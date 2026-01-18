@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 from pathlib import Path
 from typing import Optional, Sequence
@@ -20,6 +21,11 @@ from daylib.workset_state_db import WorksetStateDB
 from daylib.workset_scheduler import WorksetScheduler
 
 LOGGER = logging.getLogger("daylily.workset_api.cli")
+
+
+def _str_to_bool(val: str) -> bool:
+    """Convert string to boolean, handling common truthy values."""
+    return val.lower() in ("true", "1", "yes", "on")
 
 
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
@@ -60,7 +66,14 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--create-table",
         action="store_true",
-        help="Create DynamoDB table if it doesn't exist",
+        default=True,
+        help="Create DynamoDB tables if they don't exist (default: True)",
+    )
+    parser.add_argument(
+        "--no-create-table",
+        action="store_false",
+        dest="create_table",
+        help="Don't create DynamoDB tables automatically",
     )
     parser.add_argument(
         "--reload",
@@ -97,7 +110,6 @@ def configure_logging(verbose: bool) -> None:
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     """Main entry point."""
-    import os
     from daylib.workset_integration import WorksetIntegration
 
     args = parse_args(argv)
@@ -140,11 +152,106 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     else:
         LOGGER.warning("No control bucket configured. Set DAYLILY_CONTROL_BUCKET or use --control-bucket")
 
+    # Initialize CustomerManager for user registration and management
+    customer_manager = None
+    try:
+        from daylib.workset_customer import CustomerManager
+        customer_manager = CustomerManager(
+            region=args.region,
+            profile=args.profile,
+        )
+        # Always try to create the customer table if it doesn't exist
+        try:
+            customer_manager.create_customer_table_if_not_exists()
+            LOGGER.info("CustomerManager initialized (table: %s)", customer_manager.customer_table_name)
+        except Exception as table_err:
+            LOGGER.warning("Could not verify/create customer table: %s", table_err)
+            # Still keep the customer_manager - the table might exist
+            LOGGER.info("CustomerManager initialized (table: %s, may need manual creation)", customer_manager.customer_table_name)
+    except Exception as e:
+        LOGGER.warning("Failed to initialize CustomerManager: %s", e)
+        import traceback
+        LOGGER.debug("CustomerManager init traceback: %s", traceback.format_exc())
+
+    # Check if authentication is enabled via environment variable
+    enable_auth = _str_to_bool(os.getenv("DAYLILY_ENABLE_AUTH", "false"))
+    cognito_auth = None
+
+    if enable_auth:
+        # Import CognitoAuth only when needed
+        try:
+            from daylib.workset_auth import CognitoAuth
+        except ImportError:
+            LOGGER.error(
+                "Authentication enabled but python-jose not installed. "
+                "Install with: pip install 'python-jose[cryptography]'"
+            )
+            return 1
+
+        # Get Cognito configuration from environment
+        user_pool_id = os.getenv("COGNITO_USER_POOL_ID")
+        # Support both COGNITO_CLIENT_ID and COGNITO_APP_CLIENT_ID
+        app_client_id = os.getenv("COGNITO_CLIENT_ID") or os.getenv("COGNITO_APP_CLIENT_ID")
+
+        if not user_pool_id or not app_client_id:
+            LOGGER.error(
+                "Authentication enabled but Cognito not configured. "
+                "Set COGNITO_USER_POOL_ID and COGNITO_CLIENT_ID environment variables."
+            )
+            return 1
+
+        LOGGER.info("Initializing Cognito authentication (pool: %s)", user_pool_id)
+        # Get settings for domain whitelist validation
+        from daylib.config import get_settings
+        settings = get_settings()
+        cognito_auth = CognitoAuth(
+            region=args.region,
+            user_pool_id=user_pool_id,
+            app_client_id=app_client_id,
+            profile=args.profile,
+            settings=settings,
+        )
+        LOGGER.info("Cognito authentication initialized successfully")
+    else:
+        LOGGER.info("Authentication disabled (set DAYLILY_ENABLE_AUTH=true to enable)")
+
+    # Initialize FileRegistry for file management API
+    file_registry = None
+    try:
+        from daylib.file_registry import FileRegistry
+        file_registry = FileRegistry(
+            region=args.region,
+            profile=args.profile,
+        )
+        # Ensure the table exists
+        try:
+            file_registry.create_table_if_not_exists()
+            LOGGER.info("FileRegistry initialized (table: %s)", file_registry.table_name)
+        except Exception as table_err:
+            LOGGER.warning("Could not verify/create file registry table: %s", table_err)
+            LOGGER.info("FileRegistry initialized (table: %s, may need manual creation)", file_registry.table_name)
+    except Exception as e:
+        LOGGER.warning("Failed to initialize FileRegistry: %s", e)
+        import traceback
+        LOGGER.debug("FileRegistry init traceback: %s", traceback.format_exc())
+
     # Create FastAPI app
-    app = create_app(state_db, scheduler, integration=integration)
+    LOGGER.info("Creating FastAPI app with customer_manager=%s, file_registry=%s",
+                "CONFIGURED" if customer_manager else "NONE",
+                "CONFIGURED" if file_registry else "NONE")
+    app = create_app(
+        state_db,
+        scheduler,
+        integration=integration,
+        cognito_auth=cognito_auth,
+        customer_manager=customer_manager,
+        enable_auth=enable_auth,
+        file_registry=file_registry,
+    )
 
     # Run server
-    LOGGER.info("Starting API server on %s:%d", args.host, args.port)
+    auth_status = "ENABLED" if enable_auth else "DISABLED"
+    LOGGER.info("Starting API server on %s:%d (auth: %s)", args.host, args.port, auth_status)
     uvicorn.run(
         app,
         host=args.host,

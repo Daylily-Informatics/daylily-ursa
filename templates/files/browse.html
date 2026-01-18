@@ -106,7 +106,7 @@
                 {% endif %}
             </div>
             <div class="browse-size">
-                {% if item.size_bytes is not none %}
+                {% if item.size_bytes is defined and item.size_bytes is not none %}
                 {{ item.size_bytes | filesizeformat }}
                 {% else %}
                 --

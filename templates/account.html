@@ -36,6 +36,35 @@
             </form>
         </div>
         
+        <!-- Session Debug Info -->
+        {% if session_info %}
+        <div class="card" style="background: #fff3cd; border: 1px solid #ffc107;">
+            <h3 class="card-title"><i class="fas fa-bug"></i> Session Debug Info</h3>
+            <dl style="margin: 0; font-family: monospace; font-size: 0.85rem;">
+                <div class="d-flex justify-between mb-sm">
+                    <dt>Session Email:</dt>
+                    <dd>{{ session_info.session_user_email | default('None') }}</dd>
+                </div>
+                <div class="d-flex justify-between mb-sm">
+                    <dt>Session Customer ID:</dt>
+                    <dd>{{ session_info.session_customer_id | default('None') }}</dd>
+                </div>
+                <div class="d-flex justify-between mb-sm">
+                    <dt>Session Logged In:</dt>
+                    <dd>{{ session_info.session_logged_in | default('None') }}</dd>
+                </div>
+                <div class="d-flex justify-between mb-sm">
+                    <dt>DB Customer ID:</dt>
+                    <dd>{{ db_customer_id | default('None') }}</dd>
+                </div>
+                <div class="d-flex justify-between mb-sm">
+                    <dt>Template Customer ID:</dt>
+                    <dd>{{ customer.customer_id | default('None') }}</dd>
+                </div>
+            </dl>
+        </div>
+        {% endif %}
+
         <!-- Resource Quotas -->
         <div class="card">
             <h3 class="card-title"><i class="fas fa-tachometer-alt"></i> Resource Quotas</h3>

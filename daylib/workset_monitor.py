@@ -83,6 +83,28 @@ STATE_COLORS = {
 }
 
 
+# Regex pattern to detect date suffix like -20260118 at the end of a name
+DATE_SUFFIX_PATTERN = re.compile(r"-\d{8}$")
+
+
+def ensure_date_suffix(name: str) -> str:
+    """Ensure the workset name has a -YYYYMMDD date suffix.
+
+    If the name already ends with -YYYYMMDD, return it unchanged.
+    Otherwise, append today's date in UTC.
+
+    Args:
+        name: Workset name (e.g., "my-workset-abc12345")
+
+    Returns:
+        Name with date suffix (e.g., "my-workset-abc12345-20260118")
+    """
+    if DATE_SUFFIX_PATTERN.search(name):
+        return name
+    date_suffix = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d")
+    return f"{name}-{date_suffix}"
+
+
 class MonitorError(RuntimeError):
     """Raised when a workset fails validation or processing."""
 
@@ -784,8 +806,10 @@ class WorksetMonitor:
     ) -> str:
         if not clone_args:
             return ""
+        # Ensure workset name has date suffix for day-clone destination
+        workset_name_with_date = ensure_date_suffix(workset.name)
         mapping = {
-            "workset": workset.name,
+            "workset": workset_name_with_date,
             "workdir_name": self._workdir_name(workset, work_yaml),
         }
         try:
@@ -1816,7 +1840,9 @@ class WorksetMonitor:
     def _generate_tmux_session_name(self, workset: Workset) -> str:
         prefix = self.config.pipeline.tmux_session_prefix or "daylily"
         safe_prefix = re.sub(r"[^A-Za-z0-9_-]", "_", prefix)
-        safe_name = re.sub(r"[^A-Za-z0-9_-]", "_", workset.name)
+        # Ensure workset name has date suffix for consistent tmux session naming
+        workset_name_with_date = ensure_date_suffix(workset.name)
+        safe_name = re.sub(r"[^A-Za-z0-9_-]", "_", workset_name_with_date)
         timestamp = int(time.time())
         return f"{safe_prefix}_{safe_name}_{timestamp}"
 
@@ -1852,8 +1878,11 @@ class WorksetMonitor:
         parsed = self._parse_timestamp(text)
         if not parsed:
             return None
-        if parsed.tzinfo is not None:
-            parsed = parsed.astimezone(dt.timezone.utc).replace(tzinfo=None)
+        # Ensure timezone-aware datetime in UTC for consistent subtraction
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=dt.timezone.utc)
+        else:
+            parsed = parsed.astimezone(dt.timezone.utc)
         return parsed
 
     def _clear_pipeline_start(self, workset: Workset) -> None:
@@ -2039,7 +2068,9 @@ class WorksetMonitor:
             if not location and result.stderr:
                 location = self._parse_day_clone_location(result.stderr)
             if not location:
-                dest = self._extract_dest_from_clone_args(clone_args) or self._sanitize_name(workset.name)
+                dest = self._extract_dest_from_clone_args(clone_args) or self._sanitize_name(
+                    ensure_date_suffix(workset.name)
+                )
                 location = self._expected_pipeline_dir(dest)
                 LOGGER.info(
                     "day-clone did not report Location; falling back to %s", location
@@ -2064,7 +2095,9 @@ class WorksetMonitor:
                 "Pipeline location unavailable for restart; rerun day-clone or remove cached state"
             )
         # No clone requested; ensure fallback dir on headnode exists
-        fallback = PurePosixPath(self.config.pipeline.workdir) / workset.name
+        # Use date-suffixed name for consistent directory naming
+        workset_name_with_date = ensure_date_suffix(workset.name)
+        fallback = PurePosixPath(self.config.pipeline.workdir) / workset_name_with_date
         ensure_cmd = f"mkdir -p {shlex.quote(str(fallback))}"
         self._run_headnode_command(cluster_name, ensure_cmd, check=True, shell=True)
         self._record_pipeline_location(workset, fallback)

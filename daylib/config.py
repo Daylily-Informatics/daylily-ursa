@@ -99,6 +99,14 @@ class Settings(BaseSettings):
         default="daylily-dev-secret-change-in-production",
         description="Secret key for session encryption (CHANGE IN PRODUCTION)",
     )
+    whitelist_domains: str = Field(
+        default="all",
+        description=(
+            "Email domain whitelist for registration and login. "
+            "Set to 'all' to allow any domain, or a comma-separated list of allowed domains "
+            "(e.g., 'company.com,partner.org'). Case-insensitive."
+        ),
+    )
 
     # ========== CORS Configuration ==========
     cors_origins: str = Field(
@@ -289,6 +297,70 @@ class Settings(BaseSettings):
     def is_validation_strict(self) -> bool:
         """Check if validation is in strict mode."""
         return self.validation_strictness == "strict"
+
+    def get_whitelist_domains(self) -> List[str]:
+        """Get list of whitelisted email domains.
+
+        Returns:
+            List of domain strings (lowercase), or empty list if all domains allowed.
+        """
+        if not self.whitelist_domains or self.whitelist_domains.strip().lower() == "all":
+            return []
+        return [d.strip().lower() for d in self.whitelist_domains.split(",") if d.strip()]
+
+    def is_domain_whitelisted(self, email: str) -> bool:
+        """Check if an email address's domain is whitelisted.
+
+        Args:
+            email: Email address to check
+
+        Returns:
+            True if domain is allowed (whitelisted or no whitelist configured),
+            False if domain is blocked.
+        """
+        whitelist = self.get_whitelist_domains()
+        if not whitelist:
+            # No whitelist = all domains allowed
+            return True
+
+        # Extract domain from email
+        if not email or "@" not in email:
+            return False
+
+        domain = email.split("@")[-1].strip().lower()
+        if not domain:
+            return False
+
+        return domain in whitelist
+
+    def validate_email_domain(self, email: str) -> tuple[bool, str]:
+        """Validate email domain against whitelist.
+
+        Args:
+            email: Email address to validate
+
+        Returns:
+            Tuple of (is_valid, error_message).
+            error_message is empty string if valid.
+        """
+        if not email:
+            return False, "Email address is required"
+
+        if "@" not in email:
+            return False, "Invalid email address format"
+
+        domain = email.split("@")[-1].strip().lower()
+        if not domain:
+            return False, "Invalid email address: missing domain"
+
+        if not self.is_domain_whitelisted(email):
+            whitelist = self.get_whitelist_domains()
+            return False, (
+                f"Email domain '{domain}' is not allowed. "
+                f"Registration is restricted to: {', '.join(whitelist)}"
+            )
+
+        return True, ""
 
 
 @lru_cache

@@ -1482,9 +1482,11 @@ def create_app(
                     detail=f"Customer {customer_id} not found",
                 )
 
-            # Generate a unique workset ID from the name
+            # Generate a unique workset ID from the name with date suffix
+            import datetime as dt
             safe_name = workset_name.replace(" ", "-").lower()[:30]
-            workset_id = f"{safe_name}-{uuid.uuid4().hex[:8]}"
+            date_suffix = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d")
+            workset_id = f"{safe_name}-{uuid.uuid4().hex[:8]}-{date_suffix}"
 
             # Use control-plane bucket (monitor bucket) for workset registration
             bucket = None

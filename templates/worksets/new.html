@@ -21,7 +21,7 @@
         <ol style="margin: 0; padding-left: var(--spacing-lg); line-height: 1.8; color: #c8d4db;">
             <li><strong>Name your workset</strong> &mdash; Use a descriptive name like "ProjectX-Cohort1-Jan2024"</li>
             <li><strong>Select pipeline &amp; reference</strong> &mdash; Choose the analysis type and reference genome</li>
-            <li><strong>Provide input data</strong> &mdash; Upload FASTQ files, specify an S3 path, or upload a manifest</li>
+            <li><strong>Provide a manifest</strong> &mdash; Upload a <code>stage_samples.tsv</code> file or select a saved manifest</li>
             <li><strong>Configure options</strong> &mdash; Set priority, notifications, and QC preferences</li>
         </ol>
     </div>
@@ -76,122 +76,13 @@
             </div>
         </div>
         
-        <!-- Step 2: Input Files -->
+        <!-- Step 2: Input Files (Manifest) -->
         <div class="card">
             <h3 class="card-title"><span class="badge badge-in-progress">2</span> Input Files</h3>
-            <p class="text-muted mb-lg">Specify where your sequencing data is located. Choose the method that best fits your workflow:</p>
+            <p class="text-muted mb-lg">Provide a manifest file that defines your analysis inputs. You can upload a new <code>stage_samples.tsv</code> file or select a previously saved manifest.</p>
 
-            <div class="tabs">
-                <ul class="tab-list">
-                    <li class="tab-item active" onclick="switchTab('fileset')">
-                        <i class="fas fa-layer-group"></i> File Set
-                    </li>
-                    <li class="tab-item" onclick="switchTab('upload')">
-                        <i class="fas fa-upload"></i> Upload Files
-                    </li>
-                    <li class="tab-item" onclick="switchTab('s3')">
-                        <i class="fab fa-aws"></i> S3 Path
-                    </li>
-                    <li class="tab-item" onclick="switchTab('manifest')">
-                        <i class="fas fa-file-alt"></i> Manifest
-                    </li>
-                </ul>
-            </div>
-
-            <!-- File Set Tab (NEW - Primary Input Method) -->
-            <div class="tab-content active" id="tab-fileset">
-                <div class="alert alert-info mb-lg" style="background: #0d3344; border: 1px solid var(--color-info); border-radius: var(--radius-md); padding: var(--spacing-md); color: #b8d4e8;">
-                    <i class="fas fa-star text-warning"></i>
-                    <strong style="color: #fff;">Recommended:</strong> Select a pre-configured file set containing your analysis inputs. File sets track metadata and can be reused across worksets.
-                </div>
-
-                <div class="form-group">
-                    <label class="form-label">Select File Set</label>
-                    <select id="fileset-select" class="form-control form-select" onchange="loadFilesetPreview()">
-                        <option value="">Choose a file set...</option>
-                    </select>
-                </div>
-
-                <div id="fileset-preview" class="d-none">
-                    <div class="card" style="background: #1a2a33; margin-top: var(--spacing-md);">
-                        <div class="d-flex justify-between align-center mb-md">
-                            <h4 style="margin: 0; color: #fff;"><i class="fas fa-layer-group text-accent"></i> <span id="fileset-name">File Set</span></h4>
-                            <span class="badge badge-info" id="fileset-file-count">0 files</span>
-                        </div>
-                        <p id="fileset-description" class="text-muted mb-md"></p>
-                        <div id="fileset-files-preview" class="fileset-files-preview"></div>
-                    </div>
-                </div>
-
-                <div class="mt-lg text-center">
-                    <p class="text-muted mb-md">Don't have a file set yet?</p>
-                    <a href="/portal/files/filesets" class="btn btn-outline">
-                        <i class="fas fa-plus"></i> Create File Set
-                    </a>
-                </div>
-            </div>
-
-            <!-- Upload Tab -->
-            <div class="tab-content" id="tab-upload">
-                <div class="alert alert-info mb-lg" style="background: #0d3344; border: 1px solid var(--color-info); border-radius: var(--radius-md); padding: var(--spacing-md); color: #b8d4e8;">
-                    <i class="fas fa-info-circle text-info"></i>
-                    <strong style="color: #fff;">Best for:</strong> Small to medium datasets (&lt;50GB total). Files are uploaded to your S3 bucket and a workset configuration is auto-generated.
-                </div>
-                <div class="file-upload" id="file-dropzone">
-                    <div class="file-upload-icon"><i class="fas fa-cloud-upload-alt"></i></div>
-                    <p class="file-upload-text">
-                        <strong>Drag and drop</strong> your FASTQ files here, or <strong>click to browse</strong>
-                    </p>
-                    <p class="text-muted" style="font-size: 0.875rem;">
-                        Supported: .fastq, .fastq.gz, .fq.gz (Max 50GB per file)
-                    </p>
-                    <input type="file" id="file-input" class="file-upload-input"
-                           multiple accept=".fastq,.fq,.fastq.gz,.fq.gz">
-                </div>
-                <p class="form-text mt-md">
-                    <i class="fas fa-lightbulb text-warning"></i>
-                    <strong>Tip:</strong> Name your files using the pattern <code>SampleName_R1.fastq.gz</code> / <code>SampleName_R2.fastq.gz</code> or <code>SampleName.R1.fastq.gz</code> / <code>SampleName.R2.fastq.gz</code> for paired-end reads. The system will automatically pair them.
-                </p>
-
-                <div id="file-list" class="mt-lg d-none">
-                    <h4>Selected Files</h4>
-                    <ul id="file-items" class="list-unstyled"></ul>
-                </div>
-            </div>
-
-            <!-- S3 Tab -->
-            <div class="tab-content" id="tab-s3">
-                <div class="alert alert-info mb-lg" style="background: #0d3344; border: 1px solid var(--color-info); border-radius: var(--radius-md); padding: var(--spacing-md); color: #b8d4e8;">
-                    <i class="fas fa-info-circle text-info"></i>
-                    <strong style="color: #fff;">Best for:</strong> Large datasets or data already in S3. Point to an existing folder containing your FASTQ files and <code style="background: #1a4a5e; padding: 2px 6px; border-radius: 3px;">stage_samples.tsv</code> manifest.
-                </div>
-                <div class="form-group">
-                    <label for="s3_bucket" class="form-label">S3 Bucket</label>
-                    <input type="text" id="s3_bucket" name="s3_bucket" class="form-control"
-                           placeholder="s3://your-bucket-name" value="{% if customer.s3_bucket %}s3://{{ customer.s3_bucket }}{% endif %}">
-                    <p class="form-text">Your designated S3 bucket (pre-filled from your account settings)</p>
-                </div>
-                <div class="form-group">
-                    <label for="s3_prefix" class="form-label">S3 Prefix (Path)</label>
-                    <div class="input-group">
-                        <input type="text" id="s3_prefix" name="s3_prefix" class="form-control"
-                               placeholder="worksets/my-workset/">
-                        <button type="button" id="discover-s3-samples" class="btn btn-outline" title="Discover samples from S3">
-                            <i class="fas fa-search"></i> Discover
-                        </button>
-                    </div>
-                    <p class="form-text">Path to the folder containing your FASTQ files. Click <strong>Discover</strong> to auto-detect analysis inputs.</p>
-                </div>
-                <div id="s3-samples-preview"></div>
-                <div class="alert alert-info mt-lg" style="background: #0d3344; border: 1px solid var(--color-info); border-radius: var(--radius-md); padding: var(--spacing-md); color: #b8d4e8;">
-                    <i class="fas fa-lightbulb text-warning"></i>
-                    <strong style="color: #fff;">Tip:</strong> Click <strong>Discover</strong> to automatically find FASTQ files and <code style="background: #1a4a5e; padding: 2px 6px; border-radius: 3px;">stage_samples.tsv</code> in your S3 path.
-                    If no manifest exists, <a href="/portal/manifest-generator" class="text-accent">generate one here</a>.
-                </div>
-            </div>
-
-            <!-- Manifest Tab -->
-            <div class="tab-content" id="tab-manifest">
+            <!-- Manifest Content (no tabs needed - manifest is the only input method) -->
+            <div id="tab-manifest">
                 <div class="alert alert-info mb-lg" style="background: #0d3344; border: 1px solid var(--color-info); border-radius: var(--radius-md); padding: var(--spacing-md); color: #b8d4e8;">
                     <i class="fas fa-info-circle text-info"></i>
                     <strong style="color: #fff;">Best for:</strong> Advanced users with pre-configured sample sheets. Choose a saved manifest or upload a <code style="background: #1a4a5e; padding: 2px 6px; border-radius: 3px;">stage_samples.tsv</code> that defines your analysis inputs and metadata.

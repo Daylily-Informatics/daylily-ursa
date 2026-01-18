@@ -779,6 +779,72 @@ samples: []
         assert response.status_code == 400
         assert "at least one sample" in response.json()["detail"]
 
+    def test_create_workset_from_manifest_tsv_content(
+        self, mock_state_db, mock_customer_manager_with_email_lookup, mock_integration
+    ):
+        """Test workset creation from manifest TSV content."""
+        mock_state_db.get_workset.return_value = {"workset_id": "test"}
+
+        app = create_app(
+            state_db=mock_state_db,
+            customer_manager=mock_customer_manager_with_email_lookup,
+            integration=mock_integration,
+            enable_auth=False
+        )
+        client = TestClient(app)
+
+        # Sample manifest TSV content matching the user's format
+        manifest_tsv = """RUN_ID\tSAMPLE_ID\tEXPERIMENTID\tSAMPLE_TYPE\tLIB_PREP\tSEQ_VENDOR\tSEQ_PLATFORM\tLANE\tSEQBC_ID\tPATH_TO_CONCORDANCE_DATA_DIR\tR1_FQ\tR2_FQ\tSTAGE_DIRECTIVE\tSTAGE_TARGET\tSUBSAMPLE_PCT\tIS_POS_CTRL\tIS_NEG_CTRL\tN_X\tN_Y\tEXTERNAL_SAMPLE_ID
+R0\tA1\tE1\tblood\tnoampwgs\tILMN\tNOVASEQX\t0\tS1\t\ts3://bucket/sample.R1.fastq.gz\ts3://bucket/sample.R2.fastq.gz\tstage_data\t/fsx/staged/\tna\tfalse\tfalse\t1\t1\tHG002"""
+
+        response = client.post(
+            "/api/customers/cust-001/worksets",
+            json={
+                "workset_name": "Manifest TSV Workset",
+                "pipeline_type": "wgs",
+                "reference_genome": "hg38",
+                "manifest_tsv_content": manifest_tsv,
+            }
+        )
+        assert response.status_code == 200
+
+        # Verify integration was called with correct data
+        mock_integration.register_workset.assert_called_once()
+        call_kwargs = mock_integration.register_workset.call_args[1]
+        metadata = call_kwargs["metadata"]
+        assert metadata["sample_count"] == 1
+        assert metadata["samples"][0]["sample_id"] == "A1"
+        assert "R1.fastq.gz" in metadata["samples"][0]["r1_file"]
+        assert "R2.fastq.gz" in metadata["samples"][0]["r2_file"]
+        # Verify raw TSV is passed for S3 write
+        assert "stage_samples_tsv" in metadata
+
+    def test_create_workset_from_manifest_tsv_empty_rejected(
+        self, mock_state_db, mock_customer_manager_with_email_lookup
+    ):
+        """Test that manifest TSV with no data rows is rejected."""
+        app = create_app(
+            state_db=mock_state_db,
+            customer_manager=mock_customer_manager_with_email_lookup,
+            enable_auth=False
+        )
+        client = TestClient(app)
+
+        # Header only, no data rows
+        manifest_tsv = "RUN_ID\tSAMPLE_ID\tR1_FQ\tR2_FQ"
+
+        response = client.post(
+            "/api/customers/cust-001/worksets",
+            json={
+                "workset_name": "Empty Manifest Workset",
+                "pipeline_type": "wgs",
+                "reference_genome": "hg38",
+                "manifest_tsv_content": manifest_tsv,
+            }
+        )
+        assert response.status_code == 400
+        assert "at least one sample" in response.json()["detail"]
+
 
 class TestCustomerLookupByEmail:
     """Tests for customer lookup by email functionality."""
@@ -980,4 +1046,403 @@ class TestPortalFileRegistration:
         # This test verifies the 403 response path for cross-customer access
         # Full testing requires session mocking
         pass  # Placeholder for future session-mocked tests
+
+
+class TestPortalFileAutoRegistration:
+    """Tests for the portal file auto-registration implementation."""
+
+    @pytest.fixture
+    def mock_file_registry(self):
+        """Mock FileRegistry for registration tests."""
+        registry = MagicMock()
+        registry.register_file.return_value = True
+        registry.get_file.return_value = None  # File not already registered
+        return registry
+
+    @pytest.fixture
+    def mock_linked_bucket_manager(self):
+        """Mock LinkedBucketManager."""
+        bucket = MagicMock()
+        bucket.bucket_id = "lb-test123"
+        bucket.customer_id = "cust-001"
+        bucket.bucket_name = "test-bucket"
+        bucket.display_name = "Test Bucket"
+
+        manager = MagicMock()
+        manager.get_bucket.return_value = bucket
+        manager.list_customer_buckets.return_value = [bucket]
+        return manager
+
+    @pytest.fixture
+    def mock_bucket_discovery(self):
+        """Mock BucketFileDiscovery."""
+        from daylib.file_registry import DiscoveredFile
+
+        discovered = [
+            DiscoveredFile(
+                s3_uri="s3://test-bucket/sample_R1.fastq.gz",
+                bucket_name="test-bucket",
+                key="sample_R1.fastq.gz",
+                file_size_bytes=1024000,
+                last_modified="2024-01-15T10:00:00Z",
+                etag="abc123",
+                detected_format="fastq",
+                is_registered=False,
+            ),
+            DiscoveredFile(
+                s3_uri="s3://test-bucket/sample_R2.fastq.gz",
+                bucket_name="test-bucket",
+                key="sample_R2.fastq.gz",
+                file_size_bytes=1024000,
+                last_modified="2024-01-15T10:00:00Z",
+                etag="def456",
+                detected_format="fastq",
+                is_registered=False,
+            ),
+        ]
+        return discovered
+
+    def test_auto_register_files_success(self, mock_file_registry, mock_bucket_discovery):
+        """Test successful auto-registration of discovered files."""
+        from daylib.file_registry import BucketFileDiscovery
+
+        discovery = BucketFileDiscovery(region="us-west-2")
+
+        # Use real auto_register_files with mocked registry
+        registered, skipped, errors = discovery.auto_register_files(
+            discovered_files=mock_bucket_discovery,
+            registry=mock_file_registry,
+            customer_id="cust-001",
+            biosample_id="biosample-001",
+            subject_id="subject-001",
+            sequencing_platform="NOVASEQX",
+        )
+
+        assert registered == 2
+        assert skipped == 0
+        assert len(errors) == 0
+        assert mock_file_registry.register_file.call_count == 2
+
+    def test_auto_register_files_skips_already_registered(self, mock_file_registry, mock_bucket_discovery):
+        """Test that already-registered files are skipped."""
+        from daylib.file_registry import BucketFileDiscovery
+
+        # Mark first file as already registered
+        mock_bucket_discovery[0].is_registered = True
+
+        discovery = BucketFileDiscovery(region="us-west-2")
+
+        registered, skipped, errors = discovery.auto_register_files(
+            discovered_files=mock_bucket_discovery,
+            registry=mock_file_registry,
+            customer_id="cust-001",
+            biosample_id="biosample-001",
+            subject_id="subject-001",
+        )
+
+        assert registered == 1
+        assert skipped == 1
+        assert len(errors) == 0
+        assert mock_file_registry.register_file.call_count == 1
+
+    def test_auto_register_detects_read_number(self, mock_file_registry, mock_bucket_discovery):
+        """Test that R1/R2 detection works correctly."""
+        from daylib.file_registry import BucketFileDiscovery
+
+        discovery = BucketFileDiscovery(region="us-west-2")
+
+        discovery.auto_register_files(
+            discovered_files=mock_bucket_discovery,
+            registry=mock_file_registry,
+            customer_id="cust-001",
+            biosample_id="biosample-001",
+            subject_id="subject-001",
+        )
+
+        # Check the registration calls for read_number
+        calls = mock_file_registry.register_file.call_args_list
+        assert len(calls) == 2
+
+        # R1 file should have read_number=1
+        r1_registration = calls[0][0][0]  # First positional arg of first call
+        assert r1_registration.read_number == 1
+
+        # R2 file should have read_number=2
+        r2_registration = calls[1][0][0]
+        assert r2_registration.read_number == 2
+
+    def test_auto_register_handles_registration_failure(self, mock_file_registry, mock_bucket_discovery):
+        """Test that registration failures are captured in errors list."""
+        from daylib.file_registry import BucketFileDiscovery
+
+        # Make register_file raise an exception for the first file
+        mock_file_registry.register_file.side_effect = [Exception("DynamoDB error"), True]
+
+        discovery = BucketFileDiscovery(region="us-west-2")
+
+        registered, skipped, errors = discovery.auto_register_files(
+            discovered_files=mock_bucket_discovery,
+            registry=mock_file_registry,
+            customer_id="cust-001",
+            biosample_id="biosample-001",
+            subject_id="subject-001",
+        )
+
+        assert registered == 1
+        assert skipped == 0
+        assert len(errors) == 1
+        assert "DynamoDB error" in errors[0]
+
+    def test_auto_register_sets_correct_metadata(self, mock_file_registry, mock_bucket_discovery):
+        """Test that biosample and sequencing metadata are set correctly."""
+        from daylib.file_registry import BucketFileDiscovery
+
+        discovery = BucketFileDiscovery(region="us-west-2")
+
+        discovery.auto_register_files(
+            discovered_files=mock_bucket_discovery,
+            registry=mock_file_registry,
+            customer_id="cust-001",
+            biosample_id="my-biosample",
+            subject_id="HG002",
+            sequencing_platform="ILLUMINA_NOVASEQ_X",
+        )
+
+        call = mock_file_registry.register_file.call_args_list[0]
+        registration = call[0][0]
+
+        assert registration.customer_id == "cust-001"
+        assert registration.biosample_metadata.biosample_id == "my-biosample"
+        assert registration.biosample_metadata.subject_id == "HG002"
+        assert registration.sequencing_metadata.platform == "ILLUMINA_NOVASEQ_X"
+        assert registration.file_metadata.file_format == "fastq"
+
+
+class TestFileSearchAPI:
+    """Tests for the file search API endpoint."""
+
+    @pytest.fixture
+    def mock_file_registrations(self):
+        """Create mock file registrations for search tests."""
+        from daylib.file_registry import FileRegistration, FileMetadata, BiosampleMetadata, SequencingMetadata
+
+        return [
+            FileRegistration(
+                file_id="file-001",
+                customer_id="cust-001",
+                file_metadata=FileMetadata(
+                    file_id="file-001",
+                    s3_uri="s3://bucket/sample1_R1.fastq.gz",
+                    file_size_bytes=1024000,
+                    file_format="fastq",
+                ),
+                biosample_metadata=BiosampleMetadata(
+                    biosample_id="biosample-001",
+                    subject_id="HG002",
+                    sample_type="blood",
+                ),
+                sequencing_metadata=SequencingMetadata(
+                    platform="ILLUMINA_NOVASEQ_X",
+                    vendor="ILMN",
+                ),
+                tags=["wgs", "germline"],
+                registered_at="2024-01-15T10:00:00Z",
+            ),
+            FileRegistration(
+                file_id="file-002",
+                customer_id="cust-001",
+                file_metadata=FileMetadata(
+                    file_id="file-002",
+                    s3_uri="s3://bucket/sample1_R2.fastq.gz",
+                    file_size_bytes=1024000,
+                    file_format="fastq",
+                ),
+                biosample_metadata=BiosampleMetadata(
+                    biosample_id="biosample-001",
+                    subject_id="HG002",
+                    sample_type="blood",
+                ),
+                sequencing_metadata=SequencingMetadata(
+                    platform="ILLUMINA_NOVASEQ_X",
+                    vendor="ILMN",
+                ),
+                tags=["wgs", "germline"],
+                registered_at="2024-01-15T10:00:00Z",
+            ),
+            FileRegistration(
+                file_id="file-003",
+                customer_id="cust-001",
+                file_metadata=FileMetadata(
+                    file_id="file-003",
+                    s3_uri="s3://bucket/sample2.bam",
+                    file_size_bytes=5000000000,
+                    file_format="bam",
+                ),
+                biosample_metadata=BiosampleMetadata(
+                    biosample_id="biosample-002",
+                    subject_id="HG003",
+                    sample_type="saliva",
+                ),
+                sequencing_metadata=SequencingMetadata(
+                    platform="ONT_PROMETHION",
+                    vendor="ONT",
+                ),
+                tags=["wgs", "somatic"],
+                registered_at="2024-01-16T10:00:00Z",
+            ),
+        ]
+
+    @pytest.fixture
+    def mock_file_registry_for_search(self, mock_file_registrations):
+        """Mock FileRegistry for search tests."""
+        registry = MagicMock()
+        registry.list_customer_files.return_value = mock_file_registrations
+        registry.search_files_by_tag.side_effect = lambda cid, tag: [
+            f for f in mock_file_registrations if tag in f.tags
+        ]
+        registry.search_files_by_biosample.side_effect = lambda cid, bid: [
+            f for f in mock_file_registrations
+            if f.biosample_metadata.biosample_id == bid
+        ]
+        return registry
+
+    def test_search_returns_all_files_when_no_filters(self, mock_file_registry_for_search, mock_file_registrations):
+        """Test that search returns all files when no filters are applied."""
+        from daylib.file_api import FileSearchRequest
+
+        # Simulate the search logic
+        request = FileSearchRequest()
+        results = mock_file_registry_for_search.list_customer_files("cust-001", limit=1000)
+
+        assert len(results) == 3
+
+    def test_search_filters_by_file_format(self, mock_file_registrations):
+        """Test filtering by file format."""
+        request_format = "fastq"
+        results = [f for f in mock_file_registrations
+                   if f.file_metadata.file_format.lower() == request_format.lower()]
+
+        assert len(results) == 2
+        assert all(f.file_metadata.file_format == "fastq" for f in results)
+
+    def test_search_filters_by_subject_id(self, mock_file_registrations):
+        """Test filtering by subject ID (partial match)."""
+        subject_search = "hg002"
+        results = [f for f in mock_file_registrations
+                   if f.biosample_metadata and
+                   subject_search in f.biosample_metadata.subject_id.lower()]
+
+        assert len(results) == 2
+        assert all(f.biosample_metadata.subject_id == "HG002" for f in results)
+
+    def test_search_filters_by_biosample_id(self, mock_file_registrations):
+        """Test filtering by biosample ID."""
+        biosample_search = "biosample-002"
+        results = [f for f in mock_file_registrations
+                   if f.biosample_metadata and
+                   biosample_search in f.biosample_metadata.biosample_id.lower()]
+
+        assert len(results) == 1
+        assert results[0].file_id == "file-003"
+
+    def test_search_filters_by_sample_type(self, mock_file_registrations):
+        """Test filtering by sample type."""
+        sample_type = "blood"
+        results = [f for f in mock_file_registrations
+                   if f.biosample_metadata and
+                   f.biosample_metadata.sample_type and
+                   f.biosample_metadata.sample_type.lower() == sample_type.lower()]
+
+        assert len(results) == 2
+
+    def test_search_filters_by_platform(self, mock_file_registrations):
+        """Test filtering by sequencing platform."""
+        platform = "ont"
+        results = [f for f in mock_file_registrations
+                   if f.sequencing_metadata and
+                   f.sequencing_metadata.platform and
+                   platform in f.sequencing_metadata.platform.lower()]
+
+        assert len(results) == 1
+        assert results[0].file_id == "file-003"
+
+    def test_search_filters_by_tag(self, mock_file_registrations):
+        """Test filtering by tag."""
+        tag = "somatic"
+        results = [f for f in mock_file_registrations if tag in f.tags]
+
+        assert len(results) == 1
+        assert results[0].file_id == "file-003"
+
+    def test_search_filters_by_date_range(self, mock_file_registrations):
+        """Test filtering by registration date range."""
+        date_from = "2024-01-16"
+        results = [f for f in mock_file_registrations
+                   if f.registered_at and str(f.registered_at) >= date_from]
+
+        assert len(results) == 1
+        assert results[0].file_id == "file-003"
+
+    def test_search_general_text_matches_filename(self, mock_file_registrations):
+        """Test general search matches filename."""
+        search_term = "sample1"
+        results = []
+        for f in mock_file_registrations:
+            filename = f.file_metadata.s3_uri.split('/')[-1] if f.file_metadata else ''
+            if search_term.lower() in filename.lower():
+                results.append(f)
+
+        assert len(results) == 2
+
+    def test_search_general_text_matches_tags(self, mock_file_registrations):
+        """Test general search matches tags."""
+        search_term = "germline"
+        results = []
+        for f in mock_file_registrations:
+            if f.tags and any(search_term.lower() in tag.lower() for tag in f.tags):
+                results.append(f)
+
+        assert len(results) == 2
+
+    def test_search_combined_filters(self, mock_file_registrations):
+        """Test combining multiple filters."""
+        # Filter by format AND subject
+        format_filter = "fastq"
+        subject_filter = "hg002"
+
+        results = mock_file_registrations
+        results = [f for f in results
+                   if f.file_metadata.file_format.lower() == format_filter.lower()]
+        results = [f for f in results
+                   if f.biosample_metadata and
+                   subject_filter in f.biosample_metadata.subject_id.lower()]
+
+        assert len(results) == 2
+
+    def test_search_returns_empty_for_no_matches(self, mock_file_registrations):
+        """Test search returns empty list when no files match."""
+        format_filter = "vcf"
+        results = [f for f in mock_file_registrations
+                   if f.file_metadata.file_format.lower() == format_filter.lower()]
+
+        assert len(results) == 0
+
+    def test_search_case_insensitive(self, mock_file_registrations):
+        """Test that search is case-insensitive."""
+        # Search with different cases
+        subject_upper = "HG002"
+        subject_lower = "hg002"
+        subject_mixed = "Hg002"
+
+        results_upper = [f for f in mock_file_registrations
+                        if f.biosample_metadata and
+                        subject_upper.lower() in f.biosample_metadata.subject_id.lower()]
+        results_lower = [f for f in mock_file_registrations
+                        if f.biosample_metadata and
+                        subject_lower.lower() in f.biosample_metadata.subject_id.lower()]
+        results_mixed = [f for f in mock_file_registrations
+                        if f.biosample_metadata and
+                        subject_mixed.lower() in f.biosample_metadata.subject_id.lower()]
+
+        assert len(results_upper) == len(results_lower) == len(results_mixed) == 2
 

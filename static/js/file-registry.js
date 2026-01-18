@@ -66,119 +66,349 @@ let debounceTimer = null;
 function debounceSearch() {
     clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => {
-        searchFiles();
+        filterFilesClientSide();
     }, 300);
 }
 
 // ============================================================================
-// File Search & Filtering
+// File Search & Filtering (Client-Side for loaded files)
 // ============================================================================
 
 let currentSearchParams = {};
 let searchDebounceTimer = null;
 
+/**
+ * Initialize file search functionality.
+ * Sets up event listeners for search input and filters.
+ */
 function initFileSearch() {
-    const searchInput = document.getElementById('file-search');
+    // Support both #file-search and #search-query for backwards compatibility
+    const searchInput = document.getElementById('file-search') || document.getElementById('search-query');
     if (searchInput) {
         searchInput.addEventListener('input', (e) => {
             clearTimeout(searchDebounceTimer);
             searchDebounceTimer = setTimeout(() => {
                 currentSearchParams.search = e.target.value;
-                searchFiles();
+                filterFilesClientSide();
             }, 300);
         });
+    }
+
+    // Set up filter change listeners
+    const filterIds = ['filter-format', 'filter-sample-type', 'filter-platform',
+                       'filter-subject-id', 'filter-biosample-id', 'filter-tags',
+                       'filter-has-controls', 'filter-date-from'];
+    filterIds.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+            el.addEventListener('change', filterFilesClientSide);
+            if (el.tagName === 'INPUT' && el.type === 'text') {
+                el.addEventListener('input', debounceSearch);
+            }
+        }
+    });
+}
+
+/**
+ * Gather all current filter values from the UI.
+ */
+function gatherFilterValues() {
+    return {
+        search: (document.getElementById('search-query')?.value ||
+                 document.getElementById('file-search')?.value || '').toLowerCase().trim(),
+        format: (document.getElementById('filter-format')?.value || '').toLowerCase(),
+        sampleType: (document.getElementById('filter-sample-type')?.value || '').toLowerCase(),
+        subjectId: (document.getElementById('filter-subject-id')?.value || '').toLowerCase().trim(),
+        biosampleId: (document.getElementById('filter-biosample-id')?.value || '').toLowerCase().trim(),
+        tags: (document.getElementById('filter-tags')?.value || '').toLowerCase().trim(),
+        platform: (document.getElementById('filter-platform')?.value || '').toLowerCase(),
+        hasControls: document.getElementById('filter-has-controls')?.value || '',
+        dateFrom: document.getElementById('filter-date-from')?.value || ''
+    };
+}
+
+/**
+ * Client-side filtering of files already loaded in the table.
+ * Uses data attributes on table rows for fast filtering.
+ */
+function filterFilesClientSide() {
+    const tbody = document.getElementById('files-tbody');
+    if (!tbody) return;
+
+    const filters = gatherFilterValues();
+    const rows = tbody.querySelectorAll('tr[data-file-id]');
+    let visibleCount = 0;
+
+    rows.forEach(row => {
+        const rowData = {
+            fileId: (row.dataset.fileId || '').toLowerCase(),
+            format: (row.dataset.format || '').toLowerCase(),
+            sampleType: (row.dataset.sampleType || '').toLowerCase(),
+            subjectId: (row.dataset.subjectId || '').toLowerCase(),
+            biosampleId: (row.dataset.biosampleId || '').toLowerCase(),
+            tags: (row.dataset.tags || '').toLowerCase(),
+            platform: (row.dataset.platform || '').toLowerCase(),
+            created: row.dataset.created || '',
+            // Get text content for general search
+            text: row.textContent.toLowerCase()
+        };
+
+        let visible = true;
+
+        // General search - matches filename, subject, biosample, tags, or any text
+        if (filters.search && visible) {
+            visible = rowData.text.includes(filters.search) ||
+                      rowData.fileId.includes(filters.search) ||
+                      rowData.subjectId.includes(filters.search) ||
+                      rowData.biosampleId.includes(filters.search) ||
+                      rowData.tags.includes(filters.search);
+        }
+
+        // Format filter
+        if (filters.format && visible) {
+            visible = rowData.format === filters.format;
+        }
+
+        // Sample type filter
+        if (filters.sampleType && visible) {
+            visible = rowData.sampleType === filters.sampleType;
+        }
+
+        // Subject ID filter (partial match)
+        if (filters.subjectId && visible) {
+            visible = rowData.subjectId.includes(filters.subjectId);
+        }
+
+        // Biosample ID filter (partial match)
+        if (filters.biosampleId && visible) {
+            visible = rowData.biosampleId.includes(filters.biosampleId);
+        }
+
+        // Tags filter (any tag matches)
+        if (filters.tags && visible) {
+            const searchTags = filters.tags.split(',').map(t => t.trim()).filter(t => t);
+            visible = searchTags.some(tag => rowData.tags.includes(tag));
+        }
+
+        // Platform filter
+        if (filters.platform && visible) {
+            visible = rowData.platform.includes(filters.platform);
+        }
+
+        // Date filter
+        if (filters.dateFrom && visible && rowData.created) {
+            visible = rowData.created >= filters.dateFrom;
+        }
+
+        row.style.display = visible ? '' : 'none';
+        if (visible) visibleCount++;
+    });
+
+    // Update stats
+    updateFilteredCount(visibleCount, rows.length);
+
+    // Show/hide empty state
+    const emptyRow = document.getElementById('empty-files-row');
+    if (emptyRow) {
+        emptyRow.style.display = (visibleCount === 0 && rows.length > 0) ? '' : 'none';
+    }
+
+    // Show "no results" message if filtering returned nothing
+    showNoResultsMessage(visibleCount === 0 && rows.length > 0);
+}
+
+/**
+ * Update the displayed count of filtered files.
+ */
+function updateFilteredCount(visible, total) {
+    const statEl = document.getElementById('stat-total-files');
+    if (statEl) {
+        if (visible === total) {
+            statEl.textContent = total;
+        } else {
+            statEl.textContent = `${visible} / ${total}`;
+        }
+    }
+}
+
+/**
+ * Show or hide a "no results" message when filtering.
+ */
+function showNoResultsMessage(show) {
+    let noResultsEl = document.getElementById('no-filter-results');
+    const tbody = document.getElementById('files-tbody');
+
+    if (show) {
+        if (!noResultsEl && tbody) {
+            const tr = document.createElement('tr');
+            tr.id = 'no-filter-results';
+            tr.innerHTML = `
+                <td colspan="10">
+                    <div class="empty-state">
+                        <div class="empty-state-icon"><i class="fas fa-search"></i></div>
+                        <h4 class="empty-state-title">No files match your filters</h4>
+                        <p class="empty-state-text">Try adjusting your search criteria or clear filters</p>
+                        <button class="btn btn-outline" onclick="clearFilters()">
+                            <i class="fas fa-times"></i> Clear Filters
+                        </button>
+                    </div>
+                </td>
+            `;
+            tbody.appendChild(tr);
+        }
+    } else if (noResultsEl) {
+        noResultsEl.remove();
     }
 }
 
 function applyFilters() {
-    const formatFilter = document.getElementById('filter-format');
-    const platformFilter = document.getElementById('filter-platform');
-    const dateFromFilter = document.getElementById('filter-date-from');
-    const dateToFilter = document.getElementById('filter-date-to');
-    
-    if (formatFilter) currentSearchParams.file_format = formatFilter.value;
-    if (platformFilter) currentSearchParams.platform = platformFilter.value;
-    if (dateFromFilter) currentSearchParams.date_from = dateFromFilter.value;
-    if (dateToFilter) currentSearchParams.date_to = dateToFilter.value;
-    
-    searchFiles();
+    filterFilesClientSide();
 }
 
 function clearFilters() {
-    currentSearchParams = {};
-    document.querySelectorAll('.filter-control').forEach(el => {
-        if (el.tagName === 'SELECT') el.selectedIndex = 0;
-        else if (el.tagName === 'INPUT') el.value = '';
+    // Clear all filter inputs
+    const inputs = ['search-query', 'file-search', 'filter-subject-id',
+                    'filter-biosample-id', 'filter-tags', 'filter-date-from'];
+    inputs.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = '';
     });
-    searchFiles();
+
+    // Reset all select dropdowns
+    const selects = ['filter-format', 'filter-sample-type', 'filter-platform', 'filter-has-controls'];
+    selects.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.selectedIndex = 0;
+    });
+
+    currentSearchParams = {};
+    filterFilesClientSide();
 }
 
-async function searchFiles() {
-    const resultsContainer = document.getElementById('file-results');
+/**
+ * Server-side search for larger datasets or when client-side data is insufficient.
+ * Falls back to API search when needed.
+ */
+async function searchFilesAPI() {
+    const resultsContainer = document.getElementById('file-results') || document.getElementById('files-tbody');
     if (!resultsContainer) return;
-    
-    resultsContainer.innerHTML = '<div class="loading"><i class="fas fa-spinner fa-spin"></i> Searching...</div>';
-    
+
+    const customerId = getCustomerId();
+    if (!customerId) {
+        console.error('No customer ID available for search');
+        return;
+    }
+
+    // Show loading state
+    const originalContent = resultsContainer.innerHTML;
+    resultsContainer.innerHTML = '<tr><td colspan="10"><div class="loading"><i class="fas fa-spinner fa-spin"></i> Searching...</div></td></tr>';
+
     try {
+        const filters = gatherFilterValues();
         const params = new URLSearchParams();
-        Object.entries(currentSearchParams).forEach(([key, value]) => {
-            if (value) params.append(key, value);
+        params.append('customer_id', customerId);
+
+        if (filters.search) params.append('search', filters.search);
+        if (filters.biosampleId) params.append('biosample_id', filters.biosampleId);
+        if (filters.subjectId) params.append('subject_id', filters.subjectId);
+        if (filters.tags) params.append('tag', filters.tags);
+        if (filters.format) params.append('file_format', filters.format);
+        if (filters.platform) params.append('platform', filters.platform);
+
+        const response = await fetch(`${FILE_API_BASE}/search?${params}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                tag: filters.tags || null,
+                biosample_id: filters.biosampleId || null,
+                subject_id: filters.subjectId || null
+            })
         });
-        
-        const response = await fetch(`${FILE_API_BASE}/search?${params}`);
+
+        if (!response.ok) {
+            throw new Error(`Search failed: ${response.status}`);
+        }
+
         const data = await response.json();
-        
+
         if (data.files && data.files.length > 0) {
-            renderFileResults(data.files);
-            updateResultCount(data.total || data.files.length);
+            renderFileResultsInTable(data.files);
+            updateFilteredCount(data.files.length, data.file_count || data.files.length);
         } else {
-            resultsContainer.innerHTML = `
-                <div class="empty-state">
-                    <i class="fas fa-search"></i>
-                    <p>No files found matching your criteria</p>
-                </div>
-            `;
+            showNoResultsMessage(true);
         }
     } catch (error) {
-        console.error('Search error:', error);
-        resultsContainer.innerHTML = `
-            <div class="error-state">
-                <i class="fas fa-exclamation-triangle"></i>
-                <p>Error searching files. Please try again.</p>
-            </div>
-        `;
+        console.error('Search API error:', error);
+        resultsContainer.innerHTML = originalContent;
+        showToast('Search failed. Using client-side filtering.', 'error');
+        filterFilesClientSide();
     }
 }
 
-function renderFileResults(files) {
-    const container = document.getElementById('file-results');
-    container.innerHTML = files.map(file => `
-        <div class="file-row" data-file-id="${file.file_id}">
-            <div class="file-checkbox">
-                <input type="checkbox" class="file-select" value="${file.file_id}" onchange="updateBulkActions()">
-            </div>
-            <div class="file-icon">
-                <i class="fas fa-${getFileIcon(file.file_format)}"></i>
-            </div>
-            <div class="file-info">
-                <a href="/portal/files/${file.file_id}" class="file-name">${file.filename}</a>
-                <span class="file-path text-muted">${file.s3_uri}</span>
-            </div>
-            <div class="file-meta">
-                <span class="badge badge-${file.file_format}">${file.file_format.toUpperCase()}</span>
-            </div>
-            <div class="file-subject">
-                <a href="/portal/files?subject_id=${file.subject_id}">${file.subject_id || 'N/A'}</a>
-            </div>
-            <div class="file-size">${formatFileSize(file.file_size_bytes)}</div>
-            <div class="file-date">${formatDate(file.registered_at)}</div>
-            <div class="file-actions">
-                <button class="btn btn-sm btn-outline" onclick="showFileActions('${file.file_id}')" title="Actions">
-                    <i class="fas fa-ellipsis-v"></i>
-                </button>
-            </div>
-        </div>
+/**
+ * Render search results into the files table.
+ */
+function renderFileResultsInTable(files) {
+    const tbody = document.getElementById('files-tbody');
+    if (!tbody) return;
+
+    tbody.innerHTML = files.map(file => `
+        <tr data-file-id="${file.file_id}"
+            data-format="${(file.file_format || '').toLowerCase()}"
+            data-sample-type="${(file.sample_type || '').toLowerCase()}"
+            data-subject-id="${(file.subject_id || '').toLowerCase()}"
+            data-biosample-id="${(file.biosample_id || '').toLowerCase()}"
+            data-tags="${(file.tags || []).join(',').toLowerCase()}"
+            data-platform="${(file.platform || '').toLowerCase()}"
+            data-created="${file.registered_at || ''}">
+            <td>
+                <label class="checkbox-label">
+                    <input type="checkbox" class="file-checkbox" value="${file.file_id}">
+                </label>
+            </td>
+            <td>
+                <a href="/portal/files/${file.file_id}" class="d-flex align-center gap-sm">
+                    <i class="fas fa-${getFileIcon(file.file_format)} text-accent"></i>
+                    <span title="${file.filename || file.s3_uri}">${truncateText(file.filename || file.s3_uri, 35)}</span>
+                </a>
+            </td>
+            <td>
+                <span class="badge badge-outline" title="${file.subject_id || ''}">
+                    ${truncateText(file.subject_id || '-', 12)}
+                </span>
+            </td>
+            <td>${truncateText(file.biosample_id || '-', 15)}</td>
+            <td><span class="badge badge-info">${(file.file_format || 'unknown').toUpperCase()}</span></td>
+            <td>${file.sample_type || '-'}</td>
+            <td>${file.file_size_bytes ? formatFileSize(file.file_size_bytes) : '-'}</td>
+            <td><span class="text-muted">-</span></td>
+            <td>${file.registered_at || 'N/A'}</td>
+            <td>
+                <div class="d-flex gap-sm">
+                    <a href="/portal/files/${file.file_id}" class="btn btn-outline btn-sm" title="View Details">
+                        <i class="fas fa-eye"></i>
+                    </a>
+                    <button class="btn btn-outline btn-sm" onclick="addToFileset('${file.file_id}')" title="Add to File Set">
+                        <i class="fas fa-folder-plus"></i>
+                    </button>
+                </div>
+            </td>
+        </tr>
     `).join('');
+}
+
+/**
+ * Truncate text with ellipsis.
+ */
+function truncateText(text, maxLength) {
+    if (!text) return '';
+    return text.length > maxLength ? text.substring(0, maxLength) + '...' : text;
+}
+
+// Legacy function for backwards compatibility
+function searchFiles() {
+    // Use client-side filtering by default
+    filterFilesClientSide();
 }
 
 function getFileIcon(format) {

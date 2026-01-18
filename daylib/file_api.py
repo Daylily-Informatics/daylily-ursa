@@ -338,9 +338,15 @@ class DeleteFileResponse(BaseModel):
 
 class FileSearchRequest(BaseModel):
     """Request model for file search."""
+    search: Optional[str] = Field(None, description="General search term (filename, subject, biosample, tags)")
     tag: Optional[str] = Field(None, description="Search by tag")
     biosample_id: Optional[str] = Field(None, description="Search by biosample ID")
     subject_id: Optional[str] = Field(None, description="Search by subject ID")
+    file_format: Optional[str] = Field(None, description="Filter by file format (fastq, bam, vcf, etc.)")
+    sample_type: Optional[str] = Field(None, description="Filter by sample type (blood, saliva, etc.)")
+    platform: Optional[str] = Field(None, description="Filter by sequencing platform")
+    date_from: Optional[str] = Field(None, description="Filter by registration date (from)")
+    date_to: Optional[str] = Field(None, description="Filter by registration date (to)")
 
 
 # Upload models
@@ -1335,32 +1341,119 @@ def create_file_api_router(
         request: FileSearchRequest = Body(...),
         current_user: Optional[Dict] = Depends(auth_dependency),
     ):
-        """Search files by various criteria."""
-        try:
-            results = []
+        """Search files by various criteria.
 
+        Supports filtering by:
+        - search: General text search across filename, subject, biosample, tags
+        - tag: Specific tag match
+        - biosample_id: Biosample ID (partial match)
+        - subject_id: Subject ID (partial match)
+        - file_format: File format (fastq, bam, vcf, etc.)
+        - sample_type: Sample type (blood, saliva, etc.)
+        - platform: Sequencing platform
+        - date_from/date_to: Registration date range
+        """
+        try:
+            # Start with all files for the customer
+            all_files = file_registry.list_customer_files(customer_id, limit=1000)
+            results = all_files
+
+            # Apply tag filter first (uses dedicated search method)
             if request.tag:
                 results = file_registry.search_files_by_tag(customer_id, request.tag)
-            elif request.biosample_id:
-                results = file_registry.search_files_by_biosample(customer_id, request.biosample_id)
-            else:
-                # Return all files if no search criteria
-                results = file_registry.list_customer_files(customer_id, limit=100)
+
+            # Apply biosample filter
+            if request.biosample_id:
+                biosample_lower = request.biosample_id.lower()
+                results = [f for f in results
+                          if f.biosample_metadata and
+                          biosample_lower in f.biosample_metadata.biosample_id.lower()]
+
+            # Apply subject filter
+            if request.subject_id:
+                subject_lower = request.subject_id.lower()
+                results = [f for f in results
+                          if f.biosample_metadata and
+                          subject_lower in f.biosample_metadata.subject_id.lower()]
+
+            # Apply file format filter
+            if request.file_format:
+                format_lower = request.file_format.lower()
+                results = [f for f in results
+                          if f.file_metadata and
+                          f.file_metadata.file_format.lower() == format_lower]
+
+            # Apply sample type filter
+            if request.sample_type:
+                sample_lower = request.sample_type.lower()
+                results = [f for f in results
+                          if f.biosample_metadata and
+                          f.biosample_metadata.sample_type and
+                          f.biosample_metadata.sample_type.lower() == sample_lower]
+
+            # Apply platform filter
+            if request.platform:
+                platform_lower = request.platform.lower()
+                results = [f for f in results
+                          if f.sequencing_metadata and
+                          f.sequencing_metadata.platform and
+                          platform_lower in f.sequencing_metadata.platform.lower()]
+
+            # Apply date range filter
+            if request.date_from:
+                results = [f for f in results
+                          if f.registered_at and str(f.registered_at) >= request.date_from]
+            if request.date_to:
+                results = [f for f in results
+                          if f.registered_at and str(f.registered_at) <= request.date_to]
+
+            # Apply general search (searches across multiple fields)
+            if request.search:
+                search_lower = request.search.lower()
+                filtered = []
+                for f in results:
+                    # Check filename
+                    filename = f.file_metadata.s3_uri.split('/')[-1] if f.file_metadata else ''
+                    if search_lower in filename.lower():
+                        filtered.append(f)
+                        continue
+                    # Check subject ID
+                    if f.biosample_metadata and search_lower in f.biosample_metadata.subject_id.lower():
+                        filtered.append(f)
+                        continue
+                    # Check biosample ID
+                    if f.biosample_metadata and search_lower in f.biosample_metadata.biosample_id.lower():
+                        filtered.append(f)
+                        continue
+                    # Check tags
+                    if f.tags and any(search_lower in tag.lower() for tag in f.tags):
+                        filtered.append(f)
+                        continue
+                results = filtered
+
+            # Build response with full file details
+            def format_file(f):
+                s3_uri = f.file_metadata.s3_uri if f.file_metadata else ""
+                filename = s3_uri.split('/')[-1] if s3_uri else ""
+                return {
+                    "file_id": f.file_id,
+                    "s3_uri": s3_uri,
+                    "filename": filename,
+                    "file_format": f.file_metadata.file_format if f.file_metadata else "unknown",
+                    "file_size_bytes": f.file_metadata.file_size_bytes if f.file_metadata else 0,
+                    "biosample_id": f.biosample_metadata.biosample_id if f.biosample_metadata else None,
+                    "subject_id": f.biosample_metadata.subject_id if f.biosample_metadata else None,
+                    "sample_type": f.biosample_metadata.sample_type if f.biosample_metadata else None,
+                    "platform": f.sequencing_metadata.platform if f.sequencing_metadata else None,
+                    "tags": f.tags or [],
+                    "registered_at": str(f.registered_at) if f.registered_at else None,
+                }
 
             return {
                 "customer_id": customer_id,
                 "file_count": len(results),
-                "files": [
-                    {
-                        "file_id": f.file_id,
-                        "s3_uri": f.file_metadata.s3_uri,
-                        "biosample_id": f.biosample_metadata.biosample_id,
-                        "subject_id": f.biosample_metadata.subject_id,
-                        "tags": f.tags,
-                        "registered_at": f.registered_at,
-                    }
-                    for f in results
-                ],
+                "total": len(all_files),
+                "files": [format_file(f) for f in results],
             }
         except Exception as e:
             LOGGER.error("Failed to search files: %s", str(e))

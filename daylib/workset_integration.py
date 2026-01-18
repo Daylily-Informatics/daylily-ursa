@@ -530,7 +530,8 @@ class WorksetIntegration:
                 ContentType="text/tab-separated-values",
             )
             LOGGER.debug("Wrote raw %s to s3://%s/%s", STAGE_SAMPLES_NAME, bucket, tsv_key)
-        elif samples:
+
+        if samples:
             # Generate TSV from sample list
             # Use analysis_samples_template.tsv format with 20 columns
             # See etc/analysis_samples_template.tsv for column definitions
@@ -573,25 +574,27 @@ class WorksetIntegration:
                     }
                     tsv_lines.append("\t".join(str(row[col]) for col in header_cols))
 
-            tsv_key = f"{prefix}{STAGE_SAMPLES_NAME}"
-            self._s3.put_object(
-                Bucket=bucket,
-                Key=tsv_key,
-                Body="\n".join(tsv_lines).encode("utf-8"),
-                ContentType="text/tab-separated-values",
-            )
-            LOGGER.debug("Wrote %s to s3://%s/%s with %d samples", STAGE_SAMPLES_NAME, bucket, tsv_key, len(samples))
+            # Only write TSV if not already provided via raw_tsv_content
+            if not raw_tsv_content:
+                tsv_key = f"{prefix}{STAGE_SAMPLES_NAME}"
+                self._s3.put_object(
+                    Bucket=bucket,
+                    Key=tsv_key,
+                    Body="\n".join(tsv_lines).encode("utf-8"),
+                    ContentType="text/tab-separated-values",
+                )
+                LOGGER.debug("Wrote %s to s3://%s/%s with %d samples", STAGE_SAMPLES_NAME, bucket, tsv_key, len(samples))
 
-            # Create sample_data/ directory marker if samples reference external files
-            # This allows the monitor to detect the workset is ready
-            sample_data_key = f"{prefix}sample_data/.keep"
-            self._s3.put_object(
-                Bucket=bucket,
-                Key=sample_data_key,
-                Body=b"placeholder for external sample data references",
-                ContentType="text/plain",
-            )
-            LOGGER.debug("Created sample_data/ marker at s3://%s/%s", bucket, sample_data_key)
+        # Always create sample_data/ directory with .hold file to prevent S3 from
+        # removing the "empty" directory (S3 doesn't have real directories)
+        sample_data_key = f"{prefix}sample_data/.hold"
+        self._s3.put_object(
+            Bucket=bucket,
+            Key=sample_data_key,
+            Body=b"# Placeholder to keep sample_data/ directory from disappearing in S3\n",
+            ContentType="text/plain",
+        )
+        LOGGER.debug("Created sample_data/.hold at s3://%s/%s", bucket, sample_data_key)
 
         # Write ready sentinel
         self._write_sentinel(bucket, prefix, "ready", timestamp)

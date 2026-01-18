@@ -1,0 +1,217 @@
+#!/bin/sh
+# Daylily Ursa Environment Activation Script
+# ==========================================
+# This script must be SOURCED, not executed:
+#   source ./dayu_activate
+#
+# It will:
+#   1. Build the DAYU conda environment from config/dayu_env.yaml if it doesn't exist
+#   2. Activate the DAYU conda environment
+#   3. Add the bin/ directory to PATH so the 'dayu' CLI is available
+#
+# Prerequisites:
+#   - conda or mamba must be installed and available in PATH
+
+# DO NOT use set -e when sourcing - it will exit the user's shell on any error!
+
+# ========== Colors ==========
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+NC='\033[0m' # No Color
+
+# ========== Configuration ==========
+CONDA_ENV_NAME="DAYU"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ENV_FILE="${SCRIPT_DIR}/config/dayu_env.yaml"
+
+# ========== Helper Functions ==========
+log_info() {
+    printf "${CYAN}→${NC} %s\n" "$1"
+}
+
+log_success() {
+    printf "${GREEN}✓${NC} %s\n" "$1"
+}
+
+log_warn() {
+    printf "${YELLOW}⚠${NC} %s\n" "$1"
+}
+
+log_error() {
+    printf "${RED}✗${NC} %s\n" "$1"
+}
+
+# ========== Check Prerequisites ==========
+# Detect conda command (prefer mamba if available)
+_DAYU_ACTIVATE_OK=1
+if command -v mamba >/dev/null 2>&1; then
+    CONDA_CMD="mamba"
+elif command -v conda >/dev/null 2>&1; then
+    CONDA_CMD="conda"
+else
+    log_error "Neither conda nor mamba found. Please install Miniconda or Mamba first."
+    _DAYU_ACTIVATE_OK=0
+fi
+
+# Verify env file exists
+if [ "$_DAYU_ACTIVATE_OK" -eq 1 ] && [ ! -f "$ENV_FILE" ]; then
+    log_error "Environment file not found: $ENV_FILE"
+    _DAYU_ACTIVATE_OK=0
+fi
+
+# Only continue if prerequisites are met
+if [ "$_DAYU_ACTIVATE_OK" -eq 0 ]; then
+    unset _DAYU_ACTIVATE_OK
+else
+
+# ========== Build or Activate Environment ==========
+printf "\n${BOLD}${BLUE}╔══════════════════════════════════════════════════════════════╗${NC}\n"
+printf "${BOLD}${BLUE}║          Daylily Ursa - Environment Activation               ║${NC}\n"
+printf "${BOLD}${BLUE}╚══════════════════════════════════════════════════════════════╝${NC}\n\n"
+
+# Check if environment exists
+if $CONDA_CMD env list | grep -q "^${CONDA_ENV_NAME} "; then
+    log_success "Environment '${CONDA_ENV_NAME}' already exists"
+else
+    log_info "Environment '${CONDA_ENV_NAME}' not found. Building from ${ENV_FILE}..."
+    log_info "This may take a few minutes..."
+    
+    if $CONDA_CMD env create -n "$CONDA_ENV_NAME" -f "$ENV_FILE"; then
+        log_success "Environment '${CONDA_ENV_NAME}' created successfully"
+    else
+        log_error "Failed to create conda environment"
+        _DAYU_ACTIVATE_OK=0
+    fi
+fi
+
+# ========== Activate Environment ==========
+log_info "Activating environment '${CONDA_ENV_NAME}'..."
+
+# Source conda shell functions if needed
+if [ -z "$CONDA_SHLVL" ]; then
+    # Conda not initialized in current shell
+    CONDA_BASE="$($CONDA_CMD info --base 2>/dev/null)"
+    if [ -f "${CONDA_BASE}/etc/profile.d/conda.sh" ]; then
+        . "${CONDA_BASE}/etc/profile.d/conda.sh"
+    fi
+fi
+
+# Activate the environment
+if [ "$_DAYU_ACTIVATE_OK" -eq 1 ]; then
+    if conda activate "$CONDA_ENV_NAME" 2>/dev/null; then
+        log_success "Activated conda environment: ${CONDA_ENV_NAME}"
+    else
+        log_error "Failed to activate environment. Try: conda activate ${CONDA_ENV_NAME}"
+        _DAYU_ACTIVATE_OK=0
+    fi
+fi
+
+# ========== Setup PATH ==========
+if [ "$_DAYU_ACTIVATE_OK" -eq 1 ]; then
+    # Add bin directory to PATH if not already there
+    BIN_DIR="${SCRIPT_DIR}/bin"
+    if [ -d "$BIN_DIR" ]; then
+        case ":$PATH:" in
+            *":${BIN_DIR}:"*)
+                # Already in PATH
+                ;;
+            *)
+                export PATH="${BIN_DIR}:${PATH}"
+                log_success "Added ${BIN_DIR} to PATH"
+                ;;
+        esac
+    fi
+
+    # Also add the repo root for the dayu script
+    case ":$PATH:" in
+        *":${SCRIPT_DIR}:"*)
+            ;;
+        *)
+            export PATH="${SCRIPT_DIR}:${PATH}"
+            log_success "Added ${SCRIPT_DIR} to PATH"
+            ;;
+    esac
+
+    # ========== Install Package in Development Mode ==========
+    log_info "Installing daylily-ursa in development mode..."
+    if pip install -e "${SCRIPT_DIR}" -q 2>/dev/null; then
+        log_success "Package installed in development mode"
+    else
+        log_warn "Failed to install package - some features may not work"
+    fi
+fi
+
+# ========== Tab Completion ==========
+if [ "$_DAYU_ACTIVATE_OK" -eq 1 ]; then
+    # Dynamically extract commands from the dayu script's case statement
+    # Parses lines like "        help|--help|-h)" to extract "help"
+    _DAYU_COMMANDS=""
+    if [ -f "${SCRIPT_DIR}/dayu" ]; then
+        _DAYU_COMMANDS=$(grep -E '^\s+[a-z][-a-z0-9]*(\|[a-z][-a-z0-9]*)*\)$' "${SCRIPT_DIR}/dayu" 2>/dev/null | \
+            sed 's/[[:space:]]*//g' | \
+            sed 's/)$//' | \
+            tr '|' '\n' | \
+            grep -v '^--' | \
+            grep -v '^-' | \
+            sort -u | \
+            tr '\n' ' ')
+    fi
+    # Fallback if extraction fails
+    if [ -z "$_DAYU_COMMANDS" ]; then
+        _DAYU_COMMANDS="help version test lint format status clean deactivate"
+    fi
+
+    _dayu_completions() {
+        local cur="${COMP_WORDS[COMP_CWORD]}"
+        COMPREPLY=($(compgen -W "${_DAYU_COMMANDS}" -- "${cur}"))
+    }
+
+    # Register completion for bash
+    if [ -n "$BASH_VERSION" ]; then
+        complete -F _dayu_completions dayu
+    fi
+
+    # Register completion for zsh
+    if [ -n "$ZSH_VERSION" ]; then
+        autoload -U +X compinit && compinit 2>/dev/null
+        autoload -U +X bashcompinit && bashcompinit 2>/dev/null
+        complete -F _dayu_completions dayu
+    fi
+
+    log_success "Tab completion enabled for dayu CLI"
+
+    # ========== Summary ==========
+    printf "\n${BOLD}${GREEN}╔══════════════════════════════════════════════════════════════╗${NC}\n"
+    printf "${BOLD}${GREEN}║  ✓ Daylily Ursa environment ready!                           ║${NC}\n"
+    printf "${BOLD}${GREEN}╚══════════════════════════════════════════════════════════════╝${NC}\n\n"
+
+    printf "  ${CYAN}Conda Environment:${NC} ${CONDA_ENV_NAME}\n"
+    printf "  ${CYAN}Python:${NC}           $(python --version 2>&1 | cut -d' ' -f2)\n"
+    printf "  ${CYAN}Project Root:${NC}     ${SCRIPT_DIR}\n"
+    printf "\n"
+    printf "  ${BOLD}Available Commands (${CYAN}%d${NC}${BOLD}):${NC}\n" $(echo $_DAYU_COMMANDS | wc -w | tr -d ' ')
+    # Print commands in columns
+    echo "$_DAYU_COMMANDS" | tr ' ' '\n' | grep -v '^$' | sort | \
+        awk '{printf "    %-20s", $1; if (NR % 3 == 0) print ""; }'
+    printf "\n\n"
+    printf "  ${BOLD}Quick Start:${NC}\n"
+    printf "    dayu help             Show detailed help for all commands\n"
+    printf "    dayu status           Check system status\n"
+    printf "    dayu start-server     Start API server\n"
+    printf "\n"
+    printf "  ${BOLD}Tip:${NC} Use TAB to autocomplete dayu commands\n"
+    printf "\n"
+    printf "  ${BOLD}Deactivate:${NC}\n"
+    printf "    conda deactivate\n"
+    printf "\n"
+fi
+
+# Close the main if block from prerequisites check
+fi
+
+# Cleanup
+unset _DAYU_ACTIVATE_OK

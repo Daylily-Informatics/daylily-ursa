@@ -13,7 +13,69 @@ Daylily Ursa provides a comprehensive workset management system for orchestratin
 - **Multi-Region Support** - Coordinate worksets across AWS regions
 - **Notifications** - SNS-based alerts for workset state changes
 
-## Installation
+## Quick Start (Development)
+
+```bash
+# Activate the development environment (creates conda env if needed)
+source ./dayu_activate
+
+# Check system status
+dayu status
+
+# Run tests
+dayu test
+
+# Start the API server
+dayu server
+```
+
+## CLI Tools
+
+### `dayu_activate` - Environment Setup
+
+Source this script to set up the development environment:
+
+```bash
+source ./dayu_activate
+```
+
+This will:
+1. Create the `DAYU` conda environment from `config/dayu_env.yaml` (if not exists)
+2. Activate the conda environment
+3. Install the package in development mode
+4. Add CLI tools to PATH
+
+### `dayu` - Management CLI
+
+The main CLI tool for managing the project:
+
+```bash
+dayu <command> [args]
+```
+
+**Testing & Quality:**
+- `dayu test` - Run the complete test suite
+- `dayu test-cov` - Run tests with coverage report
+- `dayu lint` - Run ruff linter
+- `dayu format` - Format code with ruff
+- `dayu typecheck` - Run mypy type checker
+
+**Server Commands:**
+- `dayu server` - Start the FastAPI server
+- `dayu server-dev` - Start server with auto-reload
+
+**AWS Resource Management:**
+- `dayu setup-aws` - Create required AWS resources (DynamoDB tables)
+- `dayu teardown-aws` - Delete all AWS resources
+- `dayu aws-status` - Check status of AWS resources
+
+**Environment:**
+- `dayu env` - Generate `.env` file template
+- `dayu status` - Check system status
+- `dayu clean` - Remove cached files and build artifacts
+- `dayu version` - Show version information
+
+## Installation (Production)
 
 ```bash
 pip install daylily-ursa
@@ -25,10 +87,10 @@ pip install daylily-ursa[auth]
 pip install daylily-ursa[dev]
 ```
 
-## Quick Start
+## Alternative Quick Start
 
 ```bash
-# Start the API server
+# Start the API server directly
 daylily-workset-api --host 0.0.0.0 --port 8000
 
 # Start the workset monitor

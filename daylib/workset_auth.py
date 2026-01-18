@@ -7,12 +7,15 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 import boto3
 from botocore.exceptions import ClientError
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+
+if TYPE_CHECKING:
+    from daylib.config import Settings
 
 # Optional jose import - only needed if authentication is enabled
 try:
@@ -67,6 +70,7 @@ class CognitoAuth:
         user_pool_id: str = "",
         app_client_id: str = "",
         profile: Optional[str] = None,
+        settings: Optional["Settings"] = None,
     ):
         """Initialize Cognito auth.
 
@@ -75,6 +79,7 @@ class CognitoAuth:
             user_pool_id: Cognito User Pool ID (can be empty if using create_user_pool_if_not_exists)
             app_client_id: Cognito App Client ID (can be empty if using create_app_client)
             profile: AWS profile name
+            settings: Optional Settings instance for domain whitelist validation
 
         Raises:
             ImportError: If python-jose is not installed
@@ -95,6 +100,7 @@ class CognitoAuth:
         self.user_pool_id = user_pool_id
         self.app_client_id = app_client_id
         self.profile = profile
+        self.settings = settings
 
         # Get JWKS for token validation (will be empty URL if no pool_id yet)
         self.jwks_url = ""
@@ -308,6 +314,26 @@ class CognitoAuth:
             LOGGER.error(f"Failed to update app client: {e}")
             raise
 
+    def _validate_email_domain(self, email: str) -> None:
+        """Validate email domain against whitelist if settings configured.
+
+        Args:
+            email: Email address to validate
+
+        Raises:
+            HTTPException: If domain is not whitelisted (403 Forbidden)
+        """
+        if self.settings is None:
+            return  # No settings = no domain validation
+
+        is_valid, error_msg = self.settings.validate_email_domain(email)
+        if not is_valid:
+            LOGGER.warning(f"Domain validation failed for {email}: {error_msg}")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=error_msg,
+            )
+
     def create_customer_user(
         self,
         email: str,
@@ -323,7 +349,14 @@ class CognitoAuth:
 
         Returns:
             User details dict
+
+        Raises:
+            HTTPException: If email domain is not whitelisted
+            ValueError: If user already exists
         """
+        # Validate email domain against whitelist
+        self._validate_email_domain(email)
+
         try:
             kwargs = {
                 "UserPoolId": self.user_pool_id,
@@ -498,9 +531,13 @@ class CognitoAuth:
             Dict containing authentication tokens (AccessToken, IdToken, RefreshToken)
 
         Raises:
+            HTTPException: If email domain is not whitelisted
             ValueError: If authentication fails (invalid credentials)
             ClientError: If there's an AWS API error
         """
+        # Validate email domain against whitelist
+        self._validate_email_domain(email)
+
         try:
             response = self.cognito.admin_initiate_auth(
                 UserPoolId=self.user_pool_id,
@@ -626,8 +663,12 @@ class CognitoAuth:
             email: User's email address
 
         Raises:
+            HTTPException: If email domain is not whitelisted
             ValueError: If the request fails
         """
+        # Validate email domain against whitelist
+        self._validate_email_domain(email)
+
         try:
             self.cognito.forgot_password(
                 ClientId=self.app_client_id,

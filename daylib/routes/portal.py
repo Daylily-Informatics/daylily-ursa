@@ -232,6 +232,12 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         """Handle login form submission with proper authentication."""
         LOGGER.debug(f"portal_login_submit: Login attempt for email: {email}")
 
+        # Validate email domain against whitelist
+        domain_valid, domain_error = deps.settings.validate_email_domain(email)
+        if not domain_valid:
+            LOGGER.warning(f"Login blocked for {email}: {domain_error}")
+            return RedirectResponse(url=f"/portal/login?error={domain_error.replace(' ', '+')}", status_code=302)
+
         if not deps.customer_manager:
             if not deps.enable_auth:
                 LOGGER.warning("portal_login_submit: No customer manager; creating demo session for %s", email)
@@ -286,8 +292,21 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
 
     @router.get("/portal/logout", response_class=RedirectResponse)
     async def portal_logout(request: Request):
-        """Logout and redirect to login page."""
+        """Logout and redirect to login page.
+
+        Thoroughly clears all session data to prevent stale state.
+        """
+        user_email = request.session.get("user_email", "unknown")
+        LOGGER.info(f"Logging out user: {user_email}")
+
+        # Explicitly clear all session keys (more thorough than just .clear())
+        for key in list(request.session.keys()):
+            del request.session[key]
+
+        # Also call clear() to ensure complete cleanup
         request.session.clear()
+
+        LOGGER.info(f"Session cleared for user: {user_email}")
         return RedirectResponse(url="/portal/login?success=You+have+been+logged+out", status_code=302)
 
     @router.get("/portal/forgot-password", response_class=HTMLResponse)
@@ -415,6 +434,16 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                 request, "auth/register.html",
                 _get_template_context(request, deps, error="Customer management not configured"),
             )
+
+        # Validate email domain against whitelist
+        domain_valid, domain_error = deps.settings.validate_email_domain(email)
+        if not domain_valid:
+            LOGGER.warning(f"Registration blocked for {email}: {domain_error}")
+            return deps.templates.TemplateResponse(
+                request, "auth/register.html",
+                _get_template_context(request, deps, error=domain_error),
+            )
+
         try:
             custom_bucket = None
             if s3_option == "byob" and custom_s3_bucket:
@@ -438,6 +467,7 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                 cost_center=cost_center,
                 custom_s3_bucket=custom_bucket,
             )
+            LOGGER.info(f"Registration: enable_auth={deps.enable_auth}, cognito_auth={'SET' if deps.cognito_auth else 'NONE'}")
             if deps.enable_auth and deps.cognito_auth:
                 try:
                     LOGGER.info(f"Creating Cognito user for {email} (customer_id: {config.customer_id})")
@@ -447,6 +477,10 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                     LOGGER.warning(f"Cognito user creation skipped: {e}")
                 except Exception as e:
                     LOGGER.error(f"Failed to create Cognito user for {email}: {e}")
+                    import traceback
+                    LOGGER.error(f"Traceback: {traceback.format_exc()}")
+            else:
+                LOGGER.warning(f"Skipping Cognito user creation: enable_auth={deps.enable_auth}, cognito_auth={'SET' if deps.cognito_auth else 'NONE'}")
             bucket_info = f" Your S3 bucket: {config.s3_bucket}." if config.s3_bucket else ""
             if not deps.enable_auth:
                 LOGGER.info(f"Auto-logging in new customer {config.customer_id} ({email}) in no-auth mode")
@@ -478,7 +512,7 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         auth_redirect = _require_portal_auth(request)
         if auth_redirect:
             return auth_redirect
-        customer = _get_first_customer_converted(deps)
+        customer, _ = _get_customer_for_session(request, deps)
         worksets = []
         for ws_state in WorksetState:
             batch = deps.state_db.list_worksets_by_state(ws_state, limit=100)
@@ -547,7 +581,7 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         workset = deps.state_db.get_workset(workset_id)
         if not workset:
             raise HTTPException(status_code=404, detail="Workset not found")
-        customer = _get_first_customer_converted(deps)
+        customer, _ = _get_customer_for_session(request, deps)
         metadata = workset.get("metadata", {})
         if metadata:
             if "samples" in metadata and "samples" not in workset:
@@ -617,7 +651,7 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         auth_redirect = _require_portal_auth(request)
         if auth_redirect:
             return auth_redirect
-        customer = _get_first_customer_converted(deps)
+        customer, _ = _get_customer_for_session(request, deps)
         return deps.templates.TemplateResponse(
             request,
             "manifest_generator.html",
@@ -632,7 +666,7 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         auth_redirect = _require_portal_auth(request)
         if auth_redirect:
             return auth_redirect
-        customer = _get_first_customer_converted(deps)
+        customer, _ = _get_customer_for_session(request, deps)
         files = []
         stats = {"total_files": 0, "total_size": 0, "unique_subjects": 0, "unique_biosamples": 0}
         buckets = []
@@ -645,16 +679,45 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                     files = deps.file_registry.search_files_by_tag(customer_id, f"biosample:{biosample_id}")
                 else:
                     file_registrations = deps.file_registry.list_customer_files(customer_id, limit=100)
-                    files = [
-                        {"file_id": f.file_id, "customer_id": f.customer_id, "s3_bucket": f.s3_bucket, "s3_key": f.s3_key,
-                         "filename": f.s3_key.split("/")[-1] if f.s3_key else "", "size": f.file_metadata.file_size_bytes if f.file_metadata else 0,
-                         "size_formatted": format_file_size(f.file_metadata.file_size_bytes) if f.file_metadata else "0 B",
-                         "file_type": f.file_metadata.file_format if f.file_metadata else "unknown",
-                         "subject_id": f.biosample_metadata.subject_id if f.biosample_metadata else None,
-                         "biosample_id": f.biosample_metadata.biosample_id if f.biosample_metadata else None,
-                         "registered_at": f.registered_at.isoformat() if f.registered_at else None}
-                        for f in file_registrations
-                    ]
+
+                    def parse_s3_uri(s3_uri):
+                        """Parse s3://bucket/key into (bucket, key)."""
+                        if s3_uri and s3_uri.startswith("s3://"):
+                            parts = s3_uri[5:].split("/", 1)
+                            return parts[0], parts[1] if len(parts) > 1 else ""
+                        return "", ""
+
+                    files = []
+                    for f in file_registrations:
+                        s3_uri = f.file_metadata.s3_uri if f.file_metadata else ""
+                        bucket, key = parse_s3_uri(s3_uri)
+                        registered_at = f.registered_at
+                        if isinstance(registered_at, str):
+                            registered_at_str = registered_at
+                        elif hasattr(registered_at, 'isoformat'):
+                            registered_at_str = registered_at.isoformat()
+                        else:
+                            registered_at_str = None
+                        files.append({
+                            "file_id": f.file_id,
+                            "customer_id": f.customer_id,
+                            "s3_bucket": bucket,
+                            "s3_key": key,
+                            "s3_uri": s3_uri,
+                            "filename": key.split("/")[-1] if key else "",
+                            "file_size_bytes": f.file_metadata.file_size_bytes if f.file_metadata else 0,
+                            "size": f.file_metadata.file_size_bytes if f.file_metadata else 0,
+                            "size_formatted": format_file_size(f.file_metadata.file_size_bytes) if f.file_metadata else "0 B",
+                            "file_format": f.file_metadata.file_format if f.file_metadata else "unknown",
+                            "file_type": f.file_metadata.file_format if f.file_metadata else "unknown",
+                            "subject_id": f.biosample_metadata.subject_id if f.biosample_metadata else None,
+                            "biosample_id": f.biosample_metadata.biosample_id if f.biosample_metadata else None,
+                            "sample_type": f.biosample_metadata.sample_type if f.biosample_metadata else None,
+                            "sequencing_platform": f.sequencing_metadata.platform if f.sequencing_metadata else None,
+                            "tags": f.tags if f.tags else [],
+                            "registered_at": registered_at_str,
+                            "workset_count": 0,  # TODO: Add workset count lookup
+                        })
                 stats["total_files"] = len(files)
                 stats["total_size"] = sum(f.get("size", 0) for f in files)
                 stats["unique_subjects"] = len(set(f.get("subject_id") for f in files if f.get("subject_id")))
@@ -679,7 +742,7 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         auth_redirect = _require_portal_auth(request)
         if auth_redirect:
             return auth_redirect
-        customer = _get_first_customer_converted(deps)
+        customer, _ = _get_customer_for_session(request, deps)
         buckets = []
         if deps.linked_bucket_manager and customer:
             try:
@@ -687,7 +750,8 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                 buckets = [
                     {"bucket_id": b.bucket_id, "bucket_name": b.bucket_name, "bucket_type": b.bucket_type, "display_name": b.display_name,
                      "description": b.description, "is_validated": b.is_validated, "can_read": b.can_read, "can_write": b.can_write,
-                     "can_list": b.can_list, "read_only": b.read_only, "linked_at": b.linked_at.isoformat() if b.linked_at else None}
+                     "can_list": b.can_list, "read_only": b.read_only,
+                     "linked_at": b.linked_at.isoformat() if hasattr(b.linked_at, 'isoformat') else b.linked_at}
                     for b in linked_buckets
                 ]
             except Exception as e:
@@ -722,7 +786,9 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         if deps.linked_bucket_manager:
             bucket_obj = deps.linked_bucket_manager.get_bucket(bucket_id)
             if bucket_obj:
+                LOGGER.debug(f"Bucket browse: bucket.customer_id={bucket_obj.customer_id}, user.customer_id={customer.customer_id}")
                 if bucket_obj.customer_id != customer.customer_id:
+                    LOGGER.warning(f"Access denied: bucket {bucket_id} belongs to {bucket_obj.customer_id}, not {customer.customer_id}")
                     return RedirectResponse(url="/portal/files/buckets?error=Access+denied+to+this+bucket", status_code=302)
                 bucket = {"bucket_id": bucket_obj.bucket_id, "bucket_name": bucket_obj.bucket_name, "display_name": bucket_obj.display_name}
                 try:
@@ -735,13 +801,15 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                     for cp in response.get("CommonPrefixes", []):
                         folder_path = cp["Prefix"]
                         folder_name = folder_path.rstrip("/").split("/")[-1]
-                        items.append({"name": folder_name, "type": "folder", "prefix": folder_path, "icon": "folder"})
+                        items.append({"name": folder_name, "type": "folder", "prefix": folder_path, "icon": "folder",
+                                      "size_bytes": None, "last_modified": None})
                     for obj in response.get("Contents", []):
                         if obj["Key"] == current_prefix:
                             continue
                         filename = obj["Key"].split("/")[-1]
                         if filename:
-                            items.append({"name": filename, "type": "file", "key": obj["Key"], "size": obj.get("Size", 0),
+                            items.append({"name": filename, "type": "file", "key": obj["Key"],
+                                          "size": obj.get("Size", 0), "size_bytes": obj.get("Size", 0),
                                           "size_formatted": format_file_size(obj.get("Size", 0)), "icon": get_file_icon(filename),
                                           "last_modified": obj.get("LastModified").isoformat() if obj.get("LastModified") else None})
                 except Exception as e:
@@ -767,10 +835,13 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         buckets = []
         if deps.linked_bucket_manager and customer:
             try:
+                LOGGER.info(f"Loading buckets for customer: {customer.customer_id}")
                 linked_buckets = deps.linked_bucket_manager.list_customer_buckets(customer.customer_id)
+                LOGGER.info(f"Found {len(linked_buckets)} linked buckets for {customer.customer_id}")
                 buckets = [{"bucket_id": b.bucket_id, "bucket_name": b.bucket_name, "display_name": b.display_name,
                             "is_validated": b.is_validated, "can_read": b.can_read, "can_write": b.can_write, "can_list": b.can_list}
                            for b in linked_buckets]
+                LOGGER.info(f"Buckets for dropdown: {buckets}")
             except Exception as e:
                 LOGGER.warning(f"Failed to load buckets: {e}")
         return deps.templates.TemplateResponse(
@@ -804,8 +875,44 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
             bucket_name = payload.bucket_name
         else:
             raise HTTPException(status_code=400, detail="bucket_id or bucket_name required")
-        # Implementation would continue here - this is a stub for the route extraction
-        return PortalFileAutoRegisterResponse(registered_count=0, skipped_count=0, errors=["Route stub - full implementation in workset_api.py"])
+
+        # Discover files first
+        from daylib.file_registry import BucketFileDiscovery
+        discovery = BucketFileDiscovery(region=deps.settings.get_effective_region())
+        formats = payload.file_formats or ["fastq", "bam", "vcf", "cram"]
+        discovered_files = discovery.discover_files(
+            bucket_name=bucket_name,
+            prefix=payload.prefix,
+            file_formats=formats,
+            max_files=payload.max_files,
+        )
+        LOGGER.info(f"Discovered {len(discovered_files)} files for auto-registration")
+
+        # Filter to selected keys if provided
+        if payload.selected_keys:
+            selected_set = set(payload.selected_keys)
+            discovered_files = [f for f in discovered_files if f.key in selected_set]
+            LOGGER.info(f"Filtered to {len(discovered_files)} selected files")
+
+        # Check registration status
+        discovered_files = discovery.check_registration_status(
+            discovered_files=discovered_files,
+            registry=deps.file_registry,
+            customer_id=customer_id,
+        )
+
+        # Auto-register unregistered files
+        registered, skipped, errors = discovery.auto_register_files(
+            discovered_files=discovered_files,
+            registry=deps.file_registry,
+            customer_id=customer_id,
+            biosample_id=payload.biosample_id,
+            subject_id=payload.subject_id,
+            sequencing_platform=payload.sequencing_platform,
+        )
+        LOGGER.info(f"Auto-registration complete: {registered} registered, {skipped} skipped, {len(errors)} errors")
+
+        return PortalFileAutoRegisterResponse(registered_count=registered, skipped_count=skipped, errors=errors)
 
     @router.get("/portal/files/upload", response_class=HTMLResponse)
     async def portal_files_upload(request: Request):
@@ -813,7 +920,7 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         auth_redirect = _require_portal_auth(request)
         if auth_redirect:
             return auth_redirect
-        customer = _get_first_customer_converted(deps)
+        customer, _ = _get_customer_for_session(request, deps)
         buckets = []
         if deps.linked_bucket_manager and customer:
             try:
@@ -866,7 +973,7 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         auth_redirect = _require_portal_auth(request)
         if auth_redirect:
             return auth_redirect
-        customer = _get_first_customer_converted(deps)
+        customer, _ = _get_customer_for_session(request, deps)
         filesets = []
         if deps.file_registry and customer:
             try:
@@ -890,7 +997,7 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         auth_redirect = _require_portal_auth(request)
         if auth_redirect:
             return auth_redirect
-        customer = _get_first_customer_converted(deps)
+        customer, _ = _get_customer_for_session(request, deps)
         fileset = None
         files = []
         if deps.file_registry:
@@ -915,7 +1022,7 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         auth_redirect = _require_portal_auth(request)
         if auth_redirect:
             return auth_redirect
-        customer = _get_first_customer_converted(deps)
+        customer, _ = _get_customer_for_session(request, deps)
         file = None
         workset_history = []
         if deps.file_registry:
@@ -939,7 +1046,7 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         auth_redirect = _require_portal_auth(request)
         if auth_redirect:
             return auth_redirect
-        customer = _get_first_customer_converted(deps)
+        customer, _ = _get_customer_for_session(request, deps)
         file = None
         if deps.file_registry:
             try:
@@ -1030,8 +1137,8 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         auth_redirect = _require_portal_auth(request)
         if auth_redirect:
             return auth_redirect
-        customer_id = request.session.get("customer_id", "default-customer")
-        customer = _get_first_customer_converted(deps)
+        customer, _ = _get_customer_for_session(request, deps)
+        customer_id = customer.customer_id if customer else request.session.get("customer_id", "default-customer")
         subjects: List[Dict[str, Any]] = []
         stats = {"subjects": 0, "biosamples": 0, "libraries": 0}
         # Biospecimen registry would be loaded here if available
@@ -1049,8 +1156,18 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         auth_redirect = _require_portal_auth(request)
         if auth_redirect:
             return auth_redirect
-        customer = _get_first_customer_converted(deps)
+        # Use session-based customer lookup, not first customer in DB
+        customer, _ = _get_customer_for_session(request, deps)
         app_settings = deps.settings
+
+        # Debug info for troubleshooting session/customer mismatches
+        session_info = {
+            "session_user_email": request.session.get("user_email"),
+            "session_customer_id": request.session.get("customer_id"),
+            "session_logged_in": request.session.get("logged_in"),
+        }
+        db_customer_id = customer.customer_id if customer else None
+
         env_vars = {
             "AWS_PROFILE": app_settings.aws_profile,
             "AWS_DEFAULT_REGION": app_settings.aws_default_region,
@@ -1073,7 +1190,7 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         return deps.templates.TemplateResponse(
             request,
             "account.html",
-            _get_template_context(request, deps, customer=customer, active_page="account", env_vars=env_vars),
+            _get_template_context(request, deps, customer=customer, active_page="account", env_vars=env_vars, session_info=session_info, db_customer_id=db_customer_id),
         )
 
     # ========== Static Pages ==========
@@ -1084,7 +1201,7 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         auth_redirect = _require_portal_auth(request)
         if auth_redirect:
             return auth_redirect
-        customer = _get_first_customer_converted(deps)
+        customer, _ = _get_customer_for_session(request, deps)
         return deps.templates.TemplateResponse(
             request,
             "docs.html",
@@ -1097,7 +1214,7 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         auth_redirect = _require_portal_auth(request)
         if auth_redirect:
             return auth_redirect
-        customer = _get_first_customer_converted(deps)
+        customer, _ = _get_customer_for_session(request, deps)
         return deps.templates.TemplateResponse(
             request,
             "support.html",

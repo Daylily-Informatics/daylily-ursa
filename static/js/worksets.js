@@ -317,7 +317,12 @@ async function submitWorkset(event) {
     // This matches the server-side logic for workset ID generation
     const safeName = worksetName.replace(/\s+/g, '-').toLowerCase().substring(0, 30);
     const tempId = Math.random().toString(36).substring(2, 10);
-    const worksetPrefix = `worksets/${safeName}-${tempId}/`;
+    // Add date suffix in YYYYMMDD format
+    const now = new Date();
+    const dateSuffix = now.getFullYear().toString() +
+        String(now.getMonth() + 1).padStart(2, '0') +
+        String(now.getDate()).padStart(2, '0');
+    const worksetPrefix = `worksets/${safeName}-${tempId}-${dateSuffix}/`;
 
     const data = {
         workset_name: worksetName,
@@ -361,9 +366,11 @@ async function submitWorkset(event) {
             data.fileset_id = window.selectedFileset.fileset_id;
         }
 
-        // Include manifest data if uploaded
-        if (window.manifestData) {
-            data.manifest = window.manifestData;
+        // Include manifest - either saved manifest ID or uploaded TSV content
+        if (window.selectedManifestId) {
+            data.manifest_id = window.selectedManifestId;
+        } else if (window.manifestTsvContent) {
+            data.manifest_tsv_content = window.manifestTsvContent;
         }
 
         showLoading('Creating workset...');
@@ -482,6 +489,11 @@ document.addEventListener('DOMContentLoaded', function() {
     // Initialize fileset selector if on new workset page
     if (document.getElementById('fileset-select')) {
         loadFilesetOptions();
+    }
+
+    // Initialize saved manifests dropdown if on new workset page
+    if (document.getElementById('saved-manifest-select')) {
+        refreshSavedManifestsList();
     }
 
     // Add cost calculation listeners
@@ -630,13 +642,118 @@ function previewManifest(input) {
         document.getElementById('manifest-row-count').textContent = rows.length;
         document.getElementById('manifest-preview').classList.remove('d-none');
 
-        // Store manifest data
-        window.manifestData = { headers, rows };
+        // Store raw TSV content for API submission (not parsed object)
+        window.manifestTsvContent = content;
         window.manifestSampleCount = rows.length;
+        // Clear saved manifest selection since user uploaded a new one
+        window.selectedManifestId = null;
+        const savedSelect = document.getElementById('saved-manifest-select');
+        if (savedSelect) savedSelect.value = '';
+        const savedPreview = document.getElementById('saved-manifest-preview');
+        if (savedPreview) savedPreview.classList.add('d-none');
 
         calculateCostEstimate();
     };
     reader.readAsText(file);
+}
+
+// Refresh saved manifests list
+async function refreshSavedManifestsList() {
+    const customerId = window.DaylilyConfig?.customerId;
+    if (!customerId) {
+        console.warn('No customer ID available for loading manifests');
+        return;
+    }
+
+    const select = document.getElementById('saved-manifest-select');
+    if (!select) return;
+
+    try {
+        const response = await DaylilyAPI.manifests.list(customerId);
+        const manifests = response.manifests || [];
+
+        // Clear existing options except the placeholder
+        select.innerHTML = '<option value="">Choose a saved manifest...</option>';
+
+        if (manifests.length === 0) {
+            select.innerHTML += '<option value="" disabled>No saved manifests found</option>';
+            return;
+        }
+
+        manifests.forEach(m => {
+            const option = document.createElement('option');
+            option.value = m.manifest_id;
+            const name = m.name || m.manifest_id;
+            // Ensure sample_count is a number (API returns int, but be defensive)
+            const sampleCount = typeof m.sample_count === 'number' ? m.sample_count : parseInt(m.sample_count, 10) || 0;
+            const created = m.created_at ? new Date(m.created_at).toLocaleDateString() : '';
+            option.textContent = `${name} (${sampleCount} samples${created ? ', ' + created : ''})`;
+            option.dataset.name = name;
+            option.dataset.sampleCount = String(sampleCount);  // Store as string for dataset
+            option.dataset.createdAt = m.created_at || '';
+            select.appendChild(option);
+        });
+    } catch (error) {
+        console.error('Failed to load saved manifests:', error);
+        showToast('error', 'Error', 'Failed to load saved manifests');
+    }
+}
+
+// Handle saved manifest selection
+async function onSavedManifestSelected() {
+    const select = document.getElementById('saved-manifest-select');
+    const manifestId = select?.value;
+    const preview = document.getElementById('saved-manifest-preview');
+
+    if (!manifestId) {
+        if (preview) preview.classList.add('d-none');
+        window.selectedManifestId = null;
+        return;
+    }
+
+    const customerId = window.DaylilyConfig?.customerId;
+    if (!customerId) return;
+
+    try {
+        // Get manifest metadata from the selected option's dataset
+        const option = select.options[select.selectedIndex];
+        const name = option.dataset.name || manifestId;
+        // Parse sample count - dataset attributes are always strings
+        const sampleCountStr = option.dataset.sampleCount;
+        const sampleCount = sampleCountStr ? parseInt(sampleCountStr, 10) : 0;
+        const createdAt = option.dataset.createdAt;
+
+        console.log('Selected manifest:', manifestId, 'sampleCount:', sampleCount, 'raw:', sampleCountStr);
+
+        // Update preview
+        const nameEl = document.getElementById('saved-manifest-name');
+        const countEl = document.getElementById('saved-manifest-sample-count');
+        const createdEl = document.getElementById('saved-manifest-created');
+
+        if (nameEl) nameEl.textContent = name;
+        if (countEl) countEl.textContent = `${sampleCount} samples`;
+        if (createdEl && createdAt) {
+            createdEl.textContent = `Created: ${new Date(createdAt).toLocaleString()}`;
+        }
+
+        if (preview) preview.classList.remove('d-none');
+
+        // Store selected manifest ID for submission
+        window.selectedManifestId = manifestId;
+        window.manifestSampleCount = sampleCount;
+        // Clear uploaded manifest since user selected a saved one
+        window.manifestTsvContent = null;
+        const uploadPreview = document.getElementById('manifest-preview');
+        if (uploadPreview) uploadPreview.classList.add('d-none');
+        const manifestInput = document.getElementById('manifest-input');
+        if (manifestInput) manifestInput.value = '';
+
+        // Trigger cost calculation
+        calculateCostEstimate();
+    } catch (error) {
+        console.error('Failed to load manifest details:', error);
+        showToast('error', 'Error', 'Failed to load manifest details');
+    }
 }
 
 // Calculate cost estimate
@@ -653,9 +770,16 @@ function calculateCostEstimate() {
     if (window.selectedFileset) {
         sampleCount = Math.ceil((window.selectedFileset.files?.length || 0) / 2); // Assume paired-end
         totalDataSize = (window.selectedFileset.files || []).reduce((sum, f) => sum + (f.file_size || 0), 0) / (1024 * 1024 * 1024);
-    } else if (window.manifestSampleCount) {
+    } else if (window.manifestSampleCount > 0) {
+        // Use sample count from uploaded or selected manifest
         sampleCount = window.manifestSampleCount;
         totalDataSize = sampleCount * 30; // Estimate 30GB per sample
+    } else if (window.selectedManifestId && !window.manifestSampleCount) {
+        // Fallback: manifest selected but sample count not available (legacy data)
+        // Estimate 1 sample as minimum to show some cost estimate
+        sampleCount = 1;
+        totalDataSize = 30;
+        console.warn('Manifest selected but sample_count not available, using estimate');
     } else if (window.worksetSamples?.length) {
         sampleCount = window.worksetSamples.length;
         totalDataSize = sampleCount * 30;

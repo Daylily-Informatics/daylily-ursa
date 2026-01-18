@@ -118,7 +118,32 @@ const DaylilyAPI = {
             return DaylilyAPI.get(`/api/customers/${customerId}/worksets/archived`);
         },
     },
-    
+
+    // === Manifest Endpoints ===
+    manifests: {
+        async list(customerId, limit = 200) {
+            return DaylilyAPI.get(`/api/customers/${customerId}/manifests`, { limit });
+        },
+        async get(customerId, manifestId) {
+            return DaylilyAPI.get(`/api/customers/${customerId}/manifests/${manifestId}`);
+        },
+        async save(customerId, tsvContent, name = null, description = null) {
+            return DaylilyAPI.post(`/api/customers/${customerId}/manifests`, {
+                tsv_content: tsvContent,
+                name: name,
+                description: description,
+            });
+        },
+        async download(customerId, manifestId) {
+            const response = await fetch(`${DaylilyAPI.baseUrl}/api/customers/${customerId}/manifests/${manifestId}/download`);
+            if (!response.ok) {
+                const error = await response.json().catch(() => ({ detail: response.statusText }));
+                throw new Error(error.detail || `HTTP ${response.status}`);
+            }
+            return await response.text();
+        },
+    },
+
     // === File Endpoints ===
     files: {
         async list(customerId, prefix = '') {
