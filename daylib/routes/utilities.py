@@ -115,6 +115,11 @@ def create_utilities_router(
         """Estimate cost for a workset based on parameters."""
         # Base vCPU-hours per sample by pipeline type
         base_vcpu_hours_per_sample = {
+            "test_help": 0.1,  # Quick help test
+            "germline_wgs_snv": 8.0,  # SNV only - bwa2a/dppl/deep19
+            "germline_wgs_snv_sv": 12.0,  # SNV + SV - adds TIDDIT/Manta
+            "germline_wgs_kitchensink": 16.0,  # Full analysis + MultiQC
+            # Legacy types for backwards compatibility
             "germline": 4.0,
             "somatic": 8.0,
             "rnaseq": 2.0,

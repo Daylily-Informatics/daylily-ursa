@@ -18,6 +18,8 @@ import boto3
 from botocore.exceptions import ClientError
 import yaml  # type: ignore[import-untyped]
 
+from daylib.config import normalize_bucket_name
+
 if TYPE_CHECKING:
     from daylib.workset_state_db import WorksetStateDB, WorksetState, WorksetPriority
     from daylib.workset_notifications import NotificationManager, NotificationEvent
@@ -38,6 +40,23 @@ SENTINEL_FILES = {
 WORK_YAML_NAME = "daylily_work.yaml"
 INFO_YAML_NAME = "daylily_info.yaml"
 STAGE_SAMPLES_NAME = "stage_samples.tsv"
+
+# Pipeline type to dy-r command mapping
+PIPELINE_DY_R_COMMANDS = {
+    "test_help": "-p help",
+    "germline_wgs_snv": (
+        'produce_snv_concordances produce_alignstats -p -k -j 200 '
+        '--config aligners=["bwa2a"] dedupers=["dppl"] snv_callers=["deep19"]'
+    ),
+    "germline_wgs_snv_sv": (
+        'produce_snv_concordances produce_alignstats produce_tiddit produce_manta -p -k -j 2 '
+        '--config aligners=["bwa2a"] dedupers=["dppl19"] snv_callers=["deep"] sv_callers=["tiddit","manta"]'
+    ),
+    "germline_wgs_kitchensink": (
+        'produce_snv_concordances produce_multiqc_final_wgs produce_alignstats produce_tiddit produce_manta -p -k -j 2 '
+        '--config aligners=["bwa2a"] dedupers=["dppl"] snv_callers=["deep19"] sv_callers=["tiddit","manta"]'
+    ),
+}
 
 
 class WorksetIntegration:
@@ -62,11 +81,11 @@ class WorksetIntegration:
         profile: Optional[str] = None,
     ):
         """Initialize the integration layer.
-        
+
         Args:
             state_db: DynamoDB state database (optional for S3-only mode)
             s3_client: Boto3 S3 client (created if not provided)
-            bucket: S3 bucket for worksets
+            bucket: S3 bucket for worksets (with or without s3:// prefix)
             prefix: S3 prefix for workset directories
             notification_manager: Optional notification manager
             scheduler: Optional workset scheduler
@@ -74,7 +93,7 @@ class WorksetIntegration:
             profile: AWS profile name
         """
         self.state_db = state_db
-        self.bucket = bucket
+        self.bucket = normalize_bucket_name(bucket)
         self.prefix = prefix.strip("/") + "/" if prefix else ""
         self.notification_manager = notification_manager
         self.scheduler = scheduler
@@ -604,8 +623,8 @@ class WorksetIntegration:
     ) -> str:
         """Build daylily_work.yaml content using the template file.
 
-        The template at config/daylily_work.yaml is used as-is, with only the
-        export_uri field replaced with the customer's S3 bucket URI.
+        The template at config/daylily_work.yaml is used as-is, with the
+        export_uri and dy-r fields replaced based on workset configuration.
 
         Returns the YAML content as a string (not a dict) to preserve template
         structure including comments.
@@ -628,13 +647,24 @@ class WorksetIntegration:
         export_prefix = prefix.rstrip("/")
         customer_export_uri = metadata.get("export_uri") or f"s3://{bucket}/{export_prefix}/results/"
 
-        # Replace only the export_uri line in the template
-        # Preserve everything else including comments and structure
+        # Replace the export_uri line in the template
         template_content = re.sub(
             r'^export_uri:.*$',
             f'export_uri: "{customer_export_uri}"',
             template_content,
             flags=re.MULTILINE
+        )
+
+        # Replace dy-r based on pipeline_type from metadata
+        pipeline_type = metadata.get("pipeline_type", "test_help")
+        dy_r_command = PIPELINE_DY_R_COMMANDS.get(pipeline_type, PIPELINE_DY_R_COMMANDS["test_help"])
+
+        # Replace dy-r: line and any multi-line continuation (handles both single-line and >-style)
+        template_content = re.sub(
+            r'^dy-r:.*?(?=\n[a-zA-Z#]|\n\n|\Z)',
+            f'dy-r: >\n  {dy_r_command}',
+            template_content,
+            flags=re.MULTILINE | re.DOTALL
         )
 
         # Optionally replace {workdir_name} placeholder if present

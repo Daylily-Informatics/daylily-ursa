@@ -754,33 +754,146 @@ async function startDiscovery() {
     }
 }
 
+// Store discovered files globally for filtering
+let discoveredFilesCache = [];
+
 function renderDiscoveryResults(files) {
     const contentDiv = document.getElementById('discover-results-content');
 
     if (!files || files.length === 0) {
         contentDiv.innerHTML = '<div class="empty-state"><i class="fas fa-folder-open"></i><p>No files found</p></div>';
+        discoveredFilesCache = [];
         return;
     }
 
+    // Cache files for filtering
+    discoveredFilesCache = files;
+
     contentDiv.innerHTML = `
-        <div class="d-flex justify-between align-center mb-lg">
-            <span><strong>${files.length}</strong> files discovered</span>
-            <button class="btn btn-primary" onclick="registerDiscoveredFiles()">
-                <i class="fas fa-plus"></i> Register All
-            </button>
-        </div>
-        <div class="discovered-files-list">
-            ${files.map(f => `
-                <div class="discovered-file">
-                    <input type="checkbox" class="discover-select" value="${f.key}" checked>
-                    <span class="file-key">${f.key}</span>
-                    <span class="file-format text-muted">${f.detected_format ? f.detected_format.toUpperCase() : 'UNKNOWN'}</span>
-                    <span class="file-size text-muted">${formatFileSize(f.file_size_bytes || 0)}</span>
-                    ${f.is_registered ? '<span class="badge badge-success badge-sm">Registered</span>' : ''}
+        <div class="discover-controls mb-lg">
+            <div class="d-flex justify-between align-center mb-md">
+                <div class="d-flex align-center gap-md">
+                    <label class="checkbox-label mb-0" style="font-weight: 500;">
+                        <input type="checkbox" id="discover-select-all" checked onchange="toggleAllDiscoveredFiles(this.checked)">
+                        Select All
+                    </label>
+                    <span class="text-muted" id="discover-selection-count">${files.length} of ${files.length} selected</span>
                 </div>
-            `).join('')}
+                <button class="btn btn-primary" onclick="registerDiscoveredFiles()">
+                    <i class="fas fa-plus"></i> Register Selected
+                </button>
+            </div>
+            <div class="d-flex align-center gap-md">
+                <div class="form-group mb-0" style="flex: 1;">
+                    <div class="input-group">
+                        <span class="input-icon"><i class="fas fa-search"></i></span>
+                        <input type="text" class="form-control" id="discover-filter-input"
+                               placeholder="Filter files by name..."
+                               oninput="filterDiscoveredFiles(this.value)">
+                        <button type="button" class="btn btn-outline btn-sm" onclick="clearDiscoverFilter()" title="Clear filter">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+                </div>
+                <span class="text-muted" id="discover-filter-count">${files.length} files shown</span>
+            </div>
+        </div>
+        <div class="discovered-files-list" id="discovered-files-list">
+            ${renderDiscoveredFilesList(files)}
         </div>
     `;
+}
+
+function renderDiscoveredFilesList(files) {
+    return files.map(f => `
+        <div class="discovered-file" data-key="${f.key}">
+            <input type="checkbox" class="discover-select" value="${f.key}" checked onchange="updateDiscoverSelectionCount()">
+            <span class="file-key">${f.key}</span>
+            <span class="file-format text-muted">${f.detected_format ? f.detected_format.toUpperCase() : 'UNKNOWN'}</span>
+            <span class="file-size text-muted">${formatFileSize(f.file_size_bytes || 0)}</span>
+            ${f.is_registered ? '<span class="badge badge-success badge-sm">Registered</span>' : ''}
+        </div>
+    `).join('');
+}
+
+function toggleAllDiscoveredFiles(checked) {
+    const checkboxes = document.querySelectorAll('.discover-select');
+    checkboxes.forEach(cb => {
+        // Only toggle visible (not filtered out) checkboxes
+        if (cb.closest('.discovered-file').style.display !== 'none') {
+            cb.checked = checked;
+        }
+    });
+    updateDiscoverSelectionCount();
+}
+
+function filterDiscoveredFiles(searchTerm) {
+    const term = searchTerm.toLowerCase().trim();
+    const fileItems = document.querySelectorAll('.discovered-file');
+    let visibleCount = 0;
+
+    fileItems.forEach(item => {
+        const key = item.dataset.key || '';
+        const matches = term === '' || key.toLowerCase().includes(term);
+        item.style.display = matches ? '' : 'none';
+        if (matches) visibleCount++;
+    });
+
+    // Update filter count
+    const filterCountEl = document.getElementById('discover-filter-count');
+    if (filterCountEl) {
+        filterCountEl.textContent = `${visibleCount} files shown`;
+    }
+
+    // Update select all checkbox state based on visible items
+    updateSelectAllState();
+    updateDiscoverSelectionCount();
+}
+
+function clearDiscoverFilter() {
+    const filterInput = document.getElementById('discover-filter-input');
+    if (filterInput) {
+        filterInput.value = '';
+        filterDiscoveredFiles('');
+    }
+}
+
+function updateSelectAllState() {
+    const selectAllCheckbox = document.getElementById('discover-select-all');
+    if (!selectAllCheckbox) return;
+
+    const visibleCheckboxes = Array.from(document.querySelectorAll('.discovered-file'))
+        .filter(item => item.style.display !== 'none')
+        .map(item => item.querySelector('.discover-select'));
+
+    if (visibleCheckboxes.length === 0) {
+        selectAllCheckbox.checked = false;
+        selectAllCheckbox.indeterminate = false;
+        return;
+    }
+
+    const checkedCount = visibleCheckboxes.filter(cb => cb.checked).length;
+    if (checkedCount === 0) {
+        selectAllCheckbox.checked = false;
+        selectAllCheckbox.indeterminate = false;
+    } else if (checkedCount === visibleCheckboxes.length) {
+        selectAllCheckbox.checked = true;
+        selectAllCheckbox.indeterminate = false;
+    } else {
+        selectAllCheckbox.checked = false;
+        selectAllCheckbox.indeterminate = true;
+    }
+}
+
+function updateDiscoverSelectionCount() {
+    const countEl = document.getElementById('discover-selection-count');
+    if (!countEl) return;
+
+    const allCheckboxes = document.querySelectorAll('.discover-select');
+    const checkedCheckboxes = document.querySelectorAll('.discover-select:checked');
+    countEl.textContent = `${checkedCheckboxes.length} of ${allCheckboxes.length} selected`;
+
+    updateSelectAllState();
 }
 
 async function registerDiscoveredFiles() {

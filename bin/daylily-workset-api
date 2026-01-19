@@ -16,6 +16,7 @@ import uvicorn
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from daylib.config import normalize_bucket_name
 from daylib.workset_api import create_app
 from daylib.workset_state_db import WorksetStateDB
 from daylib.workset_scheduler import WorksetScheduler
@@ -135,7 +136,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     # Initialize integration layer with control bucket
     integration = None
-    control_bucket = args.control_bucket or os.getenv("DAYLILY_CONTROL_BUCKET") or os.getenv("DAYLILY_MONITOR_BUCKET")
+    raw_bucket = args.control_bucket or os.getenv("DAYLILY_CONTROL_BUCKET") or os.getenv("DAYLILY_MONITOR_BUCKET")
+    control_bucket = normalize_bucket_name(raw_bucket)
     if control_bucket:
         LOGGER.info("Initializing integration layer with control bucket: %s", control_bucket)
         try:

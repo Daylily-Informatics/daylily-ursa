@@ -45,16 +45,16 @@
                     <label for="pipeline_type" class="form-label required">Pipeline Type</label>
                     <select id="pipeline_type" name="pipeline_type" class="form-control form-select" required>
                         <option value="">Select pipeline...</option>
-                        <option value="germline">Germline Variant Calling</option>
-                        <option value="somatic">Somatic Variant Calling</option>
-                        <option value="rnaseq">RNA-Seq Analysis</option>
-                        <option value="wgs">Whole Genome Sequencing</option>
-                        <option value="wes">Whole Exome Sequencing</option>
+                        <option value="test_help">Test Help</option>
+                        <option value="germline_wgs_snv">Germline WGS SNV Only</option>
+                        <option value="germline_wgs_snv_sv">Germline WGS SNV + SV</option>
+                        <option value="germline_wgs_kitchensink">Germline WGS Kitchensink</option>
                     </select>
                     <p class="form-text">
-                        <strong>Germline:</strong> Inherited variants &bull;
-                        <strong>Somatic:</strong> Tumor vs normal &bull;
-                        <strong>RNA-Seq:</strong> Gene expression
+                        <strong>Test Help:</strong> Pipeline test run &bull;
+                        <strong>SNV Only:</strong> SNV calling with bwa2a/dppl/deep19 &bull;
+                        <strong>SNV + SV:</strong> Adds TIDDIT + Manta &bull;
+                        <strong>Kitchensink:</strong> Full WGS analysis + MultiQC
                     </p>
                 </div>
 

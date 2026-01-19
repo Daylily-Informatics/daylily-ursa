@@ -295,6 +295,23 @@
                         </div>
                     </div>
                 </div>
+                <!-- Select All and Filter Controls -->
+                <div class="discover-controls mb-md">
+                    <div class="d-flex justify-between align-center mb-sm">
+                        <label class="checkbox-label mb-0">
+                            <input type="checkbox" id="bucket-discover-select-all" checked onchange="toggleAllBucketFiles(this.checked)">
+                            <span>Select All Unregistered</span>
+                        </label>
+                        <span class="text-muted text-sm" id="bucket-discover-selection-count">0 selected</span>
+                    </div>
+                    <div class="d-flex gap-sm align-center">
+                        <input type="text" class="form-control form-control-sm" id="bucket-discover-filter"
+                               placeholder="Filter by filename..." oninput="filterBucketFiles(this.value)">
+                        <button type="button" class="btn btn-outline btn-sm" onclick="clearBucketFilter()" title="Clear">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+                </div>
                 <div class="discover-file-list" id="discover-file-list"></div>
             </div>
         </div>
@@ -424,13 +441,19 @@
 .stat-item { display: flex; flex-direction: column; }
 .stat-value { font-size: 1.5rem; font-weight: 600; }
 .stat-label { font-size: 0.75rem; color: var(--color-gray-600); text-transform: uppercase; }
-.discover-file-list { max-height: 400px; overflow-y: auto; border: 1px solid var(--color-gray-300); border-radius: var(--radius-md); }
+.discover-controls { background: var(--color-gray-50); padding: var(--spacing-md); border-radius: var(--radius-sm); border: 1px solid var(--color-gray-200); }
+.discover-controls .checkbox-label { font-weight: 500; }
+.discover-file-list { max-height: 350px; overflow-y: auto; border: 1px solid var(--color-gray-300); border-radius: var(--radius-md); }
 .discover-file-item { display: flex; align-items: center; gap: var(--spacing-md); padding: var(--spacing-sm) var(--spacing-md); border-bottom: 1px solid var(--color-gray-200); }
 .discover-file-item:last-child { border-bottom: none; }
 .discover-file-item.registered { background: var(--color-gray-100); opacity: 0.7; }
 .discover-file-item .file-key { flex: 1; font-family: var(--font-mono); font-size: 0.85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .discover-file-item .file-size { min-width: 70px; text-align: right; }
 .discover-file-item .file-format { min-width: 60px; text-align: center; }
+.gap-sm { gap: var(--spacing-sm); }
+.form-control-sm { padding: var(--spacing-xs) var(--spacing-sm); font-size: 0.875rem; }
+.checkbox-label { display: flex; align-items: center; gap: var(--spacing-sm); cursor: pointer; }
+.checkbox-label input { width: 16px; height: 16px; accent-color: var(--color-accent); }
 
 /* Edit form static text */
 .form-static { padding: var(--spacing-sm) var(--spacing-md); background: var(--color-gray-100); border-radius: var(--radius-md); font-family: var(--font-mono); color: var(--color-gray-700); }
@@ -485,16 +508,18 @@ async function discoverFiles(bucketId) {
             document.getElementById('discover-unregistered').textContent = result.unregistered_count || 0;
 
             const fileList = document.getElementById('discover-file-list');
+            window.bucketDiscoveredFiles = result.files || [];
             if (result.files && result.files.length > 0) {
                 fileList.innerHTML = result.files.map(f => `
-                    <div class="discover-file-item ${f.is_registered ? 'registered' : 'unregistered'}">
-                        <input type="checkbox" ${f.is_registered ? 'disabled' : 'checked'} value="${f.s3_uri}" data-key="${f.key}">
+                    <div class="discover-file-item ${f.is_registered ? 'registered' : 'unregistered'}" data-key="${f.key}">
+                        <input type="checkbox" ${f.is_registered ? 'disabled' : 'checked'} value="${f.s3_uri}" data-key="${f.key}" onchange="updateBucketSelectionCount()">
                         <span class="file-key" title="${f.s3_uri}">${f.key}</span>
                         <span class="file-format badge badge-outline">${f.detected_format}</span>
                         <span class="file-size text-muted">${formatFileSize(f.file_size_bytes)}</span>
                         ${f.is_registered ? '<span class="badge badge-success">Registered</span>' : ''}
                     </div>
                 `).join('');
+                updateBucketSelectionCount();
             } else {
                 fileList.innerHTML = '<p class="text-muted text-center p-lg">No genomics files found in this bucket</p>';
             }
@@ -508,6 +533,82 @@ async function discoverFiles(bucketId) {
         document.getElementById('discover-loading').classList.add('d-none');
         document.getElementById('discover-error').classList.remove('d-none');
         document.getElementById('discover-error-msg').textContent = error.message || 'Failed to discover files';
+    }
+}
+
+// Toggle all unregistered file checkboxes
+function toggleAllBucketFiles(checked) {
+    const checkboxes = document.querySelectorAll('#discover-file-list input[type="checkbox"]:not(:disabled)');
+    checkboxes.forEach(cb => {
+        // Only toggle visible items
+        if (cb.closest('.discover-file-item').style.display !== 'none') {
+            cb.checked = checked;
+        }
+    });
+    updateBucketSelectionCount();
+}
+
+// Filter bucket discovered files by filename
+function filterBucketFiles(searchTerm) {
+    const term = searchTerm.toLowerCase().trim();
+    const fileItems = document.querySelectorAll('#discover-file-list .discover-file-item');
+
+    fileItems.forEach(item => {
+        const key = item.dataset.key || '';
+        const matches = term === '' || key.toLowerCase().includes(term);
+        item.style.display = matches ? '' : 'none';
+    });
+
+    updateBucketSelectAllState();
+    updateBucketSelectionCount();
+}
+
+// Clear bucket filter
+function clearBucketFilter() {
+    const filterInput = document.getElementById('bucket-discover-filter');
+    if (filterInput) {
+        filterInput.value = '';
+        filterBucketFiles('');
+    }
+}
+
+// Update selection count display
+function updateBucketSelectionCount() {
+    const countEl = document.getElementById('bucket-discover-selection-count');
+    if (!countEl) return;
+
+    const checkedCount = document.querySelectorAll('#discover-file-list input[type="checkbox"]:checked:not(:disabled)').length;
+    countEl.textContent = `${checkedCount} selected`;
+
+    updateBucketSelectAllState();
+}
+
+// Update select all checkbox state
+function updateBucketSelectAllState() {
+    const selectAllCheckbox = document.getElementById('bucket-discover-select-all');
+    if (!selectAllCheckbox) return;
+
+    const visibleCheckboxes = Array.from(document.querySelectorAll('#discover-file-list .discover-file-item'))
+        .filter(item => item.style.display !== 'none')
+        .map(item => item.querySelector('input[type="checkbox"]:not(:disabled)'))
+        .filter(cb => cb);
+
+    if (visibleCheckboxes.length === 0) {
+        selectAllCheckbox.checked = false;
+        selectAllCheckbox.indeterminate = false;
+        return;
+    }
+
+    const checkedCount = visibleCheckboxes.filter(cb => cb.checked).length;
+    if (checkedCount === 0) {
+        selectAllCheckbox.checked = false;
+        selectAllCheckbox.indeterminate = false;
+    } else if (checkedCount === visibleCheckboxes.length) {
+        selectAllCheckbox.checked = true;
+        selectAllCheckbox.indeterminate = false;
+    } else {
+        selectAllCheckbox.checked = false;
+        selectAllCheckbox.indeterminate = true;
     }
 }
 

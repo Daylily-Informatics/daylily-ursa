@@ -14,6 +14,28 @@ from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+def normalize_bucket_name(bucket: Optional[str]) -> Optional[str]:
+    """Strip s3:// prefix and trailing slashes from bucket name.
+
+    Allows bucket names to be specified with or without the s3:// prefix.
+
+    Args:
+        bucket: Bucket name, optionally with s3:// prefix
+
+    Returns:
+        Bucket name without prefix, or None if input is None/empty
+    """
+    if not bucket:
+        return None
+    bucket = bucket.strip()
+    if bucket.startswith("s3://"):
+        bucket = bucket[5:]
+    # Strip any path component (just get bucket name)
+    if "/" in bucket:
+        bucket = bucket.split("/")[0]
+    return bucket if bucket else None
+
+
 class Settings(BaseSettings):
     """Daylily application settings.
 
@@ -273,8 +295,12 @@ class Settings(BaseSettings):
         return origins
 
     def get_control_bucket(self) -> Optional[str]:
-        """Get control bucket, preferring DAYLILY_CONTROL_BUCKET over legacy DAYLILY_MONITOR_BUCKET."""
-        return self.daylily_control_bucket or self.daylily_monitor_bucket
+        """Get control bucket, preferring DAYLILY_CONTROL_BUCKET over legacy DAYLILY_MONITOR_BUCKET.
+
+        Returns bucket name with s3:// prefix stripped if present.
+        """
+        bucket = self.daylily_control_bucket or self.daylily_monitor_bucket
+        return normalize_bucket_name(bucket)
 
     def get_effective_region(self) -> str:
         """Get the effective AWS region, considering overrides."""
