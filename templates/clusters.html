@@ -1,0 +1,295 @@
+{% extends "base.html" %}
+{% set active_page = 'clusters' %}
+
+{% block title %}Clusters - Daylily Customer Portal{% endblock %}
+
+{% block content %}
+<div class="container">
+    <!-- Page Header -->
+    <div class="page-header d-flex justify-between align-center flex-wrap gap-lg">
+        <div>
+            <h1 class="page-title">ParallelCluster Instances</h1>
+            <p class="page-subtitle">Running AWS HPC clusters across configured regions</p>
+        </div>
+        <div class="page-actions" style="margin-top: 0;">
+            <button class="btn btn-outline" onclick="refreshClusters()" id="refresh-btn">
+                <i class="fas fa-sync-alt"></i> Refresh
+            </button>
+        </div>
+    </div>
+
+    {% if error %}
+    <div class="alert alert-error mb-lg">
+        <i class="fas fa-exclamation-triangle"></i>
+        <span>{{ error }}</span>
+    </div>
+    {% endif %}
+
+    <!-- Summary Stats -->
+    <div class="grid grid-4 mb-xl">
+        <div class="stat-card">
+            <div class="card-icon primary">
+                <i class="fas fa-server"></i>
+            </div>
+            <div>
+                <div class="stat-value" id="total-clusters">{{ clusters | length }}</div>
+                <div class="stat-label">Total Clusters</div>
+            </div>
+        </div>
+
+        <div class="stat-card">
+            <div class="card-icon success">
+                <i class="fas fa-check-circle"></i>
+            </div>
+            <div>
+                <div class="stat-value" id="running-clusters">{{ clusters | selectattr('compute_fleet_status', 'equalto', 'RUNNING') | list | length }}</div>
+                <div class="stat-label">Fleet Running</div>
+            </div>
+        </div>
+
+        <div class="stat-card">
+            <div class="card-icon info">
+                <i class="fas fa-globe"></i>
+            </div>
+            <div>
+                <div class="stat-value" id="total-regions">{{ regions | length }}</div>
+                <div class="stat-label">Regions Scanned</div>
+            </div>
+        </div>
+
+        <div class="stat-card">
+            <div class="card-icon warning">
+                <i class="fas fa-microchip"></i>
+            </div>
+            <div>
+                <div class="stat-value" id="headnodes-running">{{ clusters | selectattr('head_node') | selectattr('head_node.state', 'equalto', 'running') | list | length }}</div>
+                <div class="stat-label">Headnodes Active</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Regions Info -->
+    <div class="mb-lg text-muted" style="font-size: 0.875rem;">
+        <i class="fas fa-info-circle"></i>
+        Scanning regions: <strong>{{ regions | join(', ') }}</strong>
+    </div>
+
+    <!-- Clusters Grid -->
+    {% if clusters %}
+    <div class="grid grid-2 mb-xl" id="clusters-grid">
+        {% for cluster in clusters %}
+        <div class="card cluster-card" data-status="{{ cluster.cluster_status }}" data-region="{{ cluster.region }}">
+            <div class="card-header d-flex justify-between align-center">
+                <div>
+                    <h3 class="card-title" style="margin-bottom: 0.25rem;">
+                        <i class="fas fa-server"></i> {{ cluster.cluster_name }}
+                    </h3>
+                    <span class="badge badge-sm" style="background: var(--color-bg-secondary);">{{ cluster.region }}</span>
+                </div>
+                <div class="d-flex gap-sm">
+                    {% set status_class = 'success' if cluster.cluster_status == 'CREATE_COMPLETE' else 'warning' if 'IN_PROGRESS' in cluster.cluster_status else 'error' if 'FAILED' in cluster.cluster_status else 'secondary' %}
+                    <span class="badge badge-{{ status_class }}">{{ cluster.cluster_status }}</span>
+                </div>
+            </div>
+
+            <div class="card-body">
+                <!-- Head Node Info -->
+                {% if cluster.head_node %}
+                <div class="mb-md">
+                    <h4 class="text-sm text-muted mb-sm">Head Node</h4>
+                    <div class="d-flex flex-wrap gap-md">
+                        <div>
+                            <span class="text-muted text-xs">Instance Type</span>
+                            <div class="text-sm"><code>{{ cluster.head_node.instance_type }}</code></div>
+                        </div>
+                        <div>
+                            <span class="text-muted text-xs">State</span>
+                            <div class="text-sm">
+                                {% set node_status = 'success' if cluster.head_node.state == 'running' else 'warning' if cluster.head_node.state == 'pending' else 'error' %}
+                                <span class="badge badge-sm badge-{{ node_status }}">{{ cluster.head_node.state }}</span>
+                            </div>
+                        </div>
+                        {% if is_admin and cluster.head_node.public_ip %}
+                        <div>
+                            <span class="text-muted text-xs">Public IP</span>
+                            <div class="text-sm"><code>{{ cluster.head_node.public_ip }}</code></div>
+                        </div>
+                        {% endif %}
+                        {% if is_admin and cluster.head_node.private_ip %}
+                        <div>
+                            <span class="text-muted text-xs">Private IP</span>
+                            <div class="text-sm"><code>{{ cluster.head_node.private_ip }}</code></div>
+                        </div>
+                        {% endif %}
+                    </div>
+                    {% if is_admin and cluster.head_node.public_ip and cluster.head_node.state == 'running' %}
+                    <div class="mt-sm">
+                        <span class="text-muted text-xs">SSH Command</span>
+                        <div class="ssh-cmd-wrapper d-flex align-center gap-sm">
+                            <code class="ssh-cmd" id="ssh-cmd-{{ loop.index }}">ssh -i ~/.ssh/lsmc-omics-{{ cluster.region }}.pem ubuntu@{{ cluster.head_node.public_ip }}</code>
+                            <button class="btn btn-sm btn-ghost" onclick="copySSHCommand('ssh-cmd-{{ loop.index }}')" title="Copy to clipboard">
+                                <i class="fas fa-copy"></i>
+                            </button>
+                        </div>
+                    </div>
+                    {% endif %}
+                </div>
+                {% endif %}
+
+                <!-- Fleet & Scheduler -->
+                <div class="mb-md">
+                    <div class="d-flex flex-wrap gap-lg">
+                        <div>
+                            <span class="text-muted text-xs">Compute Fleet</span>
+                            <div class="text-sm">
+                                {% set fleet_status = 'success' if cluster.compute_fleet_status == 'RUNNING' else 'warning' if cluster.compute_fleet_status == 'STOPPED' else 'secondary' %}
+                                <span class="badge badge-sm badge-{{ fleet_status }}">{{ cluster.compute_fleet_status }}</span>
+                            </div>
+                        </div>
+                        <div>
+                            <span class="text-muted text-xs">Scheduler</span>
+                            <div class="text-sm"><code>{{ cluster.scheduler_type }}</code></div>
+                        </div>
+                        {% if cluster.version %}
+                        <div>
+                            <span class="text-muted text-xs">PCluster Version</span>
+                            <div class="text-sm">{{ cluster.version }}</div>
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="card">
+        <div class="card-body text-center py-xl">
+            <i class="fas fa-server fa-3x text-muted mb-md"></i>
+            <h3>No Clusters Found</h3>
+            <p class="text-muted">No ParallelCluster instances found in the configured regions.</p>
+            <p class="text-muted text-sm">Regions scanned: {{ regions | join(', ') if regions else 'None configured' }}</p>
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<style>
+.cluster-card {
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.cluster-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+.badge-sm {
+    font-size: 0.7rem;
+    padding: 0.15rem 0.4rem;
+}
+.text-xs {
+    font-size: 0.75rem;
+}
+.text-sm {
+    font-size: 0.875rem;
+}
+.tags-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+}
+.tag-item {
+    background: var(--color-bg-secondary);
+    padding: 0.15rem 0.4rem;
+    border-radius: 0.25rem;
+    font-size: 0.7rem;
+    font-family: 'JetBrains Mono', monospace;
+}
+.ssh-cmd-wrapper {
+    margin-top: 0.25rem;
+}
+.ssh-cmd {
+    background: var(--color-bg-secondary);
+    padding: 0.35rem 0.5rem;
+    border-radius: 0.25rem;
+    font-size: 0.75rem;
+    word-break: break-all;
+    flex: 1;
+}
+.btn-ghost {
+    background: transparent;
+    border: none;
+    color: var(--color-text-muted);
+    padding: 0.25rem 0.5rem;
+    cursor: pointer;
+}
+.btn-ghost:hover {
+    color: var(--color-accent);
+}
+</style>
+
+<script>
+async function refreshClusters() {
+    const btn = document.getElementById('refresh-btn');
+    const icon = btn.querySelector('i');
+
+    btn.disabled = true;
+    icon.classList.add('fa-spin');
+
+    try {
+        const response = await fetch('/api/clusters?refresh=true');
+        const data = await response.json();
+
+        if (data.error) {
+            showToast('Error refreshing clusters: ' + data.error, 'error');
+        } else {
+            showToast('Clusters refreshed successfully', 'success');
+            // Reload page to show updated data
+            setTimeout(() => window.location.reload(), 500);
+        }
+    } catch (error) {
+        showToast('Failed to refresh clusters: ' + error.message, 'error');
+    } finally {
+        btn.disabled = false;
+        icon.classList.remove('fa-spin');
+    }
+}
+
+function showToast(message, type) {
+    const container = document.getElementById('toast-container');
+    if (!container) return;
+
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    toast.innerHTML = `
+        <i class="fas fa-${type === 'success' ? 'check-circle' : 'exclamation-circle'}"></i>
+        <span>${message}</span>
+    `;
+    container.appendChild(toast);
+
+    setTimeout(() => {
+        toast.classList.add('toast-fade-out');
+        setTimeout(() => toast.remove(), 300);
+    }, 3000);
+}
+
+function copySSHCommand(elementId) {
+    const codeEl = document.getElementById(elementId);
+    if (!codeEl) return;
+
+    const text = codeEl.textContent;
+    navigator.clipboard.writeText(text).then(() => {
+        showToast('SSH command copied to clipboard', 'success');
+    }).catch(err => {
+        // Fallback for older browsers
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textarea);
+        showToast('SSH command copied to clipboard', 'success');
+    });
+}
+</script>
+{% endblock %}
+

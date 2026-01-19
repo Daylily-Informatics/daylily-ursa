@@ -1,0 +1,1905 @@
+#!/usr/bin/env bash
+# Daylily Ursa CLI
+# ================
+# Management commands for Daylily Ursa workset system.
+#
+# Usage: dayu <command> [args]
+#
+# Setup:
+#   source ./dayu_activate
+
+# Get the directory where this script lives (resolve symlinks)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# ========== Colors ==========
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+NC='\033[0m' # No Color
+
+# ========== Check AWS_PROFILE ==========
+_check_aws_profile() {
+    if [[ -z "${AWS_PROFILE:-}" ]]; then
+        echo -e "${RED}✗ ERROR: AWS_PROFILE is not set${NC}"
+        echo ""
+        echo "Please set AWS_PROFILE before running dayu:"
+        echo ""
+        echo "  export AWS_PROFILE=your-profile-name"
+        echo "  dayu <command>"
+        echo ""
+        echo "Or inline:"
+        echo ""
+        echo "  AWS_PROFILE=your-profile-name dayu <command>"
+        echo ""
+        return 1
+    fi
+    return 0
+}
+
+# Check AWS_PROFILE - if not set, show error and skip rest of script
+if ! _check_aws_profile; then
+    # Just end the script without exit
+    :
+else
+
+# ========== Configuration ==========
+CONDA_ENV="DAYU"
+AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-us-west-2}"
+
+# DynamoDB table names (must match config.py defaults)
+WORKSET_TABLE="${WORKSET_TABLE_NAME:-daylily-worksets}"
+CUSTOMER_TABLE="${CUSTOMER_TABLE_NAME:-daylily-customers}"
+MANIFEST_TABLE="${DAYLILY_MANIFEST_TABLE:-daylily-manifests}"
+LINKED_BUCKETS_TABLE="${DAYLILY_LINKED_BUCKETS_TABLE:-daylily-linked-buckets}"
+FILE_REGISTRY_TABLE="${DAYLILY_FILE_REGISTRY_TABLE:-daylily-file-registry}"
+
+# Biospecimen tables
+SUBJECTS_TABLE="daylily-subjects"
+BIOSPECIMENS_TABLE="daylily-biospecimens"
+BIOSAMPLES_TABLE="daylily-biosamples"
+LIBRARIES_TABLE="daylily-libraries"
+
+# All managed tables
+ALL_TABLES=(
+    "$WORKSET_TABLE"
+    "$CUSTOMER_TABLE"
+    "$MANIFEST_TABLE"
+    "$LINKED_BUCKETS_TABLE"
+    "$FILE_REGISTRY_TABLE"
+    "$SUBJECTS_TABLE"
+    "$BIOSPECIMENS_TABLE"
+    "$BIOSAMPLES_TABLE"
+    "$LIBRARIES_TABLE"
+    "daylily-files"
+    "daylily-filesets"
+    "daylily-file-workset-usage"
+)
+
+# Find Python in conda environment
+PYTHON_PATH="${CONDA_PREFIX}/bin/python"
+if [[ ! -f "$PYTHON_PATH" ]]; then
+    PYTHON_PATH=$(which python3 || which python)
+fi
+
+# ========== Helper Functions ==========
+log_info() {
+    echo -e "${CYAN}→${NC} $1"
+}
+
+log_success() {
+    echo -e "${GREEN}✓${NC} $1"
+}
+
+log_warn() {
+    echo -e "${YELLOW}⚠${NC} $1"
+}
+
+log_error() {
+    echo -e "${RED}✗${NC} $1"
+}
+
+check_aws_config() {
+    local require_aws="${1:-false}"
+
+    echo -e "${CYAN}AWS Configuration:${NC}"
+    if [[ -n "$AWS_PROFILE" ]]; then
+        echo -e "  AWS_PROFILE: ${GREEN}$AWS_PROFILE${NC}"
+    else
+        echo -e "  AWS_PROFILE: ${YELLOW}(not set - using default)${NC}"
+    fi
+    echo -e "  AWS_REGION:  ${GREEN}$AWS_DEFAULT_REGION${NC}"
+    echo ""
+
+    if [[ "$require_aws" == "true" ]] && [[ -z "$AWS_PROFILE" ]]; then
+        echo -e "${YELLOW}AWS_PROFILE is not set. Using default credentials.${NC}"
+        read -p "Continue? [Y/n]: " confirm
+        if [[ "$confirm" == "n" || "$confirm" == "N" ]]; then
+            echo "Aborted."
+            return 1
+        fi
+    fi
+}
+
+# ========== Command: help ==========
+cmd_help() {
+    echo -e "${BOLD}${BLUE}Daylily Ursa - Workset Management CLI${NC}"
+    echo "======================================"
+    echo ""
+    echo "Usage: dayu <command> [args]"
+    echo ""
+    echo -e "${CYAN}Testing & Quality:${NC}"
+    echo "  test              Run the complete test suite"
+    echo "  test-cov          Run tests with coverage report"
+    echo "  lint              Run ruff linter"
+    echo "  format            Format code with ruff"
+    echo "  typecheck         Run mypy type checker"
+    echo ""
+    echo -e "${CYAN}Server Commands:${NC}"
+    echo "  start-server [args] Start the API server (daemon if no args, foreground if args)"
+    echo "  server-stop       Stop the background API server"
+    echo "  server-log        Tail the server log file"
+    echo "  server-status     Check if the server is running"
+    echo "  server-noauth     Start server in foreground without auth (dev only)"
+    echo "  server-auth       Start server in foreground with Cognito auth"
+    echo "  server-dev        Start server in foreground with auto-reload (no auth)"
+    echo ""
+    echo -e "${CYAN}AWS Resource Management:${NC}"
+    echo "  setup-aws         Create required AWS resources (DynamoDB tables)"
+    echo "  teardown-aws      Delete all AWS resources created by the project"
+    echo "  aws-status        Check status of AWS resources"
+    echo ""
+    echo -e "${CYAN}Cognito Authentication:${NC}"
+    echo "  cognito-setup       Create Cognito User Pool and App Client"
+    echo "  cognito-teardown    Delete Cognito User Pool (destructive)"
+    echo "  cognito-status      Check Cognito configuration status"
+    echo "  cognito-update-port Update callback URLs with new port"
+    echo "  cognito-set-password Set password for a Cognito user"
+    echo ""
+    echo -e "${CYAN}Monitor Commands:${NC}"
+    echo "  start-monitor     Start the workset monitor daemon"
+    echo "  stop-monitor      Stop the workset monitor daemon"
+    echo "  monitor-status    Check if the monitor is running"
+    echo "  monitor-logs      Tail the monitor log file"
+    echo ""
+    echo -e "${CYAN}Environment:${NC}"
+    echo "  genenv            Generate .env file template"
+    echo "  status            Check system status (conda, AWS, dependencies)"
+    echo "  clean             Remove cached files and build artifacts"
+    echo "  deactivate        Deactivate the dayu environment (prints instructions)"
+    echo ""
+    echo -e "${CYAN}Help:${NC}"
+    echo "  help              Show this help message"
+    echo "  version           Show version information"
+    echo ""
+}
+
+# ========== Command: version ==========
+cmd_version() {
+    echo -e "${BOLD}Daylily Ursa${NC}"
+    if [[ -f "$SCRIPT_DIR/pyproject.toml" ]]; then
+        local version
+        version=$($PYTHON_PATH -c "
+import sys
+sys.path.insert(0, '${SCRIPT_DIR}')
+try:
+    from importlib.metadata import version
+    print(version('daylily-ursa'))
+except:
+    print('dev')
+" 2>/dev/null || echo "dev")
+        echo "Version: $version"
+    fi
+    echo "Python:  $($PYTHON_PATH --version 2>&1)"
+    echo "Root:    $SCRIPT_DIR"
+}
+
+# ========== Command: test ==========
+cmd_test() {
+    echo -e "${GREEN}Running test suite...${NC}"
+    cd "$SCRIPT_DIR"
+    $PYTHON_PATH -m pytest tests/ -v "$@"
+}
+
+cmd_test_cov() {
+    echo -e "${GREEN}Running tests with coverage...${NC}"
+    cd "$SCRIPT_DIR"
+    $PYTHON_PATH -m pytest tests/ -v --cov=daylib --cov-report=term-missing --cov-report=html "$@"
+}
+
+# ========== Command: lint ==========
+cmd_lint() {
+    echo -e "${GREEN}Running linter...${NC}"
+    cd "$SCRIPT_DIR"
+    $PYTHON_PATH -m ruff check daylib/ tests/ scripts/ bin/
+}
+
+cmd_format() {
+    echo -e "${GREEN}Formatting code...${NC}"
+    cd "$SCRIPT_DIR"
+    $PYTHON_PATH -m ruff format daylib/ tests/ scripts/
+    $PYTHON_PATH -m ruff check --fix daylib/ tests/ scripts/
+}
+
+cmd_typecheck() {
+    echo -e "${GREEN}Running type checker...${NC}"
+    cd "$SCRIPT_DIR"
+    $PYTHON_PATH -m mypy daylib/
+}
+
+# ========== Command: server-noauth ==========
+cmd_server_noauth() {
+    echo -e "${GREEN}Starting FastAPI server (no authentication)...${NC}"
+    cd "$SCRIPT_DIR"
+
+    # Source .env file if it exists
+    if _source_env_file; then
+        log_info "Loaded environment from .env"
+    fi
+
+    local host="${DAYU_HOST:-0.0.0.0}"
+    local port="${DAYU_PORT:-8001}"
+
+    log_info "Host: $host, Port: $port"
+    log_warn "Authentication DISABLED - for development only"
+    echo ""
+
+    # Use exec to replace shell - clean Ctrl-C handling
+    exec $PYTHON_PATH "$SCRIPT_DIR/bin/daylily-workset-api" \
+        --host "$host" \
+        --port "$port" \
+        --profile "$AWS_PROFILE" \
+        --create-table \
+        "$@"
+}
+
+# ========== Command: server-auth ==========
+cmd_server_auth() {
+    echo -e "${GREEN}Starting FastAPI server (with authentication)...${NC}"
+    cd "$SCRIPT_DIR"
+
+    # Source .env file if it exists
+    if _source_env_file; then
+        log_info "Loaded environment from .env"
+    fi
+
+    local host="${DAYU_HOST:-0.0.0.0}"
+    local port="${DAYU_PORT:-8001}"
+
+    log_info "Host: $host, Port: $port"
+    log_info "Authentication ENABLED"
+
+    # Check for required auth environment variables
+    local missing_vars=0
+    if [[ -z "${COGNITO_USER_POOL_ID:-}" ]]; then
+        missing_vars=1
+    fi
+    if [[ -z "${COGNITO_CLIENT_ID:-}" ]]; then
+        missing_vars=1
+    fi
+
+    if [[ "$missing_vars" -eq 1 ]]; then
+        echo ""
+        log_error "Missing required Cognito environment variables:"
+        echo ""
+        echo "  Required variables:"
+        [[ -z "${COGNITO_USER_POOL_ID:-}" ]] && echo "    export COGNITO_USER_POOL_ID=<your-pool-id>"
+        [[ -z "${COGNITO_CLIENT_ID:-}" ]] && echo "    export COGNITO_CLIENT_ID=<your-client-id>"
+        echo ""
+        echo "  To create Cognito resources:"
+        echo "    dayu cognito-setup"
+        echo ""
+        echo "  To check Cognito status:"
+        echo "    dayu cognito-status"
+        echo ""
+        # Don't use return - just end the function
+    else
+        # Set auth flag for the API
+        export DAYLILY_ENABLE_AUTH=true
+        echo ""
+
+        # Use exec to replace shell - clean Ctrl-C handling
+        exec $PYTHON_PATH "$SCRIPT_DIR/bin/daylily-workset-api" \
+            --host "$host" \
+            --port "$port" \
+            --profile "$AWS_PROFILE" \
+            --create-table \
+            "$@"
+    fi
+}
+
+# ========== Command: server-dev ==========
+cmd_server_dev() {
+    echo -e "${GREEN}Starting FastAPI server (development mode, no auth)...${NC}"
+    cd "$SCRIPT_DIR"
+
+    # Source .env file if it exists
+    if _source_env_file; then
+        log_info "Loaded environment from .env"
+    fi
+
+    local host="${DAYU_HOST:-0.0.0.0}"
+    local port="${DAYU_PORT:-8001}"
+
+    log_info "Host: $host, Port: $port (auto-reload enabled)"
+    log_warn "Authentication DISABLED - development mode"
+    echo ""
+
+    # Use exec to replace shell - clean Ctrl-C handling
+    exec $PYTHON_PATH "$SCRIPT_DIR/bin/daylily-workset-api" \
+        --host "$host" \
+        --port "$port" \
+        --profile "$AWS_PROFILE" \
+        --create-table \
+        --reload \
+        --verbose \
+        "$@"
+}
+
+# ========== Monitor Configuration ==========
+MONITOR_CONFIG="${DAYLILY_MONITOR_CONFIG:-$SCRIPT_DIR/config/workset-monitor-config.yaml}"
+MONITOR_PID_FILE="${DAYLILY_MONITOR_PID:-$SCRIPT_DIR/.monitor.pid}"
+MONITOR_LOG_FILE="${DAYLILY_MONITOR_LOG:-$SCRIPT_DIR/logs/monitor.log}"
+
+# ========== Server Configuration ==========
+SERVER_PID_FILE="${DAYLILY_SERVER_PID:-$SCRIPT_DIR/.server.pid}"
+SERVER_LOG_FILE="${DAYLILY_SERVER_LOG:-$SCRIPT_DIR/logs/server.log}"
+ENV_FILE="${SCRIPT_DIR}/.env"
+
+# ========== Helper: Source .env file ==========
+_source_env_file() {
+    if [[ -f "$ENV_FILE" ]]; then
+        # Export variables from .env file (skip comments and empty lines)
+        set -a
+        # shellcheck disable=SC1090
+        source "$ENV_FILE"
+        set +a
+        return 0
+    fi
+    return 1
+}
+
+# ========== Command: start-server ==========
+cmd_start_server() {
+    echo -e "${BOLD}${BLUE}Starting API Server...${NC}"
+    cd "$SCRIPT_DIR"
+
+    # Source .env file if it exists
+    if _source_env_file; then
+        log_info "Loaded environment from .env"
+    else
+        log_warn "No .env file found. Run 'dayu genenv' to create one."
+    fi
+
+    # Check if already running
+    if [[ -f "$SERVER_PID_FILE" ]]; then
+        local pid
+        pid=$(cat "$SERVER_PID_FILE")
+        if kill -0 "$pid" 2>/dev/null; then
+            log_warn "Server already running (PID: $pid)"
+            echo ""
+            echo "Use 'dayu server-stop' to stop it first, or 'dayu server-status' to check."
+            return 1
+        else
+            log_info "Stale PID file found, removing..."
+            rm -f "$SERVER_PID_FILE"
+        fi
+    fi
+
+    local host="${DAYU_HOST:-0.0.0.0}"
+    local port="${DAYU_PORT:-8001}"
+
+    log_info "Host: $host, Port: $port"
+    log_info "Log file: $SERVER_LOG_FILE"
+    log_info "PID file: $SERVER_PID_FILE"
+
+    # Determine auth setting
+    local auth_flag=""
+    if [[ "${ENABLE_AUTH:-false}" == "true" ]]; then
+        export DAYLILY_ENABLE_AUTH=true
+        log_info "Authentication: ${GREEN}ENABLED${NC}"
+    else
+        log_warn "Authentication: DISABLED"
+    fi
+    echo ""
+
+    # Create logs directory if needed
+    mkdir -p "$(dirname "$SERVER_LOG_FILE")"
+
+    # Build server command
+    local server_cmd="$PYTHON_PATH $SCRIPT_DIR/bin/daylily-workset-api"
+    server_cmd+=" --host $host"
+    server_cmd+=" --port $port"
+    server_cmd+=" --profile $AWS_PROFILE"
+    server_cmd+=" --create-table"
+
+    # If arguments provided, run in foreground with logs to stdout
+    if [[ $# -gt 0 ]]; then
+        echo -e "${GREEN}Running server in foreground with args: $*${NC}"
+        echo ""
+        # Add extra args
+        server_cmd+=" $*"
+        # Run in foreground (blocking)
+        exec $server_cmd
+    fi
+
+    # No arguments - run as daemon
+    echo -e "${GREEN}Launching server as background daemon...${NC}"
+    nohup $server_cmd >> "$SERVER_LOG_FILE" 2>&1 &
+    local server_pid=$!
+
+    # Save PID
+    echo "$server_pid" > "$SERVER_PID_FILE"
+
+    # Wait a moment and check if it's still running
+    sleep 2
+    if kill -0 "$server_pid" 2>/dev/null; then
+        echo -e "${GREEN}✓ Server started successfully (PID: $server_pid)${NC}"
+        echo ""
+        echo "  View logs:     dayu server-log"
+        echo "  Check status:  dayu server-status"
+        echo "  Stop server:   dayu server-stop"
+        echo ""
+        echo "  Server URL:    http://${host}:${port}"
+    else
+        log_error "Server failed to start. Check logs: $SERVER_LOG_FILE"
+        rm -f "$SERVER_PID_FILE"
+        echo ""
+        echo "Last 20 lines of log:"
+        tail -20 "$SERVER_LOG_FILE" 2>/dev/null || echo "(no log available)"
+        return 1
+    fi
+}
+
+# ========== Command: server-stop ==========
+cmd_server_stop() {
+    echo -e "${BOLD}${BLUE}Stopping API Server...${NC}"
+
+    if [[ ! -f "$SERVER_PID_FILE" ]]; then
+        log_warn "No PID file found. Server may not be running."
+        echo ""
+        echo "PID file location: $SERVER_PID_FILE"
+        return 0
+    fi
+
+    local pid
+    pid=$(cat "$SERVER_PID_FILE")
+
+    if ! kill -0 "$pid" 2>/dev/null; then
+        log_warn "Server process (PID: $pid) is not running."
+        rm -f "$SERVER_PID_FILE"
+        return 0
+    fi
+
+    echo -e "Sending SIGTERM to server (PID: $pid)..."
+    kill "$pid"
+
+    # Wait for graceful shutdown (up to 10 seconds)
+    local count=0
+    while kill -0 "$pid" 2>/dev/null && [[ $count -lt 10 ]]; do
+        sleep 1
+        count=$((count + 1))
+        echo -n "."
+    done
+    echo ""
+
+    if kill -0 "$pid" 2>/dev/null; then
+        log_warn "Server didn't stop gracefully, sending SIGKILL..."
+        kill -9 "$pid" 2>/dev/null
+        sleep 1
+    fi
+
+    rm -f "$SERVER_PID_FILE"
+    echo -e "${GREEN}✓ Server stopped${NC}"
+}
+
+# ========== Command: server-log ==========
+cmd_server_log() {
+    echo -e "${BOLD}${BLUE}API Server Logs${NC}"
+    echo "================"
+    echo ""
+    echo "Log file: $SERVER_LOG_FILE"
+    echo ""
+
+    if [[ ! -f "$SERVER_LOG_FILE" ]]; then
+        log_warn "Log file does not exist yet."
+        echo "Start the server first: dayu start-server"
+        return 0
+    fi
+
+    echo -e "${CYAN}Tailing log file (Ctrl+C to exit)...${NC}"
+    echo ""
+    tail -f "$SERVER_LOG_FILE"
+}
+
+# ========== Command: server-status ==========
+cmd_server_status() {
+    echo -e "${BOLD}${BLUE}API Server Status${NC}"
+    echo "=================="
+    echo ""
+
+    echo -e "${CYAN}Configuration:${NC}"
+    echo "  Log file:    $SERVER_LOG_FILE"
+    echo "  PID file:    $SERVER_PID_FILE"
+    echo "  .env file:   $ENV_FILE"
+    echo ""
+
+    if [[ -f "$ENV_FILE" ]]; then
+        echo -e "  .env exists: ${GREEN}✓${NC}"
+    else
+        echo -e "  .env exists: ${YELLOW}✗ (not found - run 'dayu genenv')${NC}"
+    fi
+
+    echo ""
+    echo -e "${CYAN}Process Status:${NC}"
+
+    if [[ ! -f "$SERVER_PID_FILE" ]]; then
+        echo -e "  Status: ${YELLOW}NOT RUNNING${NC} (no PID file)"
+        return 0
+    fi
+
+    local pid
+    pid=$(cat "$SERVER_PID_FILE")
+
+    if kill -0 "$pid" 2>/dev/null; then
+        echo -e "  Status: ${GREEN}RUNNING${NC}"
+        echo "  PID: $pid"
+
+        # Show process info
+        if command -v ps &>/dev/null; then
+            echo ""
+            echo -e "${CYAN}Process Info:${NC}"
+            ps -p "$pid" -o pid,ppid,etime,rss,command 2>/dev/null | head -5
+        fi
+
+        # Show last few log lines
+        if [[ -f "$SERVER_LOG_FILE" ]]; then
+            echo ""
+            echo -e "${CYAN}Recent Log (last 5 lines):${NC}"
+            tail -5 "$SERVER_LOG_FILE"
+        fi
+
+        # Show server URL
+        local host="${DAYU_HOST:-0.0.0.0}"
+        local port="${DAYU_PORT:-8001}"
+        echo ""
+        echo -e "${CYAN}Server URL:${NC} http://${host}:${port}"
+    else
+        echo -e "  Status: ${RED}NOT RUNNING${NC} (stale PID: $pid)"
+        echo ""
+        log_info "Removing stale PID file..."
+        rm -f "$SERVER_PID_FILE"
+    fi
+}
+
+# ========== Command: start-monitor ==========
+cmd_start_monitor() {
+    echo -e "${BOLD}${BLUE}Starting Workset Monitor...${NC}"
+    cd "$SCRIPT_DIR"
+
+    # Check if config exists
+    if [[ ! -f "$MONITOR_CONFIG" ]]; then
+        log_error "Monitor config not found: $MONITOR_CONFIG"
+        echo ""
+        echo "Please create a configuration file. You can copy the template:"
+        echo ""
+        echo "  cp config/workset-monitor-config.template.yaml config/workset-monitor-config.yaml"
+        echo "  # Edit the file with your settings"
+        echo ""
+        echo "Or set DAYLILY_MONITOR_CONFIG to point to your config file."
+        return 1
+    fi
+
+    # Check if already running
+    if [[ -f "$MONITOR_PID_FILE" ]]; then
+        local pid
+        pid=$(cat "$MONITOR_PID_FILE")
+        if kill -0 "$pid" 2>/dev/null; then
+            log_warn "Monitor already running (PID: $pid)"
+            echo ""
+            echo "Use 'dayu stop-monitor' to stop it first, or 'dayu monitor-status' to check."
+            return 1
+        else
+            log_info "Stale PID file found, removing..."
+            rm -f "$MONITOR_PID_FILE"
+        fi
+    fi
+
+    # Create logs directory if needed
+    mkdir -p "$(dirname "$MONITOR_LOG_FILE")"
+
+    # Build monitor command with options
+    local monitor_cmd="$PYTHON_PATH $SCRIPT_DIR/bin/daylily-workset-monitor"
+    monitor_cmd+=" $MONITOR_CONFIG"
+    monitor_cmd+=" --enable-dynamodb"
+    monitor_cmd+=" --dynamodb-table $WORKSET_TABLE"
+
+    # Add any extra args passed to the command
+    if [[ $# -gt 0 ]]; then
+        monitor_cmd+=" $*"
+    fi
+
+    log_info "Config: $MONITOR_CONFIG"
+    log_info "Log file: $MONITOR_LOG_FILE"
+    log_info "PID file: $MONITOR_PID_FILE"
+    echo ""
+
+    # Start the monitor in background
+    echo -e "${GREEN}Launching monitor...${NC}"
+    nohup $monitor_cmd >> "$MONITOR_LOG_FILE" 2>&1 &
+    local monitor_pid=$!
+
+    # Save PID
+    echo "$monitor_pid" > "$MONITOR_PID_FILE"
+
+    # Wait a moment and check if it's still running
+    sleep 2
+    if kill -0 "$monitor_pid" 2>/dev/null; then
+        echo -e "${GREEN}✓ Monitor started successfully (PID: $monitor_pid)${NC}"
+        echo ""
+        echo "View logs:  dayu monitor-logs"
+        echo "Check status: dayu monitor-status"
+        echo "Stop monitor: dayu stop-monitor"
+    else
+        log_error "Monitor failed to start. Check logs: $MONITOR_LOG_FILE"
+        rm -f "$MONITOR_PID_FILE"
+        echo ""
+        echo "Last 20 lines of log:"
+        tail -20 "$MONITOR_LOG_FILE" 2>/dev/null || echo "(no log available)"
+        return 1
+    fi
+}
+
+# ========== Command: stop-monitor ==========
+cmd_stop_monitor() {
+    echo -e "${BOLD}${BLUE}Stopping Workset Monitor...${NC}"
+
+    if [[ ! -f "$MONITOR_PID_FILE" ]]; then
+        log_warn "No PID file found. Monitor may not be running."
+        echo ""
+        echo "PID file location: $MONITOR_PID_FILE"
+        return 0
+    fi
+
+    local pid
+    pid=$(cat "$MONITOR_PID_FILE")
+
+    if ! kill -0 "$pid" 2>/dev/null; then
+        log_warn "Monitor process (PID: $pid) is not running."
+        rm -f "$MONITOR_PID_FILE"
+        return 0
+    fi
+
+    echo -e "Sending SIGTERM to monitor (PID: $pid)..."
+    kill "$pid"
+
+    # Wait for graceful shutdown (up to 10 seconds)
+    local count=0
+    while kill -0 "$pid" 2>/dev/null && [[ $count -lt 10 ]]; do
+        sleep 1
+        count=$((count + 1))
+        echo -n "."
+    done
+    echo ""
+
+    if kill -0 "$pid" 2>/dev/null; then
+        log_warn "Monitor didn't stop gracefully, sending SIGKILL..."
+        kill -9 "$pid" 2>/dev/null
+        sleep 1
+    fi
+
+    rm -f "$MONITOR_PID_FILE"
+    echo -e "${GREEN}✓ Monitor stopped${NC}"
+}
+
+# ========== Command: monitor-status ==========
+cmd_monitor_status() {
+    echo -e "${BOLD}${BLUE}Workset Monitor Status${NC}"
+    echo "======================"
+    echo ""
+
+    echo -e "${CYAN}Configuration:${NC}"
+    echo "  Config file: $MONITOR_CONFIG"
+    echo "  Log file:    $MONITOR_LOG_FILE"
+    echo "  PID file:    $MONITOR_PID_FILE"
+    echo ""
+
+    if [[ -f "$MONITOR_CONFIG" ]]; then
+        echo -e "  Config exists: ${GREEN}✓${NC}"
+    else
+        echo -e "  Config exists: ${RED}✗ (not found)${NC}"
+    fi
+
+    echo ""
+    echo -e "${CYAN}Process Status:${NC}"
+
+    if [[ ! -f "$MONITOR_PID_FILE" ]]; then
+        echo -e "  Status: ${YELLOW}NOT RUNNING${NC} (no PID file)"
+        return 0
+    fi
+
+    local pid
+    pid=$(cat "$MONITOR_PID_FILE")
+
+    if kill -0 "$pid" 2>/dev/null; then
+        echo -e "  Status: ${GREEN}RUNNING${NC}"
+        echo "  PID: $pid"
+
+        # Show process info
+        if command -v ps &>/dev/null; then
+            echo ""
+            echo -e "${CYAN}Process Info:${NC}"
+            ps -p "$pid" -o pid,ppid,etime,rss,command 2>/dev/null | head -5
+        fi
+
+        # Show last few log lines
+        if [[ -f "$MONITOR_LOG_FILE" ]]; then
+            echo ""
+            echo -e "${CYAN}Recent Log (last 5 lines):${NC}"
+            tail -5 "$MONITOR_LOG_FILE"
+        fi
+    else
+        echo -e "  Status: ${RED}NOT RUNNING${NC} (stale PID: $pid)"
+        echo ""
+        log_info "Removing stale PID file..."
+        rm -f "$MONITOR_PID_FILE"
+    fi
+}
+
+# ========== Command: monitor-logs ==========
+cmd_monitor_logs() {
+    if [[ ! -f "$MONITOR_LOG_FILE" ]]; then
+        log_error "Log file not found: $MONITOR_LOG_FILE"
+        echo ""
+        echo "The monitor may not have been started yet."
+        return 1
+    fi
+
+    local lines="${1:-50}"
+    echo -e "${BOLD}${BLUE}Monitor Logs${NC} (last $lines lines, Ctrl+C to exit tail -f)"
+    echo "============"
+    echo ""
+
+    # Show recent lines then follow
+    tail -n "$lines" -f "$MONITOR_LOG_FILE"
+}
+
+# ========== Command: setup-aws ==========
+cmd_setup_aws() {
+    echo -e "${BOLD}${BLUE}╔══════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${BOLD}${BLUE}║          Daylily Ursa - AWS Resource Setup                   ║${NC}"
+    echo -e "${BOLD}${BLUE}╚══════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+
+    check_aws_config true
+
+    local region="${AWS_DEFAULT_REGION}"
+    local profile_arg=""
+    [[ -n "$AWS_PROFILE" ]] && profile_arg="--profile $AWS_PROFILE"
+
+    echo -e "${CYAN}[1/4] Creating core DynamoDB tables...${NC}"
+
+    # Create workset state table
+    log_info "Creating workset state table: $WORKSET_TABLE"
+    $PYTHON_PATH -c "
+import sys
+sys.path.insert(0, '${SCRIPT_DIR}')
+from daylib.workset_state_db import WorksetStateDB
+db = WorksetStateDB(
+    table_name='${WORKSET_TABLE}',
+    region='${region}',
+    profile='${AWS_PROFILE}' if '${AWS_PROFILE}' else None,
+)
+db.create_table_if_not_exists()
+print('  ✓ Created/verified: ${WORKSET_TABLE}')
+"
+
+    # Create customer table
+    log_info "Creating customer table: $CUSTOMER_TABLE"
+    $PYTHON_PATH -c "
+import sys
+sys.path.insert(0, '${SCRIPT_DIR}')
+from daylib.workset_customer import CustomerManager
+cm = CustomerManager(
+    table_name='${CUSTOMER_TABLE}',
+    region='${region}',
+    profile='${AWS_PROFILE}' if '${AWS_PROFILE}' else None,
+)
+cm.create_table_if_not_exists()
+print('  ✓ Created/verified: ${CUSTOMER_TABLE}')
+"
+
+    echo ""
+    echo -e "${CYAN}[2/4] Creating file registry tables...${NC}"
+    $PYTHON_PATH "${SCRIPT_DIR}/scripts/init_file_registry_tables.py" --region "$region" ${profile_arg:+$profile_arg}
+
+    echo ""
+    echo -e "${CYAN}[3/4] Creating biospecimen tables...${NC}"
+    $PYTHON_PATH "${SCRIPT_DIR}/scripts/init_biospecimen_tables.py" --region "$region" ${profile_arg:+$profile_arg}
+
+    echo ""
+    echo -e "${CYAN}[4/4] Creating manifest and linked buckets tables...${NC}"
+    $PYTHON_PATH -c "
+import sys
+sys.path.insert(0, '${SCRIPT_DIR}')
+try:
+    from daylib.manifest_registry import ManifestRegistry
+    mr = ManifestRegistry(
+        table_name='${MANIFEST_TABLE}',
+        region='${region}',
+        profile='${AWS_PROFILE}' if '${AWS_PROFILE}' else None,
+    )
+    mr.create_table_if_not_exists()
+    print('  ✓ Created/verified: ${MANIFEST_TABLE}')
+except Exception as e:
+    print(f'  ⚠ Could not create manifest table: {e}')
+
+try:
+    from daylib.s3_bucket_validator import LinkedBucketManager
+    lbm = LinkedBucketManager(
+        table_name='${LINKED_BUCKETS_TABLE}',
+        region='${region}',
+        profile='${AWS_PROFILE}' if '${AWS_PROFILE}' else None,
+    )
+    lbm.create_table_if_not_exists()
+    print('  ✓ Created/verified: ${LINKED_BUCKETS_TABLE}')
+except Exception as e:
+    print(f'  ⚠ Could not create linked buckets table: {e}')
+"
+
+    echo ""
+    echo -e "${BOLD}${GREEN}╔══════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${BOLD}${GREEN}║  ✓ AWS resource setup complete!                              ║${NC}"
+    echo -e "${BOLD}${GREEN}╚══════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    echo "Next steps:"
+    echo "  dayu status       # Verify all resources"
+    echo "  dayu env          # Generate .env file"
+    echo "  dayu server       # Start the API server"
+    echo ""
+}
+
+
+# ========== Command: teardown-aws ==========
+cmd_teardown_aws() {
+    echo -e "${BOLD}${RED}╔══════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${BOLD}${RED}║          Daylily Ursa - AWS Resource Teardown                ║${NC}"
+    echo -e "${BOLD}${RED}╚══════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+
+    check_aws_config true
+
+    echo -e "${YELLOW}WARNING: This will DELETE all Daylily DynamoDB tables!${NC}"
+    echo ""
+    echo "Tables to be deleted:"
+    for table in "${ALL_TABLES[@]}"; do
+        echo "  - $table"
+    done
+    echo ""
+
+    read -p "Type 'DELETE' to confirm: " confirm
+    if [[ "$confirm" != "DELETE" ]]; then
+        echo "Aborted."
+        return 1
+    fi
+
+    local region="${AWS_DEFAULT_REGION}"
+    local profile_arg=""
+    [[ -n "$AWS_PROFILE" ]] && profile_arg="--profile $AWS_PROFILE"
+
+    echo ""
+    log_info "Running teardown script..."
+    $PYTHON_PATH "${SCRIPT_DIR}/scripts/drop_daylily_tables.py" \
+        --region "$region" \
+        ${profile_arg:+$profile_arg} \
+        --force
+
+    echo ""
+    log_success "Teardown complete."
+}
+
+# ========== Command: aws-status ==========
+cmd_aws_status() {
+    echo -e "${BOLD}${BLUE}AWS Resource Status${NC}"
+    echo "==================="
+    echo ""
+
+    check_aws_config
+
+    local region="${AWS_DEFAULT_REGION}"
+
+    $PYTHON_PATH -c "
+import sys
+sys.path.insert(0, '${SCRIPT_DIR}')
+import boto3
+
+session_kwargs = {'region_name': '${region}'}
+if '${AWS_PROFILE}':
+    session_kwargs['profile_name'] = '${AWS_PROFILE}'
+
+session = boto3.Session(**session_kwargs)
+dynamodb = session.client('dynamodb')
+
+tables = [
+    '${WORKSET_TABLE}',
+    '${CUSTOMER_TABLE}',
+    '${MANIFEST_TABLE}',
+    '${LINKED_BUCKETS_TABLE}',
+    '${FILE_REGISTRY_TABLE}',
+    '${SUBJECTS_TABLE}',
+    '${BIOSPECIMENS_TABLE}',
+    '${BIOSAMPLES_TABLE}',
+    '${LIBRARIES_TABLE}',
+    'daylily-files',
+    'daylily-filesets',
+    'daylily-file-workset-usage',
+]
+
+print('DynamoDB Tables:')
+for table in tables:
+    try:
+        resp = dynamodb.describe_table(TableName=table)
+        status = resp['Table']['TableStatus']
+        count = resp['Table'].get('ItemCount', 0)
+        print(f'  ✓ {table}: {status} ({count} items)')
+    except dynamodb.exceptions.ResourceNotFoundException:
+        print(f'  ✗ {table}: NOT FOUND')
+    except Exception as e:
+        print(f'  ⚠ {table}: ERROR - {e}')
+"
+    echo ""
+}
+
+# ========== Command: cognito-setup ==========
+cmd_cognito_setup() {
+    echo -e "${BOLD}${BLUE}╔══════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${BOLD}${BLUE}║          Daylily Ursa - Cognito Setup                        ║${NC}"
+    echo -e "${BOLD}${BLUE}╚══════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+
+    check_aws_config
+
+    local region="${AWS_DEFAULT_REGION}"
+    local pool_name="${COGNITO_POOL_NAME:-daylily-ursa-users}"
+
+    # Prompt for server port
+    local default_port="${DAYU_PORT:-8001}"
+    echo -e "${CYAN}Server Configuration${NC}"
+    echo -n "Enter the port your server will run on [${default_port}]: "
+    read -r user_port
+    local server_port="${user_port:-$default_port}"
+
+    # Prompt for hostname
+    local default_host="localhost"
+    echo -n "Enter the hostname for callbacks [${default_host}]: "
+    read -r user_host
+    local server_host="${user_host:-$default_host}"
+    echo ""
+
+    log_info "Creating Cognito User Pool: $pool_name"
+    log_info "Region: $region"
+    log_info "Callback URL: http://${server_host}:${server_port}"
+    echo ""
+
+    $PYTHON_PATH -c "
+import boto3
+import json
+
+region = '${region}'
+pool_name = '${pool_name}'
+profile = '${AWS_PROFILE}'
+server_host = '${server_host}'
+server_port = '${server_port}'
+
+callback_url = f'http://{server_host}:{server_port}/auth/callback'
+logout_url = f'http://{server_host}:{server_port}/portal/login'
+
+session_kwargs = {'region_name': region}
+if profile:
+    session_kwargs['profile_name'] = profile
+
+session = boto3.Session(**session_kwargs)
+cognito = session.client('cognito-idp')
+
+# Check if pool already exists
+pools = cognito.list_user_pools(MaxResults=60)
+existing = [p for p in pools['UserPools'] if p['Name'] == pool_name]
+
+if existing:
+    pool_id = existing[0]['Id']
+    print(f'✓ User Pool already exists: {pool_id}')
+    # Check if custom:customer_id attribute exists, add if missing
+    try:
+        pool_info = cognito.describe_user_pool(UserPoolId=pool_id)
+        schema = pool_info['UserPool'].get('SchemaAttributes', [])
+        has_customer_id = any(attr.get('Name') == 'custom:customer_id' for attr in schema)
+        if not has_customer_id:
+            print('  Adding custom:customer_id attribute...')
+            cognito.add_custom_attributes(
+                UserPoolId=pool_id,
+                CustomAttributes=[
+                    {
+                        'Name': 'customer_id',
+                        'AttributeDataType': 'String',
+                        'Mutable': True,
+                        'Required': False,
+                        'StringAttributeConstraints': {
+                            'MinLength': '1',
+                            'MaxLength': '256'
+                        }
+                    }
+                ]
+            )
+            print('✓ Added custom:customer_id attribute')
+        else:
+            print('✓ custom:customer_id attribute exists')
+    except Exception as e:
+        print(f'⚠ Could not verify/add custom attribute: {e}')
+else:
+    # Create user pool with custom attribute
+    response = cognito.create_user_pool(
+        PoolName=pool_name,
+        Policies={
+            'PasswordPolicy': {
+                'MinimumLength': 8,
+                'RequireUppercase': True,
+                'RequireLowercase': True,
+                'RequireNumbers': True,
+                'RequireSymbols': False,
+            }
+        },
+        AutoVerifiedAttributes=['email'],
+        UsernameAttributes=['email'],
+        MfaConfiguration='OFF',
+        AdminCreateUserConfig={
+            'AllowAdminCreateUserOnly': True,
+        },
+        Schema=[
+            {
+                'Name': 'email',
+                'AttributeDataType': 'String',
+                'Required': True,
+                'Mutable': True,
+            },
+            {
+                'Name': 'customer_id',
+                'AttributeDataType': 'String',
+                'Required': False,
+                'Mutable': True,
+                'StringAttributeConstraints': {
+                    'MinLength': '1',
+                    'MaxLength': '256'
+                }
+            }
+        ],
+    )
+    pool_id = response['UserPool']['Id']
+    print(f'✓ Created User Pool: {pool_id}')
+    print('✓ Includes custom:customer_id attribute')
+
+# Check/create app client
+clients = cognito.list_user_pool_clients(UserPoolId=pool_id, MaxResults=60)
+client_name = f'{pool_name}-client'
+existing_client = [c for c in clients['UserPoolClients'] if c['ClientName'] == client_name]
+
+if existing_client:
+    client_id = existing_client[0]['ClientId']
+    print(f'✓ App Client already exists: {client_id}')
+    # Update existing client with callback URLs
+    cognito.update_user_pool_client(
+        UserPoolId=pool_id,
+        ClientId=client_id,
+        ClientName=client_name,
+        GenerateSecret=False,
+        ExplicitAuthFlows=[
+            'ALLOW_USER_PASSWORD_AUTH',
+            'ALLOW_ADMIN_USER_PASSWORD_AUTH',
+            'ALLOW_REFRESH_TOKEN_AUTH',
+            'ALLOW_USER_SRP_AUTH',
+        ],
+        SupportedIdentityProviders=['COGNITO'],
+        CallbackURLs=[callback_url],
+        LogoutURLs=[logout_url],
+        AllowedOAuthFlows=['code'],
+        AllowedOAuthScopes=['openid', 'email', 'profile'],
+        AllowedOAuthFlowsUserPoolClient=True,
+    )
+    print(f'✓ Updated App Client with callback URL: {callback_url}')
+else:
+    client_response = cognito.create_user_pool_client(
+        UserPoolId=pool_id,
+        ClientName=client_name,
+        GenerateSecret=False,
+        ExplicitAuthFlows=[
+            'ALLOW_USER_PASSWORD_AUTH',
+            'ALLOW_ADMIN_USER_PASSWORD_AUTH',
+            'ALLOW_REFRESH_TOKEN_AUTH',
+            'ALLOW_USER_SRP_AUTH',
+        ],
+        SupportedIdentityProviders=['COGNITO'],
+        CallbackURLs=[callback_url],
+        LogoutURLs=[logout_url],
+        AllowedOAuthFlows=['code'],
+        AllowedOAuthScopes=['openid', 'email', 'profile'],
+        AllowedOAuthFlowsUserPoolClient=True,
+    )
+    client_id = client_response['UserPoolClient']['ClientId']
+    print(f'✓ Created App Client: {client_id}')
+    print(f'✓ Callback URL: {callback_url}')
+
+print()
+print('Add to your environment:')
+print(f'  export COGNITO_USER_POOL_ID={pool_id}')
+print(f'  export COGNITO_CLIENT_ID={client_id}')
+print(f'  export AWS_REGION={region}')
+print()
+print(f'Start server on port {server_port}:')
+print(f'  DAYU_PORT={server_port} dayu server-auth')
+"
+    echo ""
+}
+
+# ========== Command: cognito-teardown ==========
+cmd_cognito_teardown() {
+    echo -e "${BOLD}${RED}╔══════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${BOLD}${RED}║          Daylily Ursa - Cognito Teardown                     ║${NC}"
+    echo -e "${BOLD}${RED}╚══════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+
+    check_aws_config
+
+    local region="${AWS_DEFAULT_REGION}"
+    local pool_name="${COGNITO_POOL_NAME:-daylily-ursa-users}"
+
+    log_warn "This will DELETE the Cognito User Pool: $pool_name"
+    log_warn "All users in this pool will be permanently deleted!"
+    echo ""
+
+    read -p "Type 'DELETE' to confirm: " confirm
+    if [[ "$confirm" != "DELETE" ]]; then
+        echo "Aborted."
+    else
+        $PYTHON_PATH -c "
+import boto3
+
+region = '${region}'
+pool_name = '${pool_name}'
+profile = '${AWS_PROFILE}'
+
+session_kwargs = {'region_name': region}
+if profile:
+    session_kwargs['profile_name'] = profile
+
+session = boto3.Session(**session_kwargs)
+cognito = session.client('cognito-idp')
+
+# Find pool
+pools = cognito.list_user_pools(MaxResults=60)
+existing = [p for p in pools['UserPools'] if p['Name'] == pool_name]
+
+if not existing:
+    print(f'User Pool not found: {pool_name}')
+else:
+    pool_id = existing[0]['Id']
+
+    # Delete all clients first
+    clients = cognito.list_user_pool_clients(UserPoolId=pool_id, MaxResults=60)
+    for client in clients['UserPoolClients']:
+        cognito.delete_user_pool_client(UserPoolId=pool_id, ClientId=client['ClientId'])
+        print(f'✓ Deleted client: {client[\"ClientId\"]}')
+
+    # Delete pool
+    cognito.delete_user_pool(UserPoolId=pool_id)
+    print(f'✓ Deleted User Pool: {pool_id}')
+"
+        echo ""
+        log_success "Cognito teardown complete."
+    fi
+}
+
+# ========== Command: cognito-status ==========
+cmd_cognito_status() {
+    echo -e "${BOLD}${BLUE}Cognito Status${NC}"
+    echo "=============="
+    echo ""
+
+    check_aws_config
+
+    local region="${AWS_DEFAULT_REGION}"
+    local pool_name="${COGNITO_POOL_NAME:-daylily-ursa-users}"
+
+    $PYTHON_PATH -c "
+import boto3
+import os
+
+region = '${region}'
+pool_name = '${pool_name}'
+profile = '${AWS_PROFILE}'
+
+session_kwargs = {'region_name': region}
+if profile:
+    session_kwargs['profile_name'] = profile
+
+session = boto3.Session(**session_kwargs)
+cognito = session.client('cognito-idp')
+
+# Check environment variables
+env_pool_id = os.environ.get('COGNITO_USER_POOL_ID', '')
+env_client_id = os.environ.get('COGNITO_CLIENT_ID', '')
+
+print('Environment Variables:')
+if env_pool_id:
+    print(f'  COGNITO_USER_POOL_ID: {env_pool_id}')
+else:
+    print('  COGNITO_USER_POOL_ID: (not set)')
+if env_client_id:
+    print(f'  COGNITO_CLIENT_ID:    {env_client_id}')
+else:
+    print('  COGNITO_CLIENT_ID:    (not set)')
+print()
+
+# Find pool in AWS
+pools = cognito.list_user_pools(MaxResults=60)
+existing = [p for p in pools['UserPools'] if p['Name'] == pool_name]
+
+print(f'AWS Cognito ({region}):')
+if not existing:
+    print(f'  User Pool \"{pool_name}\": NOT FOUND')
+    print()
+    print('  To create: dayu cognito-setup')
+else:
+    pool_id = existing[0]['Id']
+    print(f'  User Pool: {pool_name}')
+    print(f'  Pool ID:   {pool_id}')
+
+    # Get clients
+    clients = cognito.list_user_pool_clients(UserPoolId=pool_id, MaxResults=60)
+    if clients['UserPoolClients']:
+        print(f'  Clients:')
+        for client in clients['UserPoolClients']:
+            print(f'    - {client[\"ClientName\"]}: {client[\"ClientId\"]}')
+
+    # Get user count
+    try:
+        pool_info = cognito.describe_user_pool(UserPoolId=pool_id)
+        user_count = pool_info['UserPool'].get('EstimatedNumberOfUsers', 'unknown')
+        print(f'  Users:     ~{user_count}')
+    except:
+        pass
+
+    # Show callback URLs
+    if clients['UserPoolClients']:
+        for client in clients['UserPoolClients']:
+            try:
+                client_info = cognito.describe_user_pool_client(
+                    UserPoolId=pool_id,
+                    ClientId=client['ClientId']
+                )
+                callbacks = client_info['UserPoolClient'].get('CallbackURLs', [])
+                if callbacks:
+                    print(f'  Callback URLs:')
+                    for url in callbacks:
+                        print(f'    - {url}')
+            except:
+                pass
+"
+    echo ""
+}
+
+# ========== Command: cognito-update-port ==========
+cmd_cognito_update_port() {
+    echo -e "${BOLD}${BLUE}╔══════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${BOLD}${BLUE}║          Daylily Ursa - Update Cognito Port                  ║${NC}"
+    echo -e "${BOLD}${BLUE}╚══════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+
+    check_aws_config
+
+    local region="${AWS_DEFAULT_REGION}"
+    local pool_name="${COGNITO_POOL_NAME:-daylily-ursa-users}"
+
+    # Prompt for new port
+    local default_port="${DAYU_PORT:-8001}"
+    echo -e "${CYAN}Update Callback URL Port${NC}"
+    echo -n "Enter the new port for callbacks [${default_port}]: "
+    read -r user_port
+    local server_port="${user_port:-$default_port}"
+
+    # Prompt for hostname
+    local default_host="localhost"
+    echo -n "Enter the hostname for callbacks [${default_host}]: "
+    read -r user_host
+    local server_host="${user_host:-$default_host}"
+    echo ""
+
+    log_info "Updating Cognito callback URLs..."
+    log_info "New callback URL: http://${server_host}:${server_port}"
+    echo ""
+
+    $PYTHON_PATH -c "
+import boto3
+import sys
+
+region = '${region}'
+pool_name = '${pool_name}'
+profile = '${AWS_PROFILE}'
+server_host = '${server_host}'
+server_port = '${server_port}'
+
+callback_url = f'http://{server_host}:{server_port}/auth/callback'
+logout_url = f'http://{server_host}:{server_port}/portal/login'
+
+session_kwargs = {'region_name': region}
+if profile:
+    session_kwargs['profile_name'] = profile
+
+session = boto3.Session(**session_kwargs)
+cognito = session.client('cognito-idp')
+
+# Find pool
+pools = cognito.list_user_pools(MaxResults=60)
+existing = [p for p in pools['UserPools'] if p['Name'] == pool_name]
+
+if not existing:
+    print(f'✗ User Pool \"{pool_name}\" not found')
+    print('  Run \"dayu cognito-setup\" first')
+    sys.exit(1)
+
+pool_id = existing[0]['Id']
+
+# Get all clients and update them
+clients = cognito.list_user_pool_clients(UserPoolId=pool_id, MaxResults=60)
+if not clients['UserPoolClients']:
+    print('✗ No app clients found')
+    sys.exit(1)
+
+updated = 0
+for client in clients['UserPoolClients']:
+    try:
+        # Get current client config
+        client_info = cognito.describe_user_pool_client(
+            UserPoolId=pool_id,
+            ClientId=client['ClientId']
+        )
+        client_data = client_info['UserPoolClient']
+
+        # Update with new callback URLs (GenerateSecret not allowed in update)
+        cognito.update_user_pool_client(
+            UserPoolId=pool_id,
+            ClientId=client['ClientId'],
+            ClientName=client_data['ClientName'],
+            ExplicitAuthFlows=client_data.get('ExplicitAuthFlows', []),
+            SupportedIdentityProviders=client_data.get('SupportedIdentityProviders', ['COGNITO']),
+            CallbackURLs=[callback_url],
+            LogoutURLs=[logout_url],
+            AllowedOAuthFlows=client_data.get('AllowedOAuthFlows', ['code']),
+            AllowedOAuthScopes=client_data.get('AllowedOAuthScopes', ['openid', 'email', 'profile']),
+            AllowedOAuthFlowsUserPoolClient=client_data.get('AllowedOAuthFlowsUserPoolClient', True),
+        )
+        print(f'✓ Updated client \"{client_data[\"ClientName\"]}\"')
+        print(f'  Callback: {callback_url}')
+        print(f'  Logout:   {logout_url}')
+        updated += 1
+    except Exception as e:
+        print(f'✗ Failed to update client {client[\"ClientId\"]}: {e}')
+
+print()
+if updated > 0:
+    print(f'✓ Updated {updated} client(s)')
+    print()
+    print(f'Start server on port {server_port}:')
+    print(f'  DAYU_PORT={server_port} dayu server-auth')
+"
+    echo ""
+}
+
+# ========== Command: cognito-set-password ==========
+cmd_cognito_set_password() {
+    echo -e "${BOLD}${BLUE}╔══════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${BOLD}${BLUE}║          Daylily Ursa - Set Cognito User Password            ║${NC}"
+    echo -e "${BOLD}${BLUE}╚══════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+
+    check_aws_config
+
+    local region="${AWS_DEFAULT_REGION}"
+    local pool_name="${COGNITO_POOL_NAME:-daylily-ursa-users}"
+
+    # Prompt for email
+    echo -n "Enter user email: "
+    read -r user_email
+    if [[ -z "$user_email" ]]; then
+        log_error "Email is required"
+        return 1
+    fi
+
+    # Prompt for password
+    echo -n "Enter new password (min 8 chars, upper+lower+number): "
+    read -rs user_password
+    echo ""
+    if [[ -z "$user_password" ]]; then
+        log_error "Password is required"
+        return 1
+    fi
+
+    echo ""
+    log_info "Setting password for user: $user_email"
+
+    $PYTHON_PATH -c "
+import boto3
+import sys
+
+region = '${region}'
+pool_name = '${pool_name}'
+profile = '${AWS_PROFILE}'
+email = '${user_email}'
+password = '''${user_password}'''
+
+session_kwargs = {'region_name': region}
+if profile:
+    session_kwargs['profile_name'] = profile
+
+session = boto3.Session(**session_kwargs)
+cognito = session.client('cognito-idp')
+
+# Find pool
+pools = cognito.list_user_pools(MaxResults=60)
+existing = [p for p in pools['UserPools'] if p['Name'] == pool_name]
+
+if not existing:
+    print(f'✗ User Pool \"{pool_name}\" not found')
+    sys.exit(1)
+
+pool_id = existing[0]['Id']
+
+try:
+    # Set permanent password
+    cognito.admin_set_user_password(
+        UserPoolId=pool_id,
+        Username=email,
+        Password=password,
+        Permanent=True
+    )
+    print(f'✓ Password set for {email}')
+    print()
+    print('User can now log in with the new password.')
+except cognito.exceptions.UserNotFoundException:
+    print(f'✗ User {email} not found in Cognito')
+    print()
+    print('  To create a user, register through the portal first.')
+    sys.exit(1)
+except Exception as e:
+    print(f'✗ Failed to set password: {e}')
+    sys.exit(1)
+"
+    echo ""
+}
+
+# ========== Command: genenv ==========
+cmd_genenv() {
+    echo -e "${BOLD}${BLUE}Generate .env Configuration File${NC}"
+    echo "=================================="
+    echo ""
+
+    local env_file="${SCRIPT_DIR}/.env"
+
+    if [[ -f "$env_file" ]]; then
+        log_warn ".env file already exists at $env_file"
+        echo ""
+        read -p "Overwrite? [y/N]: " confirm
+        if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+            echo "Aborted."
+            return 0
+        fi
+        echo ""
+    fi
+
+    cat > "$env_file" << 'EOF'
+# Daylily Ursa Configuration
+# ==========================
+# This file is automatically loaded by 'dayu start-server' and other server commands.
+# Edit this file to customize your configuration.
+#
+# Variables prefixed with # are optional/commented out.
+# Uncomment and set values as needed for your deployment.
+
+# ========== AWS Configuration ==========
+# AWS region for all services (required)
+AWS_DEFAULT_REGION=us-west-2
+
+# AWS profile name - if not set, uses default credentials chain
+# AWS_PROFILE=your-profile-name
+
+# AWS account ID - used for resource ARNs (optional, auto-detected if not set)
+# AWS_ACCOUNT_ID=123456789012
+
+# Comma-separated list of AWS regions to scan for ParallelCluster instances
+# Used by the Clusters page in the portal
+DAYU_ALLOWED_REGIONS=us-west-2
+
+# ========== S3 Configuration (REQUIRED for workset creation) ==========
+# Control bucket - where worksets are stored and monitored
+# This is REQUIRED for creating worksets via the portal
+# DAYLILY_CONTROL_BUCKET=your-control-bucket-name
+
+# Alternative name for control bucket (legacy support)
+# DAYLILY_MONITOR_BUCKET=your-monitor-bucket-name
+
+# Default data bucket for sample files
+# S3_BUCKET=your-data-bucket
+
+# S3 prefix for workset data (default: worksets/)
+# S3_PREFIX=worksets/
+
+# ========== DynamoDB Table Names ==========
+# These tables will be auto-created if they don't exist
+WORKSET_TABLE_NAME=daylily-worksets
+CUSTOMER_TABLE_NAME=daylily-customers
+DAYLILY_MANIFEST_TABLE=daylily-manifests
+DAYLILY_LINKED_BUCKETS_TABLE=daylily-linked-buckets
+DAYLILY_FILE_REGISTRY_TABLE=daylily-file-registry
+
+# ========== API Server Configuration ==========
+# Host to bind the server to (0.0.0.0 for all interfaces)
+DAYU_HOST=0.0.0.0
+
+# Port for the API server
+DAYU_PORT=8001
+
+# ========== Authentication ==========
+# Enable Cognito authentication (true/false)
+# Set to 'true' for production deployments
+ENABLE_AUTH=false
+
+# Cognito User Pool ID (required if ENABLE_AUTH=true)
+# Run 'dayu cognito-setup' to create, or set manually
+# COGNITO_USER_POOL_ID=us-west-2_xxxxxxxxx
+
+# Cognito App Client ID (required if ENABLE_AUTH=true)
+# COGNITO_CLIENT_ID=xxxxxxxxxxxxxxxxxxxxxxxxxx
+# COGNITO_APP_CLIENT_ID=xxxxxxxxxxxxxxxxxxxxxxxxxx
+
+# Session encryption key - CHANGE THIS IN PRODUCTION!
+SESSION_SECRET_KEY=daylily-dev-secret-change-in-production
+
+# Email domain whitelist for registration and login
+# Set to 'all' to allow any domain (default)
+# Or comma-separated list of allowed domains: company.com,partner.org
+# Case-insensitive matching
+WHITELIST_DOMAINS=all
+
+# ========== Environment Settings ==========
+# Environment name: development, staging, production
+DAYLILY_ENV=development
+
+# Demo mode - enables first-customer fallback. NEVER enable in production!
+DEMO_MODE=false
+
+# Logging level: DEBUG, INFO, WARNING, ERROR
+LOG_LEVEL=INFO
+
+# ========== Rate Limiting ==========
+# Enable rate limiting for API endpoints
+RATE_LIMIT_ENABLED=true
+
+# Redis URI for distributed rate limiting (optional)
+# If not set, uses in-memory storage (not suitable for multi-instance deployments)
+# RATE_LIMIT_STORAGE_URI=redis://localhost:6379
+
+# Comma-separated list of whitelisted IPs or user IDs
+# RATE_LIMIT_WHITELIST=127.0.0.1,admin-user-id
+
+# ========== Notifications (Optional) ==========
+# SNS topic ARN for sending notifications
+# SNS_TOPIC_ARN=arn:aws:sns:us-west-2:123456789012:daylily-notifications
+
+# Linear integration for issue tracking
+# LINEAR_API_KEY=your-linear-api-key
+# LINEAR_TEAM_ID=your-team-id
+
+# ========== CORS Configuration ==========
+# Comma-separated list of allowed origins (* for all)
+CORS_ORIGINS=*
+
+# ========== Validation ==========
+# Validation strictness: strict, permissive
+VALIDATION_STRICTNESS=strict
+VALIDATION_REQUIRED=true
+
+# ========== Pipeline Monitoring (SSH to headnode) ==========
+# SSH user for connecting to headnodes
+PIPELINE_SSH_USER=ubuntu
+
+# Path to SSH identity file (PEM) for headnode connection
+# PIPELINE_SSH_IDENTITY_FILE=~/.ssh/my-key.pem
+
+# SSH connection timeout in seconds
+PIPELINE_SSH_TIMEOUT=5
+
+# Root directory where pipeline worksets are cloned on headnode
+PIPELINE_CLONE_DEST_ROOT=/fsx/analysis_results/ubuntu
+
+# Name of the pipeline repository directory
+PIPELINE_REPO_DIR_NAME=daylily-omics-analysis
+
+# Optional: Path to workset-monitor-config.yaml for loading additional SSH settings
+# PIPELINE_MONITOR_CONFIG_PATH=config/workset-monitor-config.yaml
+EOF
+
+    log_success "Created .env file at $env_file"
+    echo ""
+    echo -e "${CYAN}Important:${NC}"
+    echo "  1. Edit the file to set your configuration:"
+    echo "     \$EDITOR $env_file"
+    echo ""
+    echo "  2. Required for workset creation:"
+    echo "     - DAYLILY_CONTROL_BUCKET (your S3 control/monitor bucket)"
+    echo ""
+    echo "  3. Required for authentication:"
+    echo "     - ENABLE_AUTH=true"
+    echo "     - COGNITO_USER_POOL_ID"
+    echo "     - COGNITO_CLIENT_ID"
+    echo ""
+    echo "  4. Start the server:"
+    echo "     dayu start-server          # Background daemon"
+    echo "     dayu start-server --reload # Foreground with auto-reload"
+    echo ""
+}
+
+# ========== Command: env (alias for genenv) ==========
+cmd_env() {
+    cmd_genenv "$@"
+}
+
+
+# ========== Command: status ==========
+cmd_status() {
+    echo -e "${BOLD}${BLUE}Daylily Ursa - System Status${NC}"
+    echo "============================="
+    echo ""
+
+    # Check conda environment
+    echo -e "${CYAN}Conda Environment:${NC}"
+    if [[ -n "$CONDA_PREFIX" ]]; then
+        local env_name=$(basename "$CONDA_PREFIX")
+        if [[ "$env_name" == "$CONDA_ENV" ]]; then
+            echo -e "  ✓ Active: ${GREEN}$env_name${NC}"
+        else
+            echo -e "  ⚠ Active: ${YELLOW}$env_name${NC} (expected: $CONDA_ENV)"
+        fi
+    else
+        echo -e "  ✗ ${RED}No conda environment active${NC}"
+        echo "    Run: source ./dayu_activate"
+    fi
+    echo ""
+
+    # Check Python
+    echo -e "${CYAN}Python:${NC}"
+    if command -v python >/dev/null 2>&1; then
+        echo "  ✓ $(python --version 2>&1)"
+        echo "    Path: $(which python)"
+    else
+        echo -e "  ✗ ${RED}Python not found${NC}"
+    fi
+    echo ""
+
+    # Check key dependencies
+    echo -e "${CYAN}Dependencies:${NC}"
+    local deps=("fastapi" "uvicorn" "boto3" "pydantic" "pytest")
+    for dep in "${deps[@]}"; do
+        if $PYTHON_PATH -c "import $dep" 2>/dev/null; then
+            local ver=$($PYTHON_PATH -c "import $dep; print(getattr($dep, '__version__', 'installed'))" 2>/dev/null)
+            echo "  ✓ $dep: $ver"
+        else
+            echo -e "  ✗ ${RED}$dep: NOT INSTALLED${NC}"
+        fi
+    done
+    echo ""
+
+    # Check AWS configuration
+    check_aws_config
+
+    # Check .env file
+    echo -e "${CYAN}Configuration:${NC}"
+    if [[ -f "${SCRIPT_DIR}/.env" ]]; then
+        echo "  ✓ .env file exists"
+    else
+        echo "  ⚠ .env file not found (run: dayu env)"
+    fi
+    echo ""
+
+    # Check project installation
+    echo -e "${CYAN}Package:${NC}"
+    if $PYTHON_PATH -c "import daylib" 2>/dev/null; then
+        echo "  ✓ daylib module importable"
+    else
+        echo -e "  ✗ ${RED}daylib not importable${NC}"
+        echo "    Run: pip install -e ."
+    fi
+    echo ""
+}
+
+# ========== Command: clean ==========
+cmd_clean() {
+    echo -e "${GREEN}Cleaning build artifacts...${NC}"
+    cd "$SCRIPT_DIR"
+
+    # Python cache
+    find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+    find . -type f -name "*.pyc" -delete 2>/dev/null || true
+    find . -type f -name "*.pyo" -delete 2>/dev/null || true
+    log_success "Removed Python cache files"
+
+    # Pytest cache
+    rm -rf .pytest_cache 2>/dev/null || true
+    log_success "Removed pytest cache"
+
+    # Coverage
+    rm -rf htmlcov .coverage coverage.xml 2>/dev/null || true
+    log_success "Removed coverage files"
+
+    # Build artifacts
+    rm -rf build dist *.egg-info 2>/dev/null || true
+    log_success "Removed build artifacts"
+
+    # Mypy cache
+    rm -rf .mypy_cache 2>/dev/null || true
+    log_success "Removed mypy cache"
+
+    # Ruff cache
+    rm -rf .ruff_cache 2>/dev/null || true
+    log_success "Removed ruff cache"
+
+    echo ""
+    log_success "Clean complete!"
+}
+
+# ========== Command: deactivate ==========
+cmd_deactivate() {
+    echo -e "${BOLD}${BLUE}Deactivate Daylily Ursa Environment${NC}"
+    echo "===================================="
+    echo ""
+    echo "To deactivate the dayu environment, run:"
+    echo ""
+    echo -e "  ${CYAN}conda deactivate${NC}"
+    echo ""
+    echo "This will:"
+    echo "  • Deactivate the DAYU conda environment"
+    echo "  • Remove bin/ and project root from PATH (on next shell)"
+    echo ""
+    echo -e "${YELLOW}Note:${NC} PATH changes made by 'source dayu_activate' persist until"
+    echo "you start a new shell or manually remove them."
+    echo ""
+    echo "To fully reset your environment, start a new terminal session."
+    echo ""
+
+    # Check if we're in the DAYU environment
+    if [[ "${CONDA_DEFAULT_ENV:-}" == "DAYU" ]]; then
+        echo -e "${GREEN}You are currently in the DAYU environment.${NC}"
+        echo ""
+        echo "Run 'conda deactivate' now? (y/n)"
+        read -r response
+        if [[ "$response" =~ ^[Yy]$ ]]; then
+            # This won't work directly since we're in a subprocess
+            # Just tell the user to run it
+            echo ""
+            echo -e "${YELLOW}Please run:${NC}  conda deactivate"
+            echo ""
+            echo "(Cannot deactivate from within a script - must be run in your shell)"
+        fi
+    else
+        echo -e "${YELLOW}You don't appear to be in the DAYU environment.${NC}"
+        echo "Current environment: ${CONDA_DEFAULT_ENV:-none}"
+    fi
+}
+
+# ========== Main Dispatcher ==========
+main() {
+    local cmd="${1:-help}"
+    shift 2>/dev/null || true
+
+    case "$cmd" in
+        help|--help|-h)
+            cmd_help
+            ;;
+        version|--version|-v)
+            cmd_version
+            ;;
+        test)
+            cmd_test "$@"
+            ;;
+        test-cov)
+            cmd_test_cov "$@"
+            ;;
+        lint)
+            cmd_lint
+            ;;
+        format)
+            cmd_format
+            ;;
+        typecheck)
+            cmd_typecheck
+            ;;
+        start-server)
+            cmd_start_server "$@"
+            ;;
+        server-stop)
+            cmd_server_stop
+            ;;
+        server-log)
+            cmd_server_log
+            ;;
+        server-status)
+            cmd_server_status
+            ;;
+        server-noauth)
+            cmd_server_noauth "$@"
+            ;;
+        server-auth)
+            cmd_server_auth "$@"
+            ;;
+        server-dev)
+            cmd_server_dev "$@"
+            ;;
+        start-monitor)
+            cmd_start_monitor "$@"
+            ;;
+        stop-monitor)
+            cmd_stop_monitor
+            ;;
+        monitor-status)
+            cmd_monitor_status
+            ;;
+        monitor-logs)
+            cmd_monitor_logs "$@"
+            ;;
+        setup-aws)
+            cmd_setup_aws
+            ;;
+        teardown-aws)
+            cmd_teardown_aws
+            ;;
+        aws-status)
+            cmd_aws_status
+            ;;
+        cognito-setup)
+            cmd_cognito_setup
+            ;;
+        cognito-teardown)
+            cmd_cognito_teardown
+            ;;
+        cognito-status)
+            cmd_cognito_status
+            ;;
+        cognito-update-port)
+            cmd_cognito_update_port
+            ;;
+        cognito-set-password)
+            cmd_cognito_set_password
+            ;;
+        genenv|env)
+            cmd_genenv
+            ;;
+        status)
+            cmd_status
+            ;;
+        clean)
+            cmd_clean
+            ;;
+        deactivate)
+            cmd_deactivate
+            ;;
+        *)
+            log_error "Unknown command: $cmd"
+            echo ""
+            cmd_help
+            ;;
+    esac
+}
+
+# Run main
+main "$@"
+
+fi  # End of AWS_PROFILE check
