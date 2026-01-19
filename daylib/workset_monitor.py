@@ -2962,8 +2962,39 @@ class WorksetMonitor:
         except ClientError as exc:
             raise MonitorError(f"Referenced S3 object not found: {uri}") from exc
 
+    def _is_headnode_local_path(self, path: str) -> bool:
+        """Check if path refers to headnode-local filesystem rather than S3 sample data.
+
+        Reference data paths like /fsx/data/genomic_data/... exist on the headnode
+        and should not be validated via S3.
+        """
+        path = path.strip()
+        # Absolute paths starting with common headnode mount points
+        headnode_prefixes = (
+            "/fsx/",           # FSx Lustre mount
+            "/efs/",           # EFS mount
+            "/shared/",        # Shared storage
+            "/scratch/",       # Scratch space
+            "/data/",          # Common data mount
+            "/mnt/",           # Generic mount point
+            "/home/",          # Home directories
+            "/opt/",           # Installed software/data
+        )
+        return path.startswith(headnode_prefixes)
+
     def _assert_sample_file_exists(self, workset: Workset, relative_path: str) -> None:
-        """Verify that a sample_data file exists inside the workset prefix."""
+        """Verify that a sample_data file exists inside the workset prefix.
+
+        Skips validation for headnode-local paths (e.g., /fsx/data/genomic_data/...)
+        which are reference data that already exist on the headnode filesystem.
+        """
+        # Skip validation for headnode-local paths - these are validated at runtime
+        if self._is_headnode_local_path(relative_path):
+            LOGGER.debug(
+                "Skipping S3 validation for headnode-local path: %s", relative_path
+            )
+            return
+
         key = f"{workset.prefix}{SAMPLE_DATA_DIRNAME}/{relative_path.lstrip('/')}"
         try:
             self._s3.head_object(Bucket=self.config.monitor.bucket, Key=key)

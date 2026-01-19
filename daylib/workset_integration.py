@@ -49,11 +49,11 @@ PIPELINE_DY_R_COMMANDS = {
         '--config aligners=["bwa2a"] dedupers=["dppl"] snv_callers=["deep19"]'
     ),
     "germline_wgs_snv_sv": (
-        'produce_snv_concordances produce_alignstats produce_tiddit produce_manta -p -k -j 2 '
+        'produce_snv_concordances produce_alignstats produce_tiddit produce_manta -p -k -j 200 '
         '--config aligners=["bwa2a"] dedupers=["dppl19"] snv_callers=["deep"] sv_callers=["tiddit","manta"]'
     ),
     "germline_wgs_kitchensink": (
-        'produce_snv_concordances produce_multiqc_final_wgs produce_alignstats produce_tiddit produce_manta -p -k -j 2 '
+        'produce_snv_concordances produce_multiqc_final_wgs produce_alignstats produce_tiddit produce_manta -p -k -j 200 '
         '--config aligners=["bwa2a"] dedupers=["dppl"] snv_callers=["deep19"] sv_callers=["tiddit","manta"]'
     ),
 }
