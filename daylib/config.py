@@ -41,6 +41,14 @@ class Settings(BaseSettings):
         default=None,
         description="AWS account ID for resource ARNs",
     )
+    dayu_allowed_regions: str = Field(
+        default="us-west-2",
+        description="Comma-separated list of AWS regions to scan for ParallelCluster instances",
+    )
+
+    def get_allowed_regions(self) -> List[str]:
+        """Get list of allowed regions from comma-separated string."""
+        return [r.strip() for r in self.dayu_allowed_regions.split(",") if r.strip()]
 
     # ========== DynamoDB Table Names ==========
     workset_table_name: str = Field(
@@ -206,6 +214,32 @@ class Settings(BaseSettings):
     validation_required: bool = Field(
         default=True,
         description="Require validation for workset creation/updates",
+    )
+
+    # ========== Pipeline Monitoring (SSH to headnode) ==========
+    pipeline_ssh_user: str = Field(
+        default="ubuntu",
+        description="SSH user for connecting to headnodes",
+    )
+    pipeline_ssh_identity_file: Optional[str] = Field(
+        default=None,
+        description="Path to SSH identity file (PEM) for headnode connection",
+    )
+    pipeline_ssh_timeout: int = Field(
+        default=5,
+        description="SSH connection timeout in seconds",
+    )
+    pipeline_clone_dest_root: str = Field(
+        default="/fsx/analysis_results/ubuntu",
+        description="Root directory where pipeline worksets are cloned on headnode",
+    )
+    pipeline_repo_dir_name: str = Field(
+        default="daylily-omics-analysis",
+        description="Name of the pipeline repository directory",
+    )
+    pipeline_monitor_config_path: Optional[str] = Field(
+        default=None,
+        description="Path to workset-monitor-config.yaml for loading additional SSH settings",
     )
 
     @field_validator("cors_origins")

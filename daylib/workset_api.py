@@ -70,6 +70,15 @@ except ImportError:
 from daylib.workset_customer import CustomerManager, CustomerConfig
 from daylib.workset_validation import WorksetValidator
 
+# Pipeline status monitoring
+try:
+    from daylib.pipeline_status import PipelineStatusFetcher, PipelineStatus
+    PIPELINE_STATUS_AVAILABLE = True
+except ImportError:
+    PIPELINE_STATUS_AVAILABLE = False
+    PipelineStatusFetcher = None  # type: ignore[misc, assignment]
+    PipelineStatus = None  # type: ignore[misc, assignment]
+
 # Optional integration layer import
 try:
     from daylib.workset_integration import WorksetIntegration
@@ -1936,7 +1945,23 @@ def create_app(
             customer_id: str,
             workset_id: str,
         ):
-            """Get logs for a customer's workset."""
+            """Get logs for a customer's workset including live pipeline status.
+
+            Returns:
+                - workset_id: The workset identifier
+                - state_history: List of state transitions from DynamoDB
+                - pipeline_status: Live status from headnode (null if unavailable)
+                  - is_running: Whether the tmux session is active
+                  - steps_completed: Number of Snakemake steps completed
+                  - steps_total: Total number of Snakemake steps
+                  - percent_complete: Completion percentage
+                  - current_rule: Currently executing Snakemake rule
+                  - duration_seconds: Pipeline runtime in seconds
+                  - storage_bytes: Size of analysis directory
+                  - recent_log_lines: Last 50 lines from Snakemake log
+                  - log_files: List of available Snakemake log files
+                  - errors: Error lines found in logs
+            """
             if not customer_manager:
                 raise HTTPException(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -1964,9 +1989,181 @@ def create_app(
                     detail="Workset does not belong to this customer",
                 )
 
-            # Return workset state_history as logs
+            # Get state history from DynamoDB
             history = workset.get("state_history", [])
-            return {"logs": history, "workset_id": workset_id}
+
+            # Attempt to fetch live pipeline status from headnode
+            pipeline_status = None
+            if PIPELINE_STATUS_AVAILABLE and PipelineStatusFetcher is not None:
+                cluster_name = workset.get("cluster_name")
+                workset_name = workset.get("name") or workset.get("workset_name")
+
+                if cluster_name and workset_name:
+                    try:
+                        # Create fetcher with settings from environment
+                        fetcher = PipelineStatusFetcher(
+                            ssh_user=settings.pipeline_ssh_user,
+                            ssh_identity_file=settings.pipeline_ssh_identity_file,
+                            timeout=settings.pipeline_ssh_timeout,
+                            clone_dest_root=settings.pipeline_clone_dest_root,
+                            repo_dir_name=settings.pipeline_repo_dir_name,
+                        )
+
+                        # Get headnode IP from cluster
+                        headnode_ip = fetcher.get_headnode_ip(
+                            cluster_name,
+                            region=settings.get_effective_region(),
+                            profile=settings.aws_profile,
+                        )
+
+                        if headnode_ip:
+                            # Derive tmux session name (matches monitor convention)
+                            tmux_session = f"daylily-{workset_name}"
+
+                            # Fetch status
+                            status_obj = fetcher.fetch_status(
+                                headnode_ip=headnode_ip,
+                                workset_name=workset_name,
+                                tmux_session_name=tmux_session,
+                            )
+                            pipeline_status = status_obj.to_dict()
+                        else:
+                            LOGGER.debug(
+                                "Could not get headnode IP for cluster %s",
+                                cluster_name,
+                            )
+                    except Exception as e:
+                        LOGGER.warning(
+                            "Failed to fetch pipeline status for %s: %s",
+                            workset_id,
+                            str(e),
+                        )
+                        # Graceful fallback - return null pipeline_status
+                        pipeline_status = None
+
+            return {
+                "workset_id": workset_id,
+                "state_history": history,
+                "pipeline_status": pipeline_status,
+            }
+
+        @app.get(
+            "/api/customers/{customer_id}/worksets/{workset_id}/snakemake-log/{log_filename}",
+            tags=["customer-worksets"],
+        )
+        async def download_snakemake_log(
+            customer_id: str,
+            workset_id: str,
+            log_filename: str,
+        ):
+            """Download a specific Snakemake log file from the headnode.
+
+            Args:
+                customer_id: Customer identifier
+                workset_id: Workset identifier
+                log_filename: Name of the Snakemake log file (e.g., 2026-01-18T135855.907380.snakemake.log)
+
+            Returns:
+                Plain text content of the log file
+            """
+            if not customer_manager:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Customer management not configured",
+                )
+
+            config = customer_manager.get_customer_config(customer_id)
+            if not config:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Customer {customer_id} not found",
+                )
+
+            workset = state_db.get_workset(workset_id)
+            if not workset:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Workset {workset_id} not found",
+                )
+
+            # Verify workset belongs to this customer
+            if not verify_workset_ownership(workset, customer_id):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Workset does not belong to this customer",
+                )
+
+            # Validate log filename (prevent path traversal)
+            if "/" in log_filename or "\\" in log_filename or ".." in log_filename:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid log filename",
+                )
+            if not log_filename.endswith(".snakemake.log"):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid log filename format",
+                )
+
+            if not PIPELINE_STATUS_AVAILABLE or PipelineStatusFetcher is None:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Pipeline status module not available",
+                )
+
+            cluster_name = workset.get("cluster_name")
+            workset_name = workset.get("name") or workset.get("workset_name")
+
+            if not cluster_name or not workset_name:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Workset missing cluster_name or name",
+                )
+
+            try:
+                fetcher = PipelineStatusFetcher(
+                    ssh_user=settings.pipeline_ssh_user,
+                    ssh_identity_file=settings.pipeline_ssh_identity_file,
+                    timeout=settings.pipeline_ssh_timeout,
+                    clone_dest_root=settings.pipeline_clone_dest_root,
+                    repo_dir_name=settings.pipeline_repo_dir_name,
+                )
+
+                headnode_ip = fetcher.get_headnode_ip(
+                    cluster_name,
+                    region=settings.get_effective_region(),
+                    profile=settings.aws_profile,
+                )
+
+                if not headnode_ip:
+                    raise HTTPException(
+                        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                        detail=f"Could not connect to cluster {cluster_name}",
+                    )
+
+                content = fetcher.get_full_log_content(headnode_ip, workset_name, log_filename)
+                if content is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail=f"Log file {log_filename} not found",
+                    )
+
+                return Response(
+                    content=content,
+                    media_type="text/plain",
+                    headers={
+                        "Content-Disposition": f'attachment; filename="{log_filename}"',
+                    },
+                )
+
+            except HTTPException:
+                raise
+            except Exception as e:
+                LOGGER.error("Failed to download Snakemake log: %s", str(e))
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Failed to fetch log file: {str(e)}",
+                )
 
     # ========== Workset Validation Endpoints ==========
 
@@ -2305,6 +2502,58 @@ def create_app(
             "policy": policy,
             "apply_command": f"aws s3api put-bucket-policy --bucket {bucket_name} --policy file://bucket-policy.json",
         }
+
+    # ========== Cluster Management Endpoints ==========
+
+    @app.get("/api/clusters", tags=["clusters"])
+    async def list_clusters(
+        request: Request,
+        refresh: bool = Query(False, description="Force refresh cluster cache"),
+    ):
+        """List all ParallelCluster instances across configured regions.
+
+        Returns cluster information including status, head node details,
+        compute fleet status, and relevant tags.
+
+        Uses caching to reduce API calls (5 minute TTL by default).
+        Set refresh=true to force a cache refresh.
+        """
+        try:
+            from daylib.cluster_service import ClusterService
+
+            allowed_regions = settings.get_allowed_regions()
+            if not allowed_regions:
+                return {
+                    "clusters": [],
+                    "regions": [],
+                    "error": "No regions configured. Set DAYU_ALLOWED_REGIONS environment variable.",
+                }
+
+            service = ClusterService(
+                regions=allowed_regions,
+                aws_profile=settings.aws_profile,
+                cache_ttl_seconds=300,
+            )
+
+            clusters_by_region = service.get_clusters_by_region(force_refresh=refresh)
+            all_clusters = []
+            for region_clusters in clusters_by_region.values():
+                for cluster in region_clusters:
+                    all_clusters.append(cluster.to_dict())
+
+            return {
+                "clusters": all_clusters,
+                "regions": allowed_regions,
+                "total_count": len(all_clusters),
+                "cached": not refresh,
+            }
+        except Exception as e:
+            LOGGER.error(f"Failed to list clusters: {e}")
+            return {
+                "clusters": [],
+                "regions": settings.get_allowed_regions(),
+                "error": str(e),
+            }
 
     # ========== Customer Portal Routes ==========
 

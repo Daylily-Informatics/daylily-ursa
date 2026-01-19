@@ -1221,5 +1221,50 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
             _get_template_context(request, deps, customer=customer, active_page="support"),
         )
 
+    # ========== Clusters Routes ==========
+
+    @router.get("/portal/clusters", response_class=HTMLResponse)
+    async def portal_clusters(request: Request):
+        """Clusters page - shows ParallelCluster instances across regions."""
+        auth_redirect = _require_portal_auth(request)
+        if auth_redirect:
+            return auth_redirect
+        customer, _ = _get_customer_for_session(request, deps)
+
+        # Fetch cluster information
+        clusters = []
+        regions = []
+        error = None
+        try:
+            from daylib.cluster_service import ClusterService
+
+            allowed_regions = deps.settings.get_allowed_regions()
+            regions = allowed_regions
+
+            if allowed_regions:
+                service = ClusterService(
+                    regions=allowed_regions,
+                    aws_profile=deps.settings.aws_profile,
+                    cache_ttl_seconds=300,
+                )
+                all_clusters = service.get_all_clusters()
+                clusters = [c.to_dict() for c in all_clusters]
+        except Exception as e:
+            LOGGER.error(f"Failed to fetch clusters: {e}")
+            error = str(e)
+
+        return deps.templates.TemplateResponse(
+            request,
+            "clusters.html",
+            _get_template_context(
+                request, deps,
+                customer=customer,
+                clusters=clusters,
+                regions=regions,
+                error=error,
+                active_page="clusters",
+            ),
+        )
+
     return router
 

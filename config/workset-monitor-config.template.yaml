@@ -120,9 +120,10 @@ pipeline:
   pipeline_timeout_minutes: 480
   
   # Command to export results back to S3
-  # Available variables: {cluster}, {target_uri}, {region}, {profile}, {output_dir}, 
+  # Available variables: {cluster}, {target_uri}, {region}, {profile}, {output_dir},
   #                      {workdir_name}, {workset_dir}, {pipeline_dir}, {workset}
-  export_command: ./bin/daylily-export-fsx-to-s3-from-local --cluster {cluster} --target-uri analysis_results/ubuntu/{workdir_name} --region {region} --profile {profile} --output-dir ./etc --verbose
+  # IMPORTANT: {output_dir} must be used for --output-dir to match where monitor looks for fsx_export.yaml
+  export_command: ./bin/daylily-export-fsx-to-s3-from-local --cluster {cluster} --target-uri analysis_results/ubuntu/{workdir_name} --region {region} --profile {profile} --output-dir {output_dir} --verbose
   
   # Shell initialization command run before entering pipeline directory
   login_shell_init: source ~/.bashrc

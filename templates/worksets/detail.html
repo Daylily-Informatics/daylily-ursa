@@ -200,13 +200,33 @@
                 </div>
             </div>
             
-            <!-- Logs -->
+            <!-- Pipeline Status (Live from Headnode) -->
+            <div class="card" id="pipeline-status-card">
+                <div class="card-header">
+                    <h3 class="card-title"><i class="fas fa-cogs"></i> Pipeline Status</h3>
+                    <button class="btn btn-outline btn-sm" onclick="refreshPipelineStatus('{{ workset.workset_id }}')" title="Refresh status">
+                        <i class="fas fa-sync-alt"></i>
+                    </button>
+                </div>
+                <div id="pipeline-status-content">
+                    <div class="text-center text-muted py-md">
+                        <i class="fas fa-spinner fa-spin"></i> Loading pipeline status...
+                    </div>
+                </div>
+            </div>
+
+            <!-- Processing Logs -->
             <div class="card">
                 <div class="card-header">
-                    <h3 class="card-title">Processing Logs</h3>
-                    <button class="btn btn-outline btn-sm" onclick="downloadLogs('{{ workset.workset_id }}')">
-                        <i class="fas fa-download"></i> Download
-                    </button>
+                    <h3 class="card-title"><i class="fas fa-scroll"></i> Processing Logs</h3>
+                    <div class="d-flex gap-sm">
+                        <button class="btn btn-outline btn-sm" onclick="downloadLogs('{{ workset.workset_id }}')" title="Download state history">
+                            <i class="fas fa-download"></i> History
+                        </button>
+                        <button class="btn btn-outline btn-sm" id="download-snakemake-btn" onclick="downloadSnakemakeLogs('{{ workset.workset_id }}')" title="Download Snakemake logs" style="display: none;">
+                            <i class="fas fa-file-alt"></i> Snakemake
+                        </button>
+                    </div>
                 </div>
                 <div class="code-block" style="max-height: 300px; overflow-y: auto;">
                     <pre id="workset-logs">{{ workset.logs | default('No logs available yet...') }}</pre>
@@ -260,6 +280,65 @@
                     </div>
                 </dl>
             </div>
+
+            <!-- Execution Environment -->
+            {% if workset.execution_cluster_name or workset.execution_s3_bucket %}
+            <div class="card">
+                <h3 class="card-title"><i class="fas fa-cloud"></i> Execution Environment</h3>
+                <dl style="margin: 0;">
+                    {% if workset.execution_cluster_name %}
+                    <div class="d-flex justify-between mb-sm">
+                        <dt class="text-muted">Cluster</dt>
+                        <dd><code>{{ workset.execution_cluster_name }}</code></dd>
+                    </div>
+                    {% endif %}
+                    {% if workset.execution_cluster_region %}
+                    <div class="d-flex justify-between mb-sm">
+                        <dt class="text-muted">Region</dt>
+                        <dd>{{ workset.execution_cluster_region }}</dd>
+                    </div>
+                    {% endif %}
+                    {% if is_admin and workset.execution_headnode_ip %}
+                    <div class="d-flex justify-between mb-sm">
+                        <dt class="text-muted">Headnode IP</dt>
+                        <dd><code>{{ workset.execution_headnode_ip }}</code></dd>
+                    </div>
+                    {% endif %}
+                    {% if workset.execution_s3_bucket %}
+                    <div class="d-flex justify-between mb-sm">
+                        <dt class="text-muted">Output Bucket</dt>
+                        <dd><code>{{ workset.execution_s3_bucket }}</code></dd>
+                    </div>
+                    {% endif %}
+                    {% if workset.execution_s3_prefix %}
+                    <div class="d-flex justify-between mb-sm">
+                        <dt class="text-muted">Output Prefix</dt>
+                        <dd style="word-break: break-all;"><code style="font-size: 0.75rem;">{{ workset.execution_s3_prefix }}</code></dd>
+                    </div>
+                    {% endif %}
+                    {% if workset.execution_started_at %}
+                    <div class="d-flex justify-between mb-sm">
+                        <dt class="text-muted">Execution Started</dt>
+                        <dd>{{ workset.execution_started_at }}</dd>
+                    </div>
+                    {% endif %}
+                    {% if workset.execution_ended_at %}
+                    <div class="d-flex justify-between mb-sm">
+                        <dt class="text-muted">Execution Ended</dt>
+                        <dd>{{ workset.execution_ended_at }}</dd>
+                    </div>
+                    {% endif %}
+                </dl>
+                {% if is_admin and workset.execution_headnode_ip and workset.execution_cluster_region %}
+                <div class="mt-md" style="border-top: 1px solid var(--border-color); padding-top: 0.75rem;">
+                    <span class="text-muted text-xs">SSH Command</span>
+                    <div class="code-block mt-sm" style="font-size: 0.75rem; padding: 0.5rem;">
+                        <code>ssh -i ~/.ssh/lsmc-omics-{{ workset.execution_cluster_region }}.pem ubuntu@{{ workset.execution_headnode_ip }}</code>
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+            {% endif %}
 
             <!-- DynamoDB Metrics (if available) -->
             {% if workset.metrics %}
@@ -329,9 +408,160 @@
 {% block extra_js %}
 <script src="/static/js/worksets.js?v={{ cache_bust | default('1') }}"></script>
 <script>
+// Pipeline status display
+const worksetId = '{{ workset.workset_id }}';
+const customerId = window.DaylilyConfig?.customerId;
+
+function formatBytes(bytes) {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
+function formatDuration(seconds) {
+    if (seconds < 60) return `${seconds}s`;
+    if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+    const hours = Math.floor(seconds / 3600);
+    const mins = Math.floor((seconds % 3600) / 60);
+    return `${hours}h ${mins}m`;
+}
+
+function renderPipelineStatus(status) {
+    const container = document.getElementById('pipeline-status-content');
+    if (!status) {
+        container.innerHTML = `
+            <div class="text-muted py-sm" style="padding: 1rem;">
+                <i class="fas fa-info-circle"></i> Pipeline status unavailable
+                <div style="font-size: 0.85rem; margin-top: 0.5rem;">
+                    Status is only available when a cluster is running and SSH access is configured.
+                </div>
+            </div>`;
+        return;
+    }
+
+    if (status.error_message) {
+        container.innerHTML = `
+            <div class="text-warning py-sm" style="padding: 1rem;">
+                <i class="fas fa-exclamation-triangle"></i> ${status.error_message}
+            </div>`;
+        return;
+    }
+
+    const runningBadge = status.is_running
+        ? '<span class="badge badge-success"><i class="fas fa-play"></i> Running</span>'
+        : '<span class="badge badge-secondary"><i class="fas fa-stop"></i> Not Running</span>';
+
+    const progressBar = status.steps_total > 0 ? `
+        <div style="margin: 1rem 0;">
+            <div class="d-flex justify-between mb-sm">
+                <span>Progress: ${status.steps_completed} / ${status.steps_total} steps</span>
+                <span>${status.percent_complete.toFixed(1)}%</span>
+            </div>
+            <div style="background: var(--bg-tertiary); border-radius: 4px; height: 8px; overflow: hidden;">
+                <div style="background: var(--accent); height: 100%; width: ${status.percent_complete}%; transition: width 0.3s;"></div>
+            </div>
+        </div>` : '';
+
+    const currentRule = status.current_rule
+        ? `<div class="mb-sm"><strong>Current Rule:</strong> <code>${status.current_rule}</code></div>`
+        : '';
+
+    const errorsSection = status.errors && status.errors.length > 0 ? `
+        <div class="mt-md" style="border-top: 1px solid var(--border-color); padding-top: 1rem;">
+            <strong class="text-danger"><i class="fas fa-exclamation-circle"></i> Errors (${status.errors.length}):</strong>
+            <div class="code-block mt-sm" style="max-height: 150px; overflow-y: auto; font-size: 0.8rem;">
+                <pre style="margin: 0; white-space: pre-wrap;">${status.errors.join('\n')}</pre>
+            </div>
+        </div>` : '';
+
+    // Show download button if log files exist
+    if (status.log_files && status.log_files.length > 0) {
+        document.getElementById('download-snakemake-btn').style.display = 'inline-flex';
+    }
+
+    container.innerHTML = `
+        <div style="padding: 1rem;">
+            <div class="d-flex justify-between align-center mb-md">
+                ${runningBadge}
+                <span class="text-muted" style="font-size: 0.85rem;">
+                    <i class="fas fa-clock"></i> ${formatDuration(status.duration_seconds)}
+                    &nbsp;|&nbsp;
+                    <i class="fas fa-hdd"></i> ${formatBytes(status.storage_bytes)}
+                </span>
+            </div>
+            ${progressBar}
+            ${currentRule}
+            ${status.log_files && status.log_files.length > 0 ? `
+                <div class="text-muted" style="font-size: 0.85rem;">
+                    <i class="fas fa-file-alt"></i> ${status.log_files.length} log file(s) available
+                </div>` : ''}
+            ${errorsSection}
+        </div>`;
+}
+
+async function loadPipelineStatus() {
+    if (!customerId) {
+        renderPipelineStatus(null);
+        return;
+    }
+    try {
+        const response = await DaylilyAPI.worksets.getLogs(customerId, worksetId);
+        renderPipelineStatus(response.pipeline_status);
+
+        // Also update state history if available
+        if (response.state_history && response.state_history.length > 0) {
+            const logsEl = document.getElementById('workset-logs');
+            if (logsEl) {
+                const historyText = response.state_history.map(h =>
+                    `[${h.timestamp || 'N/A'}] ${h.state || h.new_state || 'unknown'}: ${h.reason || ''}`
+                ).join('\n');
+                logsEl.textContent = historyText || 'No state history available';
+            }
+        }
+    } catch (error) {
+        console.error('Failed to load pipeline status:', error);
+        renderPipelineStatus({ error_message: 'Failed to fetch status: ' + error.message });
+    }
+}
+
+async function refreshPipelineStatus(wsId) {
+    const container = document.getElementById('pipeline-status-content');
+    container.innerHTML = `
+        <div class="text-center text-muted py-md">
+            <i class="fas fa-spinner fa-spin"></i> Refreshing...
+        </div>`;
+    await loadPipelineStatus();
+}
+
+async function downloadSnakemakeLogs(wsId) {
+    if (!customerId) return;
+    try {
+        const response = await DaylilyAPI.worksets.getLogs(customerId, wsId);
+        if (response.pipeline_status && response.pipeline_status.recent_log_lines) {
+            const content = response.pipeline_status.recent_log_lines.join('\n');
+            const blob = new Blob([content], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `workset-${wsId}-snakemake.log`;
+            a.click();
+            URL.revokeObjectURL(url);
+        } else {
+            showToast('warning', 'No Logs', 'No Snakemake log content available');
+        }
+    } catch (error) {
+        showToast('error', 'Download Failed', error.message);
+    }
+}
+
+// Load pipeline status on page load
+document.addEventListener('DOMContentLoaded', loadPipelineStatus);
+
 // Auto-refresh for in-progress worksets
 {% if workset.state == 'in_progress' %}
-setInterval(refreshWorksetDetail, 10000);
+setInterval(refreshWorksetDetail, 30000);
 {% endif %}
 </script>
 {% endblock %}

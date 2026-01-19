@@ -989,6 +989,8 @@ class WorksetMonitor:
                 message=f"Workset {workset.name} processing failed",
                 error_details=str(exc),
             )
+            # Record execution end time on error
+            self._record_execution_ended(workset)
         else:
             self._write_sentinel(
                 workset,
@@ -1002,6 +1004,8 @@ class WorksetMonitor:
                 state="complete",
                 message=f"Workset {workset.name} completed successfully",
             )
+            # Record execution end time on success
+            self._record_execution_ended(workset)
         finally:
             # Always release the lock after processing (success or error)
             self._release_workset_lock(workset)
@@ -1154,6 +1158,11 @@ class WorksetMonitor:
         LOGGER.info("Using cluster %s for workset %s", cluster_name, workset.name)
         self._update_metrics(workset, {"cluster_name": cluster_name})
 
+        # Capture execution environment metadata
+        self._capture_execution_environment(
+            workset, cluster_name, inputs.target_export_uri
+        )
+
         completed_commands: Set[str] = set()
         clone_args = inputs.clone_args
         manifest_path = inputs.manifest_path
@@ -1296,6 +1305,81 @@ class WorksetMonitor:
                 completed_commands.add(export_label)
 
         return pipeline_dir
+
+    def _capture_execution_environment(
+        self,
+        workset: Workset,
+        cluster_name: str,
+        target_export_uri: Optional[str],
+    ) -> None:
+        """Capture execution environment metadata and store in DynamoDB.
+
+        This records where and how the workset is being processed, including
+        cluster details and output locations.
+        """
+        if not self.state_db:
+            LOGGER.debug("No state_db configured; skipping execution environment capture")
+            return
+
+        now_iso = dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
+
+        # Get headnode IP (may already be cached)
+        headnode_ip: Optional[str] = None
+        try:
+            headnode_ip = self._headnode_ip(cluster_name)
+        except Exception as e:
+            LOGGER.warning("Unable to get headnode IP for %s: %s", cluster_name, str(e))
+
+        # Parse S3 bucket and prefix from export_uri
+        execution_s3_bucket: Optional[str] = None
+        execution_s3_prefix: Optional[str] = None
+        if target_export_uri:
+            if target_export_uri.startswith("s3://"):
+                uri_parts = target_export_uri[5:].split("/", 1)
+                execution_s3_bucket = uri_parts[0]
+                execution_s3_prefix = uri_parts[1] if len(uri_parts) > 1 else ""
+
+        try:
+            self.state_db.update_execution_environment(
+                workset_id=workset.name,
+                cluster_name=cluster_name,
+                cluster_region=self.config.aws.region,
+                headnode_ip=headnode_ip,
+                execution_s3_bucket=execution_s3_bucket,
+                execution_s3_prefix=execution_s3_prefix,
+                execution_started_at=now_iso,
+            )
+            LOGGER.info(
+                "Captured execution environment for %s: cluster=%s, region=%s",
+                workset.name,
+                cluster_name,
+                self.config.aws.region,
+            )
+        except Exception as e:
+            LOGGER.warning(
+                "Failed to capture execution environment for %s: %s",
+                workset.name,
+                str(e),
+            )
+
+    def _record_execution_ended(self, workset: Workset) -> None:
+        """Record execution end time in DynamoDB."""
+        if not self.state_db:
+            return
+
+        now_iso = dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
+        try:
+            self.state_db.update_execution_environment(
+                workset_id=workset.name,
+                execution_ended_at=now_iso,
+            )
+            LOGGER.debug("Recorded execution end time for %s", workset.name)
+        except Exception as e:
+            LOGGER.warning(
+                "Failed to record execution end time for %s: %s",
+                workset.name,
+                str(e),
+            )
 
     def _local_state_dir(self, workset: Workset) -> Path:
         root = self.config.pipeline.local_state_root or "~/.cache/daylily-monitor"
@@ -2560,8 +2644,17 @@ class WorksetMonitor:
 
         status_path = output_dir / FSX_EXPORT_STATUS_FILENAME
         if not status_path.exists():
+            # Check common misconfiguration: file in ./etc instead of output_dir
+            etc_path = Path("./etc") / FSX_EXPORT_STATUS_FILENAME
+            hint = ""
+            if etc_path.exists():
+                hint = (
+                    f" (Found at {etc_path.resolve()} instead - check export_command "
+                    "uses {{output_dir}} not hardcoded ./etc)"
+                )
             raise MonitorError(
-                f"Export command for {workset.name} did not produce {FSX_EXPORT_STATUS_FILENAME}"
+                f"Export command for {workset.name} did not produce {FSX_EXPORT_STATUS_FILENAME} "
+                f"at expected path {status_path}{hint}"
             )
         try:
             status_data = yaml.safe_load(status_path.read_text(encoding="utf-8"))
@@ -2587,8 +2680,36 @@ class WorksetMonitor:
         LOGGER.info(
             "Export completed for %s; results available at %s", workset.name, s3_uri
         )
+
+        # Backup export status to S3 workset directory for resilience/debugging
+        try:
+            self._backup_export_status_to_s3(workset, status_path, target_uri)
+        except Exception as exc:
+            LOGGER.warning(
+                "Failed to backup export status to S3 for %s: %s", workset.name, exc
+            )
+
         if self.config.cluster.auto_teardown:
             self._maybe_shutdown_cluster(cluster_name)
+
+    def _backup_export_status_to_s3(
+        self, workset: Workset, status_path: Path, target_uri: str
+    ) -> None:
+        """Backup fsx_export.yaml to the workset's S3 location for resilience."""
+        # Derive S3 destination from workset bucket/prefix
+        s3_key = f"{workset.prefix.rstrip('/')}/{FSX_EXPORT_STATUS_FILENAME}"
+        try:
+            self.s3_client.upload_file(
+                str(status_path),
+                workset.bucket,
+                s3_key,
+            )
+            LOGGER.info(
+                "Backed up export status to s3://%s/%s", workset.bucket, s3_key
+            )
+        except Exception as exc:
+            LOGGER.debug("S3 backup failed: %s", exc)
+            raise
 
     # ------------------------------------------------------------------
     # Cluster helpers

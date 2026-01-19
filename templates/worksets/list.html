@@ -51,7 +51,7 @@
     </div>
     
     <!-- Worksets Table -->
-    <div class="table-container">
+    <div class="table-container" style="overflow-x: auto;">
         <table class="table" id="worksets-table">
             <thead>
                 <tr>
@@ -63,10 +63,12 @@
                     <th>Workset ID</th>
                     <th>Customer</th>
                     <th>Status</th>
+                    <th>Cluster</th>
                     <th>Pipeline</th>
                     <th>Samples</th>
                     <th>Progress</th>
-                    <th>Created</th>
+                    <th>Started</th>
+                    <th>Last Updated</th>
                     <th>Cost</th>
                     <th>Actions</th>
                 </tr>
@@ -81,8 +83,8 @@
                         </label>
                     </td>
                     <td>
-                        <a href="/portal/worksets/{{ ws.workset_id }}" class="text-accent">
-                            {{ ws.workset_id[:16] }}...
+                        <a href="/portal/worksets/{{ ws.workset_id }}" class="text-accent" style="font-family: monospace; font-size: 0.8rem;">
+                            {{ ws.workset_id }}
                         </a>
                     </td>
                     <td>
@@ -94,6 +96,13 @@
                         <span class="badge badge-{{ ws.state | lower | replace('_', '-') }}">
                             {{ ws.state }}
                         </span>
+                    </td>
+                    <td>
+                        {% if ws.execution_cluster_name or ws.cluster_name %}
+                        <code style="font-size: 0.75rem;">{{ ws.execution_cluster_name or ws.cluster_name }}</code>
+                        {% else %}
+                        <span class="text-muted">—</span>
+                        {% endif %}
                     </td>
                     <td>{{ ws.pipeline_type | default('germline') }}</td>
                     <td>{{ ws.sample_count | default(0) }}</td>
@@ -114,7 +123,8 @@
                         <span class="text-muted">Pending</span>
                         {% endif %}
                     </td>
-                    <td>{{ ws.created_at | default('N/A') }}</td>
+                    <td style="font-size: 0.8rem;">{{ ws.started_at or ws.execution_started_at | default('—') }}</td>
+                    <td style="font-size: 0.8rem;">{{ ws.updated_at | default('—') }}</td>
                     <td>${{ "%.2f"|format(ws.cost_usd | default(0)) }}</td>
                     <td>
                         <div class="d-flex gap-sm">
@@ -136,7 +146,7 @@
                 {% endfor %}
                 {% else %}
                 <tr id="empty-row">
-                    <td colspan="10">
+                    <td colspan="12">
                         <div class="empty-state">
                             <div class="empty-state-icon"><i class="fas fa-folder-open"></i></div>
                             <h4 class="empty-state-title">No worksets yet</h4>

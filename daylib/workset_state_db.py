@@ -586,6 +586,82 @@ class WorksetStateDB:
         except ClientError as e:
             LOGGER.warning("Failed to update progress for %s: %s", workset_id, str(e))
 
+    def update_execution_environment(
+        self,
+        workset_id: str,
+        cluster_name: Optional[str] = None,
+        cluster_region: Optional[str] = None,
+        headnode_ip: Optional[str] = None,
+        execution_s3_bucket: Optional[str] = None,
+        execution_s3_prefix: Optional[str] = None,
+        execution_started_at: Optional[str] = None,
+        execution_ended_at: Optional[str] = None,
+    ) -> None:
+        """Update workset execution environment metadata.
+
+        This captures information about where and how the workset is being processed,
+        including cluster details and output locations.
+
+        Args:
+            workset_id: Workset identifier
+            cluster_name: Name of the ParallelCluster where workset is running
+            cluster_region: AWS region of the execution cluster
+            headnode_ip: IP address of the cluster headnode (sensitive - admin only)
+            execution_s3_bucket: S3 bucket where results will be written
+            execution_s3_prefix: S3 prefix/path for workset results
+            execution_started_at: ISO timestamp when execution began on cluster
+            execution_ended_at: ISO timestamp when execution completed
+        """
+        now_iso = dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
+
+        update_parts = ["updated_at = :now"]
+        expr_values: Dict[str, Any] = {":now": now_iso}
+
+        if cluster_name is not None:
+            update_parts.append("execution_cluster_name = :exec_cluster")
+            expr_values[":exec_cluster"] = cluster_name
+
+        if cluster_region is not None:
+            update_parts.append("execution_cluster_region = :exec_region")
+            expr_values[":exec_region"] = cluster_region
+
+        if headnode_ip is not None:
+            update_parts.append("execution_headnode_ip = :exec_ip")
+            expr_values[":exec_ip"] = headnode_ip
+
+        if execution_s3_bucket is not None:
+            update_parts.append("execution_s3_bucket = :exec_bucket")
+            expr_values[":exec_bucket"] = execution_s3_bucket
+
+        if execution_s3_prefix is not None:
+            update_parts.append("execution_s3_prefix = :exec_prefix")
+            expr_values[":exec_prefix"] = execution_s3_prefix
+
+        if execution_started_at is not None:
+            update_parts.append("execution_started_at = :exec_started")
+            expr_values[":exec_started"] = execution_started_at
+
+        if execution_ended_at is not None:
+            update_parts.append("execution_ended_at = :exec_ended")
+            expr_values[":exec_ended"] = execution_ended_at
+
+        update_expr = "SET " + ", ".join(update_parts)
+
+        try:
+            self.table.update_item(
+                Key={"workset_id": workset_id},
+                UpdateExpression=update_expr,
+                ExpressionAttributeValues=expr_values,
+            )
+            LOGGER.info(
+                "Updated execution environment for workset %s: cluster=%s, region=%s",
+                workset_id,
+                cluster_name,
+                cluster_region,
+            )
+        except ClientError as e:
+            LOGGER.warning("Failed to update execution environment for %s: %s", workset_id, str(e))
+
     def get_workset(self, workset_id: str) -> Optional[Dict[str, Any]]:
         """Retrieve workset details.
 
