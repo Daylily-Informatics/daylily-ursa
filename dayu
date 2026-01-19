@@ -157,6 +157,7 @@ cmd_help() {
     echo "  cognito-status      Check Cognito configuration status"
     echo "  cognito-update-port Update callback URLs with new port"
     echo "  cognito-set-password Set password for a Cognito user"
+    echo "  set-admin           Grant or revoke admin status for a user"
     echo ""
     echo -e "${CYAN}Monitor Commands:${NC}"
     echo "  start-monitor     Start the workset monitor daemon"
@@ -1477,6 +1478,86 @@ except Exception as e:
     echo ""
 }
 
+# ========== Command: set-admin ==========
+cmd_set_admin() {
+    echo -e "${BOLD}${BLUE}╔══════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${BOLD}${BLUE}║          Daylily Ursa - Set User Admin Status                ║${NC}"
+    echo -e "${BOLD}${BLUE}╚══════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+
+    check_aws_config
+
+    local region="${AWS_DEFAULT_REGION}"
+    local customer_table="${DAYLILY_CUSTOMER_TABLE:-daylily-customers}"
+
+    # Prompt for email
+    echo -n "Enter user email: "
+    read -r user_email
+    if [[ -z "$user_email" ]]; then
+        log_error "Email is required"
+        return 1
+    fi
+
+    # Prompt for admin status
+    echo -n "Grant admin status? (y/n): "
+    read -r admin_choice
+    local is_admin="false"
+    if [[ "$admin_choice" == "y" || "$admin_choice" == "Y" ]]; then
+        is_admin="true"
+    fi
+
+    echo ""
+    if [[ "$is_admin" == "true" ]]; then
+        log_info "Granting admin status to: $user_email"
+    else
+        log_info "Revoking admin status from: $user_email"
+    fi
+
+    $PYTHON_PATH -c "
+import sys
+sys.path.insert(0, '${SCRIPT_DIR}')
+
+from daylib.workset_customer import CustomerManager
+
+region = '${region}'
+profile = '${AWS_PROFILE}' or None
+customer_table = '${customer_table}'
+email = '${user_email}'
+is_admin = ${is_admin}
+
+try:
+    manager = CustomerManager(
+        region=region,
+        profile=profile,
+        customer_table_name=customer_table,
+    )
+
+    success = manager.set_admin_status(email, is_admin)
+
+    if success:
+        status = 'granted' if is_admin else 'revoked'
+        print(f'✓ Admin status {status} for {email}')
+        print()
+        if is_admin:
+            print('User now has admin privileges:')
+            print('  - Can view all clusters and headnode IPs')
+            print('  - Can see SSH connection commands')
+            print('  - Can access admin-only features')
+        else:
+            print('User no longer has admin privileges.')
+    else:
+        print(f'✗ Failed to update admin status for {email}')
+        print()
+        print('  Make sure the user exists in the customer database.')
+        print('  Users must register through the portal first.')
+        sys.exit(1)
+except Exception as e:
+    print(f'✗ Error: {e}')
+    sys.exit(1)
+"
+    echo ""
+}
+
 # ========== Command: genenv ==========
 cmd_genenv() {
     echo -e "${BOLD}${BLUE}Generate .env Configuration File${NC}"
@@ -1878,6 +1959,9 @@ main() {
             ;;
         cognito-set-password)
             cmd_cognito_set_password
+            ;;
+        set-admin)
+            cmd_set_admin
             ;;
         genenv|env)
             cmd_genenv
