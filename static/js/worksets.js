@@ -56,7 +56,7 @@ function clearSelection() {
 
 // Refresh worksets list
 async function refreshWorksets() {
-    const customerId = window.DaylilyConfig?.customerId;
+    const customerId = window.UrsaConfig?.customerId;
     if (!customerId) return;
     
     showLoading('Refreshing worksets...');
@@ -76,7 +76,7 @@ async function refreshWorksets() {
 async function cancelWorkset(worksetId) {
     if (!confirm('Are you sure you want to cancel this workset?')) return;
     
-    const customerId = window.DaylilyConfig?.customerId;
+    const customerId = window.UrsaConfig?.customerId;
     if (!customerId) return;
     
     showLoading('Cancelling workset...');
@@ -94,7 +94,7 @@ async function cancelWorkset(worksetId) {
 
 // Retry workset
 async function retryWorkset(worksetId) {
-    const customerId = window.DaylilyConfig?.customerId;
+    const customerId = window.UrsaConfig?.customerId;
     if (!customerId) return;
     
     showLoading('Retrying workset...');
@@ -120,7 +120,7 @@ async function bulkCancel() {
     showLoading('Cancelling worksets...');
 
     try {
-        const customerId = window.DaylilyConfig?.customerId;
+        const customerId = window.UrsaConfig?.customerId;
         if (!customerId) return;
 
         let successCount = 0;
@@ -176,7 +176,7 @@ async function bulkArchive() {
     const reason = prompt('Enter reason for archiving (optional):');
     if (reason === null) return; // User cancelled
 
-    const customerId = window.DaylilyConfig?.customerId;
+    const customerId = window.UrsaConfig?.customerId;
     if (!customerId) return;
 
     showLoading(`Archiving ${archivable.length} worksets...`);
@@ -257,7 +257,7 @@ async function bulkDelete() {
     const reason = prompt('Enter reason for deletion (optional):');
     if (reason === null) return; // User cancelled
 
-    const customerId = window.DaylilyConfig?.customerId;
+    const customerId = window.UrsaConfig?.customerId;
     if (!customerId) return;
 
     const deleteType = hardDelete ? 'permanently deleting' : 'deleting';
@@ -302,7 +302,7 @@ function getSelectedWorksets() {
 async function submitWorkset(event) {
     event.preventDefault();
 
-    const customerId = window.DaylilyConfig?.customerId;
+    const customerId = window.UrsaConfig?.customerId;
     if (!customerId) {
         showToast('error', 'Error', 'Customer ID not found');
         return;
@@ -393,7 +393,7 @@ async function refreshWorksetDetail() {
 
 // Download logs
 async function downloadLogs(worksetId) {
-    const customerId = window.DaylilyConfig?.customerId;
+    const customerId = window.UrsaConfig?.customerId;
     if (!customerId) return;
 
     try {
@@ -415,7 +415,7 @@ async function archiveWorkset(worksetId) {
     const reason = prompt('Enter reason for archiving (optional):');
     if (reason === null) return; // User cancelled
 
-    const customerId = window.DaylilyConfig?.customerId;
+    const customerId = window.UrsaConfig?.customerId;
     if (!customerId) return;
 
     showLoading('Archiving workset...');
@@ -444,7 +444,7 @@ async function deleteWorkset(worksetId) {
     const reason = prompt('Enter reason for deletion (optional):');
     if (reason === null) return; // User cancelled
 
-    const customerId = window.DaylilyConfig?.customerId;
+    const customerId = window.UrsaConfig?.customerId;
     if (!customerId) return;
 
     showLoading(hardDelete ? 'Permanently deleting workset...' : 'Deleting workset...');
@@ -464,7 +464,7 @@ async function deleteWorkset(worksetId) {
 async function restoreWorkset(worksetId) {
     if (!confirm('Restore this workset? It will be set back to ready state.')) return;
 
-    const customerId = window.DaylilyConfig?.customerId;
+    const customerId = window.UrsaConfig?.customerId;
     if (!customerId) return;
 
     showLoading('Restoring workset...');
@@ -538,7 +538,7 @@ async function loadFilesetOptions() {
     const select = document.getElementById('fileset-select');
     if (!select) return;
 
-    const customerId = window.DaylilyConfig?.customerId;
+    const customerId = window.UrsaConfig?.customerId;
     if (!customerId) return;
 
     try {
@@ -659,7 +659,7 @@ function previewManifest(input) {
 
 // Refresh saved manifests list
 async function refreshSavedManifestsList() {
-    const customerId = window.DaylilyConfig?.customerId;
+    const customerId = window.UrsaConfig?.customerId;
     if (!customerId) {
         console.warn('No customer ID available for loading manifests');
         return;
@@ -711,7 +711,7 @@ async function onSavedManifestSelected() {
         return;
     }
 
-    const customerId = window.DaylilyConfig?.customerId;
+    const customerId = window.UrsaConfig?.customerId;
     if (!customerId) return;
 
     try {

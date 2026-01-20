@@ -62,7 +62,8 @@
                     </th>
                     <th>Workset ID</th>
                     <th>Customer</th>
-                    <th>Status</th>
+                    <th>DynamoDB Status</th>
+                    <th>S3 Status</th>
                     <th>Cluster</th>
                     <th>Pipeline</th>
                     <th>Samples</th>
@@ -95,6 +96,11 @@
                     <td>
                         <span class="badge badge-{{ ws.state | lower | replace('_', '-') }}">
                             {{ ws.state }}
+                        </span>
+                    </td>
+                    <td>
+                        <span class="badge badge-{{ ws.s3_status | default('unknown') | lower | replace('_', '-') }}" title="Status from S3 sentinel files">
+                            {{ ws.s3_status | default('unknown') }}
                         </span>
                     </td>
                     <td>

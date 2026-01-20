@@ -4,7 +4,7 @@
 
 // Global state
 const DaylilyPortal = {
-    config: window.DaylilyConfig || {},
+    config: window.UrsaConfig || {},
     toasts: [],
 };
 

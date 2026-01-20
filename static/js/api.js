@@ -3,7 +3,7 @@
  */
 
 const DaylilyAPI = {
-    baseUrl: window.DaylilyConfig?.apiBase || '',
+    baseUrl: window.UrsaConfig?.apiBase || '',
 
     // Generic request method
     async request(endpoint, options = {}) {
@@ -19,8 +19,8 @@ const DaylilyAPI = {
         };
 
         // Add CSRF token if available
-        if (window.DaylilyConfig?.csrfToken) {
-            config.headers['X-CSRF-Token'] = window.DaylilyConfig.csrfToken;
+        if (window.UrsaConfig?.csrfToken) {
+            config.headers['X-CSRF-Token'] = window.UrsaConfig.csrfToken;
         }
 
         try {
@@ -210,7 +210,7 @@ const DaylilyAPI = {
 
 // Refresh dashboard stats
 async function refreshDashboardStats() {
-    const customerId = window.DaylilyConfig?.customerId;
+    const customerId = window.UrsaConfig?.customerId;
     if (!customerId) return;
     
     try {

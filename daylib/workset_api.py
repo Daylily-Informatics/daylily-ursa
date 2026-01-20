@@ -457,20 +457,27 @@ def create_app(
     @app.post("/worksets", response_model=WorksetResponse, status_code=status.HTTP_201_CREATED, tags=["worksets"])
     async def create_workset(workset: WorksetCreate):
         """Register a new workset."""
-        success = state_db.register_workset(
-            workset_id=workset.workset_id,
-            bucket=workset.bucket,
-            prefix=workset.prefix,
-            priority=workset.priority,
-            metadata=workset.metadata,
-        )
-        
+        try:
+            success = state_db.register_workset(
+                workset_id=workset.workset_id,
+                bucket=workset.bucket,
+                prefix=workset.prefix,
+                priority=workset.priority,
+                metadata=workset.metadata,
+                customer_id=workset.customer_id,
+            )
+        except ValueError as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(e),
+            )
+
         if not success:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f"Workset {workset.workset_id} already exists",
             )
-        
+
         # Retrieve the created workset
         created = state_db.get_workset(workset.workset_id)
         if not created:
@@ -1630,14 +1637,20 @@ def create_app(
                 except ValueError:
                     ws_priority = WorksetPriority.NORMAL
 
-                success = state_db.register_workset(
-                    workset_id=workset_id,
-                    bucket=bucket,
-                    prefix=prefix,
-                    priority=ws_priority,
-                    metadata=metadata,
-                    customer_id=customer_id,
-                )
+                try:
+                    success = state_db.register_workset(
+                        workset_id=workset_id,
+                        bucket=bucket,
+                        prefix=prefix,
+                        priority=ws_priority,
+                        metadata=metadata,
+                        customer_id=customer_id,
+                    )
+                except ValueError as e:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=str(e),
+                    )
 
             if not success:
                 raise HTTPException(
@@ -2045,6 +2058,113 @@ def create_app(
                 "workset_id": workset_id,
                 "state_history": history,
                 "pipeline_status": pipeline_status,
+            }
+
+        @app.get("/api/customers/{customer_id}/worksets/{workset_id}/performance-metrics", tags=["customer-worksets"])
+        async def get_customer_workset_performance_metrics(
+            customer_id: str,
+            workset_id: str,
+            force_refresh: bool = Query(False, description="Force refresh from headnode even if cached"),
+        ):
+            """Get performance metrics for a customer's workset.
+
+            Metrics are pulled from the cluster headnode:
+            - alignment_stats: Per-sample alignment quality metrics from alignstats_combo_mqc.tsv
+            - benchmark_data: Per-rule performance metrics from rules_benchmark_data_singleton.tsv
+            - cost_summary: Computed per-sample and total costs
+
+            Caching behavior:
+            - While workset is running/pending: fetches fresh data from headnode
+            - Once complete/error: fetches once, then returns cached data
+            - Use force_refresh=true to bypass cache
+            """
+            if not customer_manager:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Customer management not configured",
+                )
+
+            config = customer_manager.get_customer_config(customer_id)
+            if not config:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Customer {customer_id} not found",
+                )
+
+            workset = state_db.get_workset(workset_id)
+            if not workset:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Workset {workset_id} not found",
+                )
+
+            # Verify workset belongs to this customer
+            if not verify_workset_ownership(workset, customer_id):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Workset does not belong to this customer",
+                )
+
+            workset_state = workset.get("state", "")
+            is_terminal_state = workset_state in ("complete", "error", "archived", "deleted")
+
+            # Check for cached metrics first
+            if not force_refresh:
+                cached = state_db.get_performance_metrics(workset_id)
+                if cached and cached.get("is_final"):
+                    # Have final cached metrics - return them
+                    return {
+                        "workset_id": workset_id,
+                        "cached": True,
+                        "is_final": True,
+                        **cached.get("metrics", {}),
+                    }
+
+            # Need to fetch from headnode
+            metrics_data = None
+            if PIPELINE_STATUS_AVAILABLE and PipelineStatusFetcher is not None:
+                cluster_name = workset.get("cluster_name")
+                workset_name = workset.get("name") or workset.get("workset_name")
+
+                if cluster_name and workset_name:
+                    try:
+                        fetcher = PipelineStatusFetcher(
+                            ssh_user=settings.pipeline_ssh_user,
+                            ssh_identity_file=settings.pipeline_ssh_identity_file,
+                            timeout=settings.pipeline_ssh_timeout,
+                            clone_dest_root=settings.pipeline_clone_dest_root,
+                            repo_dir_name=settings.pipeline_repo_dir_name,
+                        )
+
+                        headnode_ip = fetcher.get_headnode_ip(
+                            cluster_name,
+                            region=settings.get_effective_region(),
+                            profile=settings.aws_profile,
+                        )
+
+                        if headnode_ip:
+                            metrics_data = fetcher.fetch_performance_metrics(
+                                headnode_ip, workset_name
+                            )
+                    except Exception as e:
+                        LOGGER.warning(
+                            "Failed to fetch performance metrics for %s: %s",
+                            workset_id,
+                            str(e),
+                        )
+
+            # Cache the results
+            if metrics_data:
+                # Cache with is_final=True if workset is in terminal state
+                state_db.update_performance_metrics(
+                    workset_id, metrics_data, is_final=is_terminal_state
+                )
+
+            return {
+                "workset_id": workset_id,
+                "cached": False,
+                "is_final": is_terminal_state,
+                **(metrics_data or {"alignment_stats": None, "benchmark_data": None, "cost_summary": None}),
             }
 
         @app.get(
@@ -2509,6 +2629,7 @@ def create_app(
     async def list_clusters(
         request: Request,
         refresh: bool = Query(False, description="Force refresh cluster cache"),
+        fetch_status: bool = Query(False, description="Fetch SSH-based status (budget/jobs) for running headnodes"),
     ):
         """List all ParallelCluster instances across configured regions.
 
@@ -2517,6 +2638,7 @@ def create_app(
 
         Uses caching to reduce API calls (5 minute TTL by default).
         Set refresh=true to force a cache refresh.
+        Set fetch_status=true to also fetch budget and job queue info via SSH.
         """
         try:
             from daylib.cluster_service import ClusterService
@@ -2526,7 +2648,7 @@ def create_app(
                 return {
                     "clusters": [],
                     "regions": [],
-                    "error": "No regions configured. Set DAYU_ALLOWED_REGIONS environment variable.",
+                    "error": "No regions configured. Set URSA_ALLOWED_REGIONS environment variable.",
                 }
 
             service = ClusterService(
@@ -2535,17 +2657,18 @@ def create_app(
                 cache_ttl_seconds=300,
             )
 
-            clusters_by_region = service.get_clusters_by_region(force_refresh=refresh)
-            all_clusters = []
-            for region_clusters in clusters_by_region.values():
-                for cluster in region_clusters:
-                    all_clusters.append(cluster.to_dict())
+            all_clusters = service.get_all_clusters_with_status(
+                force_refresh=refresh,
+                fetch_ssh_status=fetch_status,
+            )
+            clusters_dicts = [c.to_dict() for c in all_clusters]
 
             return {
-                "clusters": all_clusters,
+                "clusters": clusters_dicts,
                 "regions": allowed_regions,
-                "total_count": len(all_clusters),
+                "total_count": len(clusters_dicts),
                 "cached": not refresh,
+                "status_fetched": fetch_status,
             }
         except Exception as e:
             LOGGER.error(f"Failed to list clusters: {e}")
@@ -2568,6 +2691,15 @@ def create_app(
         if static_dir.exists():
             app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
+        # Initialize biospecimen registry for portal (optional)
+        biospecimen_registry_for_portal = None
+        if BIOSPECIMEN_AVAILABLE:
+            try:
+                biospecimen_registry_for_portal = BiospecimenRegistry(region=region, profile=profile)
+                LOGGER.info("Biospecimen registry initialized for portal")
+            except Exception as e:
+                LOGGER.warning("Failed to initialize biospecimen registry for portal: %s", str(e))
+
         # Portal routes are now in daylib/routes/portal.py
         from daylib.routes.portal import create_portal_router, PortalDependencies
         portal_deps = PortalDependencies(
@@ -2579,6 +2711,7 @@ def create_app(
             customer_manager=customer_manager,
             file_registry=file_registry,
             linked_bucket_manager=linked_bucket_manager,
+            biospecimen_registry=biospecimen_registry_for_portal,
         )
         portal_router = create_portal_router(portal_deps)
         app.include_router(portal_router)

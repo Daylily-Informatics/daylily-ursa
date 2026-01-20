@@ -378,3 +378,71 @@ class TestAcquireReleaseLock:
         assert result is True
         mock_state_db.release_lock.assert_called_once()
 
+
+class TestMonitorWorksetExistenceCheck:
+    """Tests for monitor's workset existence check - monitor should NEVER create worksets."""
+
+    @pytest.fixture
+    def mock_state_db_for_monitor(self):
+        """Create mock WorksetStateDB for monitor tests."""
+        mock_db = MagicMock()
+        return mock_db
+
+    def test_workset_exists_returns_true_when_found(self, mock_state_db_for_monitor):
+        """Test that _workset_exists_in_dynamodb returns True when workset exists."""
+        from daylib.workset_monitor import WorksetMonitor
+
+        mock_state_db_for_monitor.get_workset.return_value = {
+            "workset_id": "test-ws-001",
+            "state": "ready",
+        }
+
+        monitor = WorksetMonitor.__new__(WorksetMonitor)
+        monitor.state_db = mock_state_db_for_monitor
+
+        result = monitor._workset_exists_in_dynamodb("test-ws-001")
+
+        assert result is True
+        mock_state_db_for_monitor.get_workset.assert_called_once_with("test-ws-001")
+
+    def test_workset_exists_returns_false_when_not_found(self, mock_state_db_for_monitor):
+        """Test that _workset_exists_in_dynamodb returns False when workset doesn't exist."""
+        from daylib.workset_monitor import WorksetMonitor
+
+        mock_state_db_for_monitor.get_workset.return_value = None
+
+        monitor = WorksetMonitor.__new__(WorksetMonitor)
+        monitor.state_db = mock_state_db_for_monitor
+
+        result = monitor._workset_exists_in_dynamodb("unknown-ws")
+
+        assert result is False
+        mock_state_db_for_monitor.get_workset.assert_called_once_with("unknown-ws")
+
+    def test_workset_exists_returns_false_when_no_state_db(self):
+        """Test that _workset_exists_in_dynamodb returns False when state_db is None."""
+        from daylib.workset_monitor import WorksetMonitor
+
+        monitor = WorksetMonitor.__new__(WorksetMonitor)
+        monitor.state_db = None
+
+        result = monitor._workset_exists_in_dynamodb("test-ws-001")
+
+        assert result is False
+
+    def test_monitor_does_not_create_worksets(self, mock_state_db_for_monitor):
+        """Test that monitor does NOT call register_workset for unknown worksets."""
+        from daylib.workset_monitor import WorksetMonitor
+
+        # Workset doesn't exist in DynamoDB
+        mock_state_db_for_monitor.get_workset.return_value = None
+
+        monitor = WorksetMonitor.__new__(WorksetMonitor)
+        monitor.state_db = mock_state_db_for_monitor
+
+        # Check existence - should return False
+        result = monitor._workset_exists_in_dynamodb("new-workset")
+
+        assert result is False
+        # Most importantly: register_workset should NOT be called
+        mock_state_db_for_monitor.register_workset.assert_not_called()

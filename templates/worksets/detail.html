@@ -372,6 +372,50 @@
             </div>
             {% endif %}
 
+            <!-- Performance Metrics (fetched from headnode) -->
+            <div class="card" id="performance-metrics-card" style="display: none;">
+                <h3 class="card-title"><i class="fas fa-tachometer-alt"></i> Performance Metrics</h3>
+                <div id="performance-metrics-loading" class="text-muted text-center py-md">
+                    <i class="fas fa-spinner fa-spin"></i> Loading metrics...
+                </div>
+                <div id="performance-metrics-content" style="display: none;">
+                    <!-- Cost Summary -->
+                    <div id="cost-summary-section" style="display: none;">
+                        <h4 class="text-sm text-muted mb-sm"><i class="fas fa-dollar-sign"></i> Cost Summary</h4>
+                        <dl style="margin: 0 0 1rem 0;">
+                            <div class="d-flex justify-between mb-sm">
+                                <dt class="text-muted">Total Cost</dt>
+                                <dd><strong id="total-cost">-</strong></dd>
+                            </div>
+                            <div class="d-flex justify-between mb-sm">
+                                <dt class="text-muted">Rules Executed</dt>
+                                <dd id="rule-count">-</dd>
+                            </div>
+                            <div class="d-flex justify-between mb-sm">
+                                <dt class="text-muted">Samples</dt>
+                                <dd id="sample-count">-</dd>
+                            </div>
+                        </dl>
+                        <details class="mb-md">
+                            <summary class="text-sm text-muted cursor-pointer">Per-Sample Costs</summary>
+                            <div id="per-sample-costs" class="mt-sm" style="font-size: 0.85rem;"></div>
+                        </details>
+                    </div>
+
+                    <!-- Alignment Stats -->
+                    <div id="alignment-stats-section" style="display: none;">
+                        <h4 class="text-sm text-muted mb-sm"><i class="fas fa-align-left"></i> Alignment Statistics</h4>
+                        <div id="alignment-stats-table" style="overflow-x: auto; font-size: 0.8rem;">
+                        </div>
+                    </div>
+
+                    <!-- No metrics message -->
+                    <div id="no-metrics-message" class="text-muted text-center py-md" style="display: none;">
+                        <i class="fas fa-info-circle"></i> Metrics not yet available. They will appear once the pipeline completes.
+                    </div>
+                </div>
+            </div>
+
             <!-- Results (if completed) -->
             {% if workset.state == 'completed' %}
             <div class="card">
@@ -556,12 +600,106 @@ async function downloadSnakemakeLogs(wsId) {
     }
 }
 
+// Performance Metrics
+async function loadPerformanceMetrics(forceRefresh = false) {
+    if (!customerId) return;
+
+    const card = document.getElementById('performance-metrics-card');
+    const loading = document.getElementById('performance-metrics-loading');
+    const content = document.getElementById('performance-metrics-content');
+    const costSection = document.getElementById('cost-summary-section');
+    const alignSection = document.getElementById('alignment-stats-section');
+    const noMetrics = document.getElementById('no-metrics-message');
+
+    card.style.display = 'block';
+    loading.style.display = 'block';
+    content.style.display = 'none';
+
+    try {
+        const url = `/api/customers/${customerId}/worksets/${worksetId}/performance-metrics${forceRefresh ? '?force_refresh=true' : ''}`;
+        const response = await fetch(url);
+        if (!response.ok) throw new Error('Failed to fetch metrics');
+        const data = await response.json();
+
+        loading.style.display = 'none';
+        content.style.display = 'block';
+
+        let hasMetrics = false;
+
+        // Render cost summary
+        if (data.cost_summary) {
+            hasMetrics = true;
+            costSection.style.display = 'block';
+            document.getElementById('total-cost').textContent = `$${data.cost_summary.total_cost.toFixed(4)}`;
+            document.getElementById('rule-count').textContent = data.cost_summary.rule_count;
+            document.getElementById('sample-count').textContent = data.cost_summary.sample_count;
+
+            // Per-sample costs
+            const perSampleDiv = document.getElementById('per-sample-costs');
+            const perSampleCosts = data.cost_summary.per_sample_costs || {};
+            const sortedSamples = Object.entries(perSampleCosts).sort((a, b) => b[1] - a[1]);
+            perSampleDiv.innerHTML = sortedSamples.map(([sample, cost]) =>
+                `<div class="d-flex justify-between mb-xs">
+                    <span class="text-muted">${sample}</span>
+                    <span>$${cost.toFixed(4)}</span>
+                </div>`
+            ).join('');
+        } else {
+            costSection.style.display = 'none';
+        }
+
+        // Render alignment stats
+        if (data.alignment_stats && data.alignment_stats.length > 0) {
+            hasMetrics = true;
+            alignSection.style.display = 'block';
+            const tableDiv = document.getElementById('alignment-stats-table');
+
+            // Key columns to display
+            const keyColumns = ['Sample', 'AlignedBasesPct', 'MappedReadsPct', 'WgsCoverageMean', 'DuplicationRate'];
+            const stats = data.alignment_stats;
+            const allCols = Object.keys(stats[0] || {});
+            const displayCols = keyColumns.filter(c => allCols.includes(c));
+            if (displayCols.length === 0) displayCols.push(...allCols.slice(0, 5));
+
+            let html = '<table style="width: 100%; border-collapse: collapse;">';
+            html += '<thead><tr>' + displayCols.map(c => `<th style="padding: 4px 8px; border-bottom: 1px solid var(--border-color); text-align: left;">${c}</th>`).join('') + '</tr></thead>';
+            html += '<tbody>';
+            for (const row of stats) {
+                html += '<tr>' + displayCols.map(c => {
+                    let val = row[c] || '-';
+                    if (typeof val === 'number' || !isNaN(parseFloat(val))) {
+                        val = parseFloat(val).toFixed(2);
+                    }
+                    return `<td style="padding: 4px 8px; border-bottom: 1px solid var(--border-color);">${val}</td>`;
+                }).join('') + '</tr>';
+            }
+            html += '</tbody></table>';
+            tableDiv.innerHTML = html;
+        } else {
+            alignSection.style.display = 'none';
+        }
+
+        noMetrics.style.display = hasMetrics ? 'none' : 'block';
+
+    } catch (error) {
+        console.error('Failed to load performance metrics:', error);
+        loading.style.display = 'none';
+        content.style.display = 'block';
+        noMetrics.style.display = 'block';
+        noMetrics.innerHTML = '<i class="fas fa-exclamation-triangle"></i> Failed to load metrics';
+    }
+}
+
 // Load pipeline status on page load
-document.addEventListener('DOMContentLoaded', loadPipelineStatus);
+document.addEventListener('DOMContentLoaded', () => {
+    loadPipelineStatus();
+    loadPerformanceMetrics();
+});
 
 // Auto-refresh for in-progress worksets
-{% if workset.state == 'in_progress' %}
+{% if workset.state == 'in_progress' or workset.state == 'running' or workset.state == 'pending' %}
 setInterval(refreshWorksetDetail, 30000);
+setInterval(() => loadPerformanceMetrics(false), 60000); // Refresh metrics every 60s
 {% endif %}
 </script>
 {% endblock %}

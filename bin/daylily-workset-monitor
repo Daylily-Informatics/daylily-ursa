@@ -90,6 +90,13 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         default=os.environ.get("DAYLILY_SNS_TOPIC_ARN"),
         help="SNS topic ARN for notifications",
     )
+    parser.add_argument(
+        "--parallel",
+        type=int,
+        default=1,
+        metavar="N",
+        help="Maximum number of worksets to run in parallel (default: 1)",
+    )
     return parser.parse_args(argv)
 
 
@@ -172,6 +179,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     config = MonitorConfig.load(args.config)
     if args.once and not args.actions:
         config.monitor.continuous = False
+
+    # Apply command-line parallel setting
+    if args.parallel > 0:
+        config.monitor.max_concurrent_worksets = args.parallel
 
     # Initialize integration components
     components = setup_integration_components(config, args)

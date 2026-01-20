@@ -1,13 +1,13 @@
 #!/bin/sh
-# Daylily Ursa Environment Activation Script
+# Ursa Environment Activation Script
 # ==========================================
 # This script must be SOURCED, not executed:
-#   source ./dayu_activate
+#   source ./ursa_activate
 #
 # It will:
-#   1. Build the DAYU conda environment from config/dayu_env.yaml if it doesn't exist
-#   2. Activate the DAYU conda environment
-#   3. Add the bin/ directory to PATH so the 'dayu' CLI is available
+#   1. Build the URSA conda environment from config/ursa_env.yaml if it doesn't exist
+#   2. Activate the URSA conda environment
+#   3. Add the bin/ directory to PATH so the 'ursa' CLI is available
 #
 # Prerequisites:
 #   - conda or mamba must be installed and available in PATH
@@ -24,9 +24,9 @@ BOLD='\033[1m'
 NC='\033[0m' # No Color
 
 # ========== Configuration ==========
-CONDA_ENV_NAME="DAYU"
+CONDA_ENV_NAME="URSA"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-ENV_FILE="${SCRIPT_DIR}/config/dayu_env.yaml"
+ENV_FILE="${SCRIPT_DIR}/config/ursa_env.yaml"
 
 # ========== Helper Functions ==========
 log_info() {
@@ -47,30 +47,30 @@ log_error() {
 
 # ========== Check Prerequisites ==========
 # Detect conda command (prefer mamba if available)
-_DAYU_ACTIVATE_OK=1
+_URSA_ACTIVATE_OK=1
 if command -v mamba >/dev/null 2>&1; then
     CONDA_CMD="mamba"
 elif command -v conda >/dev/null 2>&1; then
     CONDA_CMD="conda"
 else
     log_error "Neither conda nor mamba found. Please install Miniconda or Mamba first."
-    _DAYU_ACTIVATE_OK=0
+    _URSA_ACTIVATE_OK=0
 fi
 
 # Verify env file exists
-if [ "$_DAYU_ACTIVATE_OK" -eq 1 ] && [ ! -f "$ENV_FILE" ]; then
+if [ "$_URSA_ACTIVATE_OK" -eq 1 ] && [ ! -f "$ENV_FILE" ]; then
     log_error "Environment file not found: $ENV_FILE"
-    _DAYU_ACTIVATE_OK=0
+    _URSA_ACTIVATE_OK=0
 fi
 
 # Only continue if prerequisites are met
-if [ "$_DAYU_ACTIVATE_OK" -eq 0 ]; then
-    unset _DAYU_ACTIVATE_OK
+if [ "$_URSA_ACTIVATE_OK" -eq 0 ]; then
+    unset _URSA_ACTIVATE_OK
 else
 
 # ========== Build or Activate Environment ==========
 printf "\n${BOLD}${BLUE}╔══════════════════════════════════════════════════════════════╗${NC}\n"
-printf "${BOLD}${BLUE}║          Daylily Ursa - Environment Activation               ║${NC}\n"
+printf "${BOLD}${BLUE}║          Ursa - Environment Activation               ║${NC}\n"
 printf "${BOLD}${BLUE}╚══════════════════════════════════════════════════════════════╝${NC}\n\n"
 
 # Check if environment exists
@@ -84,7 +84,7 @@ else
         log_success "Environment '${CONDA_ENV_NAME}' created successfully"
     else
         log_error "Failed to create conda environment"
-        _DAYU_ACTIVATE_OK=0
+        _URSA_ACTIVATE_OK=0
     fi
 fi
 
@@ -101,17 +101,17 @@ if [ -z "$CONDA_SHLVL" ]; then
 fi
 
 # Activate the environment
-if [ "$_DAYU_ACTIVATE_OK" -eq 1 ]; then
+if [ "$_URSA_ACTIVATE_OK" -eq 1 ]; then
     if conda activate "$CONDA_ENV_NAME" 2>/dev/null; then
         log_success "Activated conda environment: ${CONDA_ENV_NAME}"
     else
         log_error "Failed to activate environment. Try: conda activate ${CONDA_ENV_NAME}"
-        _DAYU_ACTIVATE_OK=0
+        _URSA_ACTIVATE_OK=0
     fi
 fi
 
 # ========== Setup PATH ==========
-if [ "$_DAYU_ACTIVATE_OK" -eq 1 ]; then
+if [ "$_URSA_ACTIVATE_OK" -eq 1 ]; then
     # Add bin directory to PATH if not already there
     BIN_DIR="${SCRIPT_DIR}/bin"
     if [ -d "$BIN_DIR" ]; then
@@ -126,7 +126,7 @@ if [ "$_DAYU_ACTIVATE_OK" -eq 1 ]; then
         esac
     fi
 
-    # Also add the repo root for the dayu script
+    # Also add the repo root for the ursa script
     case ":$PATH:" in
         *":${SCRIPT_DIR}:"*)
             ;;
@@ -137,7 +137,7 @@ if [ "$_DAYU_ACTIVATE_OK" -eq 1 ]; then
     esac
 
     # ========== Install Package in Development Mode ==========
-    log_info "Installing daylily-ursa in development mode..."
+    log_info "Installing ursa in development mode..."
     if pip install -e "${SCRIPT_DIR}" -q 2>/dev/null; then
         log_success "Package installed in development mode"
     else
@@ -146,64 +146,40 @@ if [ "$_DAYU_ACTIVATE_OK" -eq 1 ]; then
 fi
 
 # ========== Tab Completion ==========
-if [ "$_DAYU_ACTIVATE_OK" -eq 1 ]; then
-    # Dynamically extract commands from the dayu script's case statement
-    # Parses lines like "        help|--help|-h)" to extract "help"
-    _DAYU_COMMANDS=""
-    if [ -f "${SCRIPT_DIR}/dayu" ]; then
-        _DAYU_COMMANDS=$(grep -E '^\s+[a-z][-a-z0-9]*(\|[a-z][-a-z0-9]*)*\)$' "${SCRIPT_DIR}/dayu" 2>/dev/null | \
-            sed 's/[[:space:]]*//g' | \
-            sed 's/)$//' | \
-            tr '|' '\n' | \
-            grep -v '^--' | \
-            grep -v '^-' | \
-            sort -u | \
-            tr '\n' ' ')
-    fi
-    # Fallback if extraction fails
-    if [ -z "$_DAYU_COMMANDS" ]; then
-        _DAYU_COMMANDS="help version test lint format status clean deactivate"
+if [ "$_URSA_ACTIVATE_OK" -eq 1 ]; then
+    # Enable Typer's built-in shell completion
+    _ursa_shell="$(basename "$SHELL")"
+    if [ "$_ursa_shell" = "zsh" ]; then
+        eval "$(ursa --show-completion zsh 2>/dev/null)"
+    elif [ "$_ursa_shell" = "bash" ]; then
+        eval "$(ursa --show-completion bash 2>/dev/null)"
     fi
 
-    _dayu_completions() {
-        local cur="${COMP_WORDS[COMP_CWORD]}"
-        COMPREPLY=($(compgen -W "${_DAYU_COMMANDS}" -- "${cur}"))
-    }
-
-    # Register completion for bash
-    if [ -n "$BASH_VERSION" ]; then
-        complete -F _dayu_completions dayu
-    fi
-
-    # Register completion for zsh
-    if [ -n "$ZSH_VERSION" ]; then
-        autoload -U +X compinit && compinit 2>/dev/null
-        autoload -U +X bashcompinit && bashcompinit 2>/dev/null
-        complete -F _dayu_completions dayu
-    fi
-
-    log_success "Tab completion enabled for dayu CLI"
+    log_success "Tab completion enabled for ursa CLI"
 
     # ========== Summary ==========
     printf "\n${BOLD}${GREEN}╔══════════════════════════════════════════════════════════════╗${NC}\n"
-    printf "${BOLD}${GREEN}║  ✓ Daylily Ursa environment ready!                           ║${NC}\n"
+    printf "${BOLD}${GREEN}║  ✓ Ursa environment ready!                                   ║${NC}\n"
     printf "${BOLD}${GREEN}╚══════════════════════════════════════════════════════════════╝${NC}\n\n"
 
     printf "  ${CYAN}Conda Environment:${NC} ${CONDA_ENV_NAME}\n"
     printf "  ${CYAN}Python:${NC}           $(python --version 2>&1 | cut -d' ' -f2)\n"
     printf "  ${CYAN}Project Root:${NC}     ${SCRIPT_DIR}\n"
     printf "\n"
-    printf "  ${BOLD}Available Commands (${CYAN}%d${NC}${BOLD}):${NC}\n" $(echo $_DAYU_COMMANDS | wc -w | tr -d ' ')
-    # Print commands in columns
-    echo "$_DAYU_COMMANDS" | tr ' ' '\n' | grep -v '^$' | sort | \
-        awk '{printf "    %-20s", $1; if (NR % 3 == 0) print ""; }'
-    printf "\n\n"
-    printf "  ${BOLD}Quick Start:${NC}\n"
-    printf "    dayu help             Show detailed help for all commands\n"
-    printf "    dayu status           Check system status\n"
-    printf "    dayu start-server     Start API server\n"
+    printf "  ${BOLD}Command Groups:${NC}\n"
+    printf "    ${CYAN}ursa server${NC}   API server management (start, stop, status, logs)\n"
+    printf "    ${CYAN}ursa monitor${NC}  Workset monitor (start, stop, status, logs)\n"
+    printf "    ${CYAN}ursa aws${NC}      AWS resources (setup, status, teardown)\n"
+    printf "    ${CYAN}ursa cognito${NC}  Authentication (setup, status, set-admin)\n"
+    printf "    ${CYAN}ursa test${NC}     Testing (run, cov, lint, format, typecheck)\n"
+    printf "    ${CYAN}ursa env${NC}      Environment (status, generate, clean)\n"
     printf "\n"
-    printf "  ${BOLD}Tip:${NC} Use TAB to autocomplete dayu commands\n"
+    printf "  ${BOLD}Quick Start:${NC}\n"
+    printf "    ursa --help           Show all commands\n"
+    printf "    ursa server start     Start API server\n"
+    printf "    ursa info             Show system status\n"
+    printf "\n"
+    printf "  ${BOLD}Tip:${NC} Use TAB to autocomplete ursa commands and subcommands\n"
     printf "\n"
     printf "  ${BOLD}Deactivate:${NC}\n"
     printf "    conda deactivate\n"
@@ -214,4 +190,4 @@ fi
 fi
 
 # Cleanup
-unset _DAYU_ACTIVATE_OK
+unset _URSA_ACTIVATE_OK

@@ -136,6 +136,158 @@
                 </div>
                 {% endif %}
 
+                <!-- Cluster Info (Admin only) -->
+                {% if is_admin and cluster.budget_info %}
+                <div class="mb-md budget-section">
+                    <h4 class="text-sm text-muted mb-sm"><i class="fas fa-server"></i> Cluster Info</h4>
+                    {% if cluster.budget_info.error %}
+                    <div class="budget-error text-xs text-muted">
+                        <i class="fas fa-exclamation-triangle"></i> {{ cluster.budget_info.error }}
+                    </div>
+                    {% else %}
+                    <div class="budget-grid">
+                        <div class="budget-item">
+                            <span class="text-muted text-xs">Project</span>
+                            <div class="text-sm"><code>{{ cluster.budget_info.project_name or 'N/A' }}</code></div>
+                        </div>
+                        <div class="budget-item">
+                            <span class="text-muted text-xs">Region</span>
+                            <div class="text-sm"><code>{{ cluster.budget_info.region or 'N/A' }}</code></div>
+                        </div>
+                        {% if cluster.budget_info.reference_bucket %}
+                        <div class="budget-item" style="grid-column: span 2;">
+                            <span class="text-muted text-xs">Reference Bucket</span>
+                            <div class="text-sm"><code>s3://{{ cluster.budget_info.reference_bucket }}</code></div>
+                        </div>
+                        {% endif %}
+                    </div>
+                    <h5 class="text-xs text-muted mb-xs mt-sm"><i class="fas fa-dollar-sign"></i> AWS Budget</h5>
+                    <div class="budget-grid">
+                        <div class="budget-item">
+                            <span class="text-muted text-xs">Total Budget</span>
+                            <div class="text-sm budget-value">${{ "%.2f"|format(cluster.budget_info.total_budget or 0) }}</div>
+                        </div>
+                        <div class="budget-item">
+                            <span class="text-muted text-xs">Used</span>
+                            <div class="text-sm budget-value">${{ "%.2f"|format(cluster.budget_info.used_budget or 0) }}</div>
+                        </div>
+                        <div class="budget-item">
+                            <span class="text-muted text-xs">% Used</span>
+                            {% set pct = cluster.budget_info.percent_used or 0 %}
+                            {% set pct_class = 'success' if pct < 80 else 'warning' if pct < 100 else 'error' %}
+                            <div class="text-sm">
+                                <span class="badge badge-sm badge-{{ pct_class }}">{{ "%.1f"|format(pct) }}%</span>
+                            </div>
+                        </div>
+                    </div>
+                    {% if cluster.budget_info.fetched_at %}
+                    <div class="text-xs text-muted mt-xs">Updated: {{ cluster.budget_info.fetched_at[:19] }}</div>
+                    {% endif %}
+                    {% if cluster.budget_info.ssh_command %}
+                    <details class="mt-xs">
+                        <summary class="text-xs text-muted cursor-pointer">SSH Command</summary>
+                        <code class="text-xs d-block mt-xs" style="word-break: break-all; background: var(--bg-tertiary); padding: 0.5rem; border-radius: 4px;">{{ cluster.budget_info.ssh_command }}</code>
+                    </details>
+                    {% endif %}
+                    {% endif %}
+                </div>
+                {% endif %}
+
+                <!-- Job Queue Info (Admin only) -->
+                {% if is_admin and cluster.job_queue %}
+                <div class="mb-md job-queue-section">
+                    <h4 class="text-sm text-muted mb-sm"><i class="fas fa-tasks"></i> Slurm Job Queue</h4>
+                    {% if cluster.job_queue.error %}
+                    <div class="queue-error text-xs text-muted">
+                        <i class="fas fa-exclamation-triangle"></i> {{ cluster.job_queue.error }}
+                    </div>
+                    {% else %}
+                    <div class="job-queue-summary d-flex flex-wrap gap-md">
+                        <div class="queue-stat">
+                            <span class="queue-count">{{ cluster.job_queue.total_jobs }}</span>
+                            <span class="queue-label">Total</span>
+                        </div>
+                        <div class="queue-stat queue-running">
+                            <span class="queue-count">{{ cluster.job_queue.running_jobs }}</span>
+                            <span class="queue-label">Running</span>
+                        </div>
+                        <div class="queue-stat queue-pending">
+                            <span class="queue-count">{{ cluster.job_queue.pending_jobs }}</span>
+                            <span class="queue-label">Pending</span>
+                        </div>
+                        <div class="queue-stat queue-configuring">
+                            <span class="queue-count">{{ cluster.job_queue.configuring_jobs }}</span>
+                            <span class="queue-label">Config</span>
+                        </div>
+                        <div class="queue-stat">
+                            <span class="queue-count">{{ cluster.job_queue.total_cpus }}</span>
+                            <span class="queue-label">CPUs</span>
+                        </div>
+                    </div>
+                    {% if cluster.job_queue.jobs %}
+                    <div class="job-list mt-sm">
+                        <table class="job-table">
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>Name</th>
+                                    <th>State</th>
+                                    <th>CPUs</th>
+                                    <th>Time</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for job in cluster.job_queue.jobs[:5] %}
+                                <tr>
+                                    <td><code>{{ job.job_id }}</code></td>
+                                    <td class="job-name" title="{{ job.name }}">{{ job.name[:20] }}{% if job.name|length > 20 %}...{% endif %}</td>
+                                    <td>
+                                        {% set job_state_class = 'success' if job.state == 'RUNNING' else 'warning' if job.state == 'PENDING' else 'info' if job.state == 'CONFIGURING' else 'secondary' %}
+                                        <span class="badge badge-xs badge-{{ job_state_class }}">{{ job.state_short }}</span>
+                                    </td>
+                                    <td>{{ job.cpus }}</td>
+                                    <td>{{ job.time_used }}</td>
+                                </tr>
+                                {% endfor %}
+                                {% if cluster.job_queue.jobs|length > 5 %}
+                                {% for job in cluster.job_queue.jobs[5:] %}
+                                <tr class="job-row-hidden" data-cluster="{{ cluster.name }}" style="display: none;">
+                                    <td><code>{{ job.job_id }}</code></td>
+                                    <td class="job-name" title="{{ job.name }}">{{ job.name[:20] }}{% if job.name|length > 20 %}...{% endif %}</td>
+                                    <td>
+                                        {% set job_state_class = 'success' if job.state == 'RUNNING' else 'warning' if job.state == 'PENDING' else 'info' if job.state == 'CONFIGURING' else 'secondary' %}
+                                        <span class="badge badge-xs badge-{{ job_state_class }}">{{ job.state_short }}</span>
+                                    </td>
+                                    <td>{{ job.cpus }}</td>
+                                    <td>{{ job.time_used }}</td>
+                                </tr>
+                                {% endfor %}
+                                {% endif %}
+                            </tbody>
+                        </table>
+                        {% if cluster.job_queue.jobs|length > 5 %}
+                        <div class="text-xs text-muted mt-xs expand-jobs-link" data-cluster="{{ cluster.name }}" style="cursor: pointer;">
+                            <span class="expand-text">+ {{ cluster.job_queue.jobs|length - 5 }} more jobs</span>
+                            <span class="collapse-text" style="display: none;">− Show fewer</span>
+                        </div>
+                        {% endif %}
+                    </div>
+                    {% elif cluster.job_queue.total_jobs == 0 %}
+                    <div class="text-xs text-muted">No jobs in queue</div>
+                    {% endif %}
+                    {% if cluster.job_queue.fetched_at %}
+                    <div class="text-xs text-muted mt-xs">Updated: {{ cluster.job_queue.fetched_at[:19] }}</div>
+                    {% endif %}
+                    {% if cluster.job_queue.ssh_command %}
+                    <details class="mt-xs">
+                        <summary class="text-xs text-muted cursor-pointer">SSH Command</summary>
+                        <code class="text-xs d-block mt-xs" style="word-break: break-all; background: var(--bg-tertiary); padding: 0.5rem; border-radius: 4px;">{{ cluster.job_queue.ssh_command }}</code>
+                    </details>
+                    {% endif %}
+                    {% endif %}
+                </div>
+                {% endif %}
+
                 <!-- Fleet & Scheduler -->
                 <div class="mb-md">
                     <div class="d-flex flex-wrap gap-lg">
@@ -225,6 +377,110 @@
 .btn-ghost:hover {
     color: var(--color-accent);
 }
+/* Budget Section */
+.budget-section {
+    background: rgba(0, 217, 166, 0.05);
+    border-radius: 0.5rem;
+    padding: 0.75rem;
+    border-left: 3px solid var(--color-success);
+}
+.budget-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 0.75rem;
+}
+.budget-item {
+    text-align: center;
+}
+.budget-value {
+    font-weight: 600;
+    font-family: 'JetBrains Mono', monospace;
+}
+.budget-error {
+    color: var(--color-warning);
+}
+/* Job Queue Section */
+.job-queue-section {
+    background: rgba(23, 162, 184, 0.05);
+    border-radius: 0.5rem;
+    padding: 0.75rem;
+    border-left: 3px solid var(--color-info);
+}
+.job-queue-summary {
+    display: flex;
+    gap: 1rem;
+}
+.queue-stat {
+    text-align: center;
+    padding: 0.35rem 0.75rem;
+    background: var(--color-bg-secondary);
+    border-radius: 0.35rem;
+    min-width: 50px;
+}
+.queue-stat.queue-running {
+    background: rgba(0, 217, 166, 0.2);
+}
+.queue-stat.queue-pending {
+    background: rgba(255, 193, 7, 0.2);
+}
+.queue-stat.queue-configuring {
+    background: rgba(23, 162, 184, 0.2);
+}
+.queue-count {
+    display: block;
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: var(--color-primary);
+    line-height: 1;
+}
+.queue-label {
+    display: block;
+    font-size: 0.65rem;
+    color: var(--color-text-muted);
+    text-transform: uppercase;
+    margin-top: 0.15rem;
+}
+.job-list {
+    max-height: 200px;
+    overflow-y: auto;
+}
+.job-table {
+    width: 100%;
+    font-size: 0.75rem;
+    border-collapse: collapse;
+}
+.job-table th,
+.job-table td {
+    padding: 0.35rem 0.5rem;
+    text-align: left;
+    border-bottom: 1px solid var(--color-gray-200);
+}
+.job-table th {
+    background: var(--color-bg-secondary);
+    font-weight: 600;
+    color: var(--color-gray-600);
+}
+.job-name {
+    max-width: 120px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.badge-xs {
+    font-size: 0.6rem;
+    padding: 0.1rem 0.3rem;
+}
+.mt-xs {
+    margin-top: 0.25rem;
+}
+.queue-error {
+    color: var(--color-warning);
+}
+@media (max-width: 768px) {
+    .budget-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
 </style>
 
 <script>
@@ -290,6 +546,25 @@ function copySSHCommand(elementId) {
         showToast('SSH command copied to clipboard', 'success');
     });
 }
+
+// Expand/collapse job lists
+document.querySelectorAll('.expand-jobs-link').forEach(link => {
+    link.addEventListener('click', function() {
+        const clusterName = this.dataset.cluster;
+        const hiddenRows = document.querySelectorAll(`.job-row-hidden[data-cluster="${clusterName}"]`);
+        const expandText = this.querySelector('.expand-text');
+        const collapseText = this.querySelector('.collapse-text');
+
+        const isExpanded = hiddenRows[0]?.style.display !== 'none';
+
+        hiddenRows.forEach(row => {
+            row.style.display = isExpanded ? 'none' : '';
+        });
+
+        expandText.style.display = isExpanded ? '' : 'none';
+        collapseText.style.display = isExpanded ? 'none' : '';
+    });
+});
 </script>
 {% endblock %}
 

@@ -99,6 +99,7 @@ def convert_customer_for_template(customer_config):
             self.max_storage_gb = float(config.max_storage_gb) if config.max_storage_gb else 500
             self.billing_account_id = config.billing_account_id
             self.cost_center = config.cost_center
+            self.is_admin = getattr(config, 'is_admin', False)
 
     return TemplateCustomer(customer_config)
 
@@ -141,7 +142,8 @@ class WorksetCreate(BaseModel):
     bucket: str = Field(..., description="S3 bucket name")
     prefix: str = Field(..., description="S3 prefix for workset files")
     priority: WorksetPriority = Field(WorksetPriority.NORMAL, description="Execution priority")
-    metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
+    metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata (must include samples)")
+    customer_id: str = Field(..., description="Customer ID who owns this workset (required)")
 
 
 class WorksetResponse(BaseModel):

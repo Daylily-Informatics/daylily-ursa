@@ -72,14 +72,15 @@ class TestWorksetLifecycle:
     def test_register_to_complete_workflow(self, state_db, mock_aws):
         """Test workset from registration to completion."""
         mock_table = mock_aws["table"]
-        
+
         # Step 1: Register workset
         result = state_db.register_workset(
             workset_id="integration-ws-001",
             bucket="test-bucket",
             prefix="worksets/test/",
             priority=WorksetPriority.NORMAL,
-            metadata={"samples": 5},
+            metadata={"samples": [{"sample_id": f"S{i}"} for i in range(5)], "sample_count": 5},
+            customer_id="test-customer",
         )
         assert result is True
         
@@ -186,6 +187,7 @@ class TestValidationToProcessing:
                 bucket="test-bucket",
                 prefix="worksets/validated-ws-001/",
                 metadata={"samples": config["samples"]},
+                customer_id="test-customer",
             )
             assert result is True
 

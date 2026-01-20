@@ -51,13 +51,20 @@ def create_worksets_router(
     @router.post("/worksets", response_model=WorksetResponse, status_code=status.HTTP_201_CREATED)
     async def create_workset(workset: WorksetCreate):
         """Register a new workset."""
-        success = state_db.register_workset(
-            workset_id=workset.workset_id,
-            bucket=workset.bucket,
-            prefix=workset.prefix,
-            priority=workset.priority,
-            metadata=workset.metadata,
-        )
+        try:
+            success = state_db.register_workset(
+                workset_id=workset.workset_id,
+                bucket=workset.bucket,
+                prefix=workset.prefix,
+                priority=workset.priority,
+                metadata=workset.metadata,
+                customer_id=workset.customer_id,
+            )
+        except ValueError as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(e),
+            )
 
         if not success:
             raise HTTPException(

@@ -140,6 +140,7 @@ class MonitorOptions:
     continuous: bool = True
     sentinel_index_prefix: Optional[str] = None
     archive_prefix: Optional[str] = None
+    max_concurrent_worksets: int = 1
 
     def normalised_prefix(self) -> str:
         prefix = self.prefix.lstrip("/")
@@ -328,26 +329,68 @@ class WorksetMonitor:
         self._workset_metrics: Dict[str, Dict[str, Any]] = {}
         self._workdir_names: Dict[str, str] = {}
         self._metrics_script_cache: Optional[str] = None
+        self._current_workset: Optional[Workset] = None
+        self._command_log_buffer: Dict[str, List[str]] = {}  # workset_name -> log lines
 
     # ------------------------------------------------------------------
     # Public entrypoints
     # ------------------------------------------------------------------
+    def _count_in_progress_worksets(self, worksets: Sequence[Workset]) -> int:
+        """Count worksets that are currently in progress."""
+        count = 0
+        for workset in worksets:
+            if SENTINEL_FILES["in_progress"] in workset.sentinels:
+                count += 1
+        return count
+
     def run(self) -> None:
         LOGGER.info("Starting Daylily workset monitor in %s", self.config.aws.region)
+        LOGGER.info(
+            "Monitoring bucket: %s prefix: %s",
+            self.config.monitor.bucket,
+            self.config.monitor.normalised_prefix(),
+        )
+        LOGGER.info(
+            "Poll interval: %ds, continuous: %s, max parallel: %d",
+            self.config.monitor.poll_interval_seconds,
+            self.config.monitor.continuous,
+            self.config.monitor.max_concurrent_worksets,
+        )
         if self.config.aws.session_duration_seconds:
             self._refresh_session()
+        poll_count = 0
         while True:
+            poll_count += 1
             start_time = time.time()
             try:
                 worksets = list(self._discover_worksets())
+                in_progress_count = self._count_in_progress_worksets(worksets)
+                LOGGER.info(
+                    "Poll #%d: discovered %d workset(s), %d in progress",
+                    poll_count,
+                    len(worksets),
+                    in_progress_count,
+                )
                 self._update_sentinel_indexes(worksets)
                 for workset in worksets:
+                    # Re-check in-progress count before starting a new workset
+                    current_in_progress = self._count_in_progress_worksets(worksets)
+                    if current_in_progress >= self.config.monitor.max_concurrent_worksets:
+                        # Only skip if this workset is NOT already in progress
+                        if SENTINEL_FILES["in_progress"] not in workset.sentinels:
+                            LOGGER.debug(
+                                "Skipping %s: max parallel worksets (%d) reached",
+                                workset.name,
+                                self.config.monitor.max_concurrent_worksets,
+                            )
+                            continue
                     self._handle_workset(workset)
             except Exception:
                 LOGGER.exception("Unexpected failure while monitoring worksets")
             elapsed = time.time() - start_time
             sleep_for = max(self.config.monitor.poll_interval_seconds - elapsed, 0)
             if not self.config.monitor.continuous:
+                LOGGER.info("Single poll complete (--once mode), exiting")
                 break
             if sleep_for:
                 LOGGER.debug("Sleeping %.1fs before next poll", sleep_for)
@@ -669,13 +712,16 @@ class WorksetMonitor:
                 name = workset_prefix.rstrip("/").split("/")[-1]
                 sentinels = self._list_sentinels(workset_prefix)
                 has_required = self._verify_core_files(workset_prefix)
-                yield Workset(
+                workset = Workset(
                     name=name,
                     prefix=workset_prefix,
                     sentinels=sentinels,
                     has_required_files=has_required,
                     is_archived=is_archived,
                 )
+                # Reconcile S3 state with DynamoDB
+                self._reconcile_dynamodb_state(workset)
+                yield workset
 
     def _list_sentinels(self, workset_prefix: str) -> Dict[str, str]:
         """List all sentinel files for a workset with pagination safety."""
@@ -889,12 +935,8 @@ class WorksetMonitor:
             )
             return False
         if SENTINEL_FILES["in_progress"] in sentinels:
-            LOGGER.info(
-                "Skipping %s: currently marked in-progress (since %s)",
-                workset.name,
-                sentinels[SENTINEL_FILES["in_progress"]],
-            )
-            return False
+            # Don't skip - instead, try to resume monitoring the in-progress workset
+            return self._handle_in_progress_workset(workset)
         if SENTINEL_FILES["ready"] not in sentinels:
             LOGGER.info("Skipping %s: ready sentinel missing", workset.name)
             return False
@@ -902,6 +944,198 @@ class WorksetMonitor:
             LOGGER.warning("Skipping %s: required files missing", workset.name)
             return False
         return True
+
+    def _handle_in_progress_workset(self, workset: Workset) -> bool:
+        """Handle a workset that is marked in-progress.
+
+        This method attempts to resume monitoring of an in-progress workset.
+        It checks if the pipeline has completed (success/failure sentinel)
+        and runs the export if needed.
+
+        Returns True if the workset was fully processed (complete/error),
+        False if it should remain in-progress.
+        """
+        LOGGER.info(
+            "Checking in-progress workset %s (since %s)",
+            workset.name,
+            workset.sentinels.get(SENTINEL_FILES["in_progress"]),
+        )
+
+        # Set workset context for command logging
+        self._current_workset = workset
+
+        try:
+            return self._handle_in_progress_workset_inner(workset)
+        finally:
+            # Flush command log to S3
+            self._flush_command_log(workset)
+            # Clear workset context
+            self._current_workset = None
+
+    def _handle_in_progress_workset_inner(self, workset: Workset) -> bool:
+        """Inner implementation of _handle_in_progress_workset."""
+        # Load saved pipeline location and cluster info
+        pipeline_dir = self._load_pipeline_location(workset)
+        if not pipeline_dir:
+            LOGGER.warning(
+                "No pipeline location recorded for %s; cannot resume monitoring",
+                workset.name,
+            )
+            return False
+
+        # Load inputs to get cluster info and export URI
+        try:
+            inputs = self._load_workset_inputs(workset)
+        except Exception as e:
+            LOGGER.warning(
+                "Failed to load workset inputs for %s: %s",
+                workset.name,
+                str(e),
+            )
+            return False
+
+        cluster_name = self._ensure_cluster(inputs.work_yaml)
+
+        # Check pipeline sentinel status on headnode
+        try:
+            status = self._pipeline_sentinel_status(cluster_name, pipeline_dir)
+        except Exception as e:
+            LOGGER.warning(
+                "Failed to check pipeline status for %s: %s",
+                workset.name,
+                str(e),
+            )
+            return False
+
+        if status == "success":
+            LOGGER.info(
+                "Pipeline completed successfully for in-progress workset %s; running export",
+                workset.name,
+            )
+            # Clear tmux session markers
+            existing_session = self._load_tmux_session(workset)
+            if existing_session:
+                self._terminate_tmux_session(cluster_name, existing_session)
+                self._clear_tmux_session(workset)
+            self._clear_pipeline_start(workset)
+
+            # Run export if target URI is configured
+            try:
+                if inputs.target_export_uri:
+                    self._export_results(
+                        workset, cluster_name, inputs.target_export_uri, pipeline_dir
+                    )
+
+                # Mark complete
+                self._write_sentinel(
+                    workset,
+                    SENTINEL_FILES["complete"],
+                    dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z"),
+                )
+                # Remove in_progress sentinel
+                self._delete_sentinel(workset, SENTINEL_FILES["in_progress"])
+                workset.sentinels.pop(SENTINEL_FILES["in_progress"], None)
+
+                # Send notification
+                self._notify_workset_event(
+                    workset.name,
+                    event_type="completion",
+                    state="complete",
+                    message=f"Workset {workset.name} completed successfully (resumed)",
+                )
+                self._record_execution_ended(workset)
+                self._release_workset_lock(workset)
+                LOGGER.info("Workset %s completed successfully", workset.name)
+                return False  # Already handled, don't continue normal flow
+            except Exception as exc:
+                LOGGER.exception("Export failed for %s", workset.name)
+                error_msg = f"{dt.datetime.now(dt.timezone.utc).isoformat().replace('+00:00', 'Z')}\t{exc}"
+                self._write_sentinel(workset, SENTINEL_FILES["error"], error_msg)
+                self._delete_sentinel(workset, SENTINEL_FILES["in_progress"])
+                workset.sentinels.pop(SENTINEL_FILES["in_progress"], None)
+                self._notify_workset_event(
+                    workset.name,
+                    event_type="error",
+                    state="error",
+                    message=f"Workset {workset.name} export failed",
+                    error_details=str(exc),
+                )
+                self._record_execution_ended(workset)
+                self._release_workset_lock(workset)
+                return False  # Already handled
+
+        elif status == "failure":
+            LOGGER.error("Pipeline failed for in-progress workset %s", workset.name)
+            # Clear tmux session
+            existing_session = self._load_tmux_session(workset)
+            if existing_session:
+                self._terminate_tmux_session(cluster_name, existing_session)
+                self._clear_tmux_session(workset)
+            self._clear_pipeline_start(workset)
+
+            error_msg = f"{dt.datetime.now(dt.timezone.utc).isoformat().replace('+00:00', 'Z')}\tPipeline failed for {workset.name}; see {PIPELINE_FAILURE_SENTINEL}"
+            self._write_sentinel(workset, SENTINEL_FILES["error"], error_msg)
+            self._delete_sentinel(workset, SENTINEL_FILES["in_progress"])
+            workset.sentinels.pop(SENTINEL_FILES["in_progress"], None)
+            self._notify_workset_event(
+                workset.name,
+                event_type="error",
+                state="error",
+                message=f"Workset {workset.name} pipeline failed",
+                error_details=f"See {PIPELINE_FAILURE_SENTINEL} on headnode",
+            )
+            self._record_execution_ended(workset)
+            self._release_workset_lock(workset)
+            return False  # Already handled
+
+        else:
+            # Pipeline still running - check if tmux session exists
+            existing_session = self._load_tmux_session(workset)
+            if existing_session:
+                try:
+                    session_exists = self._tmux_session_exists(cluster_name, existing_session)
+                    if session_exists:
+                        LOGGER.info(
+                            "Workset %s pipeline still running (session %s)",
+                            workset.name,
+                            existing_session,
+                        )
+                        return False  # Still in progress, nothing to do
+                    else:
+                        # Session gone but no sentinel - error state
+                        LOGGER.error(
+                            "Workset %s tmux session %s gone but no completion sentinel",
+                            workset.name,
+                            existing_session,
+                        )
+                        self._clear_tmux_session(workset)
+                        self._clear_pipeline_start(workset)
+                        error_msg = f"{dt.datetime.now(dt.timezone.utc).isoformat().replace('+00:00', 'Z')}\tPipeline session {existing_session} exited without completion sentinel"
+                        self._write_sentinel(workset, SENTINEL_FILES["error"], error_msg)
+                        self._delete_sentinel(workset, SENTINEL_FILES["in_progress"])
+                        workset.sentinels.pop(SENTINEL_FILES["in_progress"], None)
+                        self._notify_workset_event(
+                            workset.name,
+                            event_type="error",
+                            state="error",
+                            message=f"Workset {workset.name} pipeline session disappeared",
+                            error_details=f"Session {existing_session} exited without sentinel",
+                        )
+                        self._record_execution_ended(workset)
+                        self._release_workset_lock(workset)
+                        return False
+                except Exception as e:
+                    LOGGER.warning(
+                        "Failed to check tmux session for %s: %s",
+                        workset.name,
+                        str(e),
+                    )
+            else:
+                LOGGER.info(
+                    "Workset %s in-progress but no tmux session recorded; waiting",
+                    workset.name,
+                )
+            return False  # Still in progress
 
     def _update_workset_state(self, workset: Workset) -> bool:
         sentinels = workset.sentinels
@@ -971,6 +1205,10 @@ class WorksetMonitor:
             return
         if not self._update_workset_state(workset):
             return
+
+        # Set workset context for command logging
+        self._current_workset = workset
+
         try:
             self._process_workset(workset)
         except Exception as exc:
@@ -1007,6 +1245,10 @@ class WorksetMonitor:
             # Record execution end time on success
             self._record_execution_ended(workset)
         finally:
+            # Flush command log to S3
+            self._flush_command_log(workset)
+            # Clear workset context
+            self._current_workset = None
             # Always release the lock after processing (success or error)
             self._release_workset_lock(workset)
 
@@ -2455,8 +2697,15 @@ class WorksetMonitor:
 
         session_name = existing_session
         if not session_name:
+            # Build the main pipeline command
             run_command = self.config.pipeline.run_prefix + run_suffix
-            self._update_metrics(workset, {"pipeline_command": run_command.strip()})
+
+            # Automatically append benchmark data collection command
+            # This ensures we always collect per-rule performance metrics after pipeline runs
+            benchmark_suffix = " ; dy-r collect_rules_benchmark_data_singleton -p"
+            run_command_with_benchmark = run_command + benchmark_suffix
+
+            self._update_metrics(workset, {"pipeline_command": run_command_with_benchmark.strip()})
 
             steps: List[str] = []
             steps.append("echo go")
@@ -2466,7 +2715,7 @@ class WorksetMonitor:
             if init_cmd:
                 steps.append(init_cmd)
 
-            steps.append(run_command)
+            steps.append(run_command_with_benchmark)
 
             keepalive = (self.config.pipeline.tmux_keepalive_shell or "").strip()
             if keepalive:
@@ -3051,9 +3300,19 @@ class WorksetMonitor:
         if not new_state:
             return
 
+        # Only update state for worksets that already exist in DynamoDB
+        # Monitor should NEVER create worksets - that's the UI's job
+        if not self._workset_exists_in_dynamodb(workset_id):
+            LOGGER.debug(
+                "Skipping DynamoDB state sync for %s: workset not registered via UI",
+                workset_id
+            )
+            return
+
         try:
             from daylib.workset_state_db import WorksetState
             ws_state = WorksetState(new_state)
+
             self.state_db.update_state(
                 workset_id=workset_id,
                 new_state=ws_state,
@@ -3063,6 +3322,32 @@ class WorksetMonitor:
         except Exception as e:
             LOGGER.warning("Failed to sync sentinel to DynamoDB for %s: %s", workset_id, str(e))
 
+    def _workset_exists_in_dynamodb(self, workset_id: str) -> bool:
+        """Check if workset exists in DynamoDB.
+
+        The monitor should NEVER create worksets - only the UI creates worksets.
+        This method checks if a workset exists before attempting to update its state.
+
+        Args:
+            workset_id: The workset ID to check
+
+        Returns:
+            True if workset exists in DynamoDB, False otherwise
+        """
+        if not self.state_db:
+            return False
+
+        existing = self.state_db.get_workset(workset_id)
+        if existing:
+            return True
+
+        LOGGER.debug(
+            "Workset %s not found in DynamoDB - monitor will skip state updates. "
+            "Worksets must be created via the UI, not discovered by monitor.",
+            workset_id
+        )
+        return False
+
     def _delete_sentinel(self, workset: Workset, sentinel_name: str) -> None:
         bucket = self.config.monitor.bucket
         key = f"{workset.prefix}{sentinel_name}"
@@ -3070,6 +3355,239 @@ class WorksetMonitor:
         if self.dry_run:
             return
         self._s3.delete_object(Bucket=bucket, Key=key)
+
+    # ------------------------------------------------------------------
+    # DynamoDB state reconciliation
+    # ------------------------------------------------------------------
+    def _reconcile_dynamodb_state(self, workset: Workset) -> None:
+        """Reconcile DynamoDB state with S3 sentinel files.
+
+        If DynamoDB has a stale state (ready/in_progress) but S3 shows a
+        terminal state (complete/error), update DynamoDB to match S3.
+        This handles cases where the monitor crashed or restarted after
+        writing sentinels but before updating DynamoDB.
+
+        NOTE: The monitor does NOT create worksets - only the UI creates worksets.
+        If a workset doesn't exist in DynamoDB, we skip reconciliation.
+
+        Args:
+            workset: The workset to reconcile
+        """
+        if not self.state_db:
+            return
+
+        # Determine the authoritative state from S3 sentinels
+        s3_state = self._sentinel_to_state(workset.sentinels)
+        if not s3_state:
+            return
+
+        # Get DynamoDB state - monitor should NEVER create worksets
+        db_record = self.state_db.get_workset(workset.name)
+
+        if not db_record:
+            # Workset not in DynamoDB - skip it. Only the UI creates worksets.
+            LOGGER.debug(
+                "Skipping reconciliation for %s: workset not in DynamoDB (S3 state=%s). "
+                "Worksets must be created via UI.",
+                workset.name,
+                s3_state,
+            )
+            return
+
+        db_state = db_record.get("state", "ready")
+
+        # Define which states are terminal (shouldn't be overwritten)
+        terminal_states = {"complete", "error", "failed", "archived", "deleted"}
+
+        # If DynamoDB is already terminal, don't overwrite
+        if db_state in terminal_states:
+            return
+
+        # If S3 is terminal but DynamoDB isn't, update DynamoDB
+        if s3_state in terminal_states and db_state not in terminal_states:
+            try:
+                from daylib.workset_state_db import WorksetState
+                ws_state = WorksetState(s3_state)
+                self.state_db.update_state(
+                    workset_id=workset.name,
+                    new_state=ws_state,
+                    reason=f"Reconciled from S3 sentinel (was {db_state})",
+                )
+                LOGGER.info(
+                    "Reconciled stale workset %s: DynamoDB %s -> %s from S3 sentinel",
+                    workset.name,
+                    db_state,
+                    s3_state,
+                )
+            except Exception as e:
+                LOGGER.warning(
+                    "Failed to reconcile state for %s: %s",
+                    workset.name,
+                    str(e),
+                )
+            return
+
+        # If S3 shows in_progress but DynamoDB shows ready, update DynamoDB
+        if s3_state == "in_progress" and db_state == "ready":
+            try:
+                from daylib.workset_state_db import WorksetState
+                self.state_db.update_state(
+                    workset_id=workset.name,
+                    new_state=WorksetState.IN_PROGRESS,
+                    reason="Reconciled from S3 in_progress sentinel",
+                )
+                LOGGER.info(
+                    "Reconciled workset %s: DynamoDB ready -> in_progress from S3 sentinel",
+                    workset.name,
+                )
+            except Exception as e:
+                LOGGER.warning(
+                    "Failed to reconcile in_progress state for %s: %s",
+                    workset.name,
+                    str(e),
+                )
+
+    def _sentinel_to_state(self, sentinels: Dict[str, str]) -> Optional[str]:
+        """Determine the workset state from sentinel files.
+
+        Priority order (highest to lowest):
+        1. complete - terminal success
+        2. error - terminal failure
+        3. in_progress - currently running
+        4. ready - waiting to be processed
+        5. ignore - should be skipped
+
+        Returns the state string or None if no recognizable sentinels.
+        """
+        if not sentinels:
+            return None
+
+        # Check in priority order
+        if SENTINEL_FILES["complete"] in sentinels:
+            return "complete"
+        if SENTINEL_FILES["error"] in sentinels:
+            return "error"
+        if SENTINEL_FILES["in_progress"] in sentinels:
+            return "in_progress"
+        if SENTINEL_FILES["ignore"] in sentinels:
+            return "ignored"
+        if SENTINEL_FILES["ready"] in sentinels:
+            return "ready"
+
+        return None
+
+    # ------------------------------------------------------------------
+    # Command logging
+    # ------------------------------------------------------------------
+    COMMAND_LOG_FILENAME = "workset_command.log"
+
+    def _log_command(
+        self,
+        command: str,
+        returncode: int,
+        label: Optional[str] = None,
+        stdout: Optional[str] = None,
+        stderr: Optional[str] = None,
+    ) -> None:
+        """Log a command execution to the current workset's command log.
+
+        Args:
+            command: The command that was executed
+            returncode: Exit code of the command
+            label: Optional label for the command (e.g., 'stage_samples')
+            stdout: Optional stdout output (truncated)
+            stderr: Optional stderr output (truncated)
+        """
+        if not self._current_workset:
+            return
+
+        workset_name = self._current_workset.name
+        timestamp = dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
+
+        # Build log entry
+        lines = []
+        lines.append(f"[{timestamp}] {'=' * 60}")
+        if label:
+            lines.append(f"LABEL: {label}")
+        lines.append(f"COMMAND: {command}")
+        lines.append(f"EXIT_CODE: {returncode}")
+
+        # Truncate stdout/stderr to avoid huge logs
+        max_output_lines = 50
+        if stdout:
+            stdout_lines = stdout.strip().split('\n')
+            if len(stdout_lines) > max_output_lines:
+                stdout_preview = '\n'.join(stdout_lines[:max_output_lines]) + f'\n... ({len(stdout_lines) - max_output_lines} more lines)'
+            else:
+                stdout_preview = stdout.strip()
+            if stdout_preview:
+                lines.append(f"STDOUT:\n{stdout_preview}")
+
+        if stderr:
+            stderr_lines = stderr.strip().split('\n')
+            if len(stderr_lines) > max_output_lines:
+                stderr_preview = '\n'.join(stderr_lines[:max_output_lines]) + f'\n... ({len(stderr_lines) - max_output_lines} more lines)'
+            else:
+                stderr_preview = stderr.strip()
+            if stderr_preview:
+                lines.append(f"STDERR:\n{stderr_preview}")
+
+        lines.append("")  # Blank line between entries
+
+        # Buffer the log entry
+        if workset_name not in self._command_log_buffer:
+            self._command_log_buffer[workset_name] = []
+        self._command_log_buffer[workset_name].extend(lines)
+
+        # Flush to S3 periodically (every 10 commands or on important events)
+        if len(self._command_log_buffer[workset_name]) > 100:
+            self._flush_command_log(self._current_workset)
+
+    def _flush_command_log(self, workset: Workset) -> None:
+        """Flush buffered command log to S3.
+
+        Appends to existing log file if present.
+        """
+        if workset.name not in self._command_log_buffer:
+            return
+
+        buffer = self._command_log_buffer.get(workset.name, [])
+        if not buffer:
+            return
+
+        if self.dry_run:
+            self._command_log_buffer[workset.name] = []
+            return
+
+        bucket = self.config.monitor.bucket
+        key = f"{workset.prefix}{self.COMMAND_LOG_FILENAME}"
+
+        # Try to read existing log
+        existing_content = ""
+        try:
+            response = self._s3.get_object(Bucket=bucket, Key=key)
+            existing_content = response["Body"].read().decode("utf-8")
+        except self._s3.exceptions.NoSuchKey:
+            pass
+        except Exception:
+            pass  # Ignore read errors, start fresh
+
+        # Append new content
+        new_content = existing_content + "\n".join(buffer) + "\n"
+
+        try:
+            self._s3.put_object(
+                Bucket=bucket,
+                Key=key,
+                Body=new_content.encode("utf-8"),
+                ContentType="text/plain",
+            )
+            LOGGER.debug("Flushed command log for %s (%d lines)", workset.name, len(buffer))
+        except Exception as e:
+            LOGGER.warning("Failed to flush command log for %s: %s", workset.name, str(e))
+
+        # Clear buffer
+        self._command_log_buffer[workset.name] = []
 
     def _write_temp_file(self, workset: Workset, filename: str, data: bytes) -> Path:
         temp_dir = Path("/tmp") / f"daylily-workset-{workset.name}"
@@ -3352,7 +3870,7 @@ class WorksetMonitor:
             cmd_display = " ".join(command) if not isinstance(command, str) else command
         try:
             return self._run_command(
-                command, check=check, cwd=cwd, shell=shell, env=env
+                command, check=check, cwd=cwd, shell=shell, env=env, command_label=command_label
             )
         except MonitorError as exc:
             raise CommandFailedError(command_label, str(cmd_display)) from exc
@@ -3365,6 +3883,7 @@ class WorksetMonitor:
         cwd: Optional[Path] = None,
         shell: bool = False,
         env: Optional[Dict[str, str]] = None,
+        command_label: Optional[str] = None,
     ) -> subprocess.CompletedProcess:
         if isinstance(command, (str, bytes)) and not shell:
             cmd_display = command
@@ -3377,6 +3896,7 @@ class WorksetMonitor:
             print(f"[{action}] {cmd_display}")
 
         if self.dry_run:
+            self._log_command(str(cmd_display), 0, label=command_label)
             return subprocess.CompletedProcess(args=command, returncode=0, stdout=b"", stderr=b"")
 
         run_command = command
@@ -3392,6 +3912,16 @@ class WorksetMonitor:
             stderr=subprocess.PIPE,
             env=env,
         )
+
+        # Log the command execution
+        self._log_command(
+            str(cmd_display),
+            result.returncode,
+            label=command_label,
+            stdout=result.stdout.decode(errors="ignore") if result.stdout else None,
+            stderr=result.stderr.decode(errors="ignore") if result.stderr else None,
+        )
+
         if check and result.returncode != 0:
             LOGGER.error(
                 "Command failed (%s): %s",

@@ -372,3 +372,131 @@ class PipelineStatusFetcher:
 
         return status
 
+    def _get_metrics_file_path(self, workset_name: str, filename: str) -> str:
+        """Build full path to metrics file on headnode.
+
+        Pattern: /fsx/analysis_results/ubuntu/{workset_name}/daylily-omics-analysis/results/day/hg38/other_reports/{filename}
+        """
+        return f"{self.clone_dest_root}/{workset_name}/{self.repo_dir_name}/results/day/hg38/other_reports/{filename}"
+
+    def fetch_tsv_file(
+        self, headnode_ip: str, workset_name: str, filename: str
+    ) -> Optional[List[Dict[str, str]]]:
+        """Fetch a TSV file from headnode and parse into list of dicts.
+
+        Args:
+            headnode_ip: IP address of the headnode
+            workset_name: Name of the workset
+            filename: Name of the TSV file (e.g., 'alignstats_combo_mqc.tsv')
+
+        Returns:
+            List of dicts (one per row) or None if file not found/error
+        """
+        file_path = self._get_metrics_file_path(workset_name, filename)
+        cmd = f"cat {shlex.quote(file_path)} 2>/dev/null"
+        content = self._run_ssh_command(headnode_ip, cmd)
+
+        if not content or not content.strip():
+            LOGGER.debug("TSV file not found or empty: %s", file_path)
+            return None
+
+        return self._parse_tsv(content)
+
+    def _parse_tsv(self, content: str) -> List[Dict[str, str]]:
+        """Parse TSV content into list of dicts."""
+        lines = content.strip().split("\n")
+        if len(lines) < 2:  # Need at least header + 1 data row
+            return []
+
+        headers = lines[0].split("\t")
+        rows = []
+        for line in lines[1:]:
+            if not line.strip():
+                continue
+            values = line.split("\t")
+            # Pad values if row has fewer columns than header
+            while len(values) < len(headers):
+                values.append("")
+            row = {h: v for h, v in zip(headers, values)}
+            rows.append(row)
+        return rows
+
+    def fetch_alignment_stats(
+        self, headnode_ip: str, workset_name: str
+    ) -> Optional[List[Dict[str, str]]]:
+        """Fetch alignment statistics from alignstats_combo_mqc.tsv.
+
+        Returns list of per-sample alignment metrics.
+        """
+        return self.fetch_tsv_file(headnode_ip, workset_name, "alignstats_combo_mqc.tsv")
+
+    def fetch_benchmark_data(
+        self, headnode_ip: str, workset_name: str
+    ) -> Optional[List[Dict[str, str]]]:
+        """Fetch rules benchmark data from rules_benchmark_data_singleton.tsv.
+
+        Returns list of per-rule performance metrics.
+        """
+        return self.fetch_tsv_file(headnode_ip, workset_name, "rules_benchmark_data_singleton.tsv")
+
+    def fetch_performance_metrics(
+        self, headnode_ip: str, workset_name: str
+    ) -> Dict[str, Any]:
+        """Fetch all performance metrics for a workset.
+
+        Returns dict with:
+            - alignment_stats: List of per-sample alignment metrics
+            - benchmark_data: List of per-rule benchmark data
+            - cost_summary: Dict with per-sample and total costs
+        """
+        result: Dict[str, Any] = {
+            "alignment_stats": None,
+            "benchmark_data": None,
+            "cost_summary": None,
+        }
+
+        # Fetch alignment stats
+        align_stats = self.fetch_alignment_stats(headnode_ip, workset_name)
+        if align_stats:
+            result["alignment_stats"] = align_stats
+
+        # Fetch benchmark data
+        benchmark_data = self.fetch_benchmark_data(headnode_ip, workset_name)
+        if benchmark_data:
+            result["benchmark_data"] = benchmark_data
+            result["cost_summary"] = self._compute_cost_summary(benchmark_data)
+
+        return result
+
+    def _compute_cost_summary(
+        self, benchmark_data: List[Dict[str, str]]
+    ) -> Dict[str, Any]:
+        """Compute cost summary from benchmark data.
+
+        Returns:
+            Dict with:
+                - per_sample_costs: Dict[sample_name, cost]
+                - total_cost: Total cost for all rules
+                - rule_count: Number of rules
+                - sample_count: Number of unique samples
+        """
+        per_sample: Dict[str, float] = {}
+        total_cost = 0.0
+
+        for row in benchmark_data:
+            try:
+                cost = float(row.get("task_cost", "0") or "0")
+                sample = row.get("sample", "unknown")
+
+                total_cost += cost
+                per_sample[sample] = per_sample.get(sample, 0.0) + cost
+            except (ValueError, TypeError):
+                continue
+
+        return {
+            "per_sample_costs": per_sample,
+            "total_cost": round(total_cost, 4),
+            "rule_count": len(benchmark_data),
+            "sample_count": len(per_sample),
+        }
+

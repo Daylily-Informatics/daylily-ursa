@@ -153,6 +153,67 @@ class WorksetStateDB:
         table.wait_until_exists()
         LOGGER.info("Table %s created successfully", self.table_name)
 
+    @staticmethod
+    def _validate_customer_id(customer_id: Optional[str]) -> str:
+        """Validate that customer_id is present and valid.
+
+        Args:
+            customer_id: Customer ID to validate
+
+        Returns:
+            The validated customer_id
+
+        Raises:
+            ValueError: If customer_id is None, empty, or 'Unknown'
+        """
+        if customer_id is None:
+            raise ValueError("customer_id is required and cannot be None")
+        if not isinstance(customer_id, str):
+            raise ValueError(f"customer_id must be a string, got {type(customer_id).__name__}")
+        stripped = customer_id.strip()
+        if not stripped:
+            raise ValueError("customer_id cannot be empty")
+        if stripped.lower() == "unknown":
+            raise ValueError("customer_id cannot be 'Unknown'")
+        return stripped
+
+    @staticmethod
+    def _validate_samples(metadata: Optional[Dict[str, Any]]) -> int:
+        """Validate that workset has samples.
+
+        Args:
+            metadata: Workset metadata that should contain samples
+
+        Returns:
+            The sample count
+
+        Raises:
+            ValueError: If no samples are provided
+        """
+        if not metadata:
+            raise ValueError("Workset must have samples - no metadata provided")
+
+        # Check for samples in metadata
+        samples = metadata.get("samples", [])
+        sample_count = metadata.get("sample_count", 0)
+
+        # Also check stage_samples_tsv for TSV-based sample input
+        tsv_content = metadata.get("stage_samples_tsv", "")
+
+        # Count samples from various sources
+        if samples and len(samples) > 0:
+            return len(samples)
+        if sample_count and sample_count > 0:
+            return sample_count
+        if tsv_content:
+            # Count non-header, non-empty lines in TSV
+            lines = [l for l in tsv_content.strip().split('\n') if l.strip() and not l.startswith('#')]
+            # Subtract 1 for header if present
+            if lines and '\t' in lines[0]:
+                return max(0, len(lines) - 1)
+
+        raise ValueError("Workset must have at least one sample")
+
     def register_workset(
         self,
         workset_id: str,
@@ -161,6 +222,7 @@ class WorksetStateDB:
         priority: WorksetPriority = WorksetPriority.NORMAL,
         metadata: Optional[Dict[str, Any]] = None,
         customer_id: Optional[str] = None,
+        skip_validation: bool = False,
     ) -> bool:
         """Register a new workset in the database.
 
@@ -171,10 +233,20 @@ class WorksetStateDB:
             priority: Execution priority
             metadata: Additional workset metadata
             customer_id: Customer ID who owns this workset
+            skip_validation: If True, skip customer_id and sample validation
+                           (used for monitor-discovered worksets from S3)
 
         Returns:
             True if registered, False if already exists
+
+        Raises:
+            ValueError: If customer_id is invalid or no samples provided (unless skip_validation=True)
         """
+        # Validate customer_id and samples unless skipped
+        if not skip_validation:
+            customer_id = self._validate_customer_id(customer_id)
+            self._validate_samples(metadata)
+
         now = dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
         item: Dict[str, Any] = {
             "workset_id": workset_id,
@@ -206,7 +278,7 @@ class WorksetStateDB:
                 ConditionExpression="attribute_not_exists(workset_id)",
             )
             self._emit_metric("WorksetRegistered", 1.0)
-            LOGGER.info("Registered workset %s with priority %s", workset_id, priority.value)
+            LOGGER.info("Registered workset %s with priority %s for customer %s", workset_id, priority.value, customer_id)
             return True
         except ClientError as e:
             if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
@@ -678,6 +750,72 @@ class WorksetStateDB:
             return None
         except ClientError as e:
             LOGGER.error("Failed to get workset %s: %s", workset_id, str(e))
+            return None
+
+    def update_performance_metrics(
+        self,
+        workset_id: str,
+        performance_metrics: Dict[str, Any],
+        is_final: bool = False,
+    ) -> bool:
+        """Update cached performance metrics for a workset.
+
+        Args:
+            workset_id: Workset identifier
+            performance_metrics: Dict containing alignment_stats, benchmark_data, cost_summary
+            is_final: If True, marks metrics as final (no further updates needed)
+
+        Returns:
+            True if update succeeded
+        """
+        now_iso = dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
+
+        update_expr = "SET updated_at = :now, performance_metrics = :pm"
+        expr_values: Dict[str, Any] = {
+            ":now": now_iso,
+            ":pm": self._serialize_metadata(performance_metrics),
+        }
+
+        if is_final:
+            update_expr += ", performance_metrics_final = :final"
+            expr_values[":final"] = True
+
+        try:
+            self.table.update_item(
+                Key={"workset_id": workset_id},
+                UpdateExpression=update_expr,
+                ExpressionAttributeValues=expr_values,
+            )
+            LOGGER.debug(
+                "Updated performance metrics for %s (final=%s)", workset_id, is_final
+            )
+            return True
+        except ClientError as e:
+            LOGGER.warning(
+                "Failed to update performance metrics for %s: %s", workset_id, str(e)
+            )
+            return False
+
+    def get_performance_metrics(self, workset_id: str) -> Optional[Dict[str, Any]]:
+        """Get cached performance metrics for a workset.
+
+        Returns:
+            Dict with performance_metrics and performance_metrics_final, or None
+        """
+        try:
+            response = self.table.get_item(
+                Key={"workset_id": workset_id},
+                ProjectionExpression="performance_metrics, performance_metrics_final",
+            )
+            if "Item" not in response:
+                return None
+            item = response["Item"]
+            result: Dict[str, Any] = {"is_final": item.get("performance_metrics_final", False)}
+            if "performance_metrics" in item:
+                result["metrics"] = self._deserialize_metadata(item["performance_metrics"])
+            return result
+        except ClientError as e:
+            LOGGER.warning("Failed to get performance metrics for %s: %s", workset_id, str(e))
             return None
 
     def list_worksets_by_state(

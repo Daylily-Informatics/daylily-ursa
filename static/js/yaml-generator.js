@@ -201,7 +201,7 @@ function generateYaml(event) {
 
 // Open file browser modal
 function openFileBrowser(button, type) {
-    const customerId = window.DaylilyConfig?.customerId;
+    const customerId = window.UrsaConfig?.customerId;
     if (!customerId) {
         showToast('error', 'Error', 'No customer ID configured. Please create an account first.');
         return;
@@ -228,7 +228,7 @@ function closeFileBrowser() {
 // Browse a folder
 async function browseFolder(prefix) {
     currentBrowserPrefix = prefix;
-    const customerId = window.DaylilyConfig?.customerId;
+    const customerId = window.UrsaConfig?.customerId;
 
     const fileList = document.getElementById('browser-file-list');
     fileList.innerHTML = `

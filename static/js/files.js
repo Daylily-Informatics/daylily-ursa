@@ -2,11 +2,11 @@
  * Daylily Customer Portal - File Manager
  */
 
-let currentPrefix = window.DaylilyConfig?.currentPrefix || '';
+let currentPrefix = window.UrsaConfig?.currentPrefix || '';
 let uploadFiles = [];
 
 // Debug: Log configuration on load
-console.log('Files.js loaded. DaylilyConfig:', window.DaylilyConfig);
+console.log('Files.js loaded. UrsaConfig:', window.UrsaConfig);
 
 // Navigate to folder
 function navigateTo(prefix) {
@@ -122,7 +122,7 @@ function hideUploadModal() {
 
 // Download file
 async function downloadFile(key) {
-    const customerId = window.DaylilyConfig?.customerId;
+    const customerId = window.UrsaConfig?.customerId;
     if (!customerId) return;
     
     try {
@@ -135,7 +135,7 @@ async function downloadFile(key) {
 
 // Preview file
 async function previewFile(key) {
-    const customerId = window.DaylilyConfig?.customerId;
+    const customerId = window.UrsaConfig?.customerId;
     if (!customerId) {
         showToast('error', 'Preview Failed', 'No customer ID configured');
         return;
@@ -236,7 +236,7 @@ function escapeHtml(text) {
 async function deleteFile(key) {
     if (!confirm(`Delete "${key}"?`)) return;
     
-    const customerId = window.DaylilyConfig?.customerId;
+    const customerId = window.UrsaConfig?.customerId;
     if (!customerId) return;
     
     showLoading('Deleting file...');
@@ -270,7 +270,7 @@ async function bulkDelete() {
     
     try {
         for (const key of selected) {
-            await DaylilyAPI.files.delete(window.DaylilyConfig?.customerId, key);
+            await DaylilyAPI.files.delete(window.UrsaConfig?.customerId, key);
         }
         showToast('success', 'Deleted', `${selected.length} files deleted`);
         setTimeout(() => window.location.reload(), 1000);
@@ -294,7 +294,7 @@ async function createFolder() {
         return;
     }
 
-    const customerId = window.DaylilyConfig?.customerId;
+    const customerId = window.UrsaConfig?.customerId;
     if (!customerId) {
         showToast('error', 'Configuration Error', 'No customer ID found. Please refresh the page.');
         return;
@@ -332,7 +332,7 @@ function updateUploadButton() {
 
 // Start upload
 async function startUpload() {
-    const customerId = window.DaylilyConfig?.customerId;
+    const customerId = window.UrsaConfig?.customerId;
     if (!customerId) {
         showToast('error', 'Upload Failed', 'No customer ID configured');
         return;

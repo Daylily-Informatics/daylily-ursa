@@ -60,7 +60,7 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 function getCustomerId() {
-    return window.DaylilyConfig?.customerId;
+    return window.UrsaConfig?.customerId;
 }
 
 function getSelectedSavedManifestId() {
@@ -603,7 +603,7 @@ function loadInputsFromTSVContent(content) {
  * Discover FASTQ files from S3
  */
 async function discoverFromS3() {
-    const customerId = window.DaylilyConfig?.customerId;
+    const customerId = window.UrsaConfig?.customerId;
     if (!customerId) {
         alert('Customer ID not configured');
         return;

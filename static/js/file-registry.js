@@ -712,7 +712,8 @@ async function startDiscovery() {
         return;
     }
 
-    const prefix = document.getElementById('discover-prefix').value || '';
+    // Strip leading slash from prefix if present
+    const prefix = (document.getElementById('discover-prefix').value || '').replace(/^\/+/, '');
     const types = Array.from(document.querySelectorAll('.discover-type:checked')).map(cb => cb.value);
     const fileFormats = types.length > 0 ? types.join(',') : undefined;
 
@@ -905,7 +906,8 @@ async function registerDiscoveredFiles() {
 
     const selectedKeys = Array.from(checkboxes).map(cb => cb.value);
     const bucket = document.getElementById('discover-bucket').value;
-    const prefix = document.getElementById('discover-prefix').value || '';
+    // Strip leading slash from prefix if present
+    const prefix = (document.getElementById('discover-prefix').value || '').replace(/^\/+/, '');
     const biosampleId = document.getElementById('discover-biosample-id')?.value;
     const subjectId = document.getElementById('discover-subject-id')?.value;
 
@@ -1635,7 +1637,7 @@ async function addTag() {
     // Get file ID from URL
     const pathParts = window.location.pathname.split('/');
     const fileId = pathParts[pathParts.length - 1];
-    const customerId = window.DaylilyConfig?.customerId || window.CUSTOMER_ID || '';
+    const customerId = window.UrsaConfig?.customerId || window.CUSTOMER_ID || '';
 
     try {
         const response = await fetch(`${FILE_API_BASE}/${fileId}/tags?customer_id=${encodeURIComponent(customerId)}`, {
@@ -1665,7 +1667,7 @@ async function removeTag(tag) {
     // Get file ID from URL
     const pathParts = window.location.pathname.split('/');
     const fileId = pathParts[pathParts.length - 1];
-    const customerId = window.DaylilyConfig?.customerId || window.CUSTOMER_ID || '';
+    const customerId = window.UrsaConfig?.customerId || window.CUSTOMER_ID || '';
 
     try {
         const response = await fetch(`${FILE_API_BASE}/${fileId}/tags/${encodeURIComponent(tag)}?customer_id=${encodeURIComponent(customerId)}`, {

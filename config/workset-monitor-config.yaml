@@ -37,24 +37,25 @@ aws:
 monitor:
   # S3 bucket where worksets are stored
   bucket: lsmc-dayoa-omics-analysis-us-west-2
-  
+
   # S3 prefix for active worksets (must end with /)
-  prefix: daylily_monitoring/active_worksets/
-  
+  # This must match the server's S3_PREFIX setting (default: worksets/)
+  prefix: worksets/
+
   # S3 prefix for archived/completed worksets (optional)
-  archive_prefix: daylily_monitoring/archived_worksets/
-  
+  archive_prefix: worksets/archived/
+
   # How often to poll for new worksets (in seconds)
   poll_interval_seconds: 60
-  
+
   # Backoff time when a workset is locked by another monitor (in seconds)
   ready_lock_backoff_seconds: 30
-  
+
   # Run continuously (true) or single scan and exit (false)
   continuous: true
-  
+
   # S3 prefix for sentinel index files (state tracking)
-  sentinel_index_prefix: daylily_monitoring/
+  sentinel_index_prefix: worksets/.monitor/
 
 # -----------------------------------------------------------------------------
 # Cluster Configuration

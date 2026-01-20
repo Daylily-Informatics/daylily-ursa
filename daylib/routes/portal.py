@@ -59,6 +59,7 @@ class PortalDependencies:
         customer_manager: Optional["CustomerManager"] = None,
         file_registry: Optional[Any] = None,
         linked_bucket_manager: Optional[Any] = None,
+        biospecimen_registry: Optional[Any] = None,
     ):
         self.state_db = state_db
         self.templates = templates
@@ -68,6 +69,7 @@ class PortalDependencies:
         self.customer_manager = customer_manager
         self.file_registry = file_registry
         self.linked_bucket_manager = linked_bucket_manager
+        self.biospecimen_registry = biospecimen_registry
         self.region = settings.get_effective_region()
         self.profile = settings.aws_profile
 
@@ -506,6 +508,53 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
 
     # ========== Worksets Routes ==========
 
+    def _get_s3_sentinel_status(bucket: str, prefix: str) -> str:
+        """Get workset status from S3 sentinel files.
+
+        Priority order:
+        1. daylily.complete -> complete
+        2. daylily.error -> error
+        3. daylily.in_progress -> in_progress
+        4. daylily.ignore -> ignored
+        5. daylily.ready -> ready
+        6. No sentinels -> unknown
+        """
+        import boto3
+        session_kwargs = {"region_name": deps.region}
+        if deps.profile:
+            session_kwargs["profile_name"] = deps.profile
+        s3 = boto3.Session(**session_kwargs).client("s3")
+
+        # Sentinel file names
+        sentinels = {
+            "daylily.complete": "complete",
+            "daylily.error": "error",
+            "daylily.in_progress": "in_progress",
+            "daylily.ignore": "ignored",
+            "daylily.ready": "ready",
+        }
+
+        # Normalize prefix
+        if not prefix.endswith("/"):
+            prefix = prefix + "/"
+
+        try:
+            response = s3.list_objects_v2(Bucket=bucket, Prefix=prefix, MaxKeys=100)
+            found_sentinels = set()
+            for obj in response.get("Contents", []):
+                key = obj["Key"]
+                filename = key.split("/")[-1]
+                if filename in sentinels:
+                    found_sentinels.add(filename)
+
+            # Return in priority order
+            for sentinel_file, status in sentinels.items():
+                if sentinel_file in found_sentinels:
+                    return status
+            return "unknown"
+        except Exception:
+            return "error"
+
     @router.get("/portal/worksets", response_class=HTMLResponse)
     async def portal_worksets(request: Request, page: int = 1):
         """Worksets list page."""
@@ -525,6 +574,13 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
             else:
                 ws["sample_count"] = 0
                 ws["pipeline_type"] = "germline"
+            # Add S3 sentinel status
+            bucket = ws.get("bucket", "")
+            prefix = ws.get("prefix", "")
+            if bucket and prefix:
+                ws["s3_status"] = _get_s3_sentinel_status(bucket, prefix)
+            else:
+                ws["s3_status"] = "unknown"
         per_page = 20
         total_pages = max(1, (len(worksets) + per_page - 1) // per_page)
         page = max(1, min(page, total_pages))
@@ -534,7 +590,7 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         return deps.templates.TemplateResponse(
             request,
             "worksets/list.html",
-            _get_template_context(request, deps, customer=customer, worksets=paginated_worksets, page=page, total_pages=total_pages, active_page="worksets"),
+            _get_template_context(request, deps, customer=customer, worksets=paginated_worksets, current_page=page, total_pages=total_pages, active_page="worksets"),
         )
 
     @router.get("/portal/worksets/new", response_class=HTMLResponse)
@@ -1141,7 +1197,43 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         customer_id = customer.customer_id if customer else request.session.get("customer_id", "default-customer")
         subjects: List[Dict[str, Any]] = []
         stats = {"subjects": 0, "biosamples": 0, "libraries": 0}
-        # Biospecimen registry would be loaded here if available
+
+        # Load subjects from biospecimen registry if available
+        if deps.biospecimen_registry:
+            try:
+                subject_objs = deps.biospecimen_registry.list_subjects(customer_id, limit=500)
+                for subj in subject_objs:
+                    subj_dict = {
+                        "subject_id": subj.subject_id,
+                        "identifier": subj.identifier,
+                        "display_name": subj.display_name,
+                        "sex": subj.sex,
+                        "cohort": subj.cohort,
+                        "created_at": subj.created_at,
+                        "biosample_count": 0,
+                    }
+                    # Count biosamples for this subject
+                    try:
+                        biosamples = deps.biospecimen_registry.list_biosamples_for_subject(subj.subject_id)
+                        subj_dict["biosample_count"] = len(biosamples)
+                    except Exception:
+                        pass
+                    subjects.append(subj_dict)
+                stats["subjects"] = len(subjects)
+                # Get total biosamples and libraries counts
+                try:
+                    all_biosamples = deps.biospecimen_registry.list_biosamples(customer_id, limit=1000)
+                    stats["biosamples"] = len(all_biosamples)
+                except Exception:
+                    pass
+                try:
+                    all_libraries = deps.biospecimen_registry.list_libraries(customer_id, limit=1000)
+                    stats["libraries"] = len(all_libraries)
+                except Exception:
+                    pass
+            except Exception as e:
+                LOGGER.warning(f"Failed to load subjects from biospecimen registry: {e}")
+
         return deps.templates.TemplateResponse(
             request,
             "biospecimen/subjects.html",
@@ -1235,6 +1327,8 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         clusters = []
         regions = []
         error = None
+        # Check if user is admin to determine if we should fetch SSH status
+        is_admin = customer and customer.is_admin
         try:
             from daylib.cluster_service import ClusterService
 
@@ -1247,7 +1341,10 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                     aws_profile=deps.settings.aws_profile,
                     cache_ttl_seconds=300,
                 )
-                all_clusters = service.get_all_clusters()
+                # Only fetch SSH status for admin users
+                all_clusters = service.get_all_clusters_with_status(
+                    fetch_ssh_status=is_admin,
+                )
                 clusters = [c.to_dict() for c in all_clusters]
         except Exception as e:
             LOGGER.error(f"Failed to fetch clusters: {e}")

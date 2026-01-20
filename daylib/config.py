@@ -63,14 +63,14 @@ class Settings(BaseSettings):
         default=None,
         description="AWS account ID for resource ARNs",
     )
-    dayu_allowed_regions: str = Field(
+    ursa_allowed_regions: str = Field(
         default="us-west-2",
         description="Comma-separated list of AWS regions to scan for ParallelCluster instances",
     )
 
     def get_allowed_regions(self) -> List[str]:
         """Get list of allowed regions from comma-separated string."""
-        return [r.strip() for r in self.dayu_allowed_regions.split(",") if r.strip()]
+        return [r.strip() for r in self.ursa_allowed_regions.split(",") if r.strip()]
 
     # ========== DynamoDB Table Names ==========
     workset_table_name: str = Field(
@@ -303,8 +303,18 @@ class Settings(BaseSettings):
         return normalize_bucket_name(bucket)
 
     def get_effective_region(self) -> str:
-        """Get the effective AWS region, considering overrides."""
-        return self.day_aws_region or self.aws_default_region
+        """Get the effective AWS region, considering overrides.
+
+        Priority order:
+        1. DAY_AWS_REGION (Daylily-specific override)
+        2. AWS_DEFAULT_REGION (standard AWS env var)
+        3. aws_default_region setting (config file or default)
+        """
+        return (
+            self.day_aws_region
+            or os.environ.get("AWS_DEFAULT_REGION")
+            or self.aws_default_region
+        )
 
     @property
     def is_production(self) -> bool:

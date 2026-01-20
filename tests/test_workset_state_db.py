@@ -51,26 +51,28 @@ def test_register_workset_success(state_db, mock_dynamodb):
     """Test successful workset registration."""
     mock_table = mock_dynamodb["table"]
     mock_table.put_item.return_value = {}
-    
+
     result = state_db.register_workset(
         workset_id="test-workset-001",
         bucket="test-bucket",
         prefix="worksets/test-001/",
         priority=WorksetPriority.NORMAL,
-        metadata={"samples": 10, "estimated_cost": 50.0},
+        metadata={"samples": [{"sample_id": "S1"}], "sample_count": 1, "estimated_cost": 50.0},
+        customer_id="test-customer",
     )
-    
+
     assert result is True
     mock_table.put_item.assert_called_once()
-    
+
     call_args = mock_table.put_item.call_args
     item = call_args.kwargs["Item"]
-    
+
     assert item["workset_id"] == "test-workset-001"
     assert item["state"] == WorksetState.READY.value
     assert item["priority"] == WorksetPriority.NORMAL.value
     assert item["bucket"] == "test-bucket"
     assert item["prefix"] == "worksets/test-001/"
+    assert item["customer_id"] == "test-customer"
     assert "created_at" in item
     assert "state_history" in item
 
@@ -78,20 +80,96 @@ def test_register_workset_success(state_db, mock_dynamodb):
 def test_register_workset_already_exists(state_db, mock_dynamodb):
     """Test registering a workset that already exists."""
     from botocore.exceptions import ClientError
-    
+
     mock_table = mock_dynamodb["table"]
     mock_table.put_item.side_effect = ClientError(
         {"Error": {"Code": "ConditionalCheckFailedException"}},
         "PutItem",
     )
-    
+
     result = state_db.register_workset(
         workset_id="existing-workset",
         bucket="test-bucket",
         prefix="worksets/existing/",
+        metadata={"samples": [{"sample_id": "S1"}]},
+        customer_id="test-customer",
     )
-    
+
     assert result is False
+
+
+def test_register_workset_rejects_missing_customer_id(state_db, mock_dynamodb):
+    """Test that registering a workset without customer_id is rejected."""
+    import pytest
+
+    with pytest.raises(ValueError, match="customer_id is required"):
+        state_db.register_workset(
+            workset_id="test-workset",
+            bucket="test-bucket",
+            prefix="worksets/test/",
+            metadata={"samples": [{"sample_id": "S1"}]},
+            customer_id=None,
+        )
+
+
+def test_register_workset_rejects_empty_customer_id(state_db, mock_dynamodb):
+    """Test that registering a workset with empty customer_id is rejected."""
+    import pytest
+
+    with pytest.raises(ValueError, match="customer_id cannot be empty"):
+        state_db.register_workset(
+            workset_id="test-workset",
+            bucket="test-bucket",
+            prefix="worksets/test/",
+            metadata={"samples": [{"sample_id": "S1"}]},
+            customer_id="  ",
+        )
+
+
+def test_register_workset_rejects_unknown_customer_id(state_db, mock_dynamodb):
+    """Test that registering a workset with 'Unknown' customer_id is rejected."""
+    import pytest
+
+    with pytest.raises(ValueError, match="customer_id cannot be 'Unknown'"):
+        state_db.register_workset(
+            workset_id="test-workset",
+            bucket="test-bucket",
+            prefix="worksets/test/",
+            metadata={"samples": [{"sample_id": "S1"}]},
+            customer_id="Unknown",
+        )
+
+
+def test_register_workset_rejects_no_samples(state_db, mock_dynamodb):
+    """Test that registering a workset without samples is rejected."""
+    import pytest
+
+    with pytest.raises(ValueError, match="Workset must have at least one sample"):
+        state_db.register_workset(
+            workset_id="test-workset",
+            bucket="test-bucket",
+            prefix="worksets/test/",
+            metadata={"other_field": "value"},
+            customer_id="test-customer",
+        )
+
+
+def test_register_workset_skip_validation(state_db, mock_dynamodb):
+    """Test that skip_validation=True bypasses customer_id and sample validation."""
+    mock_table = mock_dynamodb["table"]
+    mock_table.put_item.return_value = {}
+
+    # This should succeed without customer_id or samples when skip_validation=True
+    result = state_db.register_workset(
+        workset_id="monitor-discovered-workset",
+        bucket="test-bucket",
+        prefix="worksets/test/",
+        metadata={"source": "monitor_discovery"},
+        customer_id=None,
+        skip_validation=True,
+    )
+
+    assert result is True
 
 
 def test_acquire_lock_success(state_db, mock_dynamodb):
