@@ -328,45 +328,85 @@ function formatFileSize(bytes) {
 const LARGE_FILE_THRESHOLD = 5 * 1024 * 1024 * 1024; // 5 GB in bytes
 
 async function startUpload() {
-    const bucket = document.getElementById('upload-bucket').value;
-    if (!bucket) {
-        alert('Please select a destination bucket');
-        return;
-    }
+    console.log('startUpload() called');
 
-    // Check for large files (>5GB)
-    const largeFiles = uploadQueue.filter(f => f.size > LARGE_FILE_THRESHOLD);
-    if (largeFiles.length > 0) {
-        showLargeFileWarning(largeFiles);
-        return;
-    }
+    try {
+        // Check for empty queue first
+        if (uploadQueue.length === 0) {
+            alert('Please add files to the upload queue first');
+            return;
+        }
 
-    // Proceed with upload
-    proceedWithUpload();
+        const bucket = document.getElementById('upload-bucket').value;
+        if (!bucket) {
+            alert('Please select a destination bucket');
+            return;
+        }
+
+        // Check for large files (>5GB)
+        const largeFiles = uploadQueue.filter(f => f.size > LARGE_FILE_THRESHOLD);
+        console.log(`Found ${largeFiles.length} large files (>${LARGE_FILE_THRESHOLD} bytes) out of ${uploadQueue.length} total`);
+
+        if (largeFiles.length > 0) {
+            showLargeFileWarning(largeFiles);
+            return;
+        }
+
+        // Proceed with upload
+        await proceedWithUpload();
+    } catch (error) {
+        console.error('Error in startUpload:', error);
+        alert('Error starting upload: ' + error.message);
+    }
 }
 
 function showLargeFileWarning(largeFiles) {
-    const bucket = document.getElementById('upload-bucket');
-    const bucketName = bucket.options[bucket.selectedIndex].dataset.bucketName;
-    const prefix = document.getElementById('upload-prefix').value || '';
+    console.log('showLargeFileWarning() called with', largeFiles.length, 'files');
 
-    // Generate AWS CLI command for the first large file as an example
-    const firstLargeFile = largeFiles[0];
-    const fullPrefix = prefix ? (prefix.endsWith('/') ? prefix : prefix + '/') : '';
-    const s3Path = `s3://${bucketName}/${fullPrefix}${firstLargeFile.name}`;
-    const cliCommand = `aws s3 cp /path/to/local/${firstLargeFile.name} ${s3Path} --profile your-profile`;
+    try {
+        const bucket = document.getElementById('upload-bucket');
+        const bucketName = bucket.options[bucket.selectedIndex]?.dataset?.bucketName || 'unknown-bucket';
+        const prefix = document.getElementById('upload-prefix').value || '';
 
-    // Update modal content
-    document.getElementById('cli-command-text').textContent = cliCommand;
+        // Generate AWS CLI command for the first large file as an example
+        const firstLargeFile = largeFiles[0];
+        const fullPrefix = prefix ? (prefix.endsWith('/') ? prefix : prefix + '/') : '';
+        const s3Path = `s3://${bucketName}/${fullPrefix}${firstLargeFile.name}`;
+        const cliCommand = `aws s3 cp /path/to/local/${firstLargeFile.name} ${s3Path} --profile your-profile`;
 
-    // Populate large files list
-    const listEl = document.getElementById('large-files-list');
-    listEl.innerHTML = largeFiles.map(f =>
-        `<li><strong>${f.name}</strong> (${formatFileSize(f.size)})</li>`
-    ).join('');
+        // Update modal content
+        const cliTextEl = document.getElementById('cli-command-text');
+        if (cliTextEl) {
+            cliTextEl.textContent = cliCommand;
+        }
 
-    // Show modal
-    document.getElementById('large-file-modal').style.display = 'flex';
+        // Populate large files list
+        const listEl = document.getElementById('large-files-list');
+        if (listEl) {
+            listEl.innerHTML = largeFiles.map(f =>
+                `<li><strong>${f.name}</strong> (${formatFileSize(f.size)})</li>`
+            ).join('');
+        }
+
+        // Show modal
+        const modal = document.getElementById('large-file-modal');
+        if (modal) {
+            modal.style.display = 'flex';
+            console.log('Large file modal displayed');
+        } else {
+            console.error('Modal element not found: large-file-modal');
+            // Fallback: just proceed with upload
+            if (confirm('Large files detected. Continue with browser upload anyway?')) {
+                proceedWithUpload();
+            }
+        }
+    } catch (error) {
+        console.error('Error in showLargeFileWarning:', error);
+        // Fallback: just proceed with upload
+        if (confirm('Error showing warning. Continue with upload anyway?')) {
+            proceedWithUpload();
+        }
+    }
 }
 
 function copyCliCommand() {
@@ -393,44 +433,70 @@ function copyCliCommand() {
 }
 
 function cancelLargeFileUpload() {
-    document.getElementById('large-file-modal').style.display = 'none';
+    console.log('cancelLargeFileUpload() called');
+    const modal = document.getElementById('large-file-modal');
+    if (modal) {
+        modal.style.display = 'none';
+    }
     if (typeof showToast === 'function') {
         showToast('Upload cancelled', 'info');
     }
 }
 
 function continueUploadAnyway() {
-    document.getElementById('large-file-modal').style.display = 'none';
-    proceedWithUpload();
+    console.log('continueUploadAnyway() called');
+    const modal = document.getElementById('large-file-modal');
+    if (modal) {
+        modal.style.display = 'none';
+    }
+    // Use setTimeout to ensure modal is hidden before starting upload
+    // This also prevents any potential event bubbling issues
+    setTimeout(() => {
+        proceedWithUpload();
+    }, 0);
 }
 
 async function proceedWithUpload() {
-    uploadInProgress = true;
-    document.getElementById('file-queue-card').style.display = 'none';
-    document.getElementById('upload-progress-card').style.display = 'block';
-    document.getElementById('progress-total').textContent = uploadQueue.length;
+    console.log('proceedWithUpload() called');
 
-    console.log(`Starting upload of ${uploadQueue.length} files`);
+    try {
+        uploadInProgress = true;
 
-    // Upload files sequentially (could be parallelized)
-    for (let i = 0; i < uploadQueue.length; i++) {
-        // Check if cancelled before starting next file
-        if (!uploadInProgress) {
-            console.log('Upload cancelled by user');
-            break;
+        const queueCard = document.getElementById('file-queue-card');
+        const progressCard = document.getElementById('upload-progress-card');
+        const progressTotal = document.getElementById('progress-total');
+
+        if (queueCard) queueCard.style.display = 'none';
+        if (progressCard) progressCard.style.display = 'block';
+        if (progressTotal) progressTotal.textContent = uploadQueue.length;
+
+        console.log(`Starting upload of ${uploadQueue.length} files`);
+
+        // Upload files sequentially (could be parallelized)
+        for (let i = 0; i < uploadQueue.length; i++) {
+            // Check if cancelled before starting next file
+            if (!uploadInProgress) {
+                console.log('Upload cancelled by user');
+                break;
+            }
+            currentUploadIndex = i;
+            const progressCount = document.getElementById('progress-count');
+            if (progressCount) progressCount.textContent = i + 1;
+            console.log(`Starting upload ${i + 1}/${uploadQueue.length}: ${uploadQueue[i].name}`);
+            await uploadFile(uploadQueue[i], i);
+            console.log(`Completed upload ${i + 1}/${uploadQueue.length}: ${uploadQueue[i].name}`);
         }
-        currentUploadIndex = i;
-        document.getElementById('progress-count').textContent = i + 1;
-        console.log(`Starting upload ${i + 1}/${uploadQueue.length}: ${uploadQueue[i].name}`);
-        await uploadFile(uploadQueue[i], i);
-        console.log(`Completed upload ${i + 1}/${uploadQueue.length}: ${uploadQueue[i].name}`);
-    }
 
-    // Only show complete if not cancelled
-    if (uploadInProgress) {
+        // Only show complete if not cancelled
+        if (uploadInProgress) {
+            uploadInProgress = false;
+            console.log('All uploads complete');
+            showUploadComplete();
+        }
+    } catch (error) {
+        console.error('Error in proceedWithUpload:', error);
         uploadInProgress = false;
-        console.log('All uploads complete');
-        showUploadComplete();
+        alert('Error during upload: ' + error.message);
     }
 }
 
@@ -439,7 +505,10 @@ async function uploadFile(file, idx) {
     const prefix = document.getElementById('upload-prefix').value || '';
 
     const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
-    document.getElementById('progress-status').textContent = `Uploading ${file.name} (${fileSizeMB} MB)...`;
+    const progressStatus = document.getElementById('progress-status');
+    if (progressStatus) {
+        progressStatus.textContent = `Uploading ${file.name} (${fileSizeMB} MB)...`;
+    }
 
     try {
         // Create FormData for multipart upload
@@ -475,16 +544,21 @@ async function uploadFile(file, idx) {
 
         // Add to progress list
         const progressList = document.getElementById('file-progress-list');
-        const progressItem = document.createElement('div');
-        progressItem.className = 'file-progress-item';
-        progressItem.innerHTML = `
-            <span class="file-progress-name">${file.name} (${fileSizeMB} MB)</span>
-            <span class="file-progress-status success">✓ Uploaded</span>
-        `;
-        progressList.appendChild(progressItem);
+        if (progressList) {
+            const progressItem = document.createElement('div');
+            progressItem.className = 'file-progress-item';
+            progressItem.innerHTML = `
+                <span class="file-progress-name">${file.name} (${fileSizeMB} MB)</span>
+                <span class="file-progress-status success">✓ Uploaded</span>
+            `;
+            progressList.appendChild(progressItem);
+        }
 
         // Update overall progress
-        document.getElementById('overall-progress-fill').style.width = `${((idx + 1) / uploadQueue.length) * 100}%`;
+        const progressFill = document.getElementById('overall-progress-fill');
+        if (progressFill) {
+            progressFill.style.width = `${((idx + 1) / uploadQueue.length) * 100}%`;
+        }
 
         console.log(`Uploaded ${file.name} to s3://${result.bucket}/${result.key}`);
 
@@ -501,16 +575,21 @@ async function uploadFile(file, idx) {
         // Only add error to progress list if not a user cancel
         if (uploadInProgress) {
             const progressList = document.getElementById('file-progress-list');
-            const progressItem = document.createElement('div');
-            progressItem.className = 'file-progress-item';
-            progressItem.innerHTML = `
-                <span class="file-progress-name">${file.name} (${fileSizeMB} MB)</span>
-                <span class="file-progress-status error">✗ ${errorMsg}</span>
-            `;
-            progressList.appendChild(progressItem);
+            if (progressList) {
+                const progressItem = document.createElement('div');
+                progressItem.className = 'file-progress-item';
+                progressItem.innerHTML = `
+                    <span class="file-progress-name">${file.name} (${fileSizeMB} MB)</span>
+                    <span class="file-progress-status error">✗ ${errorMsg}</span>
+                `;
+                progressList.appendChild(progressItem);
+            }
 
             // Update overall progress even on error
-            document.getElementById('overall-progress-fill').style.width = `${((idx + 1) / uploadQueue.length) * 100}%`;
+            const progressFill = document.getElementById('overall-progress-fill');
+            if (progressFill) {
+                progressFill.style.width = `${((idx + 1) / uploadQueue.length) * 100}%`;
+            }
         }
     }
 }
