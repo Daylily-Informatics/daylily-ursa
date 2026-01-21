@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+
+{% block title %}Results - {{ workset.workset_id }} | Daylily Portal{% endblock %}
+
+{% block content %}
+<div class="container">
+    <!-- Page Header -->
+    <div class="page-header d-flex justify-between align-center flex-wrap gap-lg">
+        <div>
+            <h1 class="page-title">
+                <i class="fas fa-folder-open text-accent"></i> 
+                Results Browser
+            </h1>
+            <p class="page-subtitle">
+                <a href="/portal/worksets/{{ workset.workset_id }}" class="text-accent">{{ workset.workset_id }}</a>
+                <span class="text-muted mx-sm">→</span>
+                <code style="font-size: 0.8rem;">{{ results_uri }}</code>
+            </p>
+        </div>
+        <div class="page-actions" style="margin-top: 0;">
+            <a href="/portal/worksets/{{ workset.workset_id }}" class="btn btn-outline">
+                <i class="fas fa-arrow-left"></i> Back to Workset
+            </a>
+        </div>
+    </div>
+
+    <!-- Breadcrumbs -->
+    <nav class="breadcrumbs mb-lg" style="background: var(--bg-secondary); padding: 0.75rem 1rem; border-radius: 4px;">
+        <a href="/portal/worksets/{{ workset.workset_id }}/results/browse" class="text-accent">
+            <i class="fas fa-home"></i> Results Root
+        </a>
+        {% for crumb in breadcrumbs %}
+        <span class="text-muted mx-sm">/</span>
+        <a href="/portal/worksets/{{ workset.workset_id }}/results/browse?prefix={{ crumb.prefix | urlencode }}" class="text-accent">
+            {{ crumb.name }}
+        </a>
+        {% endfor %}
+    </nav>
+
+    <!-- File/Folder List -->
+    <div class="card">
+        <div class="browse-header d-flex justify-between align-center mb-md">
+            <span class="text-muted">{{ items | length }} items</span>
+        </div>
+        
+        {% if parent_prefix is not none %}
+        <div class="browse-item browse-folder" onclick="navigateTo('{{ parent_prefix }}')" style="cursor: pointer;">
+            <div class="browse-icon"><i class="fas fa-level-up-alt"></i></div>
+            <div class="browse-name">..</div>
+            <div class="browse-meta text-muted">Parent Directory</div>
+        </div>
+        {% endif %}
+        
+        {% if items %}
+        {% for item in items %}
+        <div class="browse-item {% if item.is_folder %}browse-folder{% else %}browse-file{% endif %}"
+             {% if item.is_folder %}onclick="navigateTo('{{ item.key }}')" style="cursor: pointer;"{% endif %}>
+            <div class="browse-icon">
+                {% if item.is_folder %}
+                <i class="fas fa-folder" style="color: #ffc107;"></i>
+                {% elif item.file_format == 'fastq' %}
+                <i class="fas fa-dna" style="color: #28a745;"></i>
+                {% elif item.file_format == 'bam' %}
+                <i class="fas fa-align-left" style="color: #007bff;"></i>
+                {% elif item.file_format == 'vcf' %}
+                <i class="fas fa-list-alt" style="color: #6f42c1;"></i>
+                {% elif item.file_format == 'cram' %}
+                <i class="fas fa-compress-alt" style="color: #17a2b8;"></i>
+                {% elif item.file_format == 'html' %}
+                <i class="fas fa-file-code" style="color: #e83e8c;"></i>
+                {% elif item.file_format == 'pdf' %}
+                <i class="fas fa-file-pdf" style="color: #dc3545;"></i>
+                {% elif item.file_format == 'table' %}
+                <i class="fas fa-table" style="color: #fd7e14;"></i>
+                {% else %}
+                <i class="fas fa-file"></i>
+                {% endif %}
+            </div>
+            <div class="browse-name" style="flex: 1;">
+                {{ item.name }}
+            </div>
+            <div class="browse-format" style="min-width: 60px;">
+                {% if item.file_format %}
+                <span class="badge badge-outline">{{ item.file_format | upper }}</span>
+                {% endif %}
+            </div>
+            <div class="browse-size" style="min-width: 80px; text-align: right;">
+                {% if item.size_bytes is defined and item.size_bytes is not none %}
+                {{ item.size_bytes | filesizeformat }}
+                {% else %}
+                --
+                {% endif %}
+            </div>
+            <div class="browse-modified" style="min-width: 100px; text-align: right;">
+                {% if item.last_modified %}
+                {{ item.last_modified[:10] }}
+                {% else %}
+                --
+                {% endif %}
+            </div>
+            <div class="browse-actions" style="min-width: 80px; text-align: right;">
+                {% if not item.is_folder %}
+                <a href="/portal/worksets/{{ workset.workset_id }}/results/download?key={{ item.key | urlencode }}" 
+                   class="btn btn-sm btn-outline" title="Download">
+                    <i class="fas fa-download"></i>
+                </a>
+                {% endif %}
+            </div>
+        </div>
+        {% endfor %}
+        {% else %}
+        <div class="empty-state text-center py-xl">
+            <i class="fas fa-folder-open fa-3x text-muted mb-md"></i>
+            <p class="text-muted">No files found in this directory</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<style>
+.browse-item {
+    display: flex;
+    align-items: center;
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--border-color);
+    gap: 1rem;
+}
+.browse-item:hover {
+    background: var(--bg-secondary);
+}
+.browse-item:last-child {
+    border-bottom: none;
+}
+.browse-icon {
+    width: 24px;
+    text-align: center;
+}
+</style>
+
+<script>
+const worksetId = '{{ workset.workset_id }}';
+
+function navigateTo(prefix) {
+    window.location.href = `/portal/worksets/${worksetId}/results/browse?prefix=${encodeURIComponent(prefix)}`;
+}
+</script>
+{% endblock %}
+
