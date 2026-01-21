@@ -1857,9 +1857,28 @@ class WorksetMonitor:
                 str(e),
             )
 
-    def _local_state_dir(self, workset: Workset) -> Path:
+    def _resolve_local_state_root(self) -> Path:
+        """Resolve local state root to an absolute path.
+
+        Always returns an absolute path under ~/.cache/ursa by default.
+        Expands ~ and resolves to absolute path regardless of CWD.
+        """
         root = self.config.pipeline.local_state_root or "~/.cache/ursa"
-        path = Path(os.path.expanduser(root)) / workset.name
+        # Expand ~ first, then resolve to absolute path
+        expanded = Path(os.path.expanduser(root))
+        # If the path is still relative after expansion, make it absolute
+        # by placing it under the user's home directory
+        if not expanded.is_absolute():
+            expanded = Path.home() / ".cache" / "ursa" / expanded
+        return expanded.resolve()
+
+    def _local_state_dir(self, workset: Workset) -> Path:
+        """Get local state directory for a workset.
+
+        Returns absolute path: ~/.cache/ursa/<workset-id>/
+        This path is independent of the current working directory.
+        """
+        path = self._resolve_local_state_root() / workset.name
         path.mkdir(parents=True, exist_ok=True)
         return path
 
@@ -2371,8 +2390,12 @@ class WorksetMonitor:
         return headers, table_rows
 
     def _cluster_state_dir(self, cluster_name: str) -> Path:
-        root = self.config.pipeline.local_state_root or "~/.cache/daylily-monitor"
-        path = Path(os.path.expanduser(root)) / CLUSTER_STATE_DIR / cluster_name
+        """Get local state directory for cluster state.
+
+        Returns absolute path: ~/.cache/ursa/_clusters/<cluster-name>/
+        This path is independent of the current working directory.
+        """
+        path = self._resolve_local_state_root() / CLUSTER_STATE_DIR / cluster_name
         path.mkdir(parents=True, exist_ok=True)
         return path
 
@@ -4335,10 +4358,20 @@ class WorksetMonitor:
         return path
 
     def _local_stage_root(self) -> Optional[Path]:
+        """Get local staging root directory.
+
+        Returns absolute path, or None if not configured.
+        Expands ~ and resolves to absolute path regardless of CWD.
+        """
         root = self.config.pipeline.local_stage_root
         if not root:
             return None
+        # Expand ~ first, then resolve to absolute path
         path = Path(root).expanduser()
+        if not path.is_absolute():
+            # If still relative, place under the local state root
+            path = self._resolve_local_state_root() / "staging" / path
+        path = path.resolve()
         path.mkdir(parents=True, exist_ok=True)
         return path
 
