@@ -239,3 +239,50 @@ def logs(
     except KeyboardInterrupt:
         console.print("\n")
 
+
+@monitor_app.command("grep")
+def grep_logs(
+    pattern: str = typer.Argument(..., help="Pattern to search for in logs"),
+    all_logs: bool = typer.Option(False, "--all", "-a", help="Search all log files, not just the latest"),
+    ignore_case: bool = typer.Option(True, "--ignore-case/--case-sensitive", "-i/-s", help="Case-insensitive search (default)"),
+    context: int = typer.Option(0, "--context", "-C", help="Lines of context before and after match"),
+    count: bool = typer.Option(False, "--count", "-c", help="Only show count of matching lines"),
+):
+    """Search monitor logs for a pattern.
+
+    Examples:
+        ursa monitor grep 'error'
+        ursa monitor grep 'workset-123' --all
+        ursa monitor grep 'failed' -C 3
+    """
+    if all_logs:
+        log_files = sorted(LOG_DIR.glob("monitor_*.log"), reverse=True)
+    else:
+        latest = _get_latest_log()
+        log_files = [latest] if latest else []
+
+    if not log_files:
+        console.print("[yellow]⚠[/yellow]  No log files found.")
+        return
+
+    # Build grep command
+    grep_cmd = ["grep", "--color=always"]
+    if ignore_case:
+        grep_cmd.append("-i")
+    if context > 0:
+        grep_cmd.extend(["-C", str(context)])
+    if count:
+        grep_cmd.append("-c")
+    if len(log_files) > 1:
+        grep_cmd.append("-H")  # Show filename for multiple files
+
+    grep_cmd.append(pattern)
+    grep_cmd.extend(str(lf) for lf in log_files)
+
+    console.print(f"[dim]Searching {len(log_files)} log file(s) for '{pattern}'[/dim]\n")
+
+    result = subprocess.run(grep_cmd)
+
+    if result.returncode == 1:
+        console.print(f"\n[yellow]⚠[/yellow]  No matches found for '{pattern}'")
+

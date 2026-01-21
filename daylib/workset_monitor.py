@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import concurrent.futures
 import contextlib
 import csv
@@ -16,6 +17,7 @@ import shutil
 import socket
 import shlex
 import subprocess
+import threading
 import time
 from collections import defaultdict
 from pathlib import Path, PurePosixPath
@@ -184,8 +186,9 @@ class PipelineOptions:
     login_shell_init: str = "source ~/.bashrc"
     tmux_session_prefix: str = "daylily"
     tmux_keepalive_shell: str = "bash"
-    # Local monitor metadata (markers, tmux name) — never /fsx
-    local_state_root: Optional[str] = "~/.cache/daylily-monitor"
+    # Local monitor metadata (markers, tmux name, manifests) — never /fsx
+    # All workset-related files are consolidated under ~/.cache/ursa/<workset-id>/
+    local_state_root: Optional[str] = "~/.cache/ursa"
     # FSx clone base + repo dir name for fallback path computation
     clone_dest_root: str = "/fsx/analysis_results/ubuntu"
     repo_dir_name: str = "daylily-omics-analysis"
@@ -273,6 +276,7 @@ class WorksetMonitor:
     OPTIONAL_ACTIONS: Tuple[str, ...] = (
         "monitor_pipeline",
         "cleanup_pipeline",
+        "cleanup_headnode",
         "shutdown_cluster",
     )
 
@@ -332,18 +336,87 @@ class WorksetMonitor:
         self._current_workset: Optional[Workset] = None
         self._command_log_buffer: Dict[str, List[str]] = {}  # workset_name -> log lines
 
+        # Concurrent processing state
+        self._active_worksets: Set[str] = set()  # workset names currently being processed
+        self._active_worksets_lock = threading.Lock()  # protects _active_worksets
+        self._executor: Optional[concurrent.futures.ThreadPoolExecutor] = None
+        self._futures: Dict[concurrent.futures.Future, str] = {}  # future -> workset_name
+        self._shutdown_event = threading.Event()  # signals graceful shutdown
+
     # ------------------------------------------------------------------
     # Public entrypoints
     # ------------------------------------------------------------------
     def _count_in_progress_worksets(self, worksets: Sequence[Workset]) -> int:
-        """Count worksets that are currently in progress."""
+        """Count worksets that are currently in progress (from S3 sentinels)."""
         count = 0
         for workset in worksets:
             if SENTINEL_FILES["in_progress"] in workset.sentinels:
                 count += 1
         return count
 
+    def _get_active_count(self) -> int:
+        """Get the number of worksets currently being processed (thread-safe)."""
+        with self._active_worksets_lock:
+            return len(self._active_worksets)
+
+    def _is_workset_active(self, workset_name: str) -> bool:
+        """Check if a workset is currently being processed (thread-safe)."""
+        with self._active_worksets_lock:
+            return workset_name in self._active_worksets
+
+    def _mark_workset_active(self, workset_name: str) -> bool:
+        """Mark a workset as active. Returns False if already active or at capacity."""
+        with self._active_worksets_lock:
+            if workset_name in self._active_worksets:
+                return False
+            if len(self._active_worksets) >= self.config.monitor.max_concurrent_worksets:
+                return False
+            self._active_worksets.add(workset_name)
+            LOGGER.debug(
+                "Marked %s active (now %d/%d active)",
+                workset_name,
+                len(self._active_worksets),
+                self.config.monitor.max_concurrent_worksets,
+            )
+            return True
+
+    def _mark_workset_inactive(self, workset_name: str) -> None:
+        """Mark a workset as no longer active (thread-safe)."""
+        with self._active_worksets_lock:
+            self._active_worksets.discard(workset_name)
+            LOGGER.debug(
+                "Marked %s inactive (now %d/%d active)",
+                workset_name,
+                len(self._active_worksets),
+                self.config.monitor.max_concurrent_worksets,
+            )
+
+    def _handle_workset_async(self, workset: Workset) -> None:
+        """Handle a single workset in a worker thread.
+
+        This method wraps _handle_workset to ensure proper cleanup of active state.
+        """
+        try:
+            self._handle_workset(workset)
+        finally:
+            self._mark_workset_inactive(workset.name)
+
+    def _collect_completed_futures(self) -> None:
+        """Check for completed futures and clean up."""
+        done_futures = [f for f in self._futures if f.done()]
+        for future in done_futures:
+            workset_name = self._futures.pop(future)
+            try:
+                future.result()  # Raise any exception that occurred
+            except Exception:
+                LOGGER.exception("Workset %s processing raised exception", workset_name)
+
     def run(self) -> None:
+        """Run the monitor with concurrent workset processing.
+
+        Uses a ThreadPoolExecutor to process multiple worksets in parallel up to
+        the configured max_concurrent_worksets limit.
+        """
         LOGGER.info("Starting Daylily workset monitor in %s", self.config.aws.region)
         LOGGER.info(
             "Monitoring bucket: %s prefix: %s",
@@ -356,45 +429,143 @@ class WorksetMonitor:
             self.config.monitor.continuous,
             self.config.monitor.max_concurrent_worksets,
         )
-        if self.config.aws.session_duration_seconds:
-            self._refresh_session()
-        poll_count = 0
-        while True:
-            poll_count += 1
-            start_time = time.time()
-            try:
-                worksets = list(self._discover_worksets())
-                in_progress_count = self._count_in_progress_worksets(worksets)
-                LOGGER.info(
-                    "Poll #%d: discovered %d workset(s), %d in progress",
-                    poll_count,
-                    len(worksets),
-                    in_progress_count,
-                )
-                self._update_sentinel_indexes(worksets)
-                for workset in worksets:
-                    # Re-check in-progress count before starting a new workset
-                    current_in_progress = self._count_in_progress_worksets(worksets)
-                    if current_in_progress >= self.config.monitor.max_concurrent_worksets:
-                        # Only skip if this workset is NOT already in progress
-                        if SENTINEL_FILES["in_progress"] not in workset.sentinels:
+
+        max_workers = self.config.monitor.max_concurrent_worksets
+        self._executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=max_workers,
+            thread_name_prefix="workset-worker",
+        )
+
+        try:
+            if self.config.aws.session_duration_seconds:
+                self._refresh_session()
+
+            poll_count = 0
+            while not self._shutdown_event.is_set():
+                poll_count += 1
+                start_time = time.time()
+                try:
+                    # Clean up completed futures first
+                    self._collect_completed_futures()
+
+                    worksets = list(self._discover_worksets())
+                    s3_in_progress = self._count_in_progress_worksets(worksets)
+                    active_count = self._get_active_count()
+                    LOGGER.info(
+                        "Poll #%d: discovered %d workset(s), %d in-progress (S3), %d active (local)",
+                        poll_count,
+                        len(worksets),
+                        s3_in_progress,
+                        active_count,
+                    )
+                    self._update_sentinel_indexes(worksets)
+
+                    # Submit ready worksets to the thread pool
+                    for workset in worksets:
+                        # Skip if workset is already being processed
+                        if self._is_workset_active(workset.name):
+                            continue
+
+                        # Skip completed/errored/ignored worksets
+                        if self._should_skip_workset(workset):
+                            continue
+
+                        # Try to mark as active (will fail if at capacity)
+                        if not self._mark_workset_active(workset.name):
                             LOGGER.debug(
-                                "Skipping %s: max parallel worksets (%d) reached",
+                                "Skipping %s: at capacity (%d/%d)",
                                 workset.name,
+                                self._get_active_count(),
                                 self.config.monitor.max_concurrent_worksets,
                             )
                             continue
-                    self._handle_workset(workset)
+
+                        # Submit to thread pool
+                        LOGGER.info(
+                            "Submitting %s for processing (slot %d/%d)",
+                            workset.name,
+                            self._get_active_count(),
+                            self.config.monitor.max_concurrent_worksets,
+                        )
+                        future = self._executor.submit(self._handle_workset_async, workset)
+                        self._futures[future] = workset.name
+
+                except Exception:
+                    LOGGER.exception("Unexpected failure while monitoring worksets")
+
+                elapsed = time.time() - start_time
+                sleep_for = max(self.config.monitor.poll_interval_seconds - elapsed, 0)
+
+                if not self.config.monitor.continuous:
+                    # In --once mode, wait for all active worksets to complete
+                    LOGGER.info(
+                        "Single poll complete (--once mode), waiting for %d active workset(s)",
+                        self._get_active_count(),
+                    )
+                    self._wait_for_active_worksets()
+                    break
+
+                if sleep_for and not self._shutdown_event.is_set():
+                    LOGGER.debug("Sleeping %.1fs before next poll", sleep_for)
+                    self._shutdown_event.wait(sleep_for)
+
+        finally:
+            # Graceful shutdown
+            LOGGER.info("Shutting down executor, waiting for active worksets...")
+            if self._executor:
+                self._executor.shutdown(wait=True)
+            LOGGER.info("Monitor shutdown complete")
+
+    def _should_skip_workset(self, workset: Workset) -> bool:
+        """Check if a workset should be skipped (complete, error, ignore, etc).
+
+        For in-progress worksets, this method attempts to resume them by checking
+        pipeline status and running export if completed. Returns True to skip if:
+        - Already complete, errored (without restart flag), or ignored
+        - In-progress and was successfully handled (completed/errored)
+        - In-progress and still running (will be checked again next poll)
+
+        Returns False to allow normal processing only for ready worksets.
+        """
+        # Skip if already completed
+        if SENTINEL_FILES["complete"] in workset.sentinels:
+            return True
+        # Skip if errored (unless attempt_restart is set)
+        if SENTINEL_FILES["error"] in workset.sentinels and not self.attempt_restart:
+            return True
+        # Skip if ignored
+        if SENTINEL_FILES["ignore"] in workset.sentinels:
+            return True
+        # Handle in-progress worksets - try to resume/complete them
+        if SENTINEL_FILES["in_progress"] in workset.sentinels:
+            # _handle_in_progress_workset returns False when:
+            # - Pipeline completed successfully (workset marked complete)
+            # - Pipeline failed (workset marked error)
+            # - Pipeline still running (nothing to do this poll)
+            # - Unable to check status (will retry next poll)
+            # In all cases, we should skip normal processing
+            self._handle_in_progress_workset(workset)
+            return True  # Always skip - either handled or still in progress
+        return False
+
+    def _wait_for_active_worksets(self, timeout: Optional[float] = None) -> None:
+        """Wait for all active worksets to complete."""
+        if not self._futures:
+            return
+        LOGGER.info("Waiting for %d workset(s) to complete...", len(self._futures))
+        done, not_done = concurrent.futures.wait(
+            self._futures.keys(),
+            timeout=timeout,
+            return_when=concurrent.futures.ALL_COMPLETED,
+        )
+        for future in done:
+            workset_name = self._futures.pop(future, "unknown")
+            try:
+                future.result()
             except Exception:
-                LOGGER.exception("Unexpected failure while monitoring worksets")
-            elapsed = time.time() - start_time
-            sleep_for = max(self.config.monitor.poll_interval_seconds - elapsed, 0)
-            if not self.config.monitor.continuous:
-                LOGGER.info("Single poll complete (--once mode), exiting")
-                break
-            if sleep_for:
-                LOGGER.debug("Sleeping %.1fs before next poll", sleep_for)
-                time.sleep(sleep_for)
+                LOGGER.exception("Workset %s processing raised exception", workset_name)
+        if not_done:
+            LOGGER.warning("%d workset(s) did not complete in time", len(not_done))
 
     def perform_actions(
         self,
@@ -573,6 +744,19 @@ class WorksetMonitor:
                 pipeline_dir = None
                 continue
 
+            if action == "cleanup_headnode":
+                if cluster_name is None:
+                    raise MonitorError("Cluster is required to clean up headnode directory")
+                if pipeline_dir is None:
+                    pipeline_dir = self._prepare_pipeline_workspace(
+                        workset,
+                        cluster_name,
+                        inputs.clone_args,
+                        run_clone=False,
+                    )
+                self._cleanup_headnode_directory(workset, cluster_name, pipeline_dir)
+                continue
+
             if action == "shutdown_cluster":
                 if cluster_name is None:
                     cluster_name = self._ensure_cluster(inputs.work_yaml)
@@ -612,63 +796,51 @@ class WorksetMonitor:
 
 
     # ------------------------------------------------------------------
-    # Workset discovery
+    # Workset discovery (DynamoDB is source of truth)
     # ------------------------------------------------------------------
     def _discover_worksets(
         self, *, include_archive: bool = False
     ) -> Iterable[Workset]:
-        # Track yielded worksets to avoid duplicates
-        yielded_names: Set[str] = set()
+        """Discover worksets from DynamoDB and verify S3 folders exist.
 
-        # First, discover from S3 (traditional method)
-        for workset in self._discover_worksets_for_prefix(
-            self.config.monitor.normalised_prefix(), is_archived=False
-        ):
-            yielded_names.add(workset.name)
-            yield workset
+        DynamoDB is the authoritative source - worksets are created via the UI
+        and registered in DynamoDB. The monitor then verifies the S3 folder
+        exists before processing.
 
-        # Also discover from DynamoDB if available (new UI-submitted worksets)
-        if self.state_db:
-            yield from self._discover_worksets_from_dynamodb(yielded_names)
-
-        if not include_archive:
-            return
-        archive_prefix = self.config.monitor.normalised_archive_prefix()
-        if archive_prefix:
-            yield from self._discover_worksets_for_prefix(
-                archive_prefix, is_archived=True
-            )
-
-    def _discover_worksets_from_dynamodb(
-        self, already_yielded: Set[str]
-    ) -> Iterable[Workset]:
-        """Discover worksets registered in DynamoDB that aren't in S3 yet.
-
-        This enables worksets submitted via the UI to be discovered by the monitor.
-
-        Args:
-            already_yielded: Set of workset names already discovered from S3
+        Returns both:
+        - in_progress worksets (to check for completion/resume)
+        - ready worksets (to start processing)
         """
         if not self.state_db:
+            LOGGER.warning("No DynamoDB state_db configured - cannot discover worksets")
             return
 
         try:
-            ready_worksets = self.state_db.get_ready_worksets_prioritized(limit=100)
+            # Query DynamoDB for all actionable worksets (in_progress + ready)
+            worksets = self.state_db.get_actionable_worksets_prioritized(limit=100)
         except Exception as e:
             LOGGER.warning("Failed to query DynamoDB for worksets: %s", str(e))
             return
 
-        for db_workset in ready_worksets:
+        for db_workset in worksets:
             workset_id = db_workset.get("workset_id", "")
-            if workset_id in already_yielded:
+            if not workset_id:
                 continue
 
-            # Convert DynamoDB record to Workset object
+            # Get workset details from DynamoDB
             bucket = db_workset.get("bucket", self.config.monitor.bucket)
             prefix = db_workset.get("prefix", f"{self.config.monitor.normalised_prefix()}{workset_id}/")
             state = db_workset.get("state", "ready")
             lock_owner = db_workset.get("lock_owner")
             lock_acquired_at = db_workset.get("lock_acquired_at")
+
+            # Verify S3 folder exists before yielding
+            if not self._s3_folder_exists(bucket, prefix):
+                LOGGER.warning(
+                    "Workset %s registered in DynamoDB but S3 folder not found: s3://%s/%s",
+                    workset_id, bucket, prefix
+                )
+                continue
 
             # Build sentinels dict from DynamoDB state
             sentinels: Dict[str, str] = {}
@@ -677,19 +849,15 @@ class WorksetMonitor:
                 sentinels[SENTINEL_FILES["ready"]] = created_at
             elif state == "in_progress":
                 sentinels[SENTINEL_FILES["in_progress"]] = created_at
+            elif state == "complete":
+                sentinels[SENTINEL_FILES["complete"]] = created_at
+            elif state == "error":
+                sentinels[SENTINEL_FILES["error"]] = created_at
 
             if lock_owner:
                 sentinels[SENTINEL_FILES["lock"]] = lock_acquired_at or created_at
 
-            # Sync to S3 if integration layer is available
-            if self.integration and bucket:
-                try:
-                    self.integration.sync_dynamodb_to_s3(workset_id)
-                    LOGGER.info("Synced DynamoDB workset %s to S3", workset_id)
-                except Exception as e:
-                    LOGGER.warning("Failed to sync workset %s to S3: %s", workset_id, str(e))
-
-            # Check for required files - pass the correct bucket for customer worksets
+            # Check for required files
             has_required = self._verify_core_files(prefix, bucket=bucket)
 
             yield Workset(
@@ -699,29 +867,27 @@ class WorksetMonitor:
                 has_required_files=has_required,
                 is_archived=False,
             )
-            already_yielded.add(workset_id)
 
-    def _discover_worksets_for_prefix(
-        self, prefix: str, *, is_archived: bool
-    ) -> Iterable[Workset]:
-        bucket = self.config.monitor.bucket
-        paginator = self._s3.get_paginator("list_objects_v2")
-        for page in paginator.paginate(Bucket=bucket, Prefix=prefix, Delimiter="/"):
-            for common_prefix in page.get("CommonPrefixes", []):
-                workset_prefix = common_prefix["Prefix"]
-                name = workset_prefix.rstrip("/").split("/")[-1]
-                sentinels = self._list_sentinels(workset_prefix)
-                has_required = self._verify_core_files(workset_prefix)
-                workset = Workset(
-                    name=name,
-                    prefix=workset_prefix,
-                    sentinels=sentinels,
-                    has_required_files=has_required,
-                    is_archived=is_archived,
-                )
-                # Reconcile S3 state with DynamoDB
-                self._reconcile_dynamodb_state(workset)
-                yield workset
+    def _s3_folder_exists(self, bucket: str, prefix: str) -> bool:
+        """Check if an S3 folder exists (has any objects).
+
+        Args:
+            bucket: S3 bucket name
+            prefix: S3 prefix (folder path)
+
+        Returns:
+            True if at least one object exists under the prefix
+        """
+        try:
+            response = self._s3.list_objects_v2(
+                Bucket=bucket,
+                Prefix=prefix,
+                MaxKeys=1,
+            )
+            return response.get("KeyCount", 0) > 0
+        except Exception as e:
+            LOGGER.warning("Error checking S3 folder existence for %s/%s: %s", bucket, prefix, e)
+            return False
 
     def _list_sentinels(self, workset_prefix: str) -> Dict[str, str]:
         """List all sentinel files for a workset with pagination safety."""
@@ -1012,6 +1178,9 @@ class WorksetMonitor:
                 "Pipeline completed successfully for in-progress workset %s; running export",
                 workset.name,
             )
+            # Track progress: pipeline completed (recovery path)
+            self._update_progress_step(workset, "pipeline_complete", "Pipeline finished (detected on recovery)")
+
             # Clear tmux session markers
             existing_session = self._load_tmux_session(workset)
             if existing_session:
@@ -1022,9 +1191,19 @@ class WorksetMonitor:
             # Run export if target URI is configured
             try:
                 if inputs.target_export_uri:
+                    # Track progress: exporting (recovery path)
+                    self._update_progress_step(workset, "exporting", f"Exporting results to {inputs.target_export_uri}")
                     self._export_results(
                         workset, cluster_name, inputs.target_export_uri, pipeline_dir
                     )
+                    # Track progress: export complete
+                    self._update_progress_step(workset, "export_complete", "Export finished")
+
+                    # Cleanup headnode directory after successful export (recovery path)
+                    self._cleanup_headnode_directory(workset, cluster_name, pipeline_dir)
+
+                # Track progress: finalizing
+                self._update_progress_step(workset, "finalizing", "Completing workset processing")
 
                 # Mark complete
                 self._write_sentinel(
@@ -1049,6 +1228,8 @@ class WorksetMonitor:
                 return False  # Already handled, don't continue normal flow
             except Exception as exc:
                 LOGGER.exception("Export failed for %s", workset.name)
+                # Track progress: export failed
+                self._update_progress_step(workset, "export_failed", str(exc))
                 error_msg = f"{dt.datetime.now(dt.timezone.utc).isoformat().replace('+00:00', 'Z')}\t{exc}"
                 self._write_sentinel(workset, SENTINEL_FILES["error"], error_msg)
                 self._delete_sentinel(workset, SENTINEL_FILES["in_progress"])
@@ -1066,6 +1247,9 @@ class WorksetMonitor:
 
         elif status == "failure":
             LOGGER.error("Pipeline failed for in-progress workset %s", workset.name)
+            # Track progress: pipeline failed
+            self._update_progress_step(workset, "pipeline_failed", "Pipeline failed")
+
             # Clear tmux session
             existing_session = self._load_tmux_session(workset)
             if existing_session:
@@ -1455,6 +1639,9 @@ class WorksetMonitor:
         pipeline_dir: Optional[PurePosixPath],
         completed_commands: Set[str],
     ) -> PurePosixPath:
+        # Track progress: staging and cluster provisioning in parallel
+        self._update_progress_step(workset, "staging", "Staging samples and waiting for cluster")
+
         stage_label = "stage_samples"
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
             if stage_label in completed_commands:
@@ -1473,6 +1660,8 @@ class WorksetMonitor:
                 self._wait_for_cluster_ready, cluster_name
             )
             cluster_details = cluster_future.result()
+            # Track progress: cluster is ready
+            self._update_progress_step(workset, "cluster_ready", f"Cluster {cluster_name} ready")
             if cluster_details:
                 zone = self._extract_cluster_zone(cluster_details)
                 if zone:
@@ -1480,6 +1669,7 @@ class WorksetMonitor:
             try:
                 stage_artifacts = stage_future.result()
             except CommandFailedError:
+                self._update_progress_step(workset, "staging_failed", "Sample staging failed")
                 raise
         if stage_artifacts is None:
             stage_artifacts = self._stage_artifacts.get(workset.name)
@@ -1524,6 +1714,9 @@ class WorksetMonitor:
             )
             completed_commands.add(push_label)
 
+        # Track progress: pipeline starting
+        self._update_progress_step(workset, "pipeline_starting", "Launching pipeline")
+
         run_label = "run_pipeline"
         if run_label in completed_commands:
             LOGGER.info(
@@ -1534,6 +1727,30 @@ class WorksetMonitor:
             self._run_pipeline(workset, cluster_name, pipeline_dir, run_suffix)
             completed_commands.add(run_label)
 
+        # Track progress: pipeline completed, starting export
+        self._update_progress_step(workset, "pipeline_complete", "Pipeline finished successfully")
+
+        # Collect pre-export metrics (non-blocking)
+        metrics_label = "collect_metrics"
+        if metrics_label in completed_commands:
+            LOGGER.info(
+                "Skipping metrics collection for %s: already completed", workset.name
+            )
+        else:
+            try:
+                self._collect_pre_export_metrics(workset, cluster_name, pipeline_dir)
+                completed_commands.add(metrics_label)
+            except Exception as exc:
+                # Metrics collection failures are non-fatal
+                self._update_progress_step(
+                    workset, "metrics_failed", f"Metrics collection warning: {exc}"
+                )
+                LOGGER.warning(
+                    "Pre-export metrics collection failed for %s (non-fatal): %s",
+                    workset.name,
+                    exc,
+                )
+
         if target_export_uri:
             export_label = "export_results"
             if export_label in completed_commands:
@@ -1541,10 +1758,27 @@ class WorksetMonitor:
                     "Skipping export for %s: command already completed", workset.name
                 )
             else:
+                # Track progress: exporting
+                self._update_progress_step(workset, "exporting", f"Exporting results to {target_export_uri}")
                 self._export_results(
                     workset, cluster_name, target_export_uri, pipeline_dir
                 )
                 completed_commands.add(export_label)
+                # Track progress: export complete
+                self._update_progress_step(workset, "export_complete", "Export finished")
+
+            # Cleanup headnode directory after successful export
+            cleanup_label = "cleanup_headnode"
+            if cleanup_label in completed_commands:
+                LOGGER.info(
+                    "Skipping headnode cleanup for %s: already completed", workset.name
+                )
+            else:
+                self._cleanup_headnode_directory(workset, cluster_name, pipeline_dir)
+                completed_commands.add(cleanup_label)
+
+        # Track progress: finalizing
+        self._update_progress_step(workset, "finalizing", "Completing workset processing")
 
         return pipeline_dir
 
@@ -1624,7 +1858,7 @@ class WorksetMonitor:
             )
 
     def _local_state_dir(self, workset: Workset) -> Path:
-        root = self.config.pipeline.local_state_root or "~/.cache/daylily-monitor"
+        root = self.config.pipeline.local_state_root or "~/.cache/ursa"
         path = Path(os.path.expanduser(root)) / workset.name
         path.mkdir(parents=True, exist_ok=True)
         return path
@@ -1665,6 +1899,44 @@ class WorksetMonitor:
         if changed:
             self._save_metrics(workset, data)
         return data
+
+    def _update_progress_step(
+        self,
+        workset: Workset,
+        step: str,
+        message: Optional[str] = None,
+    ) -> None:
+        """Update workset progress step in DynamoDB.
+
+        Args:
+            workset: The workset being processed
+            step: Progress step value (from WorksetProgressStep enum)
+            message: Optional message describing the progress
+        """
+        if not self.state_db:
+            LOGGER.debug("No state_db; skipping progress step update to %s", step)
+            return
+
+        try:
+            from daylib.workset_state_db import WorksetProgressStep
+
+            # Try to convert to enum, fall back to raw value if not found
+            try:
+                progress_step = WorksetProgressStep(step)
+            except ValueError:
+                LOGGER.warning("Unknown progress step '%s'; using raw value", step)
+                # Use update_progress with raw string
+                self.state_db.update_progress(workset.name, current_step=step)
+                return
+
+            self.state_db.update_progress_step(workset.name, progress_step, message)
+        except Exception as exc:
+            LOGGER.warning(
+                "Failed to update progress step for %s to %s: %s",
+                workset.name,
+                step,
+                exc,
+            )
 
     def _parse_timestamp(self, value: Optional[str]) -> Optional[dt.datetime]:
         if not value:
@@ -2120,6 +2392,25 @@ class WorksetMonitor:
         marker.write_text(str(location), encoding="utf-8")
         self._update_metrics(workset, {"pipeline_dir": str(location)})
 
+        # Store headnode analysis path in DynamoDB for UI display
+        if self.state_db:
+            try:
+                self.state_db.update_execution_environment(
+                    workset.name,
+                    headnode_analysis_path=str(location),
+                )
+                LOGGER.debug(
+                    "Stored headnode_analysis_path for %s: %s",
+                    workset.name,
+                    location,
+                )
+            except Exception as exc:
+                LOGGER.warning(
+                    "Failed to store headnode_analysis_path for %s: %s",
+                    workset.name,
+                    exc,
+                )
+
     def _load_pipeline_location(self, workset: Workset) -> Optional[PurePosixPath]:
         cached = self._pipeline_locations.get(workset.name)
         if cached:
@@ -2254,6 +2545,7 @@ class WorksetMonitor:
     ) -> StageArtifacts:
         manifest_argument = self._relative_manifest_argument(manifest_path)
         reference_bucket = self._stage_reference_bucket()
+        output_dir = self._local_state_dir(workset)
         cmd = self.config.pipeline.stage_command.format(
             profile=self.config.aws.profile,
             region=self.config.aws.region,
@@ -2266,6 +2558,7 @@ class WorksetMonitor:
             ssh_extra_args=" ".join(
                 shlex.quote(arg) for arg in self.config.pipeline.ssh_extra_args
             ),
+            output_dir=shlex.quote(str(output_dir)),
         )
         LOGGER.info(
             "Staging samples for cluster %s with command: %s", cluster_name, cmd
@@ -2468,6 +2761,375 @@ class WorksetMonitor:
             shell=True,
         )
         self._clear_pipeline_location(workset)
+
+    def _collect_pre_export_metrics(
+        self,
+        workset: Workset,
+        cluster_name: str,
+        pipeline_dir: PurePosixPath,
+    ) -> Optional[Dict[str, Any]]:
+        """Collect comprehensive analysis metrics before FSx export.
+
+        Gathers statistics from the analysis directory including:
+        - Total directory size
+        - Per-sample output file counts and sizes (CRAM, SNV VCF, SV VCF)
+        - Compute costs from benchmark data
+
+        Args:
+            workset: The workset being processed
+            cluster_name: Name of the ParallelCluster
+            pipeline_dir: Path to the pipeline directory on FSx
+
+        Returns:
+            Dict containing collected metrics, or None if collection failed
+
+        Note:
+            Metrics collection failures are logged as warnings but do not block export.
+        """
+        self._update_progress_step(
+            workset, "collecting_metrics", f"Gathering analysis metrics from {pipeline_dir}"
+        )
+        LOGGER.info("Collecting pre-export metrics for %s from %s", workset.name, pipeline_dir)
+
+        metrics: Dict[str, Any] = {}
+        quoted_dir = shlex.quote(str(pipeline_dir))
+
+        # 1. Get total directory size
+        try:
+            du_cmd = f"du -sb {quoted_dir} 2>/dev/null || du -sk {quoted_dir}"
+            result = self._run_headnode_command(
+                cluster_name, du_cmd, check=False, shell=True
+            )
+            if result.returncode == 0:
+                output = result.stdout.decode("utf-8", errors="ignore").strip()
+                parts = output.split()
+                if parts:
+                    size_str = parts[0]
+                    try:
+                        # du -sb returns bytes, du -sk returns kilobytes
+                        size_bytes = int(size_str)
+                        if "k" in du_cmd.split()[-1].lower() or size_bytes < 1000:
+                            size_bytes = size_bytes * 1024  # Convert KB to bytes
+                        metrics["analysis_directory_size_bytes"] = size_bytes
+                        # Generate human-readable size
+                        metrics["analysis_directory_size_human"] = self._format_bytes(size_bytes)
+                        LOGGER.debug(
+                            "Directory size for %s: %s (%d bytes)",
+                            workset.name, metrics["analysis_directory_size_human"], size_bytes,
+                        )
+                    except ValueError:
+                        LOGGER.warning("Could not parse du output for %s: %s", workset.name, output)
+        except Exception as exc:
+            LOGGER.warning("Failed to get directory size for %s: %s", workset.name, exc)
+
+        # 2. Collect per-sample output file metrics
+        per_sample_metrics: Dict[str, Dict[str, Any]] = {}
+
+        # Find and parse CRAM files
+        self._collect_file_metrics(
+            workset, cluster_name, pipeline_dir,
+            "*.cram", "cram", per_sample_metrics
+        )
+
+        # Find and parse SNV VCF files
+        self._collect_file_metrics(
+            workset, cluster_name, pipeline_dir,
+            "*.snv.sort.vcf.gz", "snv_vcf", per_sample_metrics
+        )
+
+        # Find and parse SV VCF files
+        self._collect_file_metrics(
+            workset, cluster_name, pipeline_dir,
+            "*.sv.sort.vcf.gz", "sv_vcf", per_sample_metrics
+        )
+
+        if per_sample_metrics:
+            metrics["per_sample_metrics"] = per_sample_metrics
+            LOGGER.info(
+                "Collected file metrics for %d samples in %s",
+                len(per_sample_metrics), workset.name,
+            )
+
+        # 3. Parse benchmark data for compute costs
+        benchmark_path = f"{pipeline_dir}/results/day/hg38/other_reports/rules_benchmark_data_mqc.tsv"
+        try:
+            cost_data = self._parse_benchmark_costs(workset, cluster_name, benchmark_path, per_sample_metrics)
+            if cost_data:
+                metrics["total_compute_cost_usd"] = cost_data.get("total_cost", 0.0)
+                LOGGER.info(
+                    "Total compute cost for %s: $%.4f",
+                    workset.name, metrics["total_compute_cost_usd"],
+                )
+        except Exception as exc:
+            LOGGER.warning("Failed to parse benchmark costs for %s: %s", workset.name, exc)
+
+        # Store metrics in DynamoDB
+        if metrics and self.state_db:
+            try:
+                self.state_db.update_performance_metrics(
+                    workset.name,
+                    {"pre_export_metrics": metrics},
+                    is_final=False,
+                )
+                LOGGER.info("Stored pre-export metrics for %s in DynamoDB", workset.name)
+            except Exception as exc:
+                LOGGER.warning("Failed to store pre-export metrics for %s: %s", workset.name, exc)
+
+        self._update_progress_step(
+            workset, "metrics_complete", f"Metrics collection complete for {workset.name}"
+        )
+        return metrics if metrics else None
+
+    def _format_bytes(self, size_bytes: int) -> str:
+        """Format bytes as human-readable string (e.g., '13G', '256M')."""
+        for unit in ["B", "K", "M", "G", "T", "P"]:
+            if abs(size_bytes) < 1024:
+                if unit == "B":
+                    return f"{size_bytes}{unit}"
+                return f"{size_bytes:.1f}{unit}"
+            size_bytes = size_bytes // 1024
+        return f"{size_bytes}P"
+
+    def _collect_file_metrics(
+        self,
+        workset: Workset,
+        cluster_name: str,
+        pipeline_dir: PurePosixPath,
+        pattern: str,
+        file_type: str,
+        per_sample_metrics: Dict[str, Dict[str, Any]],
+    ) -> None:
+        """Collect file counts and sizes for a specific file type.
+
+        Parses filenames to extract sample IDs using the naming convention:
+        RUNID_SAMPLEID_EXPERIMENTID-LANE-SEQBARCODE-libprep-seqvendor-seq-platform.<extensions>
+
+        Args:
+            workset: The workset being processed
+            cluster_name: Name of the ParallelCluster
+            pipeline_dir: Path to the pipeline directory
+            pattern: Glob pattern for files (e.g., "*.cram")
+            file_type: Type identifier (e.g., "cram", "snv_vcf", "sv_vcf")
+            per_sample_metrics: Dict to update with collected metrics
+        """
+        quoted_dir = shlex.quote(str(pipeline_dir))
+        find_cmd = (
+            f"find {quoted_dir}/results/day/hg38/ -name '{pattern}' "
+            f"-exec ls -l {{}} \\; 2>/dev/null"
+        )
+
+        try:
+            result = self._run_headnode_command(
+                cluster_name, find_cmd, check=False, shell=True
+            )
+            if result.returncode != 0:
+                LOGGER.debug("No %s files found for %s", file_type, workset.name)
+                return
+
+            output = result.stdout.decode("utf-8", errors="ignore")
+            for line in output.strip().splitlines():
+                if not line.strip():
+                    continue
+                # Parse ls -l output: -rw-r--r-- 1 user group SIZE date time filename
+                parts = line.split()
+                if len(parts) < 9:
+                    continue
+                try:
+                    file_size = int(parts[4])
+                    file_path = parts[-1]
+                    sample_id = self._extract_sample_id_from_path(file_path)
+                    if sample_id:
+                        if sample_id not in per_sample_metrics:
+                            per_sample_metrics[sample_id] = {}
+                        count_key = f"{file_type}_count"
+                        size_key = f"{file_type}_size_bytes"
+                        per_sample_metrics[sample_id][count_key] = (
+                            per_sample_metrics[sample_id].get(count_key, 0) + 1
+                        )
+                        per_sample_metrics[sample_id][size_key] = (
+                            per_sample_metrics[sample_id].get(size_key, 0) + file_size
+                        )
+                except (ValueError, IndexError) as e:
+                    LOGGER.debug("Could not parse line for %s: %s (%s)", workset.name, line, e)
+
+        except Exception as exc:
+            LOGGER.warning(
+                "Failed to collect %s metrics for %s: %s", file_type, workset.name, exc
+            )
+
+    def _extract_sample_id_from_path(self, file_path: str) -> Optional[str]:
+        """Extract sample ID from a pipeline output file path.
+
+        Expected naming convention:
+        RUNID_SAMPLEID_EXPERIMENTID-LANE-SEQBARCODE-libprep-seqvendor-seq-platform.<extensions>
+
+        Args:
+            file_path: Full path to the file
+
+        Returns:
+            Extracted sample ID or None if parsing failed
+        """
+        import os
+        filename = os.path.basename(file_path)
+        # Remove extensions to get base name
+        base = filename
+        for ext in [".cram", ".snv.sort.vcf.gz", ".sv.sort.vcf.gz", ".vcf.gz", ".gz"]:
+            if base.endswith(ext):
+                base = base[:-len(ext)]
+                break
+
+        # Split by underscore: RUNID_SAMPLEID_EXPERIMENTID-...
+        parts = base.split("_")
+        if len(parts) >= 2:
+            # Sample ID is typically the second part
+            return parts[1]
+        return None
+
+    def _parse_benchmark_costs(
+        self,
+        workset: Workset,
+        cluster_name: str,
+        benchmark_path: str,
+        per_sample_metrics: Dict[str, Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+        """Parse benchmark TSV to extract compute costs.
+
+        Args:
+            workset: The workset being processed
+            cluster_name: Name of the ParallelCluster
+            benchmark_path: Path to the benchmark TSV file
+            per_sample_metrics: Dict to update with per-sample costs
+
+        Returns:
+            Dict with total_cost and per-sample breakdown, or None if parsing failed
+        """
+        quoted_path = shlex.quote(benchmark_path)
+        cat_cmd = f"cat {quoted_path} 2>/dev/null"
+
+        result = self._run_headnode_command(
+            cluster_name, cat_cmd, check=False, shell=True
+        )
+        if result.returncode != 0:
+            LOGGER.debug("Benchmark file not found for %s: %s", workset.name, benchmark_path)
+            return None
+
+        output = result.stdout.decode("utf-8", errors="ignore")
+        lines = output.strip().splitlines()
+        if len(lines) < 2:
+            LOGGER.debug("Benchmark file empty or missing header for %s", workset.name)
+            return None
+
+        # Parse header to find task_cost column
+        header = lines[0].split("\t")
+        try:
+            cost_idx = header.index("task_cost")
+        except ValueError:
+            LOGGER.warning("task_cost column not found in benchmark file for %s", workset.name)
+            return None
+
+        # Find sample column if available (for per-sample costs)
+        sample_idx = None
+        for col_name in ["sample", "sample_id", "Sample", "SAMPLE"]:
+            if col_name in header:
+                sample_idx = header.index(col_name)
+                break
+
+        total_cost = 0.0
+        sample_costs: Dict[str, float] = {}
+
+        for line in lines[1:]:
+            if not line.strip():
+                continue
+            cols = line.split("\t")
+            if len(cols) <= cost_idx:
+                continue
+            try:
+                cost = float(cols[cost_idx])
+                total_cost += cost
+
+                # Track per-sample if we have sample column
+                if sample_idx is not None and len(cols) > sample_idx:
+                    sample = cols[sample_idx].strip()
+                    if sample:
+                        sample_costs[sample] = sample_costs.get(sample, 0.0) + cost
+            except ValueError:
+                continue
+
+        # Update per_sample_metrics with costs
+        for sample, cost in sample_costs.items():
+            if sample in per_sample_metrics:
+                per_sample_metrics[sample]["compute_cost_usd"] = cost
+            else:
+                per_sample_metrics[sample] = {"compute_cost_usd": cost}
+
+        return {"total_cost": total_cost, "sample_costs": sample_costs}
+
+    def _cleanup_headnode_directory(
+        self,
+        workset: Workset,
+        cluster_name: str,
+        pipeline_dir: PurePosixPath,
+    ) -> None:
+        """Clean up headnode working directory after successful export.
+
+        Removes all contents from the pipeline directory except fsx_export.yaml,
+        which is preserved as evidence of successful export. The directory itself
+        is also preserved.
+
+        This cleanup is performed after a successful FSx-to-S3 export to free up
+        FSx storage space while retaining export metadata.
+
+        Args:
+            workset: The workset being cleaned up
+            cluster_name: Name of the ParallelCluster
+            pipeline_dir: Path to the pipeline directory on FSx
+
+        Note:
+            Cleanup failures are logged as warnings but do not fail the workset.
+        """
+        self._update_progress_step(
+            workset, "cleanup_headnode", f"Cleaning up {pipeline_dir} on headnode"
+        )
+
+        LOGGER.info(
+            "Cleaning up headnode directory %s for %s (preserving fsx_export.yaml)",
+            pipeline_dir,
+            workset.name,
+        )
+
+        # Build command that removes all contents except fsx_export.yaml
+        # Uses find to delete files/dirs at depth 1, excluding fsx_export.yaml
+        quoted_dir = shlex.quote(str(pipeline_dir))
+        cleanup_cmd = (
+            f"cd {quoted_dir} && "
+            f"find . -mindepth 1 -maxdepth 1 ! -name 'fsx_export.yaml' -exec rm -rf {{}} \\;"
+        )
+
+        try:
+            self._run_headnode_monitored_command(
+                "cleanup_headnode",
+                cleanup_cmd,
+                cluster_name=cluster_name,
+                check=True,
+                shell=True,
+            )
+            self._update_progress_step(
+                workset, "cleanup_complete", f"Headnode cleanup complete for {pipeline_dir}"
+            )
+            LOGGER.info(
+                "Headnode cleanup completed for %s; only fsx_export.yaml preserved",
+                workset.name,
+            )
+        except Exception as exc:
+            # Cleanup failures are non-fatal - log warning and continue
+            self._update_progress_step(
+                workset, "cleanup_failed", f"Cleanup warning: {exc}"
+            )
+            LOGGER.warning(
+                "Headnode cleanup failed for %s (non-fatal): %s",
+                workset.name,
+                exc,
+            )
 
     def _copy_stage_artifacts_to_pipeline(
         self,
@@ -2758,9 +3420,12 @@ class WorksetMonitor:
                     shell=False,
                 )
                 self._record_pipeline_start(workset, dt.datetime.now(dt.timezone.utc))
+                # Track progress: pipeline is now running
+                self._update_progress_step(workset, "pipeline_running", f"Pipeline running in tmux session {session_name}")
             except Exception:
                 self._clear_tmux_session(workset)
                 self._clear_pipeline_start(workset)
+                self._update_progress_step(workset, "pipeline_failed", "Failed to launch pipeline")
                 raise
             finally:
                 self._write_pipeline_sentinel(cluster_name, pipeline_dir, "END")
@@ -2930,12 +3595,41 @@ class WorksetMonitor:
             "Export completed for %s; results available at %s", workset.name, s3_uri
         )
 
+        # Update DynamoDB with the final results S3 URI
+        if s3_uri and self.state_db:
+            try:
+                self.state_db.update_execution_environment(
+                    workset.name,
+                    results_s3_uri=s3_uri,
+                )
+                LOGGER.info(
+                    "Updated DynamoDB with results_s3_uri for %s: %s",
+                    workset.name,
+                    s3_uri,
+                )
+            except Exception as exc:
+                LOGGER.warning(
+                    "Failed to update DynamoDB with results_s3_uri for %s: %s",
+                    workset.name,
+                    exc,
+                )
+
         # Backup export status to S3 workset directory for resilience/debugging
         try:
             self._backup_export_status_to_s3(workset, status_path, target_uri)
         except Exception as exc:
             LOGGER.warning(
                 "Failed to backup export status to S3 for %s: %s", workset.name, exc
+            )
+
+        # Copy export status to headnode pipeline directory so it's preserved during cleanup
+        try:
+            self._copy_export_status_to_headnode(
+                workset, cluster_name, status_path, pipeline_dir
+            )
+        except Exception as exc:
+            LOGGER.warning(
+                "Failed to copy export status to headnode for %s: %s", workset.name, exc
             )
 
         if self.config.cluster.auto_teardown:
@@ -2959,6 +3653,50 @@ class WorksetMonitor:
         except Exception as exc:
             LOGGER.debug("S3 backup failed: %s", exc)
             raise
+
+    def _copy_export_status_to_headnode(
+        self,
+        workset: Workset,
+        cluster_name: str,
+        status_path: Path,
+        pipeline_dir: PurePosixPath,
+    ) -> None:
+        """Copy fsx_export.yaml to the headnode pipeline directory.
+
+        This ensures the export status file is present in the pipeline directory
+        so it can be preserved during headnode cleanup.
+
+        Args:
+            workset: The workset being processed
+            cluster_name: Name of the ParallelCluster
+            status_path: Local path to fsx_export.yaml
+            pipeline_dir: Path to the pipeline directory on FSx
+        """
+        remote_path = pipeline_dir / FSX_EXPORT_STATUS_FILENAME
+        LOGGER.info(
+            "Copying export status to headnode: %s -> %s",
+            status_path,
+            remote_path,
+        )
+
+        # Read the local file content
+        content = status_path.read_text(encoding="utf-8")
+
+        # Write to headnode using base64 encoding to avoid special character issues
+        quoted_path = shlex.quote(str(remote_path))
+        encoded = base64.b64encode(content.encode("utf-8")).decode("ascii")
+        write_cmd = f"echo {shlex.quote(encoded)} | base64 -d > {quoted_path}"
+
+        self._run_headnode_monitored_command(
+            "copy_export_status",
+            write_cmd,
+            cluster_name=cluster_name,
+            check=True,
+            shell=True,
+        )
+        LOGGER.info(
+            "Copied export status to headnode for %s: %s", workset.name, remote_path
+        )
 
     # ------------------------------------------------------------------
     # Cluster helpers
@@ -3590,9 +4328,9 @@ class WorksetMonitor:
         self._command_log_buffer[workset.name] = []
 
     def _write_temp_file(self, workset: Workset, filename: str, data: bytes) -> Path:
-        temp_dir = Path("/tmp") / f"daylily-workset-{workset.name}"
-        temp_dir.mkdir(parents=True, exist_ok=True)
-        path = temp_dir / filename
+        # Write to consolidated state directory instead of /tmp
+        state_dir = self._local_state_dir(workset)
+        path = state_dir / filename
         path.write_bytes(data)
         return path
 

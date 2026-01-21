@@ -70,7 +70,7 @@
         </div>
         
         {% if parent_prefix is not none %}
-        <div class="browse-item browse-folder" onclick="navigateTo('{{ parent_prefix }}')">
+        <div class="browse-item browse-folder" onclick="navigateTo('{{ parent_prefix | default('', true) }}')">
             <div class="browse-icon"><i class="fas fa-level-up-alt"></i></div>
             <div class="browse-name">..</div>
             <div class="browse-meta text-muted">Parent Directory</div>

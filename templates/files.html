@@ -58,10 +58,10 @@
     
     <!-- File Browser -->
     <div class="table-container">
-        <table class="table" id="files-table">
+        <table class="table" id="files-table" data-sortable>
             <thead>
                 <tr>
-                    <th style="width: 40px;">
+                    <th style="width: 40px;" data-no-sort>
                         <label class="checkbox-label">
                             <input type="checkbox" id="select-all-files" onchange="toggleSelectAllFiles()">
                         </label>
@@ -69,7 +69,7 @@
                     <th>Name</th>
                     <th>Size</th>
                     <th>Modified</th>
-                    <th>Actions</th>
+                    <th data-no-sort>Actions</th>
                 </tr>
             </thead>
             <tbody id="files-tbody">

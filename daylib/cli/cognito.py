@@ -119,6 +119,11 @@ def setup(
             UserPoolId=pool_id,
             ClientName=f"{pool_name}-client",
             GenerateSecret=False,
+            ExplicitAuthFlows=[
+                "ALLOW_USER_PASSWORD_AUTH",
+                "ALLOW_ADMIN_USER_PASSWORD_AUTH",  # Required for admin_initiate_auth
+                "ALLOW_REFRESH_TOKEN_AUTH",
+            ],
             AllowedOAuthFlows=["code"],
             AllowedOAuthScopes=["openid", "email", "profile"],
             AllowedOAuthFlowsUserPoolClient=True,
@@ -133,6 +138,69 @@ def setup(
         console.print("\nAdd to your .env file:")
         console.print(f"   [cyan]COGNITO_USER_POOL_ID={pool_id}[/cyan]")
         console.print(f"   [cyan]COGNITO_APP_CLIENT_ID={client_id}[/cyan]")
+
+    except Exception as e:
+        console.print(f"[red]✗[/red]  Error: {e}")
+        raise typer.Exit(1)
+
+
+@cognito_app.command("fix-auth-flows")
+def fix_auth_flows():
+    """Enable required auth flows on the app client.
+
+    Fixes 'Auth flow not enabled for this client' error by enabling
+    ALLOW_ADMIN_USER_PASSWORD_AUTH on the existing app client.
+    """
+    _check_aws_profile()
+
+    pool_id = os.environ.get("COGNITO_USER_POOL_ID")
+    client_id = os.environ.get("COGNITO_APP_CLIENT_ID")
+
+    if not pool_id:
+        console.print("[red]✗[/red]  COGNITO_USER_POOL_ID not set")
+        raise typer.Exit(1)
+    if not client_id:
+        console.print("[red]✗[/red]  COGNITO_APP_CLIENT_ID not set")
+        raise typer.Exit(1)
+
+    try:
+        import boto3
+        from daylib.config import get_settings
+
+        settings = get_settings()
+        region = settings.get_effective_region()
+        cognito = boto3.client("cognito-idp", region_name=region)
+
+        # Get current client config
+        client_config = cognito.describe_user_pool_client(
+            UserPoolId=pool_id,
+            ClientId=client_id,
+        )["UserPoolClient"]
+
+        console.print(f"[cyan]Updating app client {client_id}...[/cyan]")
+
+        # Update with required auth flows
+        cognito.update_user_pool_client(
+            UserPoolId=pool_id,
+            ClientId=client_id,
+            ClientName=client_config.get("ClientName", "ursa-client"),
+            ExplicitAuthFlows=[
+                "ALLOW_USER_PASSWORD_AUTH",
+                "ALLOW_ADMIN_USER_PASSWORD_AUTH",
+                "ALLOW_REFRESH_TOKEN_AUTH",
+            ],
+            # Preserve existing OAuth config if present
+            AllowedOAuthFlows=client_config.get("AllowedOAuthFlows", []),
+            AllowedOAuthScopes=client_config.get("AllowedOAuthScopes", []),
+            AllowedOAuthFlowsUserPoolClient=client_config.get("AllowedOAuthFlowsUserPoolClient", False),
+            CallbackURLs=client_config.get("CallbackURLs", []),
+            SupportedIdentityProviders=client_config.get("SupportedIdentityProviders", ["COGNITO"]),
+        )
+
+        console.print(f"[green]✓[/green]  Enabled auth flows:")
+        console.print("     - ALLOW_USER_PASSWORD_AUTH")
+        console.print("     - ALLOW_ADMIN_USER_PASSWORD_AUTH")
+        console.print("     - ALLOW_REFRESH_TOKEN_AUTH")
 
     except Exception as e:
         console.print(f"[red]✗[/red]  Error: {e}")
@@ -220,6 +288,96 @@ def _get_pool_id() -> str:
         console.print("   Set it with: [cyan]export COGNITO_USER_POOL_ID=your-pool-id[/cyan]")
         raise typer.Exit(1)
     return pool_id
+
+
+def _generate_temp_password() -> str:
+    """Generate a secure temporary password."""
+    import secrets
+    import string
+
+    # 12 chars: upper, lower, digits (no symbols per policy)
+    alphabet = string.ascii_letters + string.digits
+    # Ensure at least one of each required type
+    password = [
+        secrets.choice(string.ascii_uppercase),
+        secrets.choice(string.ascii_lowercase),
+        secrets.choice(string.digits),
+    ]
+    # Fill remaining with random chars
+    password += [secrets.choice(alphabet) for _ in range(9)]
+    secrets.SystemRandom().shuffle(password)
+    return "".join(password)
+
+
+@cognito_app.command("add-user")
+def add_user(
+    email: str = typer.Argument(..., help="User email address"),
+    password: str = typer.Option(None, "--password", "-p", help="Password (generated if not provided)"),
+    no_verify: bool = typer.Option(False, "--no-verify", help="Skip email verification (auto-confirm)"),
+):
+    """Add a new user to the Cognito pool.
+
+    Creates a user with the given email. If no password is provided, a temporary
+    password is generated and the user will be prompted to change it on first login.
+
+    Examples:
+        ursa cognito add-user user@example.com
+        ursa cognito add-user user@example.com --password MySecure123
+        ursa cognito add-user user@example.com --no-verify
+    """
+    _check_aws_profile()
+    pool_id = _get_pool_id()
+
+    try:
+        import boto3
+        from daylib.config import get_settings
+
+        settings = get_settings()
+        region = settings.get_effective_region()
+        cognito = boto3.client("cognito-idp", region_name=region)
+
+        # Generate password if not provided
+        temp_password = password or _generate_temp_password()
+        is_temp = password is None
+
+        # Create user
+        create_params = {
+            "UserPoolId": pool_id,
+            "Username": email,
+            "TemporaryPassword": temp_password,
+            "UserAttributes": [
+                {"Name": "email", "Value": email},
+            ],
+            "MessageAction": "SUPPRESS",  # Don't send welcome email (we'll show password)
+        }
+
+        if no_verify:
+            create_params["UserAttributes"].append({"Name": "email_verified", "Value": "true"})
+
+        cognito.admin_create_user(**create_params)
+        console.print(f"[green]✓[/green]  Created user: {email}")
+
+        # If --no-verify, set permanent password immediately
+        if no_verify and password:
+            cognito.admin_set_user_password(
+                UserPoolId=pool_id,
+                Username=email,
+                Password=password,
+                Permanent=True,
+            )
+            console.print(f"[green]✓[/green]  Password set (permanent)")
+        elif is_temp:
+            console.print(f"\n[yellow]Temporary password:[/yellow] {temp_password}")
+            console.print("[dim]User must change password on first login[/dim]")
+        else:
+            console.print(f"[green]✓[/green]  Password set (temporary - must change on first login)")
+
+    except cognito.exceptions.UsernameExistsException:
+        console.print(f"[red]✗[/red]  User already exists: {email}")
+        raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"[red]✗[/red]  Error: {e}")
+        raise typer.Exit(1)
 
 
 @cognito_app.command("list-users")

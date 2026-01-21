@@ -74,6 +74,36 @@
                     </p>
                 </div>
             </div>
+
+            <div class="form-group">
+                <label for="workset_type" class="form-label required">Workset Type</label>
+                <div class="d-flex gap-lg flex-wrap">
+                    <label class="radio-card" style="flex: 1; min-width: 200px;">
+                        <input type="radio" name="workset_type" value="ruo" checked>
+                        <div class="radio-card-content">
+                            <span class="badge badge-ruo mb-sm">RUO</span>
+                            <strong>Research Use Only</strong>
+                            <p class="text-muted mb-0" style="font-size: 0.8rem;">Non-clinical research applications. Results are not intended for diagnostic use.</p>
+                        </div>
+                    </label>
+                    <label class="radio-card" style="flex: 1; min-width: 200px;">
+                        <input type="radio" name="workset_type" value="clinical">
+                        <div class="radio-card-content">
+                            <span class="badge badge-clinical mb-sm">Clinical</span>
+                            <strong>Clinical / Patient Data</strong>
+                            <p class="text-muted mb-0" style="font-size: 0.8rem;">Patient samples with regulatory requirements. Enhanced audit logging and data handling.</p>
+                        </div>
+                    </label>
+                    <label class="radio-card" style="flex: 1; min-width: 200px;">
+                        <input type="radio" name="workset_type" value="lsmc">
+                        <div class="radio-card-content">
+                            <span class="badge badge-lsmc mb-sm">LSMC</span>
+                            <strong>Lab Services</strong>
+                            <p class="text-muted mb-0" style="font-size: 0.8rem;">Laboratory Services Management Company context. Specialized billing and reporting.</p>
+                        </div>
+                    </label>
+                </div>
+            </div>
         </div>
         
         <!-- Step 2: Input Files (Manifest) -->
@@ -126,7 +156,7 @@
                     <div id="manifest-preview" class="mt-lg d-none">
                         <h4>Manifest Preview</h4>
                         <div class="table-container">
-                            <table class="table" id="manifest-table">
+                            <table class="table" id="manifest-table" data-sortable>
                                 <thead id="manifest-thead"></thead>
                                 <tbody id="manifest-tbody"></tbody>
                             </table>

@@ -57,6 +57,7 @@ def create_worksets_router(
                 bucket=workset.bucket,
                 prefix=workset.prefix,
                 priority=workset.priority,
+                workset_type=workset.workset_type,
                 metadata=workset.metadata,
                 customer_id=workset.customer_id,
             )

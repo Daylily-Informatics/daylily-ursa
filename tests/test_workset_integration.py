@@ -51,6 +51,26 @@ def mock_s3_client():
 
 
 @pytest.fixture
+def mock_dynamodb():
+    """Mock DynamoDB resource for WorksetStateDB tests."""
+    with patch("daylib.workset_state_db.boto3.Session") as mock_session:
+        mock_resource = MagicMock()
+        mock_table = MagicMock()
+        mock_client = MagicMock()
+
+        mock_session.return_value.resource.return_value = mock_resource
+        mock_session.return_value.client.return_value = mock_client
+        mock_resource.Table.return_value = mock_table
+
+        yield {
+            "session": mock_session,
+            "resource": mock_resource,
+            "table": mock_table,
+            "client": mock_client,
+        }
+
+
+@pytest.fixture
 def integration(mock_state_db, mock_s3_client):
     """Create WorksetIntegration instance."""
     return WorksetIntegration(
@@ -446,3 +466,614 @@ class TestMonitorWorksetExistenceCheck:
         assert result is False
         # Most importantly: register_workset should NOT be called
         mock_state_db_for_monitor.register_workset.assert_not_called()
+
+
+class TestMonitorConcurrentProcessing:
+    """Tests for monitor's concurrent workset processing."""
+
+    def test_mark_workset_active_success(self):
+        """Test marking a workset as active when slots available."""
+        import threading
+        from daylib.workset_monitor import WorksetMonitor
+
+        monitor = WorksetMonitor.__new__(WorksetMonitor)
+        monitor._active_worksets = set()
+        monitor._active_worksets_lock = threading.Lock()
+        monitor.config = MagicMock()
+        monitor.config.monitor.max_concurrent_worksets = 3
+
+        result = monitor._mark_workset_active("ws-001")
+
+        assert result is True
+        assert "ws-001" in monitor._active_worksets
+
+    def test_mark_workset_active_at_capacity(self):
+        """Test marking a workset as active when at capacity."""
+        import threading
+        from daylib.workset_monitor import WorksetMonitor
+
+        monitor = WorksetMonitor.__new__(WorksetMonitor)
+        monitor._active_worksets = {"ws-001", "ws-002", "ws-003"}
+        monitor._active_worksets_lock = threading.Lock()
+        monitor.config = MagicMock()
+        monitor.config.monitor.max_concurrent_worksets = 3
+
+        result = monitor._mark_workset_active("ws-004")
+
+        assert result is False
+        assert "ws-004" not in monitor._active_worksets
+
+    def test_mark_workset_active_already_active(self):
+        """Test marking a workset as active when already active."""
+        import threading
+        from daylib.workset_monitor import WorksetMonitor
+
+        monitor = WorksetMonitor.__new__(WorksetMonitor)
+        monitor._active_worksets = {"ws-001"}
+        monitor._active_worksets_lock = threading.Lock()
+        monitor.config = MagicMock()
+        monitor.config.monitor.max_concurrent_worksets = 3
+
+        result = monitor._mark_workset_active("ws-001")
+
+        assert result is False
+
+    def test_mark_workset_inactive(self):
+        """Test marking a workset as inactive."""
+        import threading
+        from daylib.workset_monitor import WorksetMonitor
+
+        monitor = WorksetMonitor.__new__(WorksetMonitor)
+        monitor._active_worksets = {"ws-001", "ws-002"}
+        monitor._active_worksets_lock = threading.Lock()
+        monitor.config = MagicMock()
+        monitor.config.monitor.max_concurrent_worksets = 3
+
+        monitor._mark_workset_inactive("ws-001")
+
+        assert "ws-001" not in monitor._active_worksets
+        assert "ws-002" in monitor._active_worksets
+
+    def test_get_active_count(self):
+        """Test getting the count of active worksets."""
+        import threading
+        from daylib.workset_monitor import WorksetMonitor
+
+        monitor = WorksetMonitor.__new__(WorksetMonitor)
+        monitor._active_worksets = {"ws-001", "ws-002"}
+        monitor._active_worksets_lock = threading.Lock()
+
+        assert monitor._get_active_count() == 2
+
+    def test_is_workset_active(self):
+        """Test checking if a workset is active."""
+        import threading
+        from daylib.workset_monitor import WorksetMonitor
+
+        monitor = WorksetMonitor.__new__(WorksetMonitor)
+        monitor._active_worksets = {"ws-001"}
+        monitor._active_worksets_lock = threading.Lock()
+
+        assert monitor._is_workset_active("ws-001") is True
+        assert monitor._is_workset_active("ws-002") is False
+
+    def test_should_skip_workset_complete(self):
+        """Test that completed worksets are skipped."""
+        from daylib.workset_monitor import WorksetMonitor, SENTINEL_FILES
+
+        monitor = WorksetMonitor.__new__(WorksetMonitor)
+        monitor.attempt_restart = False
+
+        workset = MagicMock()
+        workset.sentinels = {SENTINEL_FILES["complete"]: "2024-01-01"}
+
+        assert monitor._should_skip_workset(workset) is True
+
+    def test_should_skip_workset_error_no_restart(self):
+        """Test that errored worksets are skipped when restart not enabled."""
+        from daylib.workset_monitor import WorksetMonitor, SENTINEL_FILES
+
+        monitor = WorksetMonitor.__new__(WorksetMonitor)
+        monitor.attempt_restart = False
+
+        workset = MagicMock()
+        workset.sentinels = {SENTINEL_FILES["error"]: "error message"}
+
+        assert monitor._should_skip_workset(workset) is True
+
+    def test_should_skip_workset_error_with_restart(self):
+        """Test that errored worksets are NOT skipped when restart enabled."""
+        from daylib.workset_monitor import WorksetMonitor, SENTINEL_FILES
+
+        monitor = WorksetMonitor.__new__(WorksetMonitor)
+        monitor.attempt_restart = True
+
+        workset = MagicMock()
+        workset.sentinels = {SENTINEL_FILES["error"]: "error message"}
+
+        assert monitor._should_skip_workset(workset) is False
+
+    def test_should_skip_workset_ignored(self):
+        """Test that ignored worksets are skipped."""
+        from daylib.workset_monitor import WorksetMonitor, SENTINEL_FILES
+
+        monitor = WorksetMonitor.__new__(WorksetMonitor)
+        monitor.attempt_restart = False
+
+        workset = MagicMock()
+        workset.sentinels = {SENTINEL_FILES["ignore"]: "ignored"}
+
+        assert monitor._should_skip_workset(workset) is True
+
+    def test_should_not_skip_ready_workset(self):
+        """Test that ready worksets are NOT skipped."""
+        from daylib.workset_monitor import WorksetMonitor, SENTINEL_FILES
+
+        monitor = WorksetMonitor.__new__(WorksetMonitor)
+        monitor.attempt_restart = False
+
+        workset = MagicMock()
+        workset.sentinels = {SENTINEL_FILES["ready"]: "ready"}
+
+        assert monitor._should_skip_workset(workset) is False
+
+
+class TestFormatBytes:
+    """Tests for the _format_bytes helper method."""
+
+    def test_format_bytes_bytes(self):
+        """Test formatting small byte values."""
+        from daylib.workset_monitor import WorksetMonitor
+
+        monitor = WorksetMonitor.__new__(WorksetMonitor)
+        assert monitor._format_bytes(0) == "0B"
+        assert monitor._format_bytes(512) == "512B"
+        assert monitor._format_bytes(1023) == "1023B"
+
+    def test_format_bytes_kilobytes(self):
+        """Test formatting kilobyte values."""
+        from daylib.workset_monitor import WorksetMonitor
+
+        monitor = WorksetMonitor.__new__(WorksetMonitor)
+        assert monitor._format_bytes(1024) == "1.0K"
+        assert monitor._format_bytes(2048) == "2.0K"
+        # Note: uses integer division so 1536 -> 1K
+        assert monitor._format_bytes(1536) == "1.0K"
+
+    def test_format_bytes_megabytes(self):
+        """Test formatting megabyte values."""
+        from daylib.workset_monitor import WorksetMonitor
+
+        monitor = WorksetMonitor.__new__(WorksetMonitor)
+        assert monitor._format_bytes(1024 * 1024) == "1.0M"
+        assert monitor._format_bytes(256 * 1024 * 1024) == "256.0M"
+
+    def test_format_bytes_gigabytes(self):
+        """Test formatting gigabyte values."""
+        from daylib.workset_monitor import WorksetMonitor
+
+        monitor = WorksetMonitor.__new__(WorksetMonitor)
+        assert monitor._format_bytes(1024 * 1024 * 1024) == "1.0G"
+        assert monitor._format_bytes(13 * 1024 * 1024 * 1024) == "13.0G"
+
+    def test_format_bytes_terabytes(self):
+        """Test formatting terabyte values."""
+        from daylib.workset_monitor import WorksetMonitor
+
+        monitor = WorksetMonitor.__new__(WorksetMonitor)
+        assert monitor._format_bytes(1024 * 1024 * 1024 * 1024) == "1.0T"
+
+
+class TestExtractSampleIdFromPath:
+    """Tests for the _extract_sample_id_from_path helper method."""
+
+    def test_extract_sample_id_cram(self):
+        """Test extracting sample ID from CRAM file path."""
+        from daylib.workset_monitor import WorksetMonitor
+
+        monitor = WorksetMonitor.__new__(WorksetMonitor)
+
+        path = "/fsx/analysis/results/day/hg38/RUN001_SAMPLE123_EXP001-L001-BARCODE-libprep-vendor-seq-platform.cram"
+        assert monitor._extract_sample_id_from_path(path) == "SAMPLE123"
+
+    def test_extract_sample_id_snv_vcf(self):
+        """Test extracting sample ID from SNV VCF file path."""
+        from daylib.workset_monitor import WorksetMonitor
+
+        monitor = WorksetMonitor.__new__(WorksetMonitor)
+
+        path = "/fsx/analysis/results/day/hg38/RUN001_SAMPLE456_EXP002.snv.sort.vcf.gz"
+        assert monitor._extract_sample_id_from_path(path) == "SAMPLE456"
+
+    def test_extract_sample_id_sv_vcf(self):
+        """Test extracting sample ID from SV VCF file path."""
+        from daylib.workset_monitor import WorksetMonitor
+
+        monitor = WorksetMonitor.__new__(WorksetMonitor)
+
+        path = "/fsx/analysis/results/day/hg38/RUN001_SAMPLE789_EXP003.sv.sort.vcf.gz"
+        assert monitor._extract_sample_id_from_path(path) == "SAMPLE789"
+
+    def test_extract_sample_id_invalid_format(self):
+        """Test extracting sample ID from invalid format returns None."""
+        from daylib.workset_monitor import WorksetMonitor
+
+        monitor = WorksetMonitor.__new__(WorksetMonitor)
+
+        # Single part filename
+        path = "/fsx/analysis/results/day/hg38/singlename.cram"
+        assert monitor._extract_sample_id_from_path(path) is None
+
+    def test_extract_sample_id_simple_format(self):
+        """Test extracting sample ID from simple two-part format."""
+        from daylib.workset_monitor import WorksetMonitor
+
+        monitor = WorksetMonitor.__new__(WorksetMonitor)
+
+        path = "/fsx/analysis/RUNID_SAMPLEID.cram"
+        assert monitor._extract_sample_id_from_path(path) == "SAMPLEID"
+
+
+class TestCollectPreExportMetrics:
+    """Tests for pre-export metrics collection."""
+
+    @pytest.fixture
+    def mock_monitor(self):
+        """Create a mock monitor with required attributes."""
+        from daylib.workset_monitor import WorksetMonitor
+
+        monitor = WorksetMonitor.__new__(WorksetMonitor)
+        monitor.state_db = MagicMock()
+        monitor.dry_run = False
+        monitor.debug = False
+        return monitor
+
+    def test_collect_directory_size(self, mock_monitor):
+        """Test collecting total directory size."""
+        from pathlib import PurePosixPath
+        import subprocess
+
+        workset = MagicMock()
+        workset.name = "test-ws-001"
+
+        # Mock du command output
+        du_result = subprocess.CompletedProcess(
+            args=[], returncode=0,
+            stdout=b"13958643712\t/fsx/analysis",
+            stderr=b""
+        )
+
+        # Mock find commands to return empty (no files)
+        find_result = subprocess.CompletedProcess(
+            args=[], returncode=1, stdout=b"", stderr=b""
+        )
+
+        # Mock benchmark file not found
+        cat_result = subprocess.CompletedProcess(
+            args=[], returncode=1, stdout=b"", stderr=b""
+        )
+
+        mock_monitor._run_headnode_command = MagicMock(
+            side_effect=[du_result, find_result, find_result, find_result, cat_result]
+        )
+        mock_monitor._update_progress_step = MagicMock()
+        mock_monitor.state_db.update_performance_metrics = MagicMock(return_value=True)
+
+        result = mock_monitor._collect_pre_export_metrics(
+            workset, "test-cluster", PurePosixPath("/fsx/analysis")
+        )
+
+        assert result is not None
+        assert result["analysis_directory_size_bytes"] == 13958643712
+        assert result["analysis_directory_size_human"] == "13.0G"
+
+    def test_collect_file_metrics_cram(self, mock_monitor):
+        """Test collecting CRAM file metrics."""
+        from pathlib import PurePosixPath
+        import subprocess
+
+        workset = MagicMock()
+        workset.name = "test-ws-002"
+
+        # Mock ls -l output for CRAM files
+        ls_output = (
+            b"-rw-r--r-- 1 ubuntu ubuntu 5368709120 Jan 15 10:00 /fsx/analysis/results/day/hg38/RUN001_SAMPLE1_EXP001.cram\n"
+            b"-rw-r--r-- 1 ubuntu ubuntu 4294967296 Jan 15 10:01 /fsx/analysis/results/day/hg38/RUN001_SAMPLE2_EXP002.cram\n"
+        )
+
+        find_cram_result = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=ls_output, stderr=b""
+        )
+        find_empty = subprocess.CompletedProcess(
+            args=[], returncode=1, stdout=b"", stderr=b""
+        )
+        du_result = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=b"10737418240\t/fsx/analysis", stderr=b""
+        )
+
+        mock_monitor._run_headnode_command = MagicMock(
+            side_effect=[du_result, find_cram_result, find_empty, find_empty, find_empty]
+        )
+        mock_monitor._update_progress_step = MagicMock()
+        mock_monitor.state_db.update_performance_metrics = MagicMock(return_value=True)
+
+        result = mock_monitor._collect_pre_export_metrics(
+            workset, "test-cluster", PurePosixPath("/fsx/analysis")
+        )
+
+        assert result is not None
+        assert "per_sample_metrics" in result
+        assert "SAMPLE1" in result["per_sample_metrics"]
+        assert result["per_sample_metrics"]["SAMPLE1"]["cram_count"] == 1
+        assert result["per_sample_metrics"]["SAMPLE1"]["cram_size_bytes"] == 5368709120
+        assert "SAMPLE2" in result["per_sample_metrics"]
+        assert result["per_sample_metrics"]["SAMPLE2"]["cram_count"] == 1
+        assert result["per_sample_metrics"]["SAMPLE2"]["cram_size_bytes"] == 4294967296
+
+    def test_collect_metrics_failure_non_blocking(self, mock_monitor):
+        """Test that metrics collection failures don't block processing."""
+        from pathlib import PurePosixPath
+
+        workset = MagicMock()
+        workset.name = "test-ws-003"
+
+        # Simulate all commands failing
+        mock_monitor._run_headnode_command = MagicMock(
+            side_effect=Exception("SSH connection failed")
+        )
+        mock_monitor._update_progress_step = MagicMock()
+
+        # Should return None but not raise exception
+        result = mock_monitor._collect_pre_export_metrics(
+            workset, "test-cluster", PurePosixPath("/fsx/analysis")
+        )
+
+        # Result should be None or empty due to failure
+        assert result is None or result == {}
+
+
+class TestParseBenchmarkCosts:
+    """Tests for benchmark cost parsing."""
+
+    @pytest.fixture
+    def mock_monitor(self):
+        """Create a mock monitor for benchmark tests."""
+        from daylib.workset_monitor import WorksetMonitor
+
+        monitor = WorksetMonitor.__new__(WorksetMonitor)
+        return monitor
+
+    def test_parse_benchmark_costs_success(self, mock_monitor):
+        """Test parsing benchmark TSV with task_cost column."""
+        import subprocess
+
+        workset = MagicMock()
+        workset.name = "test-ws-001"
+
+        benchmark_content = (
+            b"rule\tsample\ttask_cost\truntime\n"
+            b"align\tSAMPLE1\t0.1234\t100\n"
+            b"variant_call\tSAMPLE1\t0.5678\t200\n"
+            b"align\tSAMPLE2\t0.2345\t150\n"
+            b"variant_call\tSAMPLE2\t0.4321\t180\n"
+        )
+
+        cat_result = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=benchmark_content, stderr=b""
+        )
+
+        mock_monitor._run_headnode_command = MagicMock(return_value=cat_result)
+
+        per_sample_metrics = {}
+        result = mock_monitor._parse_benchmark_costs(
+            workset,
+            "test-cluster",
+            "/fsx/analysis/results/day/hg38/other_reports/rules_benchmark_data_mqc.tsv",
+            per_sample_metrics,
+        )
+
+        assert result is not None
+        expected_total = 0.1234 + 0.5678 + 0.2345 + 0.4321
+        assert abs(result["total_cost"] - expected_total) < 0.0001
+        assert "SAMPLE1" in result["sample_costs"]
+        assert abs(result["sample_costs"]["SAMPLE1"] - (0.1234 + 0.5678)) < 0.0001
+        assert "SAMPLE2" in result["sample_costs"]
+        assert abs(result["sample_costs"]["SAMPLE2"] - (0.2345 + 0.4321)) < 0.0001
+
+        # Check per_sample_metrics was updated
+        assert "SAMPLE1" in per_sample_metrics
+        assert "compute_cost_usd" in per_sample_metrics["SAMPLE1"]
+
+    def test_parse_benchmark_costs_file_not_found(self, mock_monitor):
+        """Test handling when benchmark file doesn't exist."""
+        import subprocess
+
+        workset = MagicMock()
+        workset.name = "test-ws-002"
+
+        cat_result = subprocess.CompletedProcess(
+            args=[], returncode=1, stdout=b"", stderr=b"No such file"
+        )
+
+        mock_monitor._run_headnode_command = MagicMock(return_value=cat_result)
+
+        result = mock_monitor._parse_benchmark_costs(
+            workset, "test-cluster", "/nonexistent/path.tsv", {}
+        )
+
+        assert result is None
+
+    def test_parse_benchmark_costs_no_task_cost_column(self, mock_monitor):
+        """Test handling when task_cost column is missing."""
+        import subprocess
+
+        workset = MagicMock()
+        workset.name = "test-ws-003"
+
+        benchmark_content = (
+            b"rule\tsample\truntime\n"
+            b"align\tSAMPLE1\t100\n"
+        )
+
+        cat_result = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=benchmark_content, stderr=b""
+        )
+
+        mock_monitor._run_headnode_command = MagicMock(return_value=cat_result)
+
+        result = mock_monitor._parse_benchmark_costs(
+            workset, "test-cluster", "/fsx/path.tsv", {}
+        )
+
+        assert result is None
+
+
+class TestHeadnodeAnalysisPath:
+    """Tests for headnode_analysis_path storage in DynamoDB."""
+
+    def test_record_pipeline_location_stores_path(self):
+        """Test that _record_pipeline_location stores headnode_analysis_path in DynamoDB."""
+        from daylib.workset_monitor import WorksetMonitor
+        from pathlib import Path, PurePosixPath
+        import tempfile
+
+        monitor = WorksetMonitor.__new__(WorksetMonitor)
+        monitor.state_db = MagicMock()
+        monitor._pipeline_locations = {}
+        monitor._workset_metrics = {}
+
+        workset = MagicMock()
+        workset.name = "test-ws-path-001"
+
+        # Use temp directory for local state
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_dir = Path(tmpdir)
+            monitor._local_state_dir = MagicMock(return_value=state_dir)
+            monitor._save_metrics = MagicMock()
+
+            location = PurePosixPath("/fsx/analysis_results/ubuntu/test-ws-path-001/daylily-omics-analysis")
+            monitor._record_pipeline_location(workset, location)
+
+            # Verify DynamoDB was called with headnode_analysis_path
+            monitor.state_db.update_execution_environment.assert_called_once_with(
+                "test-ws-path-001",
+                headnode_analysis_path="/fsx/analysis_results/ubuntu/test-ws-path-001/daylily-omics-analysis",
+            )
+
+    def test_record_pipeline_location_handles_db_failure(self):
+        """Test that _record_pipeline_location continues on DynamoDB failure."""
+        from daylib.workset_monitor import WorksetMonitor
+        from pathlib import Path, PurePosixPath
+        import tempfile
+
+        monitor = WorksetMonitor.__new__(WorksetMonitor)
+        monitor.state_db = MagicMock()
+        monitor.state_db.update_execution_environment.side_effect = Exception("DB error")
+        monitor._pipeline_locations = {}
+        monitor._workset_metrics = {}
+
+        workset = MagicMock()
+        workset.name = "test-ws-path-002"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_dir = Path(tmpdir)
+            monitor._local_state_dir = MagicMock(return_value=state_dir)
+            monitor._save_metrics = MagicMock()
+
+            location = PurePosixPath("/fsx/analysis")
+            # Should not raise exception
+            monitor._record_pipeline_location(workset, location)
+
+            # Local state should still be recorded
+            assert workset.name in monitor._pipeline_locations
+
+
+class TestProgressStepsMetrics:
+    """Tests for metrics-related progress steps."""
+
+    def test_progress_step_collecting_metrics_exists(self):
+        """Test that COLLECTING_METRICS progress step exists."""
+        from daylib.workset_state_db import WorksetProgressStep
+
+        assert hasattr(WorksetProgressStep, "COLLECTING_METRICS")
+        assert WorksetProgressStep.COLLECTING_METRICS.value == "collecting_metrics"
+
+    def test_progress_step_metrics_complete_exists(self):
+        """Test that METRICS_COMPLETE progress step exists."""
+        from daylib.workset_state_db import WorksetProgressStep
+
+        assert hasattr(WorksetProgressStep, "METRICS_COMPLETE")
+        assert WorksetProgressStep.METRICS_COMPLETE.value == "metrics_complete"
+
+    def test_progress_step_metrics_failed_exists(self):
+        """Test that METRICS_FAILED progress step exists."""
+        from daylib.workset_state_db import WorksetProgressStep
+
+        assert hasattr(WorksetProgressStep, "METRICS_FAILED")
+        assert WorksetProgressStep.METRICS_FAILED.value == "metrics_failed"
+
+
+class TestUpdateExecutionEnvironmentHeadnodePath:
+    """Tests for headnode_analysis_path in update_execution_environment."""
+
+    def test_update_with_headnode_analysis_path(self, mock_dynamodb):
+        """Test that headnode_analysis_path is stored in DynamoDB."""
+        from daylib.workset_state_db import WorksetStateDB
+
+        db = WorksetStateDB(
+            table_name="test-worksets",
+            region="us-west-2",
+            profile=None,
+        )
+
+        mock_table = mock_dynamodb["table"]
+        mock_table.update_item.return_value = {}
+
+        db.update_execution_environment(
+            workset_id="test-ws-001",
+            headnode_analysis_path="/fsx/analysis_results/ubuntu/test-ws-001/daylily-omics-analysis",
+        )
+
+        mock_table.update_item.assert_called_once()
+        call_args = mock_table.update_item.call_args
+
+        # Check that headnode_analysis_path is in the update expression
+        update_expr = call_args.kwargs["UpdateExpression"]
+        expr_values = call_args.kwargs["ExpressionAttributeValues"]
+
+        assert "headnode_analysis_path" in update_expr
+        assert ":analysis_path" in expr_values
+        assert expr_values[":analysis_path"] == "/fsx/analysis_results/ubuntu/test-ws-001/daylily-omics-analysis"
+
+    def test_update_with_multiple_fields_including_path(self, mock_dynamodb):
+        """Test updating multiple fields including headnode_analysis_path."""
+        from daylib.workset_state_db import WorksetStateDB
+
+        db = WorksetStateDB(
+            table_name="test-worksets",
+            region="us-west-2",
+            profile=None,
+        )
+
+        mock_table = mock_dynamodb["table"]
+        mock_table.update_item.return_value = {}
+
+        db.update_execution_environment(
+            workset_id="test-ws-002",
+            cluster_name="test-cluster",
+            headnode_ip="10.0.1.100",
+            headnode_analysis_path="/fsx/analysis",
+        )
+
+        mock_table.update_item.assert_called_once()
+        call_args = mock_table.update_item.call_args
+        update_expr = call_args.kwargs["UpdateExpression"]
+        expr_values = call_args.kwargs["ExpressionAttributeValues"]
+
+        # All fields should be present
+        assert "execution_cluster_name" in update_expr
+        assert "execution_headnode_ip" in update_expr
+        assert "headnode_analysis_path" in update_expr
+        assert ":exec_cluster" in expr_values
+        assert ":exec_ip" in expr_values
+        assert ":analysis_path" in expr_values

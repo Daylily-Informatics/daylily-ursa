@@ -23,14 +23,53 @@ class WorksetState(str, Enum):
     """Workset lifecycle states."""
     READY = "ready"
     LOCKED = "locked"  # Deprecated: lock ownership is tracked via lock_owner attributes.
+    QUEUED = "queued"  # Waiting for cluster capacity or scheduling
     IN_PROGRESS = "in_progress"
     COMPLETE = "complete"
     ERROR = "error"
     IGNORED = "ignored"
     RETRYING = "retrying"  # Retry logic state
     FAILED = "failed"  # Permanent failure after max retries
+    CANCELED = "canceled"  # User-initiated cancellation
+    PAUSED = "paused"  # Temporarily halted (keeps cluster assignment)
+    PENDING_REVIEW = "pending_review"  # QC failed, needs manual approval
+    BILLING_HOLD = "billing_hold"  # Customer quota exceeded
     ARCHIVED = "archived"  # Moved to archive storage
     DELETED = "deleted"  # Hard deleted from S3
+
+
+class WorksetProgressStep(str, Enum):
+    """Progress substeps within IN_PROGRESS state.
+
+    These provide granular visibility into where a workset is in its processing
+    lifecycle without complicating the main state machine.
+    """
+    # Pre-pipeline stages
+    STAGING = "staging"  # Copying data to execution environment
+    CLUSTER_PROVISIONING = "cluster_provisioning"  # Waiting for cluster
+    CLUSTER_READY = "cluster_ready"  # Cluster available
+
+    # Pipeline execution
+    PIPELINE_STARTING = "pipeline_starting"  # Launching pipeline on cluster
+    PIPELINE_RUNNING = "pipeline_running"  # Pipeline actively executing
+    PIPELINE_COMPLETE = "pipeline_complete"  # Pipeline finished successfully
+
+    # Post-pipeline stages
+    COLLECTING_METRICS = "collecting_metrics"  # Gathering pre-export analysis metrics
+    METRICS_COMPLETE = "metrics_complete"  # Metrics collection finished
+    EXPORTING = "exporting"  # FSx to S3 export in progress
+    EXPORT_COMPLETE = "export_complete"  # Export finished
+    CLEANUP_HEADNODE = "cleanup_headnode"  # Cleaning up FSx working directory
+    CLEANUP_COMPLETE = "cleanup_complete"  # FSx cleanup finished
+    FINALIZING = "finalizing"  # Final cleanup and state updates
+
+    # Error substeps (for ERROR state)
+    STAGING_FAILED = "staging_failed"
+    CLUSTER_FAILED = "cluster_failed"
+    PIPELINE_FAILED = "pipeline_failed"
+    METRICS_FAILED = "metrics_failed"  # Non-fatal: logged but workset continues
+    EXPORT_FAILED = "export_failed"
+    CLEANUP_FAILED = "cleanup_failed"  # Non-fatal: logged but workset continues
 
 
 class WorksetPriority(str, Enum):
@@ -38,6 +77,16 @@ class WorksetPriority(str, Enum):
     URGENT = "urgent"
     NORMAL = "normal"
     LOW = "low"
+
+
+class WorksetType(str, Enum):
+    """Workset classification types.
+
+    Used to categorize worksets by their regulatory/operational context.
+    """
+    CLINICAL = "clinical"  # Patient/clinical data with regulatory requirements
+    RUO = "ruo"  # Research Use Only - non-clinical research applications
+    LSMC = "lsmc"  # Laboratory Services Management Company - lab services context
 
 
 class ErrorCategory(str, Enum):
@@ -223,6 +272,7 @@ class WorksetStateDB:
         metadata: Optional[Dict[str, Any]] = None,
         customer_id: Optional[str] = None,
         skip_validation: bool = False,
+        workset_type: Optional[WorksetType] = None,
     ) -> bool:
         """Register a new workset in the database.
 
@@ -235,6 +285,7 @@ class WorksetStateDB:
             customer_id: Customer ID who owns this workset
             skip_validation: If True, skip customer_id and sample validation
                            (used for monitor-discovered worksets from S3)
+            workset_type: Classification type (clinical, ruo, lsmc). Defaults to RUO.
 
         Returns:
             True if registered, False if already exists
@@ -247,11 +298,16 @@ class WorksetStateDB:
             customer_id = self._validate_customer_id(customer_id)
             self._validate_samples(metadata)
 
+        # Default workset_type to RUO if not specified
+        if workset_type is None:
+            workset_type = WorksetType.RUO
+
         now = dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
         item: Dict[str, Any] = {
             "workset_id": workset_id,
             "state": WorksetState.READY.value,
             "priority": priority.value,
+            "workset_type": workset_type.value,
             "bucket": bucket,
             "prefix": prefix,
             "created_at": now,
@@ -278,7 +334,7 @@ class WorksetStateDB:
                 ConditionExpression="attribute_not_exists(workset_id)",
             )
             self._emit_metric("WorksetRegistered", 1.0)
-            LOGGER.info("Registered workset %s with priority %s for customer %s", workset_id, priority.value, customer_id)
+            LOGGER.info("Registered workset %s (type=%s, priority=%s) for customer %s", workset_id, workset_type.value, priority.value, customer_id)
             return True
         except ClientError as e:
             if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
@@ -537,6 +593,7 @@ class WorksetStateDB:
         error_details: Optional[str] = None,
         cluster_name: Optional[str] = None,
         metrics: Optional[Dict[str, Any]] = None,
+        progress_step: Optional[WorksetProgressStep] = None,
     ) -> None:
         """Update workset state with audit trail.
 
@@ -547,6 +604,7 @@ class WorksetStateDB:
             error_details: Error message if state is ERROR
             cluster_name: Associated cluster name
             metrics: Performance/cost metrics
+            progress_step: Current processing substep (e.g., pipeline_running, exporting)
         """
         now_iso = dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
 
@@ -556,16 +614,18 @@ class WorksetStateDB:
             "state_history = list_append(state_history, :history)"
         )
 
+        history_entry: Dict[str, Any] = {
+            "state": new_state.value,
+            "timestamp": now_iso,
+            "reason": reason,
+        }
+        if progress_step:
+            history_entry["progress_step"] = progress_step.value
+
         expr_values: Dict[str, Any] = {
             ":state": new_state.value,
             ":now": now_iso,
-            ":history": [
-                {
-                    "state": new_state.value,
-                    "timestamp": now_iso,
-                    "reason": reason,
-                }
-            ],
+            ":history": [history_entry],
         }
 
         if error_details:
@@ -580,6 +640,10 @@ class WorksetStateDB:
             update_expr += ", metrics = :metrics"
             expr_values[":metrics"] = self._serialize_metadata(metrics)
 
+        if progress_step:
+            update_expr += ", progress_step = :progress_step"
+            expr_values[":progress_step"] = progress_step.value
+
         self.table.update_item(
             Key={"workset_id": workset_id},
             UpdateExpression=update_expr,
@@ -589,8 +653,53 @@ class WorksetStateDB:
 
         # Emit CloudWatch metrics
         self._emit_metric(f"WorksetState{new_state.value.title()}", 1.0)
+        if progress_step:
+            self._emit_metric(f"WorksetProgressStep{progress_step.value.title()}", 1.0)
 
-        LOGGER.info("Updated workset %s to state %s: %s", workset_id, new_state.value, reason)
+        step_info = f" (step: {progress_step.value})" if progress_step else ""
+        LOGGER.info("Updated workset %s to state %s%s: %s", workset_id, new_state.value, step_info, reason)
+
+    def update_progress_step(
+        self,
+        workset_id: str,
+        progress_step: WorksetProgressStep,
+        message: Optional[str] = None,
+    ) -> None:
+        """Update workset progress step without changing state.
+
+        This is the preferred method for tracking progress through IN_PROGRESS substeps.
+
+        Args:
+            workset_id: Workset identifier
+            progress_step: Progress substep enum value
+            message: Optional message describing the progress
+        """
+        now_iso = dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
+
+        update_expr = "SET updated_at = :now, progress_step = :step"
+        expr_values: Dict[str, Any] = {
+            ":now": now_iso,
+            ":step": progress_step.value,
+        }
+
+        if message:
+            update_expr += ", progress_message = :msg"
+            expr_values[":msg"] = message
+
+        try:
+            self.table.update_item(
+                Key={"workset_id": workset_id},
+                UpdateExpression=update_expr,
+                ExpressionAttributeValues=expr_values,
+            )
+            LOGGER.info(
+                "Updated progress for workset %s: step=%s%s",
+                workset_id,
+                progress_step.value,
+                f" ({message})" if message else "",
+            )
+        except ClientError as e:
+            LOGGER.warning("Failed to update progress step for %s: %s", workset_id, str(e))
 
     def update_progress(
         self,
@@ -605,6 +714,8 @@ class WorksetStateDB:
 
         This is used for incremental progress updates during processing,
         allowing the UI to show real-time status.
+
+        Note: Prefer update_progress_step() for typed progress tracking.
 
         Args:
             workset_id: Workset identifier
@@ -621,7 +732,8 @@ class WorksetStateDB:
         expr_names: Dict[str, str] = {}
 
         if current_step is not None:
-            update_parts.append("current_step = :step")
+            # Also update the new progress_step field for consistency
+            update_parts.append("progress_step = :step")
             expr_values[":step"] = current_step
 
         if cluster_name is not None:
@@ -664,10 +776,12 @@ class WorksetStateDB:
         cluster_name: Optional[str] = None,
         cluster_region: Optional[str] = None,
         headnode_ip: Optional[str] = None,
+        headnode_analysis_path: Optional[str] = None,
         execution_s3_bucket: Optional[str] = None,
         execution_s3_prefix: Optional[str] = None,
         execution_started_at: Optional[str] = None,
         execution_ended_at: Optional[str] = None,
+        results_s3_uri: Optional[str] = None,
     ) -> None:
         """Update workset execution environment metadata.
 
@@ -679,10 +793,12 @@ class WorksetStateDB:
             cluster_name: Name of the ParallelCluster where workset is running
             cluster_region: AWS region of the execution cluster
             headnode_ip: IP address of the cluster headnode (sensitive - admin only)
+            headnode_analysis_path: FSx path where pipeline is running (e.g., /fsx/analysis_results/ubuntu/<workset>/daylily-omics-analysis)
             execution_s3_bucket: S3 bucket where results will be written
             execution_s3_prefix: S3 prefix/path for workset results
             execution_started_at: ISO timestamp when execution began on cluster
             execution_ended_at: ISO timestamp when execution completed
+            results_s3_uri: Final S3 URI where results were exported (from fsx_export.yaml)
         """
         now_iso = dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
 
@@ -701,6 +817,10 @@ class WorksetStateDB:
             update_parts.append("execution_headnode_ip = :exec_ip")
             expr_values[":exec_ip"] = headnode_ip
 
+        if headnode_analysis_path is not None:
+            update_parts.append("headnode_analysis_path = :analysis_path")
+            expr_values[":analysis_path"] = headnode_analysis_path
+
         if execution_s3_bucket is not None:
             update_parts.append("execution_s3_bucket = :exec_bucket")
             expr_values[":exec_bucket"] = execution_s3_bucket
@@ -717,6 +837,10 @@ class WorksetStateDB:
             update_parts.append("execution_ended_at = :exec_ended")
             expr_values[":exec_ended"] = execution_ended_at
 
+        if results_s3_uri is not None:
+            update_parts.append("results_s3_uri = :results_uri")
+            expr_values[":results_uri"] = results_s3_uri
+
         update_expr = "SET " + ", ".join(update_parts)
 
         try:
@@ -726,10 +850,11 @@ class WorksetStateDB:
                 ExpressionAttributeValues=expr_values,
             )
             LOGGER.info(
-                "Updated execution environment for workset %s: cluster=%s, region=%s",
+                "Updated execution environment for workset %s: cluster=%s, region=%s, results_uri=%s",
                 workset_id,
                 cluster_name,
                 cluster_region,
+                results_s3_uri,
             )
         except ClientError as e:
             LOGGER.warning("Failed to update execution environment for %s: %s", workset_id, str(e))
@@ -904,6 +1029,42 @@ class WorksetStateDB:
             worksets.extend(batch)
             if len(worksets) >= limit:
                 break
+
+        return worksets
+
+    def get_actionable_worksets_prioritized(self, limit: int = 100) -> List[Dict[str, Any]]:
+        """Get worksets that need attention (ready or in_progress) ordered by priority.
+
+        This method returns worksets in the following order:
+        1. In-progress worksets (to check for completion/resume)
+        2. Ready worksets by priority (urgent, normal, low)
+
+        Args:
+            limit: Maximum number of results
+
+        Returns:
+            List of actionable worksets sorted by state and priority
+        """
+        worksets: List[Dict[str, Any]] = []
+
+        # First, get all in-progress worksets (need to check for completion)
+        in_progress = self.list_worksets_by_state(
+            WorksetState.IN_PROGRESS,
+            limit=limit,
+        )
+        worksets.extend(in_progress)
+
+        # Then get ready worksets by priority
+        if len(worksets) < limit:
+            for priority in [WorksetPriority.URGENT, WorksetPriority.NORMAL, WorksetPriority.LOW]:
+                batch = self.list_worksets_by_state(
+                    WorksetState.READY,
+                    priority=priority,
+                    limit=limit - len(worksets),
+                )
+                worksets.extend(batch)
+                if len(worksets) >= limit:
+                    break
 
         return worksets
 

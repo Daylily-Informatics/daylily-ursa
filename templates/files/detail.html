@@ -277,14 +277,14 @@
 
         {% if workset_history %}
         <div class="table-container">
-            <table class="table">
+            <table class="table" id="file-workset-history-table" data-sortable>
                 <thead>
                     <tr>
                         <th>Workset ID</th>
                         <th>Usage Type</th>
                         <th>State</th>
                         <th>Added</th>
-                        <th>Actions</th>
+                        <th data-no-sort>Actions</th>
                     </tr>
                 </thead>
                 <tbody>

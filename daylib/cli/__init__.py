@@ -26,8 +26,7 @@ def _validate_aws_env() -> None:
 
     Checks:
     - AWS_PROFILE is set and not '' or 'default'
-    - AWS_REGION and REGION are both set
-    - AWS_REGION and REGION match
+    - AWS_DEFAULT_REGION is set (standard AWS environment variable)
     """
     errors = []
 
@@ -38,20 +37,10 @@ def _validate_aws_env() -> None:
     elif aws_profile == "default":
         errors.append("AWS_PROFILE is 'default'. Use a named profile: [cyan]export AWS_PROFILE=your-profile[/cyan]")
 
-    # Check AWS_REGION and REGION
-    aws_region = os.environ.get("AWS_REGION", "")
-    region = os.environ.get("REGION", "")
-
-    if not aws_region:
-        errors.append("AWS_REGION is not set. Set it with: [cyan]export AWS_REGION=us-west-2[/cyan]")
-    if not region:
-        errors.append("REGION is not set. Set it with: [cyan]export REGION=us-west-2[/cyan]")
-
-    if aws_region and region and aws_region != region:
-        errors.append(
-            f"AWS_REGION ({aws_region}) and REGION ({region}) do not match. "
-            "Set both to the same value."
-        )
+    # Check AWS_DEFAULT_REGION (the standard AWS env var)
+    aws_default_region = os.environ.get("AWS_DEFAULT_REGION", "")
+    if not aws_default_region:
+        errors.append("AWS_DEFAULT_REGION is not set. Set it with: [cyan]export AWS_DEFAULT_REGION=us-west-2[/cyan]")
 
     if errors:
         console.print("[red bold]✗ AWS Environment Error[/red bold]\n")

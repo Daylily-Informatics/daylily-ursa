@@ -59,7 +59,7 @@
                     </div>
                     <div class="bucket-actions">
                         {% if bucket.can_list %}
-                        <a href="/portal/files/browse/{{ bucket.bucket_id }}" class="btn btn-sm btn-primary" title="Browse Files">
+                        <a href="/portal/files/browse/{{ bucket.bucket_id }}{% if bucket.prefix_restriction %}?prefix={{ bucket.prefix_restriction }}{% endif %}" class="btn btn-sm btn-primary" title="Browse Files">
                             <i class="fas fa-folder-open"></i> Browse
                         </a>
                         {% endif %}
@@ -81,6 +81,7 @@
                 <div class="bucket-details">
                     <div class="bucket-meta">
                         <span><i class="fab fa-aws"></i> <code>s3://{{ bucket.bucket_name }}</code></span>
+                        <span><i class="fas fa-folder"></i> Prefix: <code>{{ bucket.prefix_restriction if bucket.prefix_restriction else '/' }}</code></span>
                         {% if bucket.region %}
                         <span><i class="fas fa-globe"></i> {{ bucket.region }}</span>
                         {% endif %}

@@ -26,6 +26,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from daylib.config import Settings
+from daylib.file_registry import detect_file_format as _detect_file_format
 from daylib.routes.dependencies import (
     convert_customer_for_template,
     format_file_size,
@@ -557,13 +558,17 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
 
     @router.get("/portal/worksets", response_class=HTMLResponse)
     async def portal_worksets(request: Request, page: int = 1):
-        """Worksets list page."""
+        """Worksets list page (excludes archived and deleted worksets)."""
         auth_redirect = _require_portal_auth(request)
         if auth_redirect:
             return auth_redirect
         customer, _ = _get_customer_for_session(request, deps)
         worksets = []
+        # Exclude archived and deleted states from the main list
+        excluded_states = {WorksetState.ARCHIVED, WorksetState.DELETED}
         for ws_state in WorksetState:
+            if ws_state in excluded_states:
+                continue
             batch = deps.state_db.list_worksets_by_state(ws_state, limit=100)
             worksets.extend(batch)
         for ws in worksets:
@@ -571,9 +576,11 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
             if isinstance(metadata, dict):
                 ws["sample_count"] = metadata.get("sample_count", 0)
                 ws["pipeline_type"] = metadata.get("pipeline_type", "germline")
+                ws["workset_type"] = metadata.get("workset_type", ws.get("workset_type", "ruo"))
             else:
                 ws["sample_count"] = 0
                 ws["pipeline_type"] = "germline"
+                ws["workset_type"] = ws.get("workset_type", "ruo")
             # Add S3 sentinel status
             bucket = ws.get("bucket", "")
             prefix = ws.get("prefix", "")
@@ -622,6 +629,17 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                 customer_config = deps.customer_manager.get_customer_config(customers[0].customer_id)
                 if customer_config:
                     archived_worksets = [w for w in all_archived if w.get("bucket") == customer_config.s3_bucket]
+        # Ensure workset_type is available for each archived workset
+        for ws in archived_worksets:
+            metadata = ws.get("metadata", {})
+            if isinstance(metadata, dict):
+                ws["workset_type"] = metadata.get("workset_type", ws.get("workset_type", "ruo"))
+                ws["pipeline_type"] = metadata.get("pipeline_type", "germline")
+                ws["sample_count"] = metadata.get("sample_count", 0)
+            else:
+                ws["workset_type"] = ws.get("workset_type", "ruo")
+                ws["pipeline_type"] = "germline"
+                ws["sample_count"] = 0
         return deps.templates.TemplateResponse(
             request,
             "worksets/archived.html",
@@ -692,6 +710,176 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
             raise
         except Exception as e:
             LOGGER.error(f"Error generating download for workset {workset_id}: {e}")
+            raise HTTPException(status_code=500, detail=f"Failed to generate download: {str(e)}")
+
+    @router.get("/portal/worksets/{workset_id}/results/browse", response_class=HTMLResponse)
+    async def portal_workset_results_browse(request: Request, workset_id: str, prefix: str = ""):
+        """Browse workset results in S3."""
+        auth_redirect = _require_portal_auth(request)
+        if auth_redirect:
+            return auth_redirect
+        customer, _ = _get_customer_for_session(request, deps)
+        workset = deps.state_db.get_workset(workset_id)
+        if not workset:
+            raise HTTPException(status_code=404, detail="Workset not found")
+
+        # Get results S3 URI
+        results_uri = workset.get("results_s3_uri")
+        if not results_uri:
+            raise HTTPException(status_code=400, detail="No results location available for this workset")
+
+        # Parse S3 URI: s3://bucket/prefix/path
+        if not results_uri.startswith("s3://"):
+            raise HTTPException(status_code=400, detail="Invalid results URI format")
+        uri_parts = results_uri[5:].split("/", 1)
+        bucket = uri_parts[0]
+        base_prefix = uri_parts[1].rstrip("/") + "/" if len(uri_parts) > 1 else ""
+
+        # Combine base prefix with browsed prefix
+        current_prefix = base_prefix + prefix if prefix else base_prefix
+
+        items = []
+        breadcrumbs = []
+        parent_prefix = None
+
+        # Calculate parent prefix for navigation
+        if prefix:
+            parts = prefix.rstrip("/").split("/")
+            if len(parts) > 1:
+                parent_prefix = "/".join(parts[:-1]) + "/"
+            else:
+                parent_prefix = ""
+
+        try:
+            session_kwargs = {"region_name": deps.region}
+            if deps.profile:
+                session_kwargs["profile_name"] = deps.profile
+            session = boto3.Session(**session_kwargs)
+            s3 = session.client("s3")
+
+            # List objects with delimiter to get folders
+            paginator = s3.get_paginator("list_objects_v2")
+            for page in paginator.paginate(Bucket=bucket, Prefix=current_prefix, Delimiter="/"):
+                # Add folders (common prefixes)
+                for cp in page.get("CommonPrefixes", []):
+                    folder_key = cp["Prefix"]
+                    # Get relative name from base_prefix
+                    relative_key = folder_key[len(base_prefix):] if folder_key.startswith(base_prefix) else folder_key
+                    folder_name = relative_key.rstrip("/").split("/")[-1]
+                    if folder_name and not folder_name.startswith("."):
+                        items.append({
+                            "name": folder_name,
+                            "key": relative_key,
+                            "is_folder": True,
+                            "size_bytes": None,
+                            "last_modified": None,
+                            "file_format": None,
+                        })
+
+                # Add files
+                for obj in page.get("Contents", []):
+                    key = obj["Key"]
+                    # Skip the prefix itself
+                    if key == current_prefix:
+                        continue
+                    relative_key = key[len(base_prefix):] if key.startswith(base_prefix) else key
+                    filename = key.split("/")[-1]
+                    if filename and not filename.startswith("."):
+                        # Determine file format
+                        file_format = None
+                        if filename.endswith((".fastq", ".fastq.gz", ".fq", ".fq.gz")):
+                            file_format = "fastq"
+                        elif filename.endswith((".bam", ".bam.bai")):
+                            file_format = "bam"
+                        elif filename.endswith((".vcf", ".vcf.gz", ".vcf.gz.tbi")):
+                            file_format = "vcf"
+                        elif filename.endswith((".cram", ".cram.crai")):
+                            file_format = "cram"
+                        elif filename.endswith(".html"):
+                            file_format = "html"
+                        elif filename.endswith(".pdf"):
+                            file_format = "pdf"
+                        elif filename.endswith((".tsv", ".csv")):
+                            file_format = "table"
+
+                        items.append({
+                            "name": filename,
+                            "key": relative_key,
+                            "full_key": key,
+                            "is_folder": False,
+                            "size_bytes": obj.get("Size", 0),
+                            "last_modified": obj.get("LastModified").isoformat() if obj.get("LastModified") else None,
+                            "file_format": file_format,
+                        })
+        except Exception as e:
+            LOGGER.warning(f"Failed to browse results for {workset_id}: {e}")
+
+        # Build breadcrumbs from prefix
+        if prefix:
+            parts = prefix.rstrip("/").split("/")
+            for i, part in enumerate(parts):
+                breadcrumbs.append({"name": part, "prefix": "/".join(parts[:i + 1]) + "/"})
+
+        return deps.templates.TemplateResponse(
+            request,
+            "worksets/results_browse.html",
+            _get_template_context(
+                request, deps,
+                customer=customer,
+                workset=workset,
+                items=items,
+                breadcrumbs=breadcrumbs,
+                current_prefix=prefix,
+                parent_prefix=parent_prefix,
+                results_uri=results_uri,
+                active_page="worksets",
+            ),
+        )
+
+    @router.get("/portal/worksets/{workset_id}/results/download")
+    async def portal_workset_results_download(request: Request, workset_id: str, key: str = Query(...)):
+        """Download a file from workset results."""
+        auth_redirect = _require_portal_auth(request)
+        if auth_redirect:
+            return auth_redirect
+        workset = deps.state_db.get_workset(workset_id)
+        if not workset:
+            raise HTTPException(status_code=404, detail="Workset not found")
+
+        results_uri = workset.get("results_s3_uri")
+        if not results_uri:
+            raise HTTPException(status_code=400, detail="No results location available")
+
+        # Parse S3 URI
+        if not results_uri.startswith("s3://"):
+            raise HTTPException(status_code=400, detail="Invalid results URI format")
+        uri_parts = results_uri[5:].split("/", 1)
+        bucket = uri_parts[0]
+        base_prefix = uri_parts[1].rstrip("/") + "/" if len(uri_parts) > 1 else ""
+
+        # Full S3 key
+        full_key = base_prefix + key
+
+        try:
+            session_kwargs = {"region_name": deps.region}
+            if deps.profile:
+                session_kwargs["profile_name"] = deps.profile
+            session = boto3.Session(**session_kwargs)
+            s3 = session.client("s3")
+
+            filename = key.split("/")[-1]
+            presigned_url = s3.generate_presigned_url(
+                "get_object",
+                Params={
+                    "Bucket": bucket,
+                    "Key": full_key,
+                    "ResponseContentDisposition": f'attachment; filename="{filename}"',
+                },
+                ExpiresIn=3600,
+            )
+            return RedirectResponse(url=presigned_url, status_code=302)
+        except Exception as e:
+            LOGGER.error(f"Error generating download URL for {workset_id}/{key}: {e}")
             raise HTTPException(status_code=500, detail=f"Failed to generate download: {str(e)}")
 
     # ========== Manifest Generator Routes ==========
@@ -806,7 +994,8 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                 buckets = [
                     {"bucket_id": b.bucket_id, "bucket_name": b.bucket_name, "bucket_type": b.bucket_type, "display_name": b.display_name,
                      "description": b.description, "is_validated": b.is_validated, "can_read": b.can_read, "can_write": b.can_write,
-                     "can_list": b.can_list, "read_only": b.read_only,
+                     "can_list": b.can_list, "read_only": b.read_only, "region": b.region,
+                     "prefix_restriction": b.prefix_restriction,
                      "linked_at": b.linked_at.isoformat() if hasattr(b.linked_at, 'isoformat') else b.linked_at}
                     for b in linked_buckets
                 ]
@@ -834,11 +1023,14 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
             return RedirectResponse(url="/portal/login?error=No+customer+account+found", status_code=302)
         bucket = None
         items = []
-        breadcrumbs = []
+        breadcrumbs = [{"name": "/", "prefix": ""}]  # Root breadcrumb
         current_prefix = prefix.rstrip("/") + "/" if prefix else ""
-        parent_prefix = "/".join(current_prefix.rstrip("/").split("/")[:-1])
-        if parent_prefix:
-            parent_prefix += "/"
+        # Calculate parent prefix - None at root, empty string for first level, path for deeper
+        if not current_prefix:
+            parent_prefix = None  # At root, no parent
+        else:
+            parent_parts = current_prefix.rstrip("/").split("/")[:-1]
+            parent_prefix = "/".join(parent_parts) + "/" if parent_parts else ""
         if deps.linked_bucket_manager:
             bucket_obj = deps.linked_bucket_manager.get_bucket(bucket_id)
             if bucket_obj:
@@ -846,7 +1038,10 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                 if bucket_obj.customer_id != customer.customer_id:
                     LOGGER.warning(f"Access denied: bucket {bucket_id} belongs to {bucket_obj.customer_id}, not {customer.customer_id}")
                     return RedirectResponse(url="/portal/files/buckets?error=Access+denied+to+this+bucket", status_code=302)
-                bucket = {"bucket_id": bucket_obj.bucket_id, "bucket_name": bucket_obj.bucket_name, "display_name": bucket_obj.display_name}
+                bucket = {"bucket_id": bucket_obj.bucket_id, "bucket_name": bucket_obj.bucket_name,
+                          "display_name": bucket_obj.display_name or bucket_obj.bucket_name,
+                          "read_only": bucket_obj.read_only, "can_write": bucket_obj.can_write,
+                          "can_list": bucket_obj.can_list, "can_read": bucket_obj.can_read}
                 try:
                     session_kwargs = {"region_name": deps.region}
                     if deps.profile:
@@ -857,17 +1052,18 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                     for cp in response.get("CommonPrefixes", []):
                         folder_path = cp["Prefix"]
                         folder_name = folder_path.rstrip("/").split("/")[-1]
-                        items.append({"name": folder_name, "type": "folder", "prefix": folder_path, "icon": "folder",
-                                      "size_bytes": None, "last_modified": None})
+                        items.append({"name": folder_name, "is_folder": True, "key": folder_path,
+                                      "size_bytes": None, "last_modified": None, "file_format": None, "is_registered": False})
                     for obj in response.get("Contents", []):
                         if obj["Key"] == current_prefix:
                             continue
                         filename = obj["Key"].split("/")[-1]
                         if filename:
-                            items.append({"name": filename, "type": "file", "key": obj["Key"],
-                                          "size": obj.get("Size", 0), "size_bytes": obj.get("Size", 0),
-                                          "size_formatted": format_file_size(obj.get("Size", 0)), "icon": get_file_icon(filename),
-                                          "last_modified": obj.get("LastModified").isoformat() if obj.get("LastModified") else None})
+                            file_format = _detect_file_format(filename)
+                            items.append({"name": filename, "is_folder": False, "key": obj["Key"],
+                                          "size_bytes": obj.get("Size", 0), "file_format": file_format,
+                                          "last_modified": obj.get("LastModified").isoformat() if obj.get("LastModified") else None,
+                                          "is_registered": False})
                 except Exception as e:
                     LOGGER.warning(f"Failed to browse bucket {bucket_id}: {e}")
         if current_prefix:

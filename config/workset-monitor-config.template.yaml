@@ -106,8 +106,9 @@ pipeline:
   ssh_extra_args: []
   
   # Command to stage samples to the headnode
-  # Available variables: {profile}, {region}, {reference_bucket}, {analysis_samples}
-  stage_command: ./bin/daylily-stage-samples-from-local-to-headnode --profile {profile} --region {region} --reference-bucket {reference_bucket} {analysis_samples}
+  # Available variables: {profile}, {region}, {reference_bucket}, {analysis_samples}, {output_dir}
+  # Note: --config-dir ensures generated samples.tsv/units.tsv are written to the workset state dir
+  stage_command: ./bin/daylily-stage-samples-from-local-to-headnode --profile {profile} --region {region} --reference-bucket {reference_bucket} --config-dir {output_dir} {analysis_samples}
   
   # Command to clone the pipeline repository
   # Available variables: {clone_args}

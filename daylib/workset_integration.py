@@ -50,7 +50,7 @@ PIPELINE_DY_R_COMMANDS = {
     ),
     "germline_wgs_snv_sv": (
         'produce_snv_concordances produce_alignstats produce_tiddit produce_manta -p -k -j 200 '
-        '--config aligners=["bwa2a"] dedupers=["dppl19"] snv_callers=["deep"] sv_callers=["tiddit","manta"]'
+        '--config aligners=["bwa2a"] dedupers=["dppl"] snv_callers=["deep19"] sv_callers=["tiddit","manta"]'
     ),
     "germline_wgs_kitchensink": (
         'produce_snv_concordances produce_multiqc_final_wgs produce_alignstats produce_tiddit produce_manta -p -k -j 200 '
@@ -113,6 +113,7 @@ class WorksetIntegration:
         bucket: Optional[str] = None,
         prefix: Optional[str] = None,
         priority: str = "normal",
+        workset_type: str = "ruo",
         metadata: Optional[Dict[str, Any]] = None,
         customer_id: Optional[str] = None,
         *,
@@ -126,6 +127,7 @@ class WorksetIntegration:
             bucket: S3 bucket (uses default if not provided)
             prefix: S3 prefix for this workset
             priority: Execution priority (urgent, normal, low)
+            workset_type: Classification type (clinical, ruo, lsmc). Default: ruo
             metadata: Additional workset metadata
             customer_id: Customer ID who owns this workset
             write_s3: Whether to write S3 sentinel files
@@ -147,17 +149,22 @@ class WorksetIntegration:
 
         # Write to DynamoDB first (if enabled and available)
         if write_dynamodb and self.state_db:
-            from daylib.workset_state_db import WorksetPriority
+            from daylib.workset_state_db import WorksetPriority, WorksetType
             try:
                 ws_priority = WorksetPriority(priority)
             except ValueError:
                 ws_priority = WorksetPriority.NORMAL
+            try:
+                ws_type = WorksetType(workset_type)
+            except ValueError:
+                ws_type = WorksetType.RUO
 
             db_success = self.state_db.register_workset(
                 workset_id=workset_id,
                 bucket=target_bucket,
                 prefix=workset_prefix,
                 priority=ws_priority,
+                workset_type=ws_type,
                 metadata=metadata,
                 customer_id=customer_id,
             )

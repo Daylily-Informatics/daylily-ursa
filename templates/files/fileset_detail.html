@@ -75,16 +75,16 @@
     <div class="card">
         <h3 class="card-title"><i class="fas fa-file"></i> Files in Set ({{ files|length }})</h3>
         <div class="table-container">
-            <table class="table" id="fileset-files-table">
+            <table class="table" id="fileset-files-table" data-sortable>
                 <thead>
                     <tr>
-                        <th style="width: 40px;"><input type="checkbox" id="select-all" onchange="toggleSelectAll()"></th>
+                        <th style="width: 40px;" data-no-sort><input type="checkbox" id="select-all" onchange="toggleSelectAll()"></th>
                         <th>File Name</th>
                         <th>Subject ID</th>
                         <th>Sample ID</th>
                         <th>Size</th>
                         <th>Type</th>
-                        <th>Actions</th>
+                        <th data-no-sort>Actions</th>
                     </tr>
                 </thead>
                 <tbody id="files-tbody">

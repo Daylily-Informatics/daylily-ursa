@@ -5,19 +5,22 @@
 // Filter worksets
 function filterWorksets() {
     const status = document.getElementById('filter-status')?.value || '';
+    const type = document.getElementById('filter-type')?.value || '';
     const search = document.getElementById('search-worksets')?.value.toLowerCase() || '';
     const sort = document.getElementById('filter-sort')?.value || 'created_desc';
-    
+
     const rows = document.querySelectorAll('#worksets-tbody tr[data-workset-id]');
-    
+
     rows.forEach(row => {
         const rowStatus = row.dataset.status;
+        const rowType = row.dataset.type || 'ruo';
         const rowText = row.textContent.toLowerCase();
-        
+
         const matchesStatus = !status || rowStatus === status;
+        const matchesType = !type || rowType === type;
         const matchesSearch = !search || rowText.includes(search);
-        
-        row.style.display = matchesStatus && matchesSearch ? '' : 'none';
+
+        row.style.display = matchesStatus && matchesType && matchesSearch ? '' : 'none';
     });
 }
 
@@ -331,6 +334,7 @@ async function submitWorkset(event) {
         s3_bucket: formData.get('s3_bucket'),
         s3_prefix: worksetPrefix,  // Use the generated prefix
         priority: formData.get('priority'),
+        workset_type: formData.get('workset_type') || 'ruo',
         notification_email: formData.get('notification_email'),
         enable_qc: formData.get('enable_qc') === 'on',
         archive_results: formData.get('archive_results') === 'on',
@@ -700,19 +704,19 @@ async function refreshSavedManifestsList() {
 }
 
 // Handle saved manifest selection
-async function onSavedManifestSelected() {
+function onSavedManifestSelected() {
     const select = document.getElementById('saved-manifest-select');
     const manifestId = select?.value;
     const preview = document.getElementById('saved-manifest-preview');
 
     if (!manifestId) {
+        // Clear selection state
         if (preview) preview.classList.add('d-none');
         window.selectedManifestId = null;
+        window.manifestSampleCount = 0;
+        calculateCostEstimate();
         return;
     }
-
-    const customerId = window.UrsaConfig?.customerId;
-    if (!customerId) return;
 
     try {
         // Get manifest metadata from the selected option's dataset
@@ -763,6 +767,15 @@ function calculateCostEstimate() {
     const priority = document.getElementById('priority')?.value || 'normal';
     const enableQc = document.getElementById('enable_qc')?.checked ?? true;
 
+    console.log('calculateCostEstimate called:', {
+        pipeline,
+        priority,
+        enableQc,
+        selectedFileset: !!window.selectedFileset,
+        manifestSampleCount: window.manifestSampleCount,
+        selectedManifestId: window.selectedManifestId
+    });
+
     // Determine sample count based on input method
     let sampleCount = 0;
     let totalDataSize = 0; // in GB
@@ -770,10 +783,12 @@ function calculateCostEstimate() {
     if (window.selectedFileset) {
         sampleCount = Math.ceil((window.selectedFileset.files?.length || 0) / 2); // Assume paired-end
         totalDataSize = (window.selectedFileset.files || []).reduce((sum, f) => sum + (f.file_size || 0), 0) / (1024 * 1024 * 1024);
+        console.log('Using selectedFileset:', sampleCount, 'samples');
     } else if (window.manifestSampleCount > 0) {
         // Use sample count from uploaded or selected manifest
         sampleCount = window.manifestSampleCount;
         totalDataSize = sampleCount * 30; // Estimate 30GB per sample
+        console.log('Using manifestSampleCount:', sampleCount, 'samples');
     } else if (window.selectedManifestId && !window.manifestSampleCount) {
         // Fallback: manifest selected but sample count not available (legacy data)
         // Estimate 1 sample as minimum to show some cost estimate
@@ -783,15 +798,20 @@ function calculateCostEstimate() {
     } else if (window.worksetSamples?.length) {
         sampleCount = window.worksetSamples.length;
         totalDataSize = sampleCount * 30;
+        console.log('Using worksetSamples:', sampleCount, 'samples');
+    } else {
+        console.log('No sample source found, sampleCount=0');
     }
 
-    if (!pipeline || sampleCount === 0) {
-        updateCostDisplay(0, 0, 0, 0, 0, 0, 0, 1.0);
-        return;
-    }
-
-    // Base costs per sample (in USD)
+    // Base costs per sample (in USD) - map actual pipeline types to cost profiles
     const pipelineCosts = {
+        // Test pipeline
+        'test_help': { compute: 0.50, vcpuHours: 2, timeHours: 0.5 },
+        // Germline WGS variants
+        'germline_wgs_snv': { compute: 2.50, vcpuHours: 8, timeHours: 2 },
+        'germline_wgs_snv_sv': { compute: 3.50, vcpuHours: 12, timeHours: 3 },
+        'germline_wgs_kitchensink': { compute: 5.00, vcpuHours: 16, timeHours: 4 },
+        // Legacy/fallback keys
         'germline': { compute: 2.50, vcpuHours: 8, timeHours: 2 },
         'somatic': { compute: 5.00, vcpuHours: 16, timeHours: 4 },
         'rnaseq': { compute: 1.50, vcpuHours: 4, timeHours: 1.5 },
@@ -799,7 +819,17 @@ function calculateCostEstimate() {
         'wes': { compute: 3.00, vcpuHours: 12, timeHours: 2.5 }
     };
 
-    const baseCost = pipelineCosts[pipeline] || pipelineCosts['germline'];
+    // Default cost profile for when pipeline not yet selected
+    const defaultCost = { compute: 2.50, vcpuHours: 8, timeHours: 2 };
+
+    // Get cost profile - use default if pipeline not selected or unknown
+    const baseCost = (pipeline && pipelineCosts[pipeline]) ? pipelineCosts[pipeline] : defaultCost;
+
+    // If no samples, show zeros
+    if (sampleCount === 0) {
+        updateCostDisplay(0, 0, 0, 0, 0, 0, 0, 1.0);
+        return;
+    }
 
     // Priority multipliers
     const priorityMultipliers = {
@@ -831,6 +861,7 @@ function calculateCostEstimate() {
 
 // Update cost display
 function updateCostDisplay(total, time, vcpu, samples, compute, storage, transfer, priorityMult) {
+    console.log('updateCostDisplay:', { total, time, vcpu, samples, compute, storage, transfer, priorityMult });
     document.getElementById('est-cost').textContent = `$${total.toFixed(2)}`;
     document.getElementById('est-time').textContent = time > 0 ? `${time.toFixed(1)}h` : '0h';
     document.getElementById('est-vcpu').textContent = vcpu.toFixed(0);

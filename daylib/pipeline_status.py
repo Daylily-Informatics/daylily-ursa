@@ -2,6 +2,7 @@
 
 This module provides SSH-based monitoring of Snakemake pipeline progress,
 parsing log files and gathering status information from remote headnodes.
+It also supports fetching performance metrics from S3 when headnode is unavailable.
 """
 
 from __future__ import annotations
@@ -13,6 +14,10 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any, Dict, List, Optional, Sequence
+from urllib.parse import urlparse
+
+import boto3
+from botocore.exceptions import ClientError
 
 LOGGER = logging.getLogger("daylib.pipeline_status")
 
@@ -499,4 +504,128 @@ class PipelineStatusFetcher:
             "rule_count": len(benchmark_data),
             "sample_count": len(per_sample),
         }
+
+    # ==========================================================================
+    # S3 Fallback Methods - Used when headnode is unavailable
+    # ==========================================================================
+
+    def _get_s3_metrics_path(self, results_s3_uri: str, filename: str) -> str:
+        """Build S3 path to metrics file from results_s3_uri.
+
+        Args:
+            results_s3_uri: Base S3 URI where results were exported
+                           (e.g., s3://bucket/prefix/workset-name)
+            filename: Name of the TSV file (e.g., 'alignstats_combo_mqc.tsv')
+
+        Returns:
+            Full S3 path to the metrics file
+        """
+        # The results_s3_uri points to the pipeline directory root
+        # Metrics files are in: {results_s3_uri}/daylily-omics-analysis/results/day/hg38/other_reports/
+        base_uri = results_s3_uri.rstrip("/")
+        return f"{base_uri}/{self.repo_dir_name}/results/day/hg38/other_reports/{filename}"
+
+    def fetch_tsv_from_s3(
+        self, results_s3_uri: str, filename: str, region: Optional[str] = None
+    ) -> Optional[List[Dict[str, str]]]:
+        """Fetch a TSV file from S3 and parse into list of dicts.
+
+        Args:
+            results_s3_uri: Base S3 URI where results were exported
+            filename: Name of the TSV file (e.g., 'alignstats_combo_mqc.tsv')
+            region: AWS region for S3 client
+
+        Returns:
+            List of dicts (one per row) or None if file not found/error
+        """
+        s3_path = self._get_s3_metrics_path(results_s3_uri, filename)
+        parsed = urlparse(s3_path)
+        bucket = parsed.netloc
+        key = parsed.path.lstrip("/")
+
+        LOGGER.debug("Fetching TSV from S3: s3://%s/%s", bucket, key)
+
+        try:
+            s3_client = boto3.client("s3", region_name=region) if region else boto3.client("s3")
+            response = s3_client.get_object(Bucket=bucket, Key=key)
+            content = response["Body"].read().decode("utf-8")
+
+            if not content or not content.strip():
+                LOGGER.debug("S3 TSV file is empty: %s", s3_path)
+                return None
+
+            return self._parse_tsv(content)
+
+        except ClientError as e:
+            error_code = e.response.get("Error", {}).get("Code", "")
+            if error_code in ("NoSuchKey", "404"):
+                LOGGER.debug("S3 TSV file not found: %s", s3_path)
+            else:
+                LOGGER.warning("Failed to fetch TSV from S3 %s: %s", s3_path, e)
+            return None
+        except Exception as e:
+            LOGGER.warning("Error fetching TSV from S3 %s: %s", s3_path, e)
+            return None
+
+    def fetch_alignment_stats_from_s3(
+        self, results_s3_uri: str, region: Optional[str] = None
+    ) -> Optional[List[Dict[str, str]]]:
+        """Fetch alignment statistics from S3.
+
+        Args:
+            results_s3_uri: Base S3 URI where results were exported
+            region: AWS region for S3 client
+
+        Returns:
+            List of per-sample alignment metrics or None
+        """
+        return self.fetch_tsv_from_s3(results_s3_uri, "alignstats_combo_mqc.tsv", region)
+
+    def fetch_benchmark_data_from_s3(
+        self, results_s3_uri: str, region: Optional[str] = None
+    ) -> Optional[List[Dict[str, str]]]:
+        """Fetch rules benchmark data from S3.
+
+        Args:
+            results_s3_uri: Base S3 URI where results were exported
+            region: AWS region for S3 client
+
+        Returns:
+            List of per-rule performance metrics or None
+        """
+        return self.fetch_tsv_from_s3(results_s3_uri, "rules_benchmark_data_singleton.tsv", region)
+
+    def fetch_performance_metrics_from_s3(
+        self, results_s3_uri: str, region: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Fetch all performance metrics from S3.
+
+        This is the S3 fallback for fetch_performance_metrics() when
+        the headnode is unavailable.
+
+        Args:
+            results_s3_uri: Base S3 URI where results were exported
+            region: AWS region for S3 client
+
+        Returns:
+            Dict with alignment_stats, benchmark_data, cost_summary
+        """
+        result: Dict[str, Any] = {
+            "alignment_stats": None,
+            "benchmark_data": None,
+            "cost_summary": None,
+        }
+
+        # Fetch alignment stats
+        align_stats = self.fetch_alignment_stats_from_s3(results_s3_uri, region)
+        if align_stats:
+            result["alignment_stats"] = align_stats
+
+        # Fetch benchmark data
+        benchmark_data = self.fetch_benchmark_data_from_s3(results_s3_uri, region)
+        if benchmark_data:
+            result["benchmark_data"] = benchmark_data
+            result["cost_summary"] = self._compute_cost_summary(benchmark_data)
+
+        return result
 

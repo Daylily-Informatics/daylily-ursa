@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, EmailStr, Field
 
-from daylib.workset_state_db import WorksetPriority, WorksetState
+from daylib.workset_state_db import WorksetPriority, WorksetState, WorksetType
 
 LOGGER = logging.getLogger("daylily.routes")
 
@@ -142,6 +142,7 @@ class WorksetCreate(BaseModel):
     bucket: str = Field(..., description="S3 bucket name")
     prefix: str = Field(..., description="S3 prefix for workset files")
     priority: WorksetPriority = Field(WorksetPriority.NORMAL, description="Execution priority")
+    workset_type: WorksetType = Field(WorksetType.RUO, description="Workset classification type (clinical, ruo, lsmc)")
     metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata (must include samples)")
     customer_id: str = Field(..., description="Customer ID who owns this workset (required)")
 
@@ -152,6 +153,7 @@ class WorksetResponse(BaseModel):
     workset_id: str
     state: str
     priority: str
+    workset_type: str = "ruo"  # Default for backward compatibility
     bucket: str
     prefix: str
     created_at: str

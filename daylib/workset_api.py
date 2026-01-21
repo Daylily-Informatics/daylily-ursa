@@ -463,6 +463,7 @@ def create_app(
                 bucket=workset.bucket,
                 prefix=workset.prefix,
                 priority=workset.priority,
+                workset_type=workset.workset_type,
                 metadata=workset.metadata,
                 customer_id=workset.customer_id,
             )
@@ -485,7 +486,7 @@ def create_app(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to retrieve created workset",
             )
-        
+
         return WorksetResponse(**created)
     
     @app.get("/worksets/{workset_id}", response_model=WorksetResponse, tags=["worksets"])
@@ -1458,6 +1459,7 @@ def create_app(
             reference_genome: str = Body(..., embed=True),
             s3_prefix: str = Body("", embed=True),
             priority: str = Body("normal", embed=True),
+            workset_type: str = Body("ruo", embed=True),
             notification_email: Optional[str] = Body(None, embed=True),
             enable_qc: bool = Body(True, embed=True),
             archive_results: bool = Body(True, embed=True),
@@ -1598,6 +1600,13 @@ def create_app(
                     detail="Workset must contain at least one sample. Please upload files, specify an S3 path with samples, provide a saved manifest ID, or upload a manifest TSV.",
                 )
 
+            # Parse workset_type with fallback to RUO
+            from daylib.workset_state_db import WorksetType
+            try:
+                ws_type = WorksetType(workset_type.lower())
+            except ValueError:
+                ws_type = WorksetType.RUO
+
             # Store additional metadata from the form
             metadata = {
                 "workset_name": workset_name,
@@ -1608,6 +1617,7 @@ def create_app(
                 "archive_results": archive_results,
                 "submitted_by": customer_id,
                 "priority": priority,
+                "workset_type": ws_type.value,
                 "samples": normalized_samples,
                 "sample_count": len(normalized_samples),
                 "data_bucket": config.s3_bucket,
@@ -1625,6 +1635,7 @@ def create_app(
                     bucket=bucket,
                     prefix=prefix,
                     priority=priority,
+                    workset_type=ws_type.value,
                     metadata=metadata,
                     customer_id=customer_id,
                     write_s3=True,
@@ -1643,6 +1654,7 @@ def create_app(
                         bucket=bucket,
                         prefix=prefix,
                         priority=ws_priority,
+                        workset_type=ws_type,
                         metadata=metadata,
                         customer_id=customer_id,
                     )
@@ -2120,22 +2132,26 @@ def create_app(
                         **cached.get("metrics", {}),
                     }
 
-            # Need to fetch from headnode
+            # Try to fetch metrics - first from headnode, then fall back to S3
             metrics_data = None
+            metrics_source = None
+
             if PIPELINE_STATUS_AVAILABLE and PipelineStatusFetcher is not None:
-                cluster_name = workset.get("cluster_name")
-                workset_name = workset.get("name") or workset.get("workset_name")
+                cluster_name = workset.get("cluster_name") or workset.get("execution_cluster_name")
+                workset_name = workset.get("name") or workset.get("workset_name") or workset_id
+                results_s3_uri = workset.get("results_s3_uri")
 
-                if cluster_name and workset_name:
+                fetcher = PipelineStatusFetcher(
+                    ssh_user=settings.pipeline_ssh_user,
+                    ssh_identity_file=settings.pipeline_ssh_identity_file,
+                    timeout=settings.pipeline_ssh_timeout,
+                    clone_dest_root=settings.pipeline_clone_dest_root,
+                    repo_dir_name=settings.pipeline_repo_dir_name,
+                )
+
+                # Try headnode first (for running worksets)
+                if cluster_name and workset_name and not is_terminal_state:
                     try:
-                        fetcher = PipelineStatusFetcher(
-                            ssh_user=settings.pipeline_ssh_user,
-                            ssh_identity_file=settings.pipeline_ssh_identity_file,
-                            timeout=settings.pipeline_ssh_timeout,
-                            clone_dest_root=settings.pipeline_clone_dest_root,
-                            repo_dir_name=settings.pipeline_repo_dir_name,
-                        )
-
                         headnode_ip = fetcher.get_headnode_ip(
                             cluster_name,
                             region=settings.get_effective_region(),
@@ -2146,15 +2162,41 @@ def create_app(
                             metrics_data = fetcher.fetch_performance_metrics(
                                 headnode_ip, workset_name
                             )
+                            if metrics_data and any(metrics_data.values()):
+                                metrics_source = "headnode"
                     except Exception as e:
                         LOGGER.warning(
-                            "Failed to fetch performance metrics for %s: %s",
+                            "Failed to fetch performance metrics from headnode for %s: %s",
                             workset_id,
                             str(e),
                         )
 
-            # Cache the results
-            if metrics_data:
+                # Fall back to S3 if headnode didn't work or workset is complete
+                if not metrics_data or not any(metrics_data.values()):
+                    if results_s3_uri:
+                        LOGGER.debug(
+                            "Attempting S3 fallback for metrics: %s", results_s3_uri
+                        )
+                        try:
+                            metrics_data = fetcher.fetch_performance_metrics_from_s3(
+                                results_s3_uri,
+                                region=settings.get_effective_region(),
+                            )
+                            if metrics_data and any(metrics_data.values()):
+                                metrics_source = "s3"
+                                LOGGER.info(
+                                    "Fetched performance metrics from S3 for %s",
+                                    workset_id,
+                                )
+                        except Exception as e:
+                            LOGGER.warning(
+                                "Failed to fetch performance metrics from S3 for %s: %s",
+                                workset_id,
+                                str(e),
+                            )
+
+            # Cache the results if we got any
+            if metrics_data and any(metrics_data.values()):
                 # Cache with is_final=True if workset is in terminal state
                 state_db.update_performance_metrics(
                     workset_id, metrics_data, is_final=is_terminal_state
@@ -2164,6 +2206,7 @@ def create_app(
                 "workset_id": workset_id,
                 "cached": False,
                 "is_final": is_terminal_state,
+                "source": metrics_source,
                 **(metrics_data or {"alignment_stats": None, "benchmark_data": None, "cost_summary": None}),
             }
 

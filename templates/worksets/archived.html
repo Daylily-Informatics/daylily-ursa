@@ -23,10 +23,11 @@
     
     <!-- Archived Worksets Table -->
     <div class="table-container">
-        <table class="table" id="archived-table">
+        <table class="table" id="archived-table" data-sortable>
             <thead>
                 <tr>
                     <th>Workset ID</th>
+                    <th>Type</th>
                     <th>Customer</th>
                     <th>Original Status</th>
                     <th>Pipeline</th>
@@ -34,7 +35,7 @@
                     <th>Archived Date</th>
                     <th>Archived By</th>
                     <th>Reason</th>
-                    <th>Actions</th>
+                    <th data-no-sort>Actions</th>
                 </tr>
             </thead>
             <tbody>
@@ -45,6 +46,16 @@
                         <a href="/portal/worksets/{{ ws.workset_id }}" class="text-accent">
                             {{ ws.workset_id[:16] }}...
                         </a>
+                    </td>
+                    <td>
+                        {% set wtype = ws.workset_type | default('ruo') | lower %}
+                        {% if wtype == 'clinical' %}
+                        <span class="badge badge-clinical" title="Clinical">Clinical</span>
+                        {% elif wtype == 'lsmc' %}
+                        <span class="badge badge-lsmc" title="Lab Services">LSMC</span>
+                        {% else %}
+                        <span class="badge badge-ruo" title="Research Use Only">RUO</span>
+                        {% endif %}
                     </td>
                     <td>
                         <span class="text-muted" title="{{ ws.customer_id | default('Unknown') }}">
@@ -75,7 +86,7 @@
                 {% endfor %}
                 {% else %}
                 <tr id="empty-row">
-                    <td colspan="9">
+                    <td colspan="10">
                         <div class="empty-state p-xl">
                             <i class="fas fa-archive fa-3x text-muted mb-lg"></i>
                             <h4 class="empty-state-title">No archived worksets</h4>
