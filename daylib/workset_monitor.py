@@ -3285,7 +3285,7 @@ class WorksetMonitor:
     def _tmux_session_exists(self, cluster_name: str, session_name: str) -> bool:
         result = self._run_headnode_command(
             cluster_name,
-            ["tmux", "has-session", "-t", session_name],
+            ["/usr/bin/tmux", "has-session", "-t", session_name],
             check=False,
             shell=False,
         )
@@ -3298,7 +3298,7 @@ class WorksetMonitor:
             return
         self._run_headnode_command(
             cluster_name,
-            ["tmux", "kill-session", "-t", session_name],
+            ["/usr/bin/tmux", "kill-session", "-t", session_name],
             check=False,
             shell=False,
         )
@@ -3310,7 +3310,7 @@ class WorksetMonitor:
             return
         self._run_headnode_command(
             cluster_name,
-            ["tmux", "send-keys", "-t", session_name, "C-x"],
+            ["/usr/bin/tmux", "send-keys", "-t", session_name, "C-x"],
             check=False,
             shell=False,
         )
@@ -3387,7 +3387,7 @@ class WorksetMonitor:
 
             session_name = self._generate_tmux_session_name(workset)
             tmux_cmd = [
-                "tmux",
+                "/usr/bin/tmux",
                 "new-session",
                 "-d",
                 "-s",
@@ -3415,7 +3415,7 @@ class WorksetMonitor:
                 )
                 self._run_headnode_command(
                     cluster_name,
-                    ["tmux", "has-session", "-t", session_name],
+                    ["/usr/bin/tmux", "has-session", "-t", session_name],
                     check=True,
                     shell=False,
                 )
@@ -3703,7 +3703,7 @@ class WorksetMonitor:
     # ------------------------------------------------------------------
     def _cluster_has_tmux_sessions(self, cluster_name: str) -> bool:
         result = self._run_headnode_command(
-            cluster_name, ["tmux", "list-sessions"], check=False, shell=False
+            cluster_name, ["/usr/bin/tmux", "list-sessions"], check=False, shell=False
         )
         if result.returncode != 0:
             return False

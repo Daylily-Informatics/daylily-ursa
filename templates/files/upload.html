@@ -134,6 +134,44 @@
     </div>
 </div>
 
+<!-- Large File Warning Modal -->
+<div class="modal-overlay" id="large-file-modal" style="display: none;">
+    <div class="modal-dialog">
+        <div class="modal-header">
+            <h3><i class="fas fa-exclamation-triangle text-warning"></i> Large File Warning</h3>
+        </div>
+        <div class="modal-body">
+            <p>One or more files in your upload queue are larger than <strong>5 GB</strong>. Browser uploads for very large files may:</p>
+            <ul class="modal-warning-list">
+                <li>Take a very long time to complete</li>
+                <li>Be interrupted by network issues</li>
+                <li>Consume significant browser memory</li>
+            </ul>
+            <p>For better reliability, consider using the AWS CLI instead:</p>
+            <div class="cli-command-wrapper">
+                <label class="form-label">AWS CLI Command (click to copy):</label>
+                <div class="cli-command-box" id="cli-command-box" onclick="copyCliCommand()">
+                    <code id="cli-command-text"></code>
+                    <button class="cli-copy-btn" type="button" title="Copy to clipboard">
+                        <i class="fas fa-copy"></i>
+                    </button>
+                </div>
+                <small class="form-text">Replace <code>/path/to/local/file</code> with your actual file path and <code>your-profile</code> with your AWS profile name.</small>
+            </div>
+            <div class="large-files-list mt-md">
+                <label class="form-label">Large files detected:</label>
+                <ul id="large-files-list" class="text-muted"></ul>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-outline" onclick="cancelLargeFileUpload()">Cancel Upload</button>
+            <button class="btn btn-primary" onclick="continueUploadAnyway()">
+                <i class="fas fa-upload"></i> Continue Upload Anyway
+            </button>
+        </div>
+    </div>
+</div>
+
 <style>
 .upload-zone { border: 2px dashed var(--color-gray-400); border-radius: var(--radius-lg); padding: var(--spacing-3xl); text-align: center; transition: all 0.2s; cursor: pointer; }
 .upload-zone:hover, .upload-zone.drag-over { border-color: var(--color-accent); background: var(--color-gray-100); }
@@ -165,6 +203,23 @@
 .checkbox-label { display: flex; align-items: center; gap: var(--spacing-sm); cursor: pointer; }
 .checkbox-label input { width: 18px; height: 18px; accent-color: var(--color-accent); }
 .required::after { content: ' *'; color: var(--color-error); }
+/* Large File Warning Modal */
+.modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0, 0, 0, 0.5); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+.modal-dialog { background: var(--color-bg-primary); border-radius: var(--radius-lg); max-width: 600px; width: 90%; max-height: 90vh; overflow-y: auto; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2); }
+.modal-header { padding: var(--spacing-lg); border-bottom: 1px solid var(--color-gray-200); }
+.modal-header h3 { margin: 0; display: flex; align-items: center; gap: var(--spacing-sm); }
+.modal-body { padding: var(--spacing-lg); }
+.modal-footer { padding: var(--spacing-lg); border-top: 1px solid var(--color-gray-200); display: flex; justify-content: flex-end; gap: var(--spacing-md); }
+.modal-warning-list { margin: var(--spacing-md) 0; padding-left: var(--spacing-lg); color: var(--color-gray-600); }
+.modal-warning-list li { margin-bottom: var(--spacing-xs); }
+.cli-command-wrapper { margin: var(--spacing-md) 0; }
+.cli-command-box { background: var(--color-gray-900); color: var(--color-gray-100); padding: var(--spacing-md); border-radius: var(--radius-md); font-family: monospace; font-size: 0.85rem; cursor: pointer; position: relative; display: flex; align-items: flex-start; gap: var(--spacing-md); word-break: break-all; }
+.cli-command-box:hover { background: var(--color-gray-800); }
+.cli-command-box code { flex: 1; white-space: pre-wrap; }
+.cli-copy-btn { background: transparent; border: none; color: var(--color-gray-400); cursor: pointer; padding: var(--spacing-xs); flex-shrink: 0; }
+.cli-copy-btn:hover { color: var(--color-gray-100); }
+.large-files-list ul { margin: var(--spacing-sm) 0 0 0; padding-left: var(--spacing-lg); font-size: 0.9rem; }
+.text-warning { color: #f59e0b; }
 </style>
 {% endblock %}
 
@@ -270,6 +325,8 @@ function formatFileSize(bytes) {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
 
+const LARGE_FILE_THRESHOLD = 5 * 1024 * 1024 * 1024; // 5 GB in bytes
+
 async function startUpload() {
     const bucket = document.getElementById('upload-bucket').value;
     if (!bucket) {
@@ -277,6 +334,77 @@ async function startUpload() {
         return;
     }
 
+    // Check for large files (>5GB)
+    const largeFiles = uploadQueue.filter(f => f.size > LARGE_FILE_THRESHOLD);
+    if (largeFiles.length > 0) {
+        showLargeFileWarning(largeFiles);
+        return;
+    }
+
+    // Proceed with upload
+    proceedWithUpload();
+}
+
+function showLargeFileWarning(largeFiles) {
+    const bucket = document.getElementById('upload-bucket');
+    const bucketName = bucket.options[bucket.selectedIndex].dataset.bucketName;
+    const prefix = document.getElementById('upload-prefix').value || '';
+
+    // Generate AWS CLI command for the first large file as an example
+    const firstLargeFile = largeFiles[0];
+    const fullPrefix = prefix ? (prefix.endsWith('/') ? prefix : prefix + '/') : '';
+    const s3Path = `s3://${bucketName}/${fullPrefix}${firstLargeFile.name}`;
+    const cliCommand = `aws s3 cp /path/to/local/${firstLargeFile.name} ${s3Path} --profile your-profile`;
+
+    // Update modal content
+    document.getElementById('cli-command-text').textContent = cliCommand;
+
+    // Populate large files list
+    const listEl = document.getElementById('large-files-list');
+    listEl.innerHTML = largeFiles.map(f =>
+        `<li><strong>${f.name}</strong> (${formatFileSize(f.size)})</li>`
+    ).join('');
+
+    // Show modal
+    document.getElementById('large-file-modal').style.display = 'flex';
+}
+
+function copyCliCommand() {
+    const commandText = document.getElementById('cli-command-text').textContent;
+    navigator.clipboard.writeText(commandText).then(() => {
+        // Show brief feedback
+        const copyBtn = document.querySelector('.cli-copy-btn i');
+        copyBtn.className = 'fas fa-check';
+        setTimeout(() => {
+            copyBtn.className = 'fas fa-copy';
+        }, 2000);
+
+        if (typeof showToast === 'function') {
+            showToast('Command copied to clipboard', 'success');
+        }
+    }).catch(err => {
+        console.error('Failed to copy:', err);
+        // Fallback: select the text
+        const range = document.createRange();
+        range.selectNode(document.getElementById('cli-command-text'));
+        window.getSelection().removeAllRanges();
+        window.getSelection().addRange(range);
+    });
+}
+
+function cancelLargeFileUpload() {
+    document.getElementById('large-file-modal').style.display = 'none';
+    if (typeof showToast === 'function') {
+        showToast('Upload cancelled', 'info');
+    }
+}
+
+function continueUploadAnyway() {
+    document.getElementById('large-file-modal').style.display = 'none';
+    proceedWithUpload();
+}
+
+async function proceedWithUpload() {
     uploadInProgress = true;
     document.getElementById('file-queue-card').style.display = 'none';
     document.getElementById('upload-progress-card').style.display = 'block';
@@ -320,9 +448,9 @@ async function uploadFile(file, idx) {
         formData.append('prefix', prefix);
         formData.append('file', file);
 
-        // Upload to server with timeout (5 minutes for large files)
+        // Upload to server without timeout (large files can take a long time)
+        // User can cancel manually if needed
         currentAbortController = new AbortController();
-        const timeoutId = setTimeout(() => currentAbortController.abort(), 300000); // 5 min timeout
 
         const response = await fetch('/portal/files/upload', {
             method: 'POST',
@@ -330,7 +458,6 @@ async function uploadFile(file, idx) {
             signal: currentAbortController.signal,
         });
 
-        clearTimeout(timeoutId);
         currentAbortController = null;
 
         if (!response.ok) {
@@ -362,10 +489,10 @@ async function uploadFile(file, idx) {
         console.log(`Uploaded ${file.name} to s3://${result.bucket}/${result.key}`);
 
     } catch (error) {
-        // Check if cancelled by user vs timeout vs other error
+        // Check if cancelled by user vs other error
         let errorMsg;
         if (error.name === 'AbortError') {
-            errorMsg = uploadInProgress ? 'Upload timeout (5 min)' : 'Cancelled';
+            errorMsg = 'Cancelled';
         } else {
             errorMsg = error.message;
         }
