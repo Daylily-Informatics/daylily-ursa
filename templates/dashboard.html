@@ -254,8 +254,9 @@
 <script src="/static/js/charts.js?v={{ cache_bust | default('1') }}"></script>
 <script>
 document.addEventListener('DOMContentLoaded', function() {
-    // Initialize activity chart
-    initActivityChart('activity-chart');
+    // Initialize activity chart with real data from API
+    const customerId = window.UrsaConfig?.customerId;
+    initActivityChart('activity-chart', customerId);
 
     // Refresh stats periodically
     setInterval(refreshDashboardStats, 60000);
@@ -273,7 +274,7 @@ async function saveDisplayName() {
         return;
     }
 
-    const customerId = window.DaylilyConfig?.customerId;
+    const customerId = window.UrsaConfig?.customerId;
     if (!customerId) return;
 
     try {

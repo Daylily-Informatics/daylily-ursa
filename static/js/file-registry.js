@@ -924,6 +924,8 @@ async function registerDiscoveredFiles() {
     }
 
     try {
+        // Use a large max_files to ensure all selected files are found during re-discovery
+        // The backend will filter to only the selected_keys after discovery
         const response = await fetch('/portal/files/register', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -934,7 +936,7 @@ async function registerDiscoveredFiles() {
                 biosample_id: biosampleId,
                 subject_id: subjectId,
                 sequencing_platform: document.getElementById('discover-platform')?.value || 'NOVASEQX',
-                max_files: selectedKeys.length
+                max_files: 10000  // Large limit to ensure all selected files are found
             })
         });
 

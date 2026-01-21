@@ -937,7 +937,7 @@ class WorksetStateDB:
             item = response["Item"]
             result: Dict[str, Any] = {"is_final": item.get("performance_metrics_final", False)}
             if "performance_metrics" in item:
-                result["metrics"] = self._deserialize_metadata(item["performance_metrics"])
+                result["metrics"] = self._deserialize_item(item["performance_metrics"])
             return result
         except ClientError as e:
             LOGGER.warning("Failed to get performance metrics for %s: %s", workset_id, str(e))

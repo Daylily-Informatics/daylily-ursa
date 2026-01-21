@@ -17,27 +17,56 @@ const chartColors = {
     gray: '#6c757d',
 };
 
-// Initialize activity chart (dashboard)
-function initActivityChart(canvasId) {
+// Initialize activity chart (dashboard) - fetches real data from API
+async function initActivityChart(canvasId, customerId) {
     const ctx = document.getElementById(canvasId);
-    if (!ctx) return;
+    if (!ctx) return null;
 
-    // Generate sample data for last 30 days
-    const labels = [];
-    const completedData = [];
-    const submittedData = [];
-    const failedData = [];
+    // Show loading state
+    const container = ctx.parentElement;
+    const loadingDiv = document.createElement('div');
+    loadingDiv.className = 'chart-loading';
+    loadingDiv.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Loading activity data...';
+    loadingDiv.style.cssText = 'position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:var(--text-muted);';
+    container.style.position = 'relative';
+    container.appendChild(loadingDiv);
 
-    for (let i = 29; i >= 0; i--) {
-        const date = new Date();
-        date.setDate(date.getDate() - i);
-        labels.push(date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }));
-        completedData.push(Math.floor(Math.random() * 5));
-        submittedData.push(Math.floor(Math.random() * 8));
-        failedData.push(Math.floor(Math.random() * 2));
+    let labels = [];
+    let submittedData = [];
+    let completedData = [];
+    let failedData = [];
+
+    // Fetch real data if customerId provided
+    if (customerId) {
+        try {
+            const response = await fetch(`/api/customers/${customerId}/dashboard/activity?days=30`);
+            if (response.ok) {
+                const data = await response.json();
+                labels = data.labels || [];
+                submittedData = data.datasets?.submitted || [];
+                completedData = data.datasets?.completed || [];
+                failedData = data.datasets?.failed || [];
+            }
+        } catch (error) {
+            console.error('Failed to fetch activity data:', error);
+        }
     }
 
-    new Chart(ctx, {
+    // Fall back to empty data if no data fetched
+    if (labels.length === 0) {
+        for (let i = 29; i >= 0; i--) {
+            const date = new Date();
+            date.setDate(date.getDate() - i);
+            labels.push(date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }));
+            submittedData.push(0);
+            completedData.push(0);
+            failedData.push(0);
+        }
+    }
+
+    loadingDiv.remove();
+
+    const chart = new Chart(ctx, {
         type: 'line',
         data: {
             labels: labels,
@@ -86,24 +115,54 @@ function initActivityChart(canvasId) {
             },
         },
     });
+
+    return chart;
 }
 
-// Initialize cost chart (usage page)
-function initCostChart(canvasId) {
+// Initialize cost chart (usage page) - fetches real data from API
+async function initCostChart(canvasId, customerId) {
     const ctx = document.getElementById(canvasId);
-    if (!ctx) return;
-    
-    const labels = [];
-    const costData = [];
-    
-    for (let i = 29; i >= 0; i--) {
-        const date = new Date();
-        date.setDate(date.getDate() - i);
-        labels.push(date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }));
-        costData.push((Math.random() * 50 + 10).toFixed(2));
+    if (!ctx) return null;
+
+    // Show loading state
+    const container = ctx.parentElement;
+    const loadingDiv = document.createElement('div');
+    loadingDiv.className = 'chart-loading';
+    loadingDiv.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Loading cost data...';
+    loadingDiv.style.cssText = 'position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:var(--text-muted);';
+    container.style.position = 'relative';
+    container.appendChild(loadingDiv);
+
+    let labels = [];
+    let costData = [];
+
+    // Fetch real data if customerId provided
+    if (customerId) {
+        try {
+            const response = await fetch(`/api/customers/${customerId}/dashboard/cost-history?days=30`);
+            if (response.ok) {
+                const data = await response.json();
+                labels = data.labels || [];
+                costData = data.costs || [];
+            }
+        } catch (error) {
+            console.error('Failed to fetch cost history:', error);
+        }
     }
-    
-    new Chart(ctx, {
+
+    // Fall back to empty data if no data fetched
+    if (labels.length === 0) {
+        for (let i = 29; i >= 0; i--) {
+            const date = new Date();
+            date.setDate(date.getDate() - i);
+            labels.push(date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }));
+            costData.push(0);
+        }
+    }
+
+    loadingDiv.remove();
+
+    const chart = new Chart(ctx, {
         type: 'bar',
         data: {
             labels: labels,
@@ -132,25 +191,59 @@ function initCostChart(canvasId) {
             },
         },
     });
+
+    return chart;
 }
 
-// Initialize breakdown chart (usage page)
-function initBreakdownChart(canvasId) {
+// Initialize breakdown chart (usage page) - fetches real data from API
+async function initBreakdownChart(canvasId, customerId) {
     const ctx = document.getElementById(canvasId);
-    if (!ctx) return;
-    
-    new Chart(ctx, {
+    if (!ctx) return null;
+
+    // Show loading state
+    const container = ctx.parentElement;
+    const loadingDiv = document.createElement('div');
+    loadingDiv.className = 'chart-loading';
+    loadingDiv.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Loading breakdown...';
+    loadingDiv.style.cssText = 'position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:var(--text-muted);';
+    container.style.position = 'relative';
+    container.appendChild(loadingDiv);
+
+    let categories = ['Compute'];
+    let values = [0];
+
+    // Fetch real data if customerId provided
+    if (customerId) {
+        try {
+            const response = await fetch(`/api/customers/${customerId}/dashboard/cost-breakdown`);
+            if (response.ok) {
+                const data = await response.json();
+                categories = data.categories || ['Compute'];
+                values = data.values || [0];
+            }
+        } catch (error) {
+            console.error('Failed to fetch cost breakdown:', error);
+        }
+    }
+
+    loadingDiv.remove();
+
+    // Generate colors based on number of categories
+    const backgroundColors = [
+        chartColors.primary,
+        chartColors.accent,
+        chartColors.warning,
+        chartColors.gray,
+        chartColors.error,
+    ].slice(0, categories.length);
+
+    const chart = new Chart(ctx, {
         type: 'doughnut',
         data: {
-            labels: ['Compute', 'Storage', 'Data Transfer', 'Other'],
+            labels: categories,
             datasets: [{
-                data: [65, 20, 10, 5],
-                backgroundColor: [
-                    chartColors.primary,
-                    chartColors.accent,
-                    chartColors.warning,
-                    chartColors.gray,
-                ],
+                data: values,
+                backgroundColor: backgroundColors,
                 borderWidth: 0,
             }],
         },
@@ -165,9 +258,11 @@ function initBreakdownChart(canvasId) {
             cutout: '60%',
         },
     });
+
+    return chart;
 }
 
-// Update chart with real data
+// Update chart with real data (generic helper)
 async function updateChartData(chart, customerId, endpoint) {
     try {
         const data = await DaylilyAPI.get(endpoint);

@@ -383,18 +383,42 @@ class FileRegistry:
             return None
     
     def list_customer_files(self, customer_id: str, limit: int = 100) -> List[FileRegistration]:
-        """List all files for a customer."""
+        """List all files for a customer.
+
+        Args:
+            customer_id: Customer ID to list files for
+            limit: Maximum number of files to return. Use a high value (e.g., 10000)
+                   to fetch all files with automatic pagination.
+
+        Returns:
+            List of FileRegistration objects
+        """
         try:
-            response = self.files_table.query(
-                IndexName="customer-id-index",
-                KeyConditionExpression=Key("customer_id").eq(customer_id),
-                Limit=limit,
-            )
+            all_items: List[Dict[str, Any]] = []
+            exclusive_start_key: Optional[Dict[str, Any]] = None
+
+            while len(all_items) < limit:
+                query_kwargs: Dict[str, Any] = {
+                    "IndexName": "customer-id-index",
+                    "KeyConditionExpression": Key("customer_id").eq(customer_id),
+                    # Use smaller page size to avoid timeouts, but paginate through all results
+                    "Limit": min(1000, limit - len(all_items)),
+                }
+                if exclusive_start_key is not None:
+                    query_kwargs["ExclusiveStartKey"] = exclusive_start_key
+
+                response = self.files_table.query(**query_kwargs)
+                all_items.extend(response.get("Items", []))
+
+                exclusive_start_key = response.get("LastEvaluatedKey")
+                if exclusive_start_key is None:
+                    # No more pages
+                    break
 
             # Fail-fast: if any item cannot be converted, surface the error
             return [
                 self._item_to_registration(item)
-                for item in response.get("Items", [])
+                for item in all_items
             ]
         except ClientError as e:
             LOGGER.error("Failed to list files for customer %s: %s", customer_id, str(e))

@@ -203,6 +203,21 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                 stats["error_worksets"] = len([w for w in all_worksets if w.get("state") == "error"])
                 stats["active_worksets"] = stats["in_progress_worksets"]
 
+                # Calculate actual costs from completed worksets with performance metrics
+                total_actual_cost = 0.0
+                completed = [w for w in all_worksets if w.get("state") == "complete"]
+                for ws in completed:
+                    pm = ws.get("performance_metrics", {})
+                    if pm and isinstance(pm, dict):
+                        cost_summary = pm.get("cost_summary", {})
+                        if cost_summary and isinstance(cost_summary, dict):
+                            total_actual_cost += float(cost_summary.get("total_cost", 0))
+                    else:
+                        # Fall back to estimated cost if no performance metrics
+                        total_actual_cost += float(ws.get("cost_usd", 0) or ws.get("metadata", {}).get("cost_usd", 0) or 0)
+                stats["cost_this_month"] = round(total_actual_cost, 2)
+                stats["actual_cost_total"] = round(total_actual_cost, 2)
+
                 if deps.file_registry:
                     try:
                         customer_files = deps.file_registry.list_customer_files(customer_id, limit=1000)
@@ -557,20 +572,53 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
             return "error"
 
     @router.get("/portal/worksets", response_class=HTMLResponse)
-    async def portal_worksets(request: Request, page: int = 1):
-        """Worksets list page (excludes archived and deleted worksets)."""
+    async def portal_worksets(
+        request: Request,
+        page: int = 1,
+        status: str = "",
+        type: str = "",
+        search: str = "",
+        sort: str = "created_desc",
+    ):
+        """Worksets list page (excludes archived and deleted worksets).
+
+        Supports filtering by:
+        - status: Filter by workset state (ready, queued, in_progress, complete, error, etc.)
+        - type: Filter by workset type (clinical, ruo, lsmc)
+        - search: Free text search across workset name and metadata
+        - sort: Sort order (created_desc, created_asc, status)
+        """
         auth_redirect = _require_portal_auth(request)
         if auth_redirect:
             return auth_redirect
         customer, _ = _get_customer_for_session(request, deps)
         worksets = []
-        # Exclude archived and deleted states from the main list
+
+        # Determine which states to query based on status filter
         excluded_states = {WorksetState.ARCHIVED, WorksetState.DELETED}
-        for ws_state in WorksetState:
-            if ws_state in excluded_states:
-                continue
-            batch = deps.state_db.list_worksets_by_state(ws_state, limit=100)
-            worksets.extend(batch)
+        if status:
+            # Filter by specific status
+            try:
+                target_state = WorksetState(status)
+                if target_state not in excluded_states:
+                    batch = deps.state_db.list_worksets_by_state(target_state, limit=500)
+                    worksets.extend(batch)
+            except ValueError:
+                # Invalid status, return empty
+                pass
+        else:
+            # Get all non-excluded states
+            for ws_state in WorksetState:
+                if ws_state in excluded_states:
+                    continue
+                batch = deps.state_db.list_worksets_by_state(ws_state, limit=100)
+                worksets.extend(batch)
+
+        # Process worksets and apply additional filters
+        filtered_worksets = []
+        search_lower = search.lower().strip() if search else ""
+        type_filter = type.lower().strip() if type else ""
+
         for ws in worksets:
             metadata = ws.get("metadata", {})
             if isinstance(metadata, dict):
@@ -581,6 +629,26 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                 ws["sample_count"] = 0
                 ws["pipeline_type"] = "germline"
                 ws["workset_type"] = ws.get("workset_type", "ruo")
+
+            # Apply type filter
+            if type_filter:
+                ws_type = (ws.get("workset_type") or "ruo").lower()
+                if ws_type != type_filter:
+                    continue
+
+            # Apply search filter
+            if search_lower:
+                searchable = " ".join([
+                    ws.get("workset_id", ""),
+                    ws.get("name", ""),
+                    ws.get("workset_type", ""),
+                    ws.get("pipeline_type", ""),
+                    str(metadata.get("workset_name", "")),
+                    str(metadata.get("notification_email", "")),
+                ]).lower()
+                if search_lower not in searchable:
+                    continue
+
             # Add S3 sentinel status
             bucket = ws.get("bucket", "")
             prefix = ws.get("prefix", "")
@@ -588,16 +656,63 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                 ws["s3_status"] = _get_s3_sentinel_status(bucket, prefix)
             else:
                 ws["s3_status"] = "unknown"
+
+            # Extract actual compute cost from performance_metrics if available
+            compute_cost = 0.0
+            is_actual_cost = False
+            pm = ws.get("performance_metrics", {})
+            if pm and isinstance(pm, dict):
+                cost_summary = pm.get("cost_summary", {})
+                if cost_summary and isinstance(cost_summary, dict):
+                    actual_cost = cost_summary.get("total_cost")
+                    if actual_cost is not None and actual_cost > 0:
+                        compute_cost = float(actual_cost)
+                        is_actual_cost = True
+
+            # Fall back to estimated cost
+            if compute_cost == 0:
+                compute_cost = float(ws.get("cost_usd", 0) or 0)
+                if compute_cost == 0 and isinstance(metadata, dict):
+                    compute_cost = float(metadata.get("cost_usd", 0) or metadata.get("estimated_cost_usd", 0) or 0)
+
+            ws["compute_cost"] = compute_cost
+            ws["is_actual_cost"] = is_actual_cost
+
+            filtered_worksets.append(ws)
+
+        # Sort worksets
+        if sort == "created_asc":
+            filtered_worksets.sort(key=lambda w: w.get("created_at", ""), reverse=False)
+        elif sort == "status":
+            filtered_worksets.sort(key=lambda w: w.get("state", ""))
+        else:  # created_desc (default)
+            filtered_worksets.sort(key=lambda w: w.get("created_at", ""), reverse=True)
+
+        # Paginate
         per_page = 20
-        total_pages = max(1, (len(worksets) + per_page - 1) // per_page)
+        total_count = len(filtered_worksets)
+        total_pages = max(1, (total_count + per_page - 1) // per_page)
         page = max(1, min(page, total_pages))
         start_idx = (page - 1) * per_page
         end_idx = start_idx + per_page
-        paginated_worksets = worksets[start_idx:end_idx]
+        paginated_worksets = filtered_worksets[start_idx:end_idx]
+
         return deps.templates.TemplateResponse(
             request,
             "worksets/list.html",
-            _get_template_context(request, deps, customer=customer, worksets=paginated_worksets, current_page=page, total_pages=total_pages, active_page="worksets"),
+            _get_template_context(
+                request, deps,
+                customer=customer,
+                worksets=paginated_worksets,
+                current_page=page,
+                total_pages=total_pages,
+                total_count=total_count,
+                filter_status=status,
+                filter_type=type,
+                filter_search=search,
+                filter_sort=sort,
+                active_page="worksets",
+            ),
         )
 
     @router.get("/portal/worksets/new", response_class=HTMLResponse)
@@ -922,7 +1037,8 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                 elif biosample_id:
                     files = deps.file_registry.search_files_by_tag(customer_id, f"biosample:{biosample_id}")
                 else:
-                    file_registrations = deps.file_registry.list_customer_files(customer_id, limit=100)
+                    # Fetch all files (use high limit to get complete list for display/filtering)
+                    file_registrations = deps.file_registry.list_customer_files(customer_id, limit=10000)
 
                     def parse_s3_uri(s3_uri):
                         """Parse s3://bucket/key into (bucket, key)."""
@@ -1143,8 +1259,13 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         # Filter to selected keys if provided
         if payload.selected_keys:
             selected_set = set(payload.selected_keys)
+            LOGGER.debug(f"Selected keys from request ({len(selected_set)}): {list(selected_set)[:5]}...")
+            discovered_keys = {f.key for f in discovered_files}
+            LOGGER.debug(f"Discovered keys ({len(discovered_keys)}): {list(discovered_keys)[:5]}...")
+            matching_keys = selected_set & discovered_keys
+            LOGGER.debug(f"Matching keys ({len(matching_keys)}): {list(matching_keys)[:5]}...")
             discovered_files = [f for f in discovered_files if f.key in selected_set]
-            LOGGER.info(f"Filtered to {len(discovered_files)} selected files")
+            LOGGER.info(f"Filtered to {len(discovered_files)} selected files (requested {len(payload.selected_keys)})")
 
         # Check registration status
         discovered_files = discovery.check_registration_status(
@@ -1374,6 +1495,37 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                 customer_usage = deps.customer_manager.get_customer_usage(customers[0].customer_id)
                 if customer_usage:
                     usage.update(customer_usage)
+
+        # Generate usage details from completed worksets with actual costs
+        if deps.state_db:
+            try:
+                completed_worksets = deps.state_db.list_worksets_by_state(WorksetState.COMPLETE, limit=100)
+                total_actual_compute = 0.0
+                for ws in completed_worksets:
+                    pm = ws.get("performance_metrics", {})
+                    cost_summary = pm.get("cost_summary", {}) if pm and isinstance(pm, dict) else {}
+                    actual_cost = float(cost_summary.get("total_cost", 0)) if cost_summary else 0
+                    # Fallback to estimated cost
+                    if actual_cost == 0:
+                        actual_cost = float(ws.get("cost_usd", 0) or ws.get("metadata", {}).get("cost_usd", 0) or 0)
+                    if actual_cost > 0:
+                        total_actual_compute += actual_cost
+                        completed_at = ws.get("updated_at", ws.get("created_at", ""))[:10]
+                        usage_details.append({
+                            "date": completed_at,
+                            "type": "Compute",
+                            "workset_id": ws.get("workset_id"),
+                            "quantity": cost_summary.get("sample_count", 1) if cost_summary else 1,
+                            "unit": "samples",
+                            "cost": actual_cost,
+                            "is_actual": bool(cost_summary),
+                        })
+                # Sort by date descending
+                usage_details.sort(key=lambda x: x["date"], reverse=True)
+                usage["total_cost"] = round(total_actual_compute, 2)
+            except Exception as e:
+                LOGGER.warning(f"Failed to load usage details: {e}")
+
         return deps.templates.TemplateResponse(
             request,
             "usage.html",

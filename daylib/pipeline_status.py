@@ -440,9 +440,15 @@ class PipelineStatusFetcher:
     ) -> Optional[List[Dict[str, str]]]:
         """Fetch rules benchmark data from rules_benchmark_data_singleton.tsv.
 
+        Falls back to rules_benchmark_data_mqc.tsv if singleton file not found.
         Returns list of per-rule performance metrics.
         """
-        return self.fetch_tsv_file(headnode_ip, workset_name, "rules_benchmark_data_singleton.tsv")
+        # Try singleton file first
+        result = self.fetch_tsv_file(headnode_ip, workset_name, "rules_benchmark_data_singleton.tsv")
+        if result:
+            return result
+        # Fall back to mqc file
+        return self.fetch_tsv_file(headnode_ip, workset_name, "rules_benchmark_data_mqc.tsv")
 
     def fetch_performance_metrics(
         self, headnode_ip: str, workset_name: str
@@ -586,6 +592,9 @@ class PipelineStatusFetcher:
     ) -> Optional[List[Dict[str, str]]]:
         """Fetch rules benchmark data from S3.
 
+        Tries rules_benchmark_data_singleton.tsv first, then falls back to
+        rules_benchmark_data_mqc.tsv if not found.
+
         Args:
             results_s3_uri: Base S3 URI where results were exported
             region: AWS region for S3 client
@@ -593,7 +602,12 @@ class PipelineStatusFetcher:
         Returns:
             List of per-rule performance metrics or None
         """
-        return self.fetch_tsv_from_s3(results_s3_uri, "rules_benchmark_data_singleton.tsv", region)
+        # Try singleton file first
+        result = self.fetch_tsv_from_s3(results_s3_uri, "rules_benchmark_data_singleton.tsv", region)
+        if result:
+            return result
+        # Fall back to mqc file
+        return self.fetch_tsv_from_s3(results_s3_uri, "rules_benchmark_data_mqc.tsv", region)
 
     def fetch_performance_metrics_from_s3(
         self, results_s3_uri: str, region: Optional[str] = None

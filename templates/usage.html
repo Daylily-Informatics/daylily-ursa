@@ -126,14 +126,25 @@
                         </td>
                         <td>
                             {% if item.workset_id %}
-                            <a href="/portal/worksets/{{ item.workset_id }}">{{ item.workset_id[:12] }}...</a>
+                            <a href="/portal/worksets/{{ item.workset_id }}">{{ item.workset_id[:20] }}{% if item.workset_id|length > 20 %}...{% endif %}</a>
                             {% else %}
                             -
                             {% endif %}
                         </td>
                         <td>{{ item.quantity }}</td>
                         <td>{{ item.unit }}</td>
-                        <td>${{ "%.4f"|format(item.cost) }}</td>
+                        <td>
+                            ${{ "%.4f"|format(item.cost) }}
+                            {% if item.is_actual %}
+                            <span class="badge badge-success" style="font-size: 0.65rem; margin-left: 0.25rem;" title="Actual cost from benchmark data">
+                                <i class="fas fa-check"></i>
+                            </span>
+                            {% else %}
+                            <span class="badge badge-warning" style="font-size: 0.65rem; margin-left: 0.25rem;" title="Estimated cost">
+                                <i class="fas fa-calculator"></i>
+                            </span>
+                            {% endif %}
+                        </td>
                     </tr>
                     {% endfor %}
                     {% else %}
@@ -202,9 +213,22 @@
 <script src="/static/js/charts.js?v={{ cache_bust | default('1') }}"></script>
 <script>
 document.addEventListener('DOMContentLoaded', function() {
-    initCostChart('cost-chart');
-    initBreakdownChart('breakdown-chart');
+    // Initialize charts with real data from API
+    const customerId = window.UrsaConfig?.customerId;
+    initCostChart('cost-chart', customerId);
+    initBreakdownChart('breakdown-chart', customerId);
 });
+
+function changePeriod() {
+    // TODO: Implement period filtering
+    const period = document.getElementById('period-select').value;
+    console.log('Period changed to:', period);
+}
+
+function exportUsageReport() {
+    // TODO: Implement export functionality
+    showToast('info', 'Export', 'Export functionality coming soon');
+}
 </script>
 {% endblock %}
 

@@ -2,26 +2,48 @@
  * Daylily Customer Portal - Worksets Management
  */
 
-// Filter worksets
-function filterWorksets() {
+// Debounce timer for search input
+let searchDebounceTimer = null;
+
+// Filter worksets - navigates to URL with filter parameters for server-side filtering
+function filterWorksets(isSearchInput = false) {
     const status = document.getElementById('filter-status')?.value || '';
     const type = document.getElementById('filter-type')?.value || '';
-    const search = document.getElementById('search-worksets')?.value.toLowerCase() || '';
+    const search = document.getElementById('search-worksets')?.value || '';
     const sort = document.getElementById('filter-sort')?.value || 'created_desc';
 
-    const rows = document.querySelectorAll('#worksets-tbody tr[data-workset-id]');
+    // Build URL with filter parameters
+    const params = new URLSearchParams();
+    params.set('page', '1');  // Always reset to page 1 when filtering
+    if (status) params.set('status', status);
+    if (type) params.set('type', type);
+    if (search.trim()) params.set('search', search.trim());
+    if (sort && sort !== 'created_desc') params.set('sort', sort);
 
-    rows.forEach(row => {
-        const rowStatus = row.dataset.status;
-        const rowType = row.dataset.type || 'ruo';
-        const rowText = row.textContent.toLowerCase();
+    const newUrl = '/portal/worksets?' + params.toString();
 
-        const matchesStatus = !status || rowStatus === status;
-        const matchesType = !type || rowType === type;
-        const matchesSearch = !search || rowText.includes(search);
+    // For search input, debounce to avoid too many requests
+    if (isSearchInput) {
+        if (searchDebounceTimer) {
+            clearTimeout(searchDebounceTimer);
+        }
+        searchDebounceTimer = setTimeout(() => {
+            window.location.href = newUrl;
+        }, 400);  // 400ms delay for typing
+    } else {
+        // For dropdown changes, navigate immediately
+        window.location.href = newUrl;
+    }
+}
 
-        row.style.display = matchesStatus && matchesType && matchesSearch ? '' : 'none';
-    });
+// Handle search input with debouncing
+function handleSearchInput() {
+    filterWorksets(true);
+}
+
+// Clear all filters
+function clearFilters() {
+    window.location.href = '/portal/worksets?page=1';
 }
 
 // Toggle select all

@@ -2328,6 +2328,261 @@ def create_app(
                     detail=f"Failed to fetch log file: {str(e)}",
                 )
 
+        # ========== Dashboard Chart Data Endpoints ==========
+
+        @app.get("/api/customers/{customer_id}/dashboard/activity", tags=["customer-dashboard"])
+        async def get_dashboard_activity(
+            customer_id: str,
+            days: int = Query(30, ge=1, le=90, description="Number of days of activity data"),
+        ):
+            """Get workset activity data for charts (submitted/completed/failed by day).
+
+            Returns daily counts of worksets by state for the specified time period.
+            """
+            if not customer_manager:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Customer management not configured",
+                )
+
+            config = customer_manager.get_customer_config(customer_id)
+            if not config:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Customer {customer_id} not found",
+                )
+
+            # Get all worksets for this customer
+            all_worksets = []
+            for ws_state in WorksetState:
+                batch = state_db.list_worksets_by_state(ws_state, limit=500)
+                for ws in batch:
+                    if verify_workset_ownership(ws, customer_id):
+                        all_worksets.append(ws)
+
+            # Build daily activity from state_history
+            from collections import defaultdict
+            from datetime import datetime, timedelta, timezone
+
+            # Initialize date range
+            end_date = datetime.now(timezone.utc).date()
+            start_date = end_date - timedelta(days=days - 1)
+
+            # Initialize counters for each day
+            daily_submitted = defaultdict(int)
+            daily_completed = defaultdict(int)
+            daily_failed = defaultdict(int)
+
+            for ws in all_worksets:
+                state_history = ws.get("state_history", [])
+                for entry in state_history:
+                    ts = entry.get("timestamp")
+                    state = entry.get("state")
+                    if not ts or not state:
+                        continue
+
+                    try:
+                        entry_date = datetime.fromisoformat(ts.replace("Z", "+00:00")).date()
+                    except (ValueError, AttributeError):
+                        continue
+
+                    if entry_date < start_date or entry_date > end_date:
+                        continue
+
+                    date_str = entry_date.isoformat()
+                    if state == "ready":
+                        daily_submitted[date_str] += 1
+                    elif state == "complete":
+                        daily_completed[date_str] += 1
+                    elif state == "error":
+                        daily_failed[date_str] += 1
+
+            # Build response arrays
+            labels = []
+            submitted = []
+            completed = []
+            failed = []
+
+            current = start_date
+            while current <= end_date:
+                date_str = current.isoformat()
+                labels.append(current.strftime("%b %d"))
+                submitted.append(daily_submitted.get(date_str, 0))
+                completed.append(daily_completed.get(date_str, 0))
+                failed.append(daily_failed.get(date_str, 0))
+                current += timedelta(days=1)
+
+            return {
+                "labels": labels,
+                "datasets": {
+                    "submitted": submitted,
+                    "completed": completed,
+                    "failed": failed,
+                },
+                "totals": {
+                    "submitted": sum(submitted),
+                    "completed": sum(completed),
+                    "failed": sum(failed),
+                },
+            }
+
+        @app.get("/api/customers/{customer_id}/dashboard/cost-history", tags=["customer-dashboard"])
+        async def get_dashboard_cost_history(
+            customer_id: str,
+            days: int = Query(30, ge=1, le=90, description="Number of days of cost data"),
+        ):
+            """Get daily cost data for charts.
+
+            Returns daily costs aggregated from completed worksets.
+            """
+            if not customer_manager:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Customer management not configured",
+                )
+
+            config = customer_manager.get_customer_config(customer_id)
+            if not config:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Customer {customer_id} not found",
+                )
+
+            # Get all worksets for this customer
+            all_worksets = []
+            for ws_state in WorksetState:
+                batch = state_db.list_worksets_by_state(ws_state, limit=500)
+                for ws in batch:
+                    if verify_workset_ownership(ws, customer_id):
+                        all_worksets.append(ws)
+
+            from collections import defaultdict
+            from datetime import datetime, timedelta, timezone
+
+            end_date = datetime.now(timezone.utc).date()
+            start_date = end_date - timedelta(days=days - 1)
+
+            # Track daily costs
+            daily_costs = defaultdict(float)
+
+            for ws in all_worksets:
+                # Get cost from performance metrics or estimate
+                cost = 0.0
+                pm = ws.get("performance_metrics", {})
+                if pm and isinstance(pm, dict):
+                    cost_summary = pm.get("cost_summary", {})
+                    if cost_summary and isinstance(cost_summary, dict):
+                        cost = float(cost_summary.get("total_cost", 0))
+
+                if cost == 0:
+                    # Fall back to estimated cost
+                    cost = float(ws.get("cost_usd", 0) or 0)
+                    if cost == 0:
+                        metadata = ws.get("metadata", {})
+                        if isinstance(metadata, dict):
+                            cost = float(metadata.get("cost_usd", 0) or metadata.get("estimated_cost_usd", 0) or 0)
+
+                if cost == 0:
+                    continue
+
+                # Find completion date from state_history
+                completion_date = None
+                state_history = ws.get("state_history", [])
+                for entry in reversed(state_history):
+                    if entry.get("state") == "complete":
+                        ts = entry.get("timestamp")
+                        if ts:
+                            try:
+                                completion_date = datetime.fromisoformat(ts.replace("Z", "+00:00")).date()
+                            except (ValueError, AttributeError):
+                                pass
+                        break
+
+                if not completion_date:
+                    # Use updated_at as fallback
+                    updated = ws.get("updated_at")
+                    if updated:
+                        try:
+                            completion_date = datetime.fromisoformat(updated.replace("Z", "+00:00")).date()
+                        except (ValueError, AttributeError):
+                            continue
+                    else:
+                        continue
+
+                if start_date <= completion_date <= end_date:
+                    daily_costs[completion_date.isoformat()] += cost
+
+            # Build response arrays
+            labels = []
+            costs = []
+
+            current = start_date
+            while current <= end_date:
+                date_str = current.isoformat()
+                labels.append(current.strftime("%b %d"))
+                costs.append(round(daily_costs.get(date_str, 0), 4))
+                current += timedelta(days=1)
+
+            return {
+                "labels": labels,
+                "costs": costs,
+                "total": round(sum(costs), 2),
+            }
+
+        @app.get("/api/customers/{customer_id}/dashboard/cost-breakdown", tags=["customer-dashboard"])
+        async def get_dashboard_cost_breakdown(
+            customer_id: str,
+        ):
+            """Get cost breakdown by category.
+
+            Returns compute costs from benchmark data. Currently all costs are compute.
+            Future: breakdown by storage, data transfer, etc.
+            """
+            if not customer_manager:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Customer management not configured",
+                )
+
+            config = customer_manager.get_customer_config(customer_id)
+            if not config:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Customer {customer_id} not found",
+                )
+
+            # Get all completed worksets
+            completed_worksets = state_db.list_worksets_by_state(WorksetState.COMPLETE, limit=500)
+            customer_worksets = [ws for ws in completed_worksets if verify_workset_ownership(ws, customer_id)]
+
+            total_compute_cost = 0.0
+            total_estimated_cost = 0.0
+
+            for ws in customer_worksets:
+                pm = ws.get("performance_metrics", {})
+                if pm and isinstance(pm, dict):
+                    cost_summary = pm.get("cost_summary", {})
+                    if cost_summary and isinstance(cost_summary, dict):
+                        total_compute_cost += float(cost_summary.get("total_cost", 0))
+                        continue
+
+                # Fall back to estimated
+                cost = float(ws.get("cost_usd", 0) or 0)
+                if cost == 0:
+                    metadata = ws.get("metadata", {})
+                    if isinstance(metadata, dict):
+                        cost = float(metadata.get("cost_usd", 0) or metadata.get("estimated_cost_usd", 0) or 0)
+                total_estimated_cost += cost
+
+            # Return breakdown - currently just compute, but structure allows expansion
+            total = total_compute_cost + total_estimated_cost
+            return {
+                "categories": ["Compute (Actual)", "Compute (Estimated)"] if total_estimated_cost > 0 else ["Compute"],
+                "values": [round(total_compute_cost, 2), round(total_estimated_cost, 2)] if total_estimated_cost > 0 else [round(total_compute_cost, 2)],
+                "total": round(total, 2),
+                "has_actual_costs": total_compute_cost > 0,
+            }
+
     # ========== Workset Validation Endpoints ==========
 
     if validator:

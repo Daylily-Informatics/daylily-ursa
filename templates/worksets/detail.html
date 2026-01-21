@@ -235,7 +235,7 @@
             {% endif %}
             <div class="info-item" style="grid-column: span 2;">
                 <span class="info-label">S3 Location</span>
-                <span class="info-value"><code style="font-size: 0.8rem;">s3://{{ workset.s3_bucket }}/{{ workset.s3_prefix }}</code></span>
+                <span class="info-value"><code style="font-size: 0.8rem;">{% if workset.results_s3_uri %}{{ workset.results_s3_uri }}{% elif workset.s3_bucket %}s3://{{ workset.s3_bucket }}/{{ workset.s3_prefix }}{% else %}Not available{% endif %}</code></span>
             </div>
             {% if workset.lock_owner %}
             <div class="info-item" style="grid-column: span 2;">
@@ -249,13 +249,18 @@
     <!-- Cost, Resource, and Execution Cards Row -->
     <div class="metrics-row mb-lg">
         <!-- Cost Summary -->
-        <div class="card metrics-card">
+        <div class="card metrics-card" id="cost-card">
             <h4 class="card-title-sm"><i class="fas fa-dollar-sign"></i> Cost</h4>
-            <div class="metric-main">${{ "%.2f"|format(workset.cost_usd | default(0)) }}</div>
-            <div class="metric-breakdown">
-                <span>Compute: ${{ "%.2f"|format(workset.compute_cost | default(0)) }}</span>
+            <div class="metric-main" id="cost-main-display">${{ "%.2f"|format(workset.cost_usd | default(0)) }}</div>
+            <div class="metric-breakdown" id="cost-breakdown-display">
+                <span id="compute-cost-display">Compute: ${{ "%.2f"|format(workset.compute_cost | default(0)) }}</span>
                 <span>Storage: ${{ "%.2f"|format(workset.storage_cost | default(0)) }}</span>
                 <span>Transfer: ${{ "%.2f"|format(workset.transfer_cost | default(0)) }}</span>
+            </div>
+            <div id="actual-cost-badge" class="mt-xs" style="display: none;">
+                <span class="badge badge-success" style="font-size: 0.7rem;">
+                    <i class="fas fa-check-circle"></i> Actual Cost
+                </span>
             </div>
         </div>
 
@@ -311,8 +316,55 @@
     <!-- Main Content -->
     <div>
 
-            <!-- Samples -->
-            <div class="card">
+            <!-- Performance Metrics Card (fetched from headnode) - ABOVE SAMPLES -->
+            <div class="card mb-lg" id="performance-metrics-card" style="display: none;">
+                <div class="card-header">
+                    <h3 class="card-title"><i class="fas fa-tachometer-alt"></i> Performance Metrics</h3>
+                    <button class="btn btn-outline btn-sm" onclick="loadPerformanceMetrics(true)" title="Refresh metrics">
+                        <i class="fas fa-sync-alt"></i>
+                    </button>
+                </div>
+                <div id="performance-metrics-loading" class="text-muted text-center py-md">
+                    <i class="fas fa-spinner fa-spin"></i> Loading performance metrics...
+                </div>
+                <div id="performance-metrics-content" style="display: none; padding: var(--spacing-md);">
+                    <!-- Cost Summary -->
+                    <div id="cost-summary-section" style="display: none;">
+                        <h4 class="text-sm mb-sm"><i class="fas fa-dollar-sign text-success"></i> Cost Summary</h4>
+                        <div class="grid grid-3 gap-md mb-md">
+                            <div class="text-center">
+                                <div class="text-lg" id="total-cost">-</div>
+                                <div class="text-muted text-xs">Total Cost</div>
+                            </div>
+                            <div class="text-center">
+                                <div class="text-lg" id="rule-count">-</div>
+                                <div class="text-muted text-xs">Rules Executed</div>
+                            </div>
+                            <div class="text-center">
+                                <div class="text-lg" id="sample-count">-</div>
+                                <div class="text-muted text-xs">Samples</div>
+                            </div>
+                        </div>
+                        <details class="mb-md">
+                            <summary class="text-muted text-sm cursor-pointer">Per-Sample Costs</summary>
+                            <div id="per-sample-costs" class="mt-sm" style="font-size: 0.85rem;"></div>
+                        </details>
+                    </div>
+
+                    <!-- Alignment Stats - Full Table with Sample IDs -->
+                    <div id="alignment-stats-section" style="display: none;">
+                        <h4 class="text-sm mb-sm"><i class="fas fa-dna text-accent"></i> Alignment Statistics</h4>
+                        <div id="alignment-stats-table" class="table-container" style="overflow-x: auto; max-height: 300px;"></div>
+                    </div>
+
+                    <div id="no-metrics-message" class="text-muted text-center py-md" style="display: none;">
+                        <i class="fas fa-info-circle"></i> Performance metrics not yet available
+                    </div>
+                </div>
+            </div>
+
+            <!-- Samples Card -->
+            <div class="card mb-lg">
                 <div class="card-header">
                     <h3 class="card-title">Samples ({{ workset.samples | length if workset.samples else 0 }})</h3>
                 </div>
@@ -324,30 +376,34 @@
                                 <th>Status</th>
                                 <th>R1 File</th>
                                 <th>R2 File</th>
+                                <th id="sample-cost-header" style="display: none; text-align: right;">Compute Cost</th>
                             </tr>
                         </thead>
                         <tbody>
                             {% if workset.samples %}
                             {% for sample in workset.samples %}
-                            <tr>
+                            <tr data-sample-id="{{ sample.sample_id }}">
                                 <td>{{ sample.sample_id }}</td>
                                 <td><span class="badge badge-{{ sample.status | lower }}">{{ sample.status }}</span></td>
                                 <td><code style="font-size: 0.75rem;">{{ sample.r1_file | default('N/A') }}</code></td>
                                 <td><code style="font-size: 0.75rem;">{{ sample.r2_file | default('N/A') }}</code></td>
+                                <td class="sample-cost-cell" style="display: none; text-align: right;">
+                                    <span class="text-muted">-</span>
+                                </td>
                             </tr>
                             {% endfor %}
                             {% else %}
                             <tr>
-                                <td colspan="4" class="text-center text-muted">No samples found</td>
+                                <td colspan="5" class="text-center text-muted">No samples found</td>
                             </tr>
                             {% endif %}
                         </tbody>
                     </table>
                 </div>
             </div>
-            
+
             <!-- Pipeline Status (Live from Headnode) -->
-            <div class="card" id="pipeline-status-card">
+            <div class="card mb-lg" id="pipeline-status-card">
                 <div class="card-header">
                     <h3 class="card-title"><i class="fas fa-cogs"></i> Pipeline Status</h3>
                     <button class="btn btn-outline btn-sm" onclick="refreshPipelineStatus('{{ workset.workset_id }}')" title="Refresh status">
@@ -362,7 +418,7 @@
             </div>
 
             <!-- Processing Logs -->
-            <div class="card">
+            <div class="card mb-lg">
                 <div class="card-header">
                     <h3 class="card-title"><i class="fas fa-scroll"></i> Processing Logs</h3>
                     <div class="d-flex gap-sm">
@@ -404,36 +460,6 @@
                 </div>
                 {% endif %}
 
-                <!-- Performance Metrics (fetched from headnode) -->
-                <div class="card metrics-card" id="performance-metrics-card" style="display: none;">
-                    <h4 class="card-title-sm"><i class="fas fa-tachometer-alt"></i> Performance</h4>
-                    <div id="performance-metrics-loading" class="text-muted text-center py-sm">
-                        <i class="fas fa-spinner fa-spin"></i> Loading...
-                    </div>
-                    <div id="performance-metrics-content" style="display: none;">
-                        <div id="cost-summary-section" style="display: none;">
-                            <div class="metric-breakdown-vertical">
-                                <div><span class="text-muted">Total Cost:</span> <strong id="total-cost">-</strong></div>
-                                <div><span class="text-muted">Rules:</span> <span id="rule-count">-</span></div>
-                                <div><span class="text-muted">Samples:</span> <span id="sample-count">-</span></div>
-                            </div>
-                            <details class="mt-xs">
-                                <summary class="text-muted text-xs cursor-pointer">Per-Sample Costs</summary>
-                                <div id="per-sample-costs" style="font-size: 0.8rem;"></div>
-                            </details>
-                        </div>
-                        <div id="alignment-stats-section" style="display: none;">
-                            <details class="mt-xs">
-                                <summary class="text-muted text-xs cursor-pointer">Alignment Stats</summary>
-                                <div id="alignment-stats-table" style="overflow-x: auto; font-size: 0.75rem;"></div>
-                            </details>
-                        </div>
-                        <div id="no-metrics-message" class="text-muted text-center py-sm" style="display: none;">
-                            <i class="fas fa-info-circle"></i> Metrics pending
-                        </div>
-                    </div>
-                </div>
-
                 <!-- Results (if completed) -->
                 {% if workset.state == 'completed' %}
                 <div class="card metrics-card">
@@ -465,7 +491,7 @@
 <script>
 // Pipeline status display
 const worksetId = '{{ workset.workset_id }}';
-const customerId = window.DaylilyConfig?.customerId;
+const customerId = window.UrsaConfig?.customerId || '{{ customer_id | default("") }}';
 
 function formatBytes(bytes) {
     if (bytes === 0) return '0 B';
@@ -611,6 +637,56 @@ async function downloadSnakemakeLogs(wsId) {
     }
 }
 
+// Update cost card with actual compute costs from performance metrics
+function updateCostCard(costSummary) {
+    const totalActualCost = costSummary.total_cost || 0;
+    const storageCost = {{ workset.storage_cost | default(0) }};
+    const transferCost = {{ workset.transfer_cost | default(0) }};
+    const totalCost = totalActualCost + storageCost + transferCost;
+
+    // Update main cost display
+    document.getElementById('cost-main-display').textContent = `$${totalCost.toFixed(2)}`;
+    document.getElementById('compute-cost-display').innerHTML =
+        `Compute: <strong>$${totalActualCost.toFixed(2)}</strong>`;
+
+    // Show actual cost badge
+    document.getElementById('actual-cost-badge').style.display = 'block';
+}
+
+// Update samples table with per-sample costs
+function updateSampleCosts(perSampleCosts) {
+    if (!perSampleCosts || Object.keys(perSampleCosts).length === 0) return;
+
+    // Show the cost header
+    const header = document.getElementById('sample-cost-header');
+    if (header) header.style.display = 'table-cell';
+
+    // Show all cost cells
+    document.querySelectorAll('.sample-cost-cell').forEach(cell => {
+        cell.style.display = 'table-cell';
+    });
+
+    // Match sample costs to table rows
+    document.querySelectorAll('#workset-samples-table tbody tr[data-sample-id]').forEach(row => {
+        const sampleId = row.getAttribute('data-sample-id');
+        const costCell = row.querySelector('.sample-cost-cell');
+        if (!costCell) return;
+
+        // Find matching cost (sample ID may be partial match in benchmark data)
+        let matchedCost = null;
+        for (const [benchmarkSample, cost] of Object.entries(perSampleCosts)) {
+            if (benchmarkSample.includes(sampleId) || sampleId.includes(benchmarkSample)) {
+                matchedCost = cost;
+                break;
+            }
+        }
+
+        if (matchedCost !== null) {
+            costCell.innerHTML = `<strong style="color: var(--success-color);">$${matchedCost.toFixed(4)}</strong>`;
+        }
+    });
+}
+
 // Performance Metrics
 async function loadPerformanceMetrics(forceRefresh = false) {
     if (!customerId) return;
@@ -645,6 +721,9 @@ async function loadPerformanceMetrics(forceRefresh = false) {
             document.getElementById('rule-count').textContent = data.cost_summary.rule_count;
             document.getElementById('sample-count').textContent = data.cost_summary.sample_count;
 
+            // Update main cost card with actual compute cost
+            updateCostCard(data.cost_summary);
+
             // Per-sample costs
             const perSampleDiv = document.getElementById('per-sample-costs');
             const perSampleCosts = data.cost_summary.per_sample_costs || {};
@@ -655,34 +734,78 @@ async function loadPerformanceMetrics(forceRefresh = false) {
                     <span>$${cost.toFixed(4)}</span>
                 </div>`
             ).join('');
+
+            // Update samples table with per-sample costs
+            updateSampleCosts(perSampleCosts);
         } else {
             costSection.style.display = 'none';
         }
 
-        // Render alignment stats
+        // Render alignment stats with Sample ID as first column
         if (data.alignment_stats && data.alignment_stats.length > 0) {
             hasMetrics = true;
             alignSection.style.display = 'block';
             const tableDiv = document.getElementById('alignment-stats-table');
 
-            // Key columns to display
-            const keyColumns = ['Sample', 'AlignedBasesPct', 'MappedReadsPct', 'WgsCoverageMean', 'DuplicationRate'];
+            // Priority columns to display (sample first, then key metrics)
             const stats = data.alignment_stats;
             const allCols = Object.keys(stats[0] || {});
-            const displayCols = keyColumns.filter(c => allCols.includes(c));
-            if (displayCols.length === 0) displayCols.push(...allCols.slice(0, 5));
 
-            let html = '<table style="width: 100%; border-collapse: collapse;">';
-            html += '<thead><tr>' + displayCols.map(c => `<th style="padding: 4px 8px; border-bottom: 1px solid var(--border-color); text-align: left;">${c}</th>`).join('') + '</tr></thead>';
-            html += '<tbody>';
+            // Ensure sample is first, then add key metric columns (lowercase 'sample' from API)
+            const priorityOrder = ['sample', 'YieldReads', 'WgsCoverageMean', 'MappedReadsPct', 'PerfectReadsPct', 'Q20BasesPct', 'DuplicateReadsPct', 'AlignedBasesPct'];
+            let displayCols = priorityOrder.filter(c => allCols.includes(c));
+            // Add any remaining columns not in priority list
+            const remaining = allCols.filter(c => !displayCols.includes(c));
+            displayCols = displayCols.concat(remaining.slice(0, 3));
+
+            // Column display names
+            const colNames = {
+                'sample': 'Sample ID',
+                'YieldReads': 'Yield (Reads)',
+                'WgsCoverageMean': 'Coverage',
+                'MappedReadsPct': 'Mapped %',
+                'PerfectReadsPct': 'Perfect %',
+                'Q20BasesPct': 'Q20 %',
+                'DuplicateReadsPct': 'Dup Rate',
+                'AlignedBasesPct': 'Aligned %',
+            };
+
+            let html = '<table class="table" style="width: 100%; font-size: 0.85rem;">';
+            html += '<thead><tr>';
+            html += displayCols.map(c =>
+                `<th style="padding: 6px 10px; border-bottom: 2px solid var(--border-color); text-align: ${c === 'sample' ? 'left' : 'right'}; white-space: nowrap;">${colNames[c] || c}</th>`
+            ).join('');
+            html += '</tr></thead><tbody>';
+
             for (const row of stats) {
-                html += '<tr>' + displayCols.map(c => {
-                    let val = row[c] || '-';
-                    if (typeof val === 'number' || !isNaN(parseFloat(val))) {
-                        val = parseFloat(val).toFixed(2);
+                html += '<tr>';
+                html += displayCols.map(c => {
+                    let val = row[c];
+                    if (val === undefined || val === null) val = '-';
+
+                    // Format numbers
+                    if (c === 'sample') {
+                        // Sample ID - extract just the sample name from the full path, bold and left-aligned
+                        // e.g. "R0-HG001-EX1-0-S1-noampwgs-ILMN-NOVASEQX.bwa2a" -> extract readable sample ID
+                        let sampleId = val;
+                        if (sampleId.includes('.')) sampleId = sampleId.split('.')[0]; // Remove aligner suffix
+                        return `<td style="padding: 6px 10px; border-bottom: 1px solid var(--border-color); font-weight: 600;"><code>${sampleId}</code></td>`;
+                    } else if (typeof val === 'number' || !isNaN(parseFloat(val))) {
+                        const num = parseFloat(val);
+                        // Format based on column type
+                        if (c.includes('Pct') || c.includes('Rate')) {
+                            val = num.toFixed(1) + '%';
+                        } else if (c === 'WgsCoverageMean') {
+                            val = num.toFixed(2) + 'x';
+                        } else if (c === 'YieldReads' && num > 1000000) {
+                            val = (num / 1000000).toFixed(1) + 'M';
+                        } else {
+                            val = num.toFixed(2);
+                        }
                     }
-                    return `<td style="padding: 4px 8px; border-bottom: 1px solid var(--border-color);">${val}</td>`;
-                }).join('') + '</tr>';
+                    return `<td style="padding: 6px 10px; border-bottom: 1px solid var(--border-color); text-align: right;">${val}</td>`;
+                }).join('');
+                html += '</tr>';
             }
             html += '</tbody></table>';
             tableDiv.innerHTML = html;
