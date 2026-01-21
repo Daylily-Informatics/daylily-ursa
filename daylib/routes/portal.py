@@ -141,6 +141,50 @@ def _get_first_customer_converted(deps: PortalDependencies):
     return None
 
 
+def _format_bytes(size_bytes: int) -> str:
+    """Format bytes to human-readable string."""
+    if size_bytes == 0:
+        return "0 B"
+    units = ["B", "KB", "MB", "GB", "TB", "PB"]
+    unit_index = 0
+    size = float(size_bytes)
+    while size >= 1024 and unit_index < len(units) - 1:
+        size /= 1024
+        unit_index += 1
+    return f"{size:.1f} {units[unit_index]}"
+
+
+def _extract_workset_storage(workset: Dict[str, Any]) -> Dict[str, Any]:
+    """Extract storage size data from workset performance_metrics.
+
+    Populates storage_gb, storage_bytes, and storage_human fields from
+    performance_metrics.pre_export_metrics.analysis_directory_size_bytes.
+
+    Args:
+        workset: Workset dict to extract and enrich with storage info
+
+    Returns:
+        The workset dict with storage fields added
+    """
+    pm = workset.get("performance_metrics", {})
+    pre_export = pm.get("pre_export_metrics", {}) if pm and isinstance(pm, dict) else {}
+
+    # Extract storage size from pre_export_metrics
+    size_bytes = 0
+    size_human = ""
+    if pre_export and isinstance(pre_export, dict):
+        size_bytes = int(pre_export.get("analysis_directory_size_bytes", 0) or 0)
+        size_human = pre_export.get("analysis_directory_size_human", "")
+
+    # Populate the fields
+    workset["storage_bytes"] = size_bytes
+    workset["storage_gb"] = round(size_bytes / (1024**3), 2) if size_bytes > 0 else 0
+    workset["storage_human"] = size_human if size_human else (_format_bytes(size_bytes) if size_bytes > 0 else "")
+    workset["storage_available"] = size_bytes > 0
+
+    return workset
+
+
 def create_portal_router(deps: PortalDependencies) -> APIRouter:
     """Create portal router with injected dependencies.
 
@@ -203,8 +247,9 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                 stats["error_worksets"] = len([w for w in all_worksets if w.get("state") == "error"])
                 stats["active_worksets"] = stats["in_progress_worksets"]
 
-                # Calculate actual costs from completed worksets with performance metrics
+                # Calculate actual costs and storage from completed worksets with performance metrics
                 total_actual_cost = 0.0
+                total_workset_storage_bytes = 0
                 completed = [w for w in all_worksets if w.get("state") == "complete"]
                 for ws in completed:
                     pm = ws.get("performance_metrics", {})
@@ -212,11 +257,18 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                         cost_summary = pm.get("cost_summary", {})
                         if cost_summary and isinstance(cost_summary, dict):
                             total_actual_cost += float(cost_summary.get("total_cost", 0))
+                        # Aggregate workset storage
+                        pre_export = pm.get("pre_export_metrics", {})
+                        if pre_export and isinstance(pre_export, dict):
+                            total_workset_storage_bytes += int(pre_export.get("analysis_directory_size_bytes", 0) or 0)
                     else:
                         # Fall back to estimated cost if no performance metrics
                         total_actual_cost += float(ws.get("cost_usd", 0) or ws.get("metadata", {}).get("cost_usd", 0) or 0)
                 stats["cost_this_month"] = round(total_actual_cost, 2)
                 stats["actual_cost_total"] = round(total_actual_cost, 2)
+                stats["workset_storage_bytes"] = total_workset_storage_bytes
+                stats["workset_storage_gb"] = round(total_workset_storage_bytes / (1024**3), 2)
+                stats["workset_storage_human"] = _format_bytes(total_workset_storage_bytes)
 
                 if deps.file_registry:
                     try:
@@ -678,6 +730,9 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
             ws["compute_cost"] = compute_cost
             ws["is_actual_cost"] = is_actual_cost
 
+            # Extract storage size from performance_metrics
+            _extract_workset_storage(ws)
+
             filtered_worksets.append(ws)
 
         # Sort worksets
@@ -778,6 +833,10 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
             for field in ["workset_name", "pipeline_type", "reference_genome", "notification_email", "enable_qc", "archive_results", "sample_count"]:
                 if field in metadata and field not in workset:
                     workset[field] = metadata[field]
+
+        # Extract storage size from performance_metrics
+        _extract_workset_storage(workset)
+
         return deps.templates.TemplateResponse(
             request,
             "worksets/detail.html",
@@ -1496,14 +1555,17 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                 if customer_usage:
                     usage.update(customer_usage)
 
-        # Generate usage details from completed worksets with actual costs
+        # Generate usage details from completed worksets with actual costs and storage
+        workset_storage_breakdown: List[Dict[str, Any]] = []
         if deps.state_db:
             try:
                 completed_worksets = deps.state_db.list_worksets_by_state(WorksetState.COMPLETE, limit=100)
                 total_actual_compute = 0.0
+                total_workset_storage_bytes = 0
                 for ws in completed_worksets:
                     pm = ws.get("performance_metrics", {})
                     cost_summary = pm.get("cost_summary", {}) if pm and isinstance(pm, dict) else {}
+                    pre_export = pm.get("pre_export_metrics", {}) if pm and isinstance(pm, dict) else {}
                     actual_cost = float(cost_summary.get("total_cost", 0)) if cost_summary else 0
                     # Fallback to estimated cost
                     if actual_cost == 0:
@@ -1520,16 +1582,32 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                             "cost": actual_cost,
                             "is_actual": bool(cost_summary),
                         })
-                # Sort by date descending
+                    # Collect storage info per workset
+                    storage_bytes = int(pre_export.get("analysis_directory_size_bytes", 0) or 0) if pre_export else 0
+                    if storage_bytes > 0:
+                        total_workset_storage_bytes += storage_bytes
+                        workset_storage_breakdown.append({
+                            "workset_id": ws.get("workset_id"),
+                            "storage_bytes": storage_bytes,
+                            "storage_human": pre_export.get("analysis_directory_size_human", _format_bytes(storage_bytes)),
+                            "storage_gb": round(storage_bytes / (1024**3), 2),
+                            "completed_at": ws.get("updated_at", ws.get("created_at", ""))[:10],
+                        })
+                # Sort usage details by date descending
                 usage_details.sort(key=lambda x: x["date"], reverse=True)
+                # Sort storage breakdown by size descending
+                workset_storage_breakdown.sort(key=lambda x: x["storage_bytes"], reverse=True)
                 usage["total_cost"] = round(total_actual_compute, 2)
+                usage["workset_storage_bytes"] = total_workset_storage_bytes
+                usage["workset_storage_gb"] = round(total_workset_storage_bytes / (1024**3), 2)
+                usage["workset_storage_human"] = _format_bytes(total_workset_storage_bytes)
             except Exception as e:
                 LOGGER.warning(f"Failed to load usage details: {e}")
 
         return deps.templates.TemplateResponse(
             request,
             "usage.html",
-            _get_template_context(request, deps, customer=customer, usage=usage, usage_details=usage_details, active_page="usage"),
+            _get_template_context(request, deps, customer=customer, usage=usage, usage_details=usage_details, workset_storage=workset_storage_breakdown, active_page="usage"),
         )
 
     # ========== Biospecimen Routes ==========

@@ -62,11 +62,11 @@
         
         <div class="stat-card">
             <div class="card-icon error">
-                <i class="fas fa-database"></i>
+                <i class="fas fa-folder"></i>
             </div>
             <div>
-                <div class="stat-value">{{ "%.1f"|format(usage.storage_gb | default(0)) }}</div>
-                <div class="stat-label">Storage (GB)</div>
+                <div class="stat-value">{{ usage.workset_storage_human | default('0 B') }}</div>
+                <div class="stat-label">Workset Storage</div>
             </div>
         </div>
     </div>
@@ -158,7 +158,40 @@
             </table>
         </div>
     </div>
-    
+
+    <!-- Workset Storage Breakdown -->
+    {% if workset_storage %}
+    <div class="card mt-xl">
+        <div class="card-header">
+            <h3 class="card-title"><i class="fas fa-folder"></i> Workset Storage Breakdown</h3>
+            <span class="text-muted">Total: {{ usage.workset_storage_human | default('0 B') }}</span>
+        </div>
+
+        <div class="table-container" style="box-shadow: none;">
+            <table class="table" id="storage-table" data-sortable>
+                <thead>
+                    <tr>
+                        <th>Workset ID</th>
+                        <th>Completed</th>
+                        <th>Directory Size</th>
+                        <th>Size (GB)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in workset_storage %}
+                    <tr>
+                        <td><a href="/portal/worksets/{{ item.workset_id }}">{{ item.workset_id[:24] }}{% if item.workset_id|length > 24 %}...{% endif %}</a></td>
+                        <td>{{ item.completed_at }}</td>
+                        <td data-sort-value="{{ item.storage_bytes }}">{{ item.storage_human }}</td>
+                        <td>{{ "%.2f"|format(item.storage_gb) }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
     <!-- Billing Info -->
     <div class="grid grid-2 mt-xl">
         <div class="card">

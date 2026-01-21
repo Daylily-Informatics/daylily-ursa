@@ -99,6 +99,7 @@
                     <th>Started</th>
                     <th>Last Updated</th>
                     <th>Compute Cost</th>
+                    <th>Dir Size</th>
                     <th data-no-sort>Actions</th>
                 </tr>
             </thead>
@@ -191,6 +192,15 @@
                         <span class="text-muted">—</span>
                         {% endif %}
                     </td>
+                    <td data-sort-value="{{ ws.storage_bytes | default(0) }}" style="font-size: 0.85rem;">
+                        {% if ws.storage_available %}
+                        <span title="{{ ws.storage_bytes | default(0) }} bytes">{{ ws.storage_human }}</span>
+                        {% elif ws.state == 'in_progress' %}
+                        <span class="text-muted"><i class="fas fa-spinner fa-spin" style="font-size: 0.7rem;"></i></span>
+                        {% else %}
+                        <span class="text-muted">—</span>
+                        {% endif %}
+                    </td>
                     <td>
                         <div class="d-flex gap-sm">
                             <a href="/portal/worksets/{{ ws.workset_id }}" class="btn btn-outline btn-sm" title="View Details">
@@ -211,7 +221,7 @@
                 {% endfor %}
                 {% else %}
                 <tr id="empty-row">
-                    <td colspan="14">
+                    <td colspan="15">
                         <div class="empty-state">
                             <div class="empty-state-icon"><i class="fas fa-folder-open"></i></div>
                             <h4 class="empty-state-title">No worksets yet</h4>

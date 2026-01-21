@@ -270,7 +270,18 @@
             <div class="metric-breakdown-vertical">
                 <div><span class="text-muted">vCPU-hrs:</span> {{ workset.vcpu_hours | default(0) }}</div>
                 <div><span class="text-muted">Mem GB-hrs:</span> {{ workset.memory_gb_hours | default(0) }}</div>
-                <div><span class="text-muted">Storage:</span> {{ "%.1f"|format(workset.storage_gb | default(0)) }} GB</div>
+                <div>
+                    <span class="text-muted">Storage:</span>
+                    {% if workset.storage_available %}
+                    <span title="{{ workset.storage_bytes | default(0) }} bytes">{{ workset.storage_human | default('N/A') }}</span>
+                    {% elif workset.state == 'complete' %}
+                    <span class="text-muted">N/A</span>
+                    {% elif workset.state == 'in_progress' %}
+                    <span class="text-muted"><i class="fas fa-spinner fa-spin"></i> Calculating...</span>
+                    {% else %}
+                    <span class="text-muted">—</span>
+                    {% endif %}
+                </div>
                 <div><span class="text-muted">Duration:</span> {{ workset.duration | default('N/A') }}</div>
             </div>
         </div>
