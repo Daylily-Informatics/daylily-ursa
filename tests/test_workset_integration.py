@@ -714,8 +714,8 @@ class TestExtractSampleIdFromPath:
         assert monitor._extract_sample_id_from_path(path) == "SAMPLEID"
 
 
-class TestCollectPreExportMetrics:
-    """Tests for pre-export metrics collection."""
+class TestCollectPostExportMetrics:
+    """Tests for post-export metrics collection from S3."""
 
     @pytest.fixture
     def mock_monitor(self):
@@ -726,80 +726,84 @@ class TestCollectPreExportMetrics:
         monitor.state_db = MagicMock()
         monitor.dry_run = False
         monitor.debug = False
+        monitor.s3_client = MagicMock()
+        monitor.config = MagicMock()
+        monitor.config.aws.region = "us-east-1"
+        monitor.config.aws.profile = None
         return monitor
 
-    def test_collect_directory_size(self, mock_monitor):
-        """Test collecting total directory size."""
-        from pathlib import PurePosixPath
-        import subprocess
-
+    def test_collect_directory_size_from_s3(self, mock_monitor):
+        """Test collecting total directory size from S3."""
         workset = MagicMock()
         workset.name = "test-ws-001"
 
-        # Mock du command output
-        du_result = subprocess.CompletedProcess(
-            args=[], returncode=0,
-            stdout=b"13958643712\t/fsx/analysis",
-            stderr=b""
-        )
+        # Mock S3 paginator response with files totaling ~14GB
+        mock_paginator = MagicMock()
+        mock_monitor.s3_client.get_paginator.return_value = mock_paginator
+        mock_paginator.paginate.return_value = [
+            {
+                "Contents": [
+                    {"Key": "prefix/workset/file1.cram", "Size": 5368709120},
+                    {"Key": "prefix/workset/file2.cram", "Size": 5368709120},
+                    {"Key": "prefix/workset/file3.vcf.gz", "Size": 3221225472},
+                ]
+            }
+        ]
 
-        # Mock find commands to return empty (no files)
-        find_result = subprocess.CompletedProcess(
-            args=[], returncode=1, stdout=b"", stderr=b""
-        )
-
-        # Mock benchmark file not found
-        cat_result = subprocess.CompletedProcess(
-            args=[], returncode=1, stdout=b"", stderr=b""
-        )
-
-        mock_monitor._run_headnode_command = MagicMock(
-            side_effect=[du_result, find_result, find_result, find_result, cat_result]
-        )
         mock_monitor._update_progress_step = MagicMock()
         mock_monitor.state_db.update_performance_metrics = MagicMock(return_value=True)
 
-        result = mock_monitor._collect_pre_export_metrics(
-            workset, "test-cluster", PurePosixPath("/fsx/analysis")
-        )
+        # Mock PipelineStatusFetcher
+        with patch("daylib.pipeline_status.PipelineStatusFetcher") as mock_fetcher_class:
+            mock_fetcher = MagicMock()
+            mock_fetcher_class.return_value = mock_fetcher
+            mock_fetcher.fetch_performance_metrics_from_s3.return_value = {
+                "alignment_stats": None,
+                "benchmark_data": None,
+                "cost_summary": None,
+            }
+
+            result = mock_monitor._collect_post_export_metrics(
+                workset, "s3://test-bucket/prefix/workset"
+            )
 
         assert result is not None
         assert result["analysis_directory_size_bytes"] == 13958643712
         assert result["analysis_directory_size_human"] == "13.0G"
 
-    def test_collect_file_metrics_cram(self, mock_monitor):
-        """Test collecting CRAM file metrics."""
-        from pathlib import PurePosixPath
-        import subprocess
-
+    def test_collect_file_metrics_cram_from_s3(self, mock_monitor):
+        """Test collecting CRAM file metrics from S3."""
         workset = MagicMock()
         workset.name = "test-ws-002"
 
-        # Mock ls -l output for CRAM files
-        ls_output = (
-            b"-rw-r--r-- 1 ubuntu ubuntu 5368709120 Jan 15 10:00 /fsx/analysis/results/day/hg38/RUN001_SAMPLE1_EXP001.cram\n"
-            b"-rw-r--r-- 1 ubuntu ubuntu 4294967296 Jan 15 10:01 /fsx/analysis/results/day/hg38/RUN001_SAMPLE2_EXP002.cram\n"
-        )
+        # Mock S3 paginator response with CRAM files
+        mock_paginator = MagicMock()
+        mock_monitor.s3_client.get_paginator.return_value = mock_paginator
+        mock_paginator.paginate.return_value = [
+            {
+                "Contents": [
+                    {"Key": "prefix/workset/results/day/hg38/RUN001_SAMPLE1_EXP001.cram", "Size": 5368709120},
+                    {"Key": "prefix/workset/results/day/hg38/RUN001_SAMPLE2_EXP002.cram", "Size": 4294967296},
+                ]
+            }
+        ]
 
-        find_cram_result = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout=ls_output, stderr=b""
-        )
-        find_empty = subprocess.CompletedProcess(
-            args=[], returncode=1, stdout=b"", stderr=b""
-        )
-        du_result = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout=b"10737418240\t/fsx/analysis", stderr=b""
-        )
-
-        mock_monitor._run_headnode_command = MagicMock(
-            side_effect=[du_result, find_cram_result, find_empty, find_empty, find_empty]
-        )
         mock_monitor._update_progress_step = MagicMock()
         mock_monitor.state_db.update_performance_metrics = MagicMock(return_value=True)
 
-        result = mock_monitor._collect_pre_export_metrics(
-            workset, "test-cluster", PurePosixPath("/fsx/analysis")
-        )
+        # Mock PipelineStatusFetcher
+        with patch("daylib.pipeline_status.PipelineStatusFetcher") as mock_fetcher_class:
+            mock_fetcher = MagicMock()
+            mock_fetcher_class.return_value = mock_fetcher
+            mock_fetcher.fetch_performance_metrics_from_s3.return_value = {
+                "alignment_stats": None,
+                "benchmark_data": None,
+                "cost_summary": None,
+            }
+
+            result = mock_monitor._collect_post_export_metrics(
+                workset, "s3://test-bucket/prefix/workset"
+            )
 
         assert result is not None
         assert "per_sample_metrics" in result
@@ -810,26 +814,29 @@ class TestCollectPreExportMetrics:
         assert result["per_sample_metrics"]["SAMPLE2"]["cram_count"] == 1
         assert result["per_sample_metrics"]["SAMPLE2"]["cram_size_bytes"] == 4294967296
 
-    def test_collect_metrics_failure_non_blocking(self, mock_monitor):
-        """Test that metrics collection failures don't block processing."""
-        from pathlib import PurePosixPath
-
+    def test_collect_metrics_no_s3_uri(self, mock_monitor):
+        """Test that metrics collection gracefully handles missing S3 URI."""
         workset = MagicMock()
         workset.name = "test-ws-003"
 
-        # Simulate all commands failing
-        mock_monitor._run_headnode_command = MagicMock(
-            side_effect=Exception("SSH connection failed")
-        )
         mock_monitor._update_progress_step = MagicMock()
 
-        # Should return None but not raise exception
-        result = mock_monitor._collect_pre_export_metrics(
-            workset, "test-cluster", PurePosixPath("/fsx/analysis")
-        )
+        # Should return None when no S3 URI provided
+        result = mock_monitor._collect_post_export_metrics(workset, None)
 
-        # Result should be None or empty due to failure
-        assert result is None or result == {}
+        assert result is None
+
+    def test_collect_metrics_invalid_s3_uri(self, mock_monitor):
+        """Test that metrics collection handles invalid S3 URI."""
+        workset = MagicMock()
+        workset.name = "test-ws-004"
+
+        mock_monitor._update_progress_step = MagicMock()
+
+        # Should return None for invalid S3 URI
+        result = mock_monitor._collect_post_export_metrics(workset, "not-an-s3-uri")
+
+        assert result is None
 
 
 class TestParseBenchmarkCosts:

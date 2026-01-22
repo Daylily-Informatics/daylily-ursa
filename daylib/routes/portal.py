@@ -158,7 +158,10 @@ def _extract_workset_storage(workset: Dict[str, Any]) -> Dict[str, Any]:
     """Extract storage size data from workset performance_metrics.
 
     Populates storage_gb, storage_bytes, and storage_human fields from
-    performance_metrics.pre_export_metrics.analysis_directory_size_bytes.
+    performance_metrics.post_export_metrics.analysis_directory_size_bytes.
+
+    Falls back to pre_export_metrics for backwards compatibility with
+    worksets completed before the migration to post-export metrics collection.
 
     Args:
         workset: Workset dict to extract and enrich with storage info
@@ -167,14 +170,21 @@ def _extract_workset_storage(workset: Dict[str, Any]) -> Dict[str, Any]:
         The workset dict with storage fields added
     """
     pm = workset.get("performance_metrics", {})
-    pre_export = pm.get("pre_export_metrics", {}) if pm and isinstance(pm, dict) else {}
 
-    # Extract storage size from pre_export_metrics
+    # Try post_export_metrics first (new format), fall back to pre_export_metrics (legacy)
+    export_metrics = {}
+    if pm and isinstance(pm, dict):
+        export_metrics = pm.get("post_export_metrics", {})
+        if not export_metrics:
+            # Backwards compatibility: try pre_export_metrics
+            export_metrics = pm.get("pre_export_metrics", {})
+
+    # Extract storage size from export metrics
     size_bytes = 0
     size_human = ""
-    if pre_export and isinstance(pre_export, dict):
-        size_bytes = int(pre_export.get("analysis_directory_size_bytes", 0) or 0)
-        size_human = pre_export.get("analysis_directory_size_human", "")
+    if export_metrics and isinstance(export_metrics, dict):
+        size_bytes = int(export_metrics.get("analysis_directory_size_bytes", 0) or 0)
+        size_human = export_metrics.get("analysis_directory_size_human", "")
 
     # Populate the fields
     workset["storage_bytes"] = size_bytes
@@ -257,10 +267,10 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                         cost_summary = pm.get("cost_summary", {})
                         if cost_summary and isinstance(cost_summary, dict):
                             total_actual_cost += float(cost_summary.get("total_cost", 0))
-                        # Aggregate workset storage
-                        pre_export = pm.get("pre_export_metrics", {})
-                        if pre_export and isinstance(pre_export, dict):
-                            total_workset_storage_bytes += int(pre_export.get("analysis_directory_size_bytes", 0) or 0)
+                        # Aggregate workset storage (try post_export_metrics first, fall back to pre_export_metrics)
+                        export_metrics = pm.get("post_export_metrics", {}) or pm.get("pre_export_metrics", {})
+                        if export_metrics and isinstance(export_metrics, dict):
+                            total_workset_storage_bytes += int(export_metrics.get("analysis_directory_size_bytes", 0) or 0)
                     else:
                         # Fall back to estimated cost if no performance metrics
                         total_actual_cost += float(ws.get("cost_usd", 0) or ws.get("metadata", {}).get("cost_usd", 0) or 0)
@@ -1565,7 +1575,10 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                 for ws in completed_worksets:
                     pm = ws.get("performance_metrics", {})
                     cost_summary = pm.get("cost_summary", {}) if pm and isinstance(pm, dict) else {}
-                    pre_export = pm.get("pre_export_metrics", {}) if pm and isinstance(pm, dict) else {}
+                    # Try post_export_metrics first, fall back to pre_export_metrics for backwards compatibility
+                    export_metrics = {}
+                    if pm and isinstance(pm, dict):
+                        export_metrics = pm.get("post_export_metrics", {}) or pm.get("pre_export_metrics", {})
                     actual_cost = float(cost_summary.get("total_cost", 0)) if cost_summary else 0
                     # Fallback to estimated cost
                     if actual_cost == 0:
@@ -1583,13 +1596,13 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                             "is_actual": bool(cost_summary),
                         })
                     # Collect storage info per workset
-                    storage_bytes = int(pre_export.get("analysis_directory_size_bytes", 0) or 0) if pre_export else 0
+                    storage_bytes = int(export_metrics.get("analysis_directory_size_bytes", 0) or 0) if export_metrics else 0
                     if storage_bytes > 0:
                         total_workset_storage_bytes += storage_bytes
                         workset_storage_breakdown.append({
                             "workset_id": ws.get("workset_id"),
                             "storage_bytes": storage_bytes,
-                            "storage_human": pre_export.get("analysis_directory_size_human", _format_bytes(storage_bytes)),
+                            "storage_human": export_metrics.get("analysis_directory_size_human", _format_bytes(storage_bytes)),
                             "storage_gb": round(storage_bytes / (1024**3), 2),
                             "completed_at": ws.get("updated_at", ws.get("created_at", ""))[:10],
                         })

@@ -55,12 +55,12 @@ class WorksetProgressStep(str, Enum):
     PIPELINE_COMPLETE = "pipeline_complete"  # Pipeline finished successfully
 
     # Post-pipeline stages
-    COLLECTING_METRICS = "collecting_metrics"  # Gathering pre-export analysis metrics
-    METRICS_COMPLETE = "metrics_complete"  # Metrics collection finished
     EXPORTING = "exporting"  # FSx to S3 export in progress
     EXPORT_COMPLETE = "export_complete"  # Export finished
     CLEANUP_HEADNODE = "cleanup_headnode"  # Cleaning up FSx working directory
     CLEANUP_COMPLETE = "cleanup_complete"  # FSx cleanup finished
+    COLLECTING_METRICS = "collecting_metrics"  # Gathering post-export metrics from S3
+    METRICS_COMPLETE = "metrics_complete"  # Metrics collection finished
     FINALIZING = "finalizing"  # Final cleanup and state updates
 
     # Error substeps (for ERROR state)

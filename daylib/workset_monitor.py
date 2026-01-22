@@ -1190,10 +1190,11 @@ class WorksetMonitor:
 
             # Run export if target URI is configured
             try:
+                results_s3_uri: Optional[str] = None
                 if inputs.target_export_uri:
                     # Track progress: exporting (recovery path)
                     self._update_progress_step(workset, "exporting", f"Exporting results to {inputs.target_export_uri}")
-                    self._export_results(
+                    results_s3_uri = self._export_results(
                         workset, cluster_name, inputs.target_export_uri, pipeline_dir
                     )
                     # Track progress: export complete
@@ -1201,6 +1202,20 @@ class WorksetMonitor:
 
                     # Cleanup headnode directory after successful export (recovery path)
                     self._cleanup_headnode_directory(workset, cluster_name, pipeline_dir)
+
+                    # Collect post-export metrics from S3 (recovery path)
+                    try:
+                        self._collect_post_export_metrics(workset, results_s3_uri)
+                    except Exception as metrics_exc:
+                        # Metrics collection failures are non-fatal
+                        self._update_progress_step(
+                            workset, "metrics_failed", f"Metrics collection warning: {metrics_exc}"
+                        )
+                        LOGGER.warning(
+                            "Post-export metrics collection failed for %s (non-fatal): %s",
+                            workset.name,
+                            metrics_exc,
+                        )
 
                 # Track progress: finalizing
                 self._update_progress_step(workset, "finalizing", "Completing workset processing")
@@ -1730,37 +1745,25 @@ class WorksetMonitor:
         # Track progress: pipeline completed, starting export
         self._update_progress_step(workset, "pipeline_complete", "Pipeline finished successfully")
 
-        # Collect pre-export metrics (non-blocking)
-        metrics_label = "collect_metrics"
-        if metrics_label in completed_commands:
-            LOGGER.info(
-                "Skipping metrics collection for %s: already completed", workset.name
-            )
-        else:
-            try:
-                self._collect_pre_export_metrics(workset, cluster_name, pipeline_dir)
-                completed_commands.add(metrics_label)
-            except Exception as exc:
-                # Metrics collection failures are non-fatal
-                self._update_progress_step(
-                    workset, "metrics_failed", f"Metrics collection warning: {exc}"
-                )
-                LOGGER.warning(
-                    "Pre-export metrics collection failed for %s (non-fatal): %s",
-                    workset.name,
-                    exc,
-                )
-
+        # Export results to S3 first, then collect metrics from exported data
+        results_s3_uri: Optional[str] = None
         if target_export_uri:
             export_label = "export_results"
             if export_label in completed_commands:
                 LOGGER.info(
                     "Skipping export for %s: command already completed", workset.name
                 )
+                # Try to get results_s3_uri from DynamoDB for metrics collection
+                if self.state_db:
+                    try:
+                        env = self.state_db.get_execution_environment(workset.name)
+                        results_s3_uri = env.get("results_s3_uri") if env else None
+                    except Exception:
+                        pass
             else:
                 # Track progress: exporting
                 self._update_progress_step(workset, "exporting", f"Exporting results to {target_export_uri}")
-                self._export_results(
+                results_s3_uri = self._export_results(
                     workset, cluster_name, target_export_uri, pipeline_dir
                 )
                 completed_commands.add(export_label)
@@ -1776,6 +1779,27 @@ class WorksetMonitor:
             else:
                 self._cleanup_headnode_directory(workset, cluster_name, pipeline_dir)
                 completed_commands.add(cleanup_label)
+
+        # Collect post-export metrics from S3 (after export is complete)
+        metrics_label = "collect_metrics"
+        if metrics_label in completed_commands:
+            LOGGER.info(
+                "Skipping metrics collection for %s: already completed", workset.name
+            )
+        else:
+            try:
+                self._collect_post_export_metrics(workset, results_s3_uri)
+                completed_commands.add(metrics_label)
+            except Exception as exc:
+                # Metrics collection failures are non-fatal
+                self._update_progress_step(
+                    workset, "metrics_failed", f"Metrics collection warning: {exc}"
+                )
+                LOGGER.warning(
+                    "Post-export metrics collection failed for %s (non-fatal): %s",
+                    workset.name,
+                    exc,
+                )
 
         # Track progress: finalizing
         self._update_progress_step(workset, "finalizing", "Completing workset processing")
@@ -2785,123 +2809,199 @@ class WorksetMonitor:
         )
         self._clear_pipeline_location(workset)
 
-    def _collect_pre_export_metrics(
+    def _collect_post_export_metrics(
         self,
         workset: Workset,
-        cluster_name: str,
-        pipeline_dir: PurePosixPath,
+        results_s3_uri: Optional[str],
     ) -> Optional[Dict[str, Any]]:
-        """Collect comprehensive analysis metrics before FSx export.
+        """Collect comprehensive analysis metrics from S3 after FSx export.
 
-        Gathers statistics from the analysis directory including:
-        - Total directory size
+        Gathers statistics from the exported S3 data including:
+        - Total directory size (from S3 object listing)
         - Per-sample output file counts and sizes (CRAM, SNV VCF, SV VCF)
-        - Compute costs from benchmark data
+        - Alignment stats, benchmark data, and cost summary
 
         Args:
             workset: The workset being processed
-            cluster_name: Name of the ParallelCluster
-            pipeline_dir: Path to the pipeline directory on FSx
+            results_s3_uri: S3 URI where results were exported (e.g., s3://bucket/prefix/workset-name)
 
         Returns:
             Dict containing collected metrics, or None if collection failed
 
         Note:
-            Metrics collection failures are logged as warnings but do not block export.
+            Metrics collection failures are logged as warnings but do not block workset completion.
         """
+        source_desc = results_s3_uri if results_s3_uri else "S3 (URI not available)"
         self._update_progress_step(
-            workset, "collecting_metrics", f"Gathering analysis metrics from {pipeline_dir}"
+            workset, "collecting_metrics", f"Gathering analysis metrics from {source_desc}"
         )
-        LOGGER.info("Collecting pre-export metrics for %s from %s", workset.name, pipeline_dir)
+        LOGGER.info("Collecting post-export metrics for %s from %s", workset.name, source_desc)
 
         metrics: Dict[str, Any] = {}
-        quoted_dir = shlex.quote(str(pipeline_dir))
 
-        # 1. Get total directory size
-        try:
-            du_cmd = f"du -sb {quoted_dir} 2>/dev/null || du -sk {quoted_dir}"
-            result = self._run_headnode_command(
-                cluster_name, du_cmd, check=False, shell=True
+        if not results_s3_uri:
+            LOGGER.warning(
+                "No results_s3_uri available for %s; skipping S3 metrics collection",
+                workset.name,
             )
-            if result.returncode == 0:
-                output = result.stdout.decode("utf-8", errors="ignore").strip()
-                parts = output.split()
-                if parts:
-                    size_str = parts[0]
-                    try:
-                        # du -sb returns bytes, du -sk returns kilobytes
-                        size_bytes = int(size_str)
-                        if "k" in du_cmd.split()[-1].lower() or size_bytes < 1000:
-                            size_bytes = size_bytes * 1024  # Convert KB to bytes
-                        metrics["analysis_directory_size_bytes"] = size_bytes
-                        # Generate human-readable size
-                        metrics["analysis_directory_size_human"] = self._format_bytes(size_bytes)
-                        LOGGER.debug(
-                            "Directory size for %s: %s (%d bytes)",
-                            workset.name, metrics["analysis_directory_size_human"], size_bytes,
-                        )
-                    except ValueError:
-                        LOGGER.warning("Could not parse du output for %s: %s", workset.name, output)
-        except Exception as exc:
-            LOGGER.warning("Failed to get directory size for %s: %s", workset.name, exc)
+            return None
 
-        # 2. Collect per-sample output file metrics
-        per_sample_metrics: Dict[str, Dict[str, Any]] = {}
+        # Parse S3 bucket and prefix
+        if not results_s3_uri.startswith("s3://"):
+            LOGGER.warning("Invalid S3 URI for %s: %s", workset.name, results_s3_uri)
+            return None
 
-        # Find and parse CRAM files
-        self._collect_file_metrics(
-            workset, cluster_name, pipeline_dir,
-            "*.cram", "cram", per_sample_metrics
-        )
+        from urllib.parse import urlparse
+        parsed = urlparse(results_s3_uri)
+        bucket = parsed.netloc
+        prefix = parsed.path.lstrip("/")
 
-        # Find and parse SNV VCF files
-        self._collect_file_metrics(
-            workset, cluster_name, pipeline_dir,
-            "*.snv.sort.vcf.gz", "snv_vcf", per_sample_metrics
-        )
-
-        # Find and parse SV VCF files
-        self._collect_file_metrics(
-            workset, cluster_name, pipeline_dir,
-            "*.sv.sort.vcf.gz", "sv_vcf", per_sample_metrics
-        )
-
-        if per_sample_metrics:
-            metrics["per_sample_metrics"] = per_sample_metrics
-            LOGGER.info(
-                "Collected file metrics for %d samples in %s",
-                len(per_sample_metrics), workset.name,
-            )
-
-        # 3. Parse benchmark data for compute costs
-        benchmark_path = f"{pipeline_dir}/results/day/hg38/other_reports/rules_benchmark_data_mqc.tsv"
+        # 1. Get total directory size from S3
         try:
-            cost_data = self._parse_benchmark_costs(workset, cluster_name, benchmark_path, per_sample_metrics)
-            if cost_data:
-                metrics["total_compute_cost_usd"] = cost_data.get("total_cost", 0.0)
-                LOGGER.info(
-                    "Total compute cost for %s: $%.4f",
-                    workset.name, metrics["total_compute_cost_usd"],
+            size_bytes = self._get_s3_directory_size(bucket, prefix)
+            if size_bytes > 0:
+                metrics["analysis_directory_size_bytes"] = size_bytes
+                metrics["analysis_directory_size_human"] = self._format_bytes(size_bytes)
+                LOGGER.debug(
+                    "S3 directory size for %s: %s (%d bytes)",
+                    workset.name, metrics["analysis_directory_size_human"], size_bytes,
                 )
         except Exception as exc:
-            LOGGER.warning("Failed to parse benchmark costs for %s: %s", workset.name, exc)
+            LOGGER.warning("Failed to get S3 directory size for %s: %s", workset.name, exc)
+
+        # 2. Collect per-sample output file metrics from S3
+        per_sample_metrics: Dict[str, Dict[str, Any]] = {}
+        try:
+            self._collect_s3_file_metrics(bucket, prefix, per_sample_metrics)
+            if per_sample_metrics:
+                metrics["per_sample_metrics"] = per_sample_metrics
+                LOGGER.info(
+                    "Collected S3 file metrics for %d samples in %s",
+                    len(per_sample_metrics), workset.name,
+                )
+        except Exception as exc:
+            LOGGER.warning("Failed to collect S3 file metrics for %s: %s", workset.name, exc)
+
+        # 3. Fetch alignment stats, benchmark data, and cost summary from S3
+        # Use the existing PipelineStatusFetcher for consistent parsing
+        from daylib.pipeline_status import PipelineStatusFetcher
+        try:
+            fetcher = PipelineStatusFetcher(
+                region=self.config.aws.region,
+                profile=self.config.aws.profile,
+            )
+            perf_metrics = fetcher.fetch_performance_metrics_from_s3(
+                results_s3_uri,
+                region=self.config.aws.region,
+            )
+            # Merge fetched metrics into our metrics dict
+            if perf_metrics:
+                if perf_metrics.get("alignment_stats"):
+                    metrics["alignment_stats"] = perf_metrics["alignment_stats"]
+                if perf_metrics.get("benchmark_data"):
+                    metrics["benchmark_data"] = perf_metrics["benchmark_data"]
+                if perf_metrics.get("cost_summary"):
+                    metrics["cost_summary"] = perf_metrics["cost_summary"]
+                    total_cost = perf_metrics["cost_summary"].get("total_cost", 0.0)
+                    if total_cost:
+                        metrics["total_compute_cost_usd"] = total_cost
+                        LOGGER.info(
+                            "Total compute cost for %s: $%.4f",
+                            workset.name, total_cost,
+                        )
+        except Exception as exc:
+            LOGGER.warning("Failed to fetch performance metrics from S3 for %s: %s", workset.name, exc)
 
         # Store metrics in DynamoDB
         if metrics and self.state_db:
             try:
                 self.state_db.update_performance_metrics(
                     workset.name,
-                    {"pre_export_metrics": metrics},
+                    {"post_export_metrics": metrics},
                     is_final=False,
                 )
-                LOGGER.info("Stored pre-export metrics for %s in DynamoDB", workset.name)
+                LOGGER.info("Stored post-export metrics for %s in DynamoDB", workset.name)
             except Exception as exc:
-                LOGGER.warning("Failed to store pre-export metrics for %s: %s", workset.name, exc)
+                LOGGER.warning("Failed to store post-export metrics for %s: %s", workset.name, exc)
 
         self._update_progress_step(
             workset, "metrics_complete", f"Metrics collection complete for {workset.name}"
         )
         return metrics if metrics else None
+
+    def _get_s3_directory_size(self, bucket: str, prefix: str) -> int:
+        """Calculate total size of all objects under an S3 prefix.
+
+        Args:
+            bucket: S3 bucket name
+            prefix: S3 prefix (directory path)
+
+        Returns:
+            Total size in bytes
+        """
+        total_size = 0
+        paginator = self.s3_client.get_paginator("list_objects_v2")
+
+        # Ensure prefix ends with / to list directory contents
+        if prefix and not prefix.endswith("/"):
+            prefix = prefix + "/"
+
+        for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+            for obj in page.get("Contents", []):
+                total_size += obj.get("Size", 0)
+
+        LOGGER.debug("S3 directory size for s3://%s/%s: %d bytes", bucket, prefix, total_size)
+        return total_size
+
+    def _collect_s3_file_metrics(
+        self,
+        bucket: str,
+        prefix: str,
+        per_sample_metrics: Dict[str, Dict[str, Any]],
+    ) -> None:
+        """Collect per-sample file metrics (CRAM, VCF counts and sizes) from S3.
+
+        Args:
+            bucket: S3 bucket name
+            prefix: S3 prefix where results are stored
+            per_sample_metrics: Dict to populate with per-sample metrics
+        """
+        paginator = self.s3_client.get_paginator("list_objects_v2")
+
+        # Ensure prefix ends with / to list directory contents
+        if prefix and not prefix.endswith("/"):
+            prefix = prefix + "/"
+
+        for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+            for obj in page.get("Contents", []):
+                key = obj.get("Key", "")
+                size = obj.get("Size", 0)
+
+                # Extract filename from key
+                filename = key.rsplit("/", 1)[-1] if "/" in key else key
+
+                # Determine file type
+                file_type = None
+                if filename.endswith(".cram"):
+                    file_type = "cram"
+                elif filename.endswith(".snv.sort.vcf.gz"):
+                    file_type = "snv_vcf"
+                elif filename.endswith(".sv.sort.vcf.gz"):
+                    file_type = "sv_vcf"
+
+                if file_type:
+                    sample_id = self._extract_sample_id_from_path(key)
+                    if sample_id:
+                        if sample_id not in per_sample_metrics:
+                            per_sample_metrics[sample_id] = {}
+                        count_key = f"{file_type}_count"
+                        size_key = f"{file_type}_size_bytes"
+                        per_sample_metrics[sample_id][count_key] = (
+                            per_sample_metrics[sample_id].get(count_key, 0) + 1
+                        )
+                        per_sample_metrics[sample_id][size_key] = (
+                            per_sample_metrics[sample_id].get(size_key, 0) + size
+                        )
 
     def _format_bytes(self, size_bytes: int) -> str:
         """Format bytes as human-readable string (e.g., '13G', '256M')."""
@@ -3560,7 +3660,13 @@ class WorksetMonitor:
         cluster_name: str,
         target_uri: str,
         pipeline_dir: PurePosixPath,
-    ) -> None:
+    ) -> Optional[str]:
+        """Export pipeline results to S3.
+
+        Returns:
+            The S3 URI of the exported results, or None if export was successful
+            but URI was not captured.
+        """
         output_dir = self._local_state_dir(workset)
         profile_value = self.config.aws.profile or ""
         command = self.config.pipeline.export_command.format(
@@ -3657,6 +3763,8 @@ class WorksetMonitor:
 
         if self.config.cluster.auto_teardown:
             self._maybe_shutdown_cluster(cluster_name)
+
+        return s3_uri
 
     def _backup_export_status_to_s3(
         self, workset: Workset, status_path: Path, target_uri: str
