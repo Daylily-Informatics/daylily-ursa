@@ -1520,19 +1520,23 @@ def create_app(
             ursa_config = get_ursa_config()
 
             if preferred_cluster:
-                # Extract region from cluster name (e.g., "lfg-usw2d" -> need to look up)
-                # First, try to get cluster info to find its region
+                # Fast lookup of cluster region using cached mapping
                 try:
-                    from daylib.cluster_service import ClusterService
-                    service = ClusterService(
+                    from daylib.cluster_service import get_cluster_service
+                    service = get_cluster_service(
                         regions=ursa_config.get_allowed_regions() or settings.get_allowed_regions(),
                         aws_profile=ursa_config.aws_profile or settings.aws_profile,
                     )
-                    all_clusters = service.get_all_clusters_with_status(force_refresh=False)
-                    for c in all_clusters:
-                        if c.cluster_name == preferred_cluster:
-                            cluster_region = c.region
-                            break
+                    # Try fast cache lookup first (no API calls)
+                    cluster_region = service.get_region_for_cluster(preferred_cluster)
+                    if not cluster_region:
+                        # Cache miss - need to refresh (but use existing cache if available)
+                        LOGGER.debug("Cluster %s not in cache, checking full cluster list", preferred_cluster)
+                        all_clusters = service.get_all_clusters(force_refresh=False)
+                        for c in all_clusters:
+                            if c.cluster_name == preferred_cluster:
+                                cluster_region = c.region
+                                break
                 except Exception as e:
                     LOGGER.warning("Failed to look up cluster %s region: %s", preferred_cluster, e)
 
@@ -3132,7 +3136,7 @@ def create_app(
         Set fetch_status=true to also fetch budget and job queue info via SSH.
         """
         try:
-            from daylib.cluster_service import ClusterService
+            from daylib.cluster_service import get_cluster_service
             from daylib.ursa_config import get_ursa_config
 
             # Use UrsaConfig for regions (preferred) with fallback to legacy env var
@@ -3149,7 +3153,8 @@ def create_app(
                     "error": "No regions configured. Create ~/.ursa/config.yaml with region definitions.",
                 }
 
-            service = ClusterService(
+            # Use global singleton to share cache across requests
+            service = get_cluster_service(
                 regions=allowed_regions,
                 aws_profile=ursa_config.aws_profile or settings.aws_profile,
                 cache_ttl_seconds=300,

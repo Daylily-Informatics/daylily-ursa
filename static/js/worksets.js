@@ -973,7 +973,9 @@ async function refreshClusterList() {
     if (container) container.style.display = 'block';
 
     try {
-        const response = await fetch('/api/clusters?refresh=true');
+        // Use cached cluster data - refresh is expensive (10+ seconds)
+        // The cache has 5-minute TTL and parallel region scanning
+        const response = await fetch('/api/clusters');
         if (!response.ok) throw new Error(`Failed to load clusters (${response.status})`);
 
         const data = await response.json();

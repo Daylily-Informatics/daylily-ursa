@@ -12,12 +12,18 @@ import logging
 import re
 import shlex
 import subprocess
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 LOGGER = logging.getLogger("daylily.cluster_service")
+
+# Global singleton instance and lock
+_global_service: Optional["ClusterService"] = None
+_global_service_lock = threading.Lock()
 
 
 @dataclass
@@ -212,6 +218,42 @@ class ClusterService:
         self.cache_ttl_seconds = cache_ttl_seconds
         self._cache: Dict[str, Any] = {}
         self._cache_time: float = 0
+        # Fast lookup cache: cluster_name -> region (persists longer than full cache)
+        self._cluster_region_map: Dict[str, str] = {}
+        self._cluster_region_map_time: float = 0
+        self._cluster_region_map_ttl: int = 3600  # 1 hour TTL for name->region mapping
+
+    def get_region_for_cluster(self, cluster_name: str) -> Optional[str]:
+        """Fast lookup of region for a cluster name (uses cached mapping).
+
+        This is much faster than get_all_clusters() as it uses a long-lived
+        name->region cache that doesn't require pcluster CLI calls.
+
+        Args:
+            cluster_name: Name of the cluster.
+
+        Returns:
+            Region string if known, None otherwise.
+        """
+        now = time.time()
+
+        # Check if cluster_region_map is still valid
+        if (now - self._cluster_region_map_time) < self._cluster_region_map_ttl:
+            if cluster_name in self._cluster_region_map:
+                LOGGER.debug(f"Fast cache hit for cluster {cluster_name}")
+                return self._cluster_region_map[cluster_name]
+
+        # Check full cluster cache (might be more recent)
+        if self._cache and (now - self._cache_time) < self.cache_ttl_seconds:
+            for cluster in self._cache.get("clusters", []):
+                if cluster.cluster_name == cluster_name:
+                    # Update region map
+                    self._cluster_region_map[cluster_name] = cluster.region
+                    self._cluster_region_map_time = now
+                    return cluster.region
+
+        # Not in any cache - return None (caller can decide to refresh)
+        return None
 
     def _run_pcluster_command(self, args: List[str], timeout: int = 30) -> Dict[str, Any]:
         """Run a pcluster CLI command and return parsed JSON output."""
@@ -232,8 +274,16 @@ class ClusterService:
         try:
             env = os.environ.copy()
             env["AWS_PROFILE"] = profile
+            # Use explicit PIPE for stdin to avoid "bad file descriptor" errors
+            # when running from ThreadPoolExecutor threads
             result = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=timeout, env=env
+                cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=timeout,
+                env=env,
             )
             # Log stderr always for debugging
             if result.stderr.strip():
@@ -294,10 +344,33 @@ class ClusterService:
             )
         return ClusterInfo.from_dict(result, region)
 
+    def _scan_region(self, region: str) -> List[ClusterInfo]:
+        """Scan a single region for clusters (used by parallel executor).
+
+        Args:
+            region: AWS region to scan.
+
+        Returns:
+            List of ClusterInfo for clusters in that region.
+        """
+        LOGGER.debug(f"Scanning region: {region}")
+        cluster_names = self.list_clusters_in_region(region)
+        if not cluster_names:
+            LOGGER.debug(f"No clusters found in {region}")
+            return []
+
+        clusters = []
+        for name in cluster_names:
+            cluster_info = self.describe_cluster(name, region)
+            clusters.append(cluster_info)
+            LOGGER.debug(f"Found cluster: {name} ({cluster_info.cluster_status})")
+        return clusters
+
     def get_all_clusters(self, force_refresh: bool = False) -> List[ClusterInfo]:
         """Get all clusters across all configured regions.
 
-        Uses caching to avoid excessive API calls.
+        Uses caching to avoid excessive API calls. Scans regions in parallel
+        for faster response times.
 
         Args:
             force_refresh: If True, bypass cache and fetch fresh data.
@@ -307,26 +380,40 @@ class ClusterService:
         """
         now = time.time()
         if not force_refresh and self._cache and (now - self._cache_time) < self.cache_ttl_seconds:
-            LOGGER.debug("Returning cached cluster data")
+            LOGGER.debug("Returning cached cluster data (age: %.1fs)", now - self._cache_time)
             return self._cache.get("clusters", [])
 
-        LOGGER.info(f"Fetching clusters from regions: {self.regions}")
+        LOGGER.info(f"Fetching clusters from {len(self.regions)} regions in parallel: {self.regions}")
+        start_time = time.time()
         all_clusters: List[ClusterInfo] = []
 
-        for region in self.regions:
-            LOGGER.debug(f"Scanning region: {region}")
-            cluster_names = self.list_clusters_in_region(region)
-            if not cluster_names:
-                LOGGER.debug(f"No clusters found in {region}")
-                continue
-            for name in cluster_names:
-                cluster_info = self.describe_cluster(name, region)
-                all_clusters.append(cluster_info)
-                LOGGER.debug(f"Found cluster: {name} ({cluster_info.cluster_status})")
+        # Use ThreadPoolExecutor for parallel region scanning
+        # Each region scan takes 2-5 seconds, so parallelizing saves significant time
+        max_workers = min(len(self.regions), 5)  # Cap at 5 concurrent workers
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_region = {
+                executor.submit(self._scan_region, region): region
+                for region in self.regions
+            }
+            for future in as_completed(future_to_region):
+                region = future_to_region[future]
+                try:
+                    clusters = future.result()
+                    all_clusters.extend(clusters)
+                except Exception as e:
+                    LOGGER.warning(f"Failed to scan region {region}: {e}")
 
+        # Update caches
         self._cache = {"clusters": all_clusters}
         self._cache_time = now
-        LOGGER.info(f"Found {len(all_clusters)} clusters across {len(self.regions)} regions")
+
+        # Update cluster_name -> region map for fast lookups
+        for cluster in all_clusters:
+            self._cluster_region_map[cluster.cluster_name] = cluster.region
+        self._cluster_region_map_time = now
+
+        elapsed = time.time() - start_time
+        LOGGER.info(f"Found {len(all_clusters)} clusters across {len(self.regions)} regions in {elapsed:.2f}s")
         return all_clusters
 
     def get_clusters_by_region(self, force_refresh: bool = False) -> Dict[str, List[ClusterInfo]]:
@@ -648,3 +735,65 @@ class ClusterService:
         self._cache_time = 0
         LOGGER.debug("Cluster cache cleared")
 
+
+def get_cluster_service(
+    regions: Optional[List[str]] = None,
+    aws_profile: Optional[str] = None,
+    cache_ttl_seconds: int = 300,
+) -> ClusterService:
+    """Get the global ClusterService singleton.
+
+    Creates the singleton on first call. Subsequent calls return the same
+    instance (ignoring parameters). This ensures cache is shared across
+    all API calls.
+
+    Args:
+        regions: List of AWS regions (only used on first call).
+        aws_profile: AWS profile name (only used on first call).
+        cache_ttl_seconds: Cache TTL in seconds (only used on first call).
+
+    Returns:
+        The global ClusterService instance.
+    """
+    global _global_service
+
+    with _global_service_lock:
+        if _global_service is None:
+            if not regions:
+                # Try to get regions from config
+                try:
+                    from daylib.ursa_config import get_ursa_config
+                    ursa_config = get_ursa_config()
+                    if ursa_config.is_configured:
+                        regions = ursa_config.get_allowed_regions()
+                        aws_profile = aws_profile or ursa_config.aws_profile
+                except Exception as e:
+                    LOGGER.warning(f"Failed to load ursa config: {e}")
+
+            if not regions:
+                # Fallback to environment
+                import os
+                region_str = os.environ.get("URSA_ALLOWED_REGIONS", "")
+                regions = [r.strip() for r in region_str.split(",") if r.strip()]
+                if not regions:
+                    regions = [os.environ.get("AWS_DEFAULT_REGION", "us-west-2")]
+
+            LOGGER.info(f"Creating global ClusterService for regions: {regions}")
+            _global_service = ClusterService(
+                regions=regions,
+                aws_profile=aws_profile,
+                cache_ttl_seconds=cache_ttl_seconds,
+            )
+
+        return _global_service
+
+
+def reset_cluster_service() -> None:
+    """Reset the global ClusterService singleton.
+
+    Used for testing or when configuration changes require a new instance.
+    """
+    global _global_service
+    with _global_service_lock:
+        _global_service = None
+        LOGGER.info("Global ClusterService reset")
