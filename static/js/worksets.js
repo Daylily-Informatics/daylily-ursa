@@ -413,7 +413,40 @@ async function submitWorkset(event) {
 }
 
 // Refresh workset detail page
-async function refreshWorksetDetail() {
+async function refreshWorksetDetail(worksetState) {
+    // For complete or error worksets, offer to re-gather stats from S3
+    if (worksetState === 'complete' || worksetState === 'error') {
+        const regatherStats = confirm(
+            'Do you wish to re-gather stats from S3?\n\n' +
+            'Click OK to re-fetch performance metrics from S3.\n' +
+            'Click Cancel to just refresh the page.'
+        );
+
+        if (regatherStats) {
+            // Re-gather stats by calling loadPerformanceMetrics with forceRefresh=true
+            showLoading('Re-gathering stats from S3...');
+            try {
+                const customerId = window.UrsaConfig?.customerId || window.DaylilyConfig?.customerId;
+                const worksetId = window.location.pathname.split('/').pop();
+
+                const url = `/api/customers/${customerId}/worksets/${worksetId}/performance-metrics?force_refresh=true`;
+                const response = await fetch(url);
+
+                if (!response.ok) {
+                    throw new Error('Failed to re-gather stats');
+                }
+
+                showToast('success', 'Stats Refreshed', 'Performance metrics have been re-gathered from S3');
+                setTimeout(() => window.location.reload(), 1000);
+            } catch (error) {
+                showToast('error', 'Refresh Failed', error.message);
+                hideLoading();
+            }
+            return;
+        }
+    }
+
+    // Default: just reload the page
     window.location.reload();
 }
 
