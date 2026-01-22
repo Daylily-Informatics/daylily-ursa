@@ -109,19 +109,17 @@ def start(
         console.print("   Or create: [cyan]./config/workset-monitor-config.yaml[/cyan]")
         raise typer.Exit(1)
 
-    # Check ~/.ursa/config.yaml for region/bucket configuration
-    from daylib.ursa_config import get_ursa_config
+    # Check ursa-config.yaml for region configuration
+    from daylib.ursa_config import get_ursa_config, DEFAULT_CONFIG_PATH
     ursa_config = get_ursa_config()
     if not ursa_config.is_configured:
-        console.print("[yellow]⚠[/yellow]  No regions configured in ~/.ursa/config.yaml")
-        console.print("   Cluster discovery requires region-to-bucket mappings.")
-        console.print("   Create [cyan]~/.ursa/config.yaml[/cyan] with:")
+        console.print(f"[yellow]⚠[/yellow]  No regions configured in {DEFAULT_CONFIG_PATH}")
+        console.print("   Cluster discovery requires region definitions.")
+        console.print(f"   Create [cyan]{DEFAULT_CONFIG_PATH}[/cyan] with:")
         console.print("")
         console.print("[dim]   regions:")
-        console.print("     us-west-2:")
-        console.print("       bucket: s3://your-bucket-us-west-2")
-        console.print("     us-east-1:")
-        console.print("       bucket: s3://your-bucket-us-east-1[/dim]")
+        console.print("     - us-west-2")
+        console.print("     - us-east-1[/dim]")
     else:
         regions = ursa_config.get_allowed_regions()
         console.print(f"[green]✓[/green]  Ursa config loaded: [cyan]{len(regions)} regions[/cyan]")

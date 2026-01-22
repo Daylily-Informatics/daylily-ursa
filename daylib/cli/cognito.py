@@ -18,6 +18,27 @@ def _check_aws_profile():
         raise typer.Exit(1)
 
 
+def _get_cognito_region() -> str:
+    """Get the AWS region for Cognito operations.
+
+    Priority order:
+    1. UrsaConfig.cognito_region (from ~/.ursa/ursa-config.yaml or COGNITO_REGION env var)
+    2. AWS_DEFAULT_REGION environment variable
+    3. Fallback to 'us-west-2'
+
+    Returns:
+        AWS region string (e.g., 'us-west-2')
+    """
+    from daylib.ursa_config import get_ursa_config
+
+    ursa_config = get_ursa_config()
+    if ursa_config.cognito_region:
+        return ursa_config.cognito_region
+
+    # Fallback to AWS_DEFAULT_REGION or us-west-2
+    return os.environ.get("AWS_DEFAULT_REGION", "us-west-2")
+
+
 @cognito_app.command("status")
 def status():
     """Check Cognito configuration status."""
@@ -27,42 +48,54 @@ def status():
 
     try:
         import boto3
-        from daylib.config import get_settings
+        from daylib.ursa_config import get_ursa_config, DEFAULT_CONFIG_PATH
 
-        settings = get_settings()
-        region = settings.get_effective_region()
+        region = _get_cognito_region()
         cognito = boto3.client("cognito-idp", region_name=region)
+        ursa_config = get_ursa_config()
 
         table = Table(title="Cognito Configuration")
         table.add_column("Property", style="cyan")
         table.add_column("Value")
+        table.add_column("Source", style="dim")
 
-        # Check env vars
-        pool_id = os.environ.get("COGNITO_USER_POOL_ID", "")
-        client_id = os.environ.get("COGNITO_APP_CLIENT_ID", "")
+        table.add_row("Region", region, "")
+
+        # Check for pool ID from env or config
+        pool_id_env = os.environ.get("COGNITO_USER_POOL_ID", "")
+        pool_id_config = ursa_config.cognito_user_pool_id or ""
+        pool_id = pool_id_env or pool_id_config
+        pool_source = "env" if pool_id_env else ("config" if pool_id_config else "")
 
         if pool_id:
             try:
                 pool = cognito.describe_user_pool(UserPoolId=pool_id)
-                table.add_row("User Pool ID", pool_id)
-                table.add_row("User Pool Name", pool["UserPool"]["Name"])
-                table.add_row("Status", "[green]Active[/green]")
+                table.add_row("User Pool ID", pool_id, pool_source)
+                table.add_row("User Pool Name", pool["UserPool"]["Name"], "")
+                table.add_row("Status", "[green]Active[/green]", "")
             except Exception as e:
-                table.add_row("User Pool ID", pool_id)
-                table.add_row("Status", f"[red]Error: {e}[/red]")
+                table.add_row("User Pool ID", pool_id, pool_source)
+                table.add_row("Status", f"[red]Error: {e}[/red]", "")
         else:
-            table.add_row("User Pool ID", "[dim]Not configured[/dim]")
+            table.add_row("User Pool ID", "[dim]Not configured[/dim]", "")
+
+        # Check for client ID from env or config
+        client_id_env = os.environ.get("COGNITO_APP_CLIENT_ID", "")
+        client_id_config = ursa_config.cognito_app_client_id or ""
+        client_id = client_id_env or client_id_config
+        client_source = "env" if client_id_env else ("config" if client_id_config else "")
 
         if client_id:
-            table.add_row("App Client ID", client_id)
+            table.add_row("App Client ID", client_id, client_source)
         else:
-            table.add_row("App Client ID", "[dim]Not configured[/dim]")
+            table.add_row("App Client ID", "[dim]Not configured[/dim]", "")
 
         console.print(table)
 
         if not pool_id or not client_id:
             console.print("\n[yellow]⚠[/yellow]  Cognito not fully configured")
             console.print("   Run: [cyan]ursa cognito setup[/cyan]")
+            console.print(f"   Or configure in: [cyan]{DEFAULT_CONFIG_PATH}[/cyan]")
 
     except Exception as e:
         console.print(f"[red]✗[/red]  Error: {e}")
@@ -81,10 +114,9 @@ def setup(
 
     try:
         import boto3
-        from daylib.config import get_settings
 
-        settings = get_settings()
-        region = settings.get_effective_region()
+        region = _get_cognito_region()
+        console.print(f"[dim]Region: {region}[/dim]")
         cognito = boto3.client("cognito-idp", region_name=region)
 
         # Check if pool already exists
@@ -153,22 +185,14 @@ def fix_auth_flows():
     """
     _check_aws_profile()
 
-    pool_id = os.environ.get("COGNITO_USER_POOL_ID")
-    client_id = os.environ.get("COGNITO_APP_CLIENT_ID")
-
-    if not pool_id:
-        console.print("[red]✗[/red]  COGNITO_USER_POOL_ID not set")
-        raise typer.Exit(1)
-    if not client_id:
-        console.print("[red]✗[/red]  COGNITO_APP_CLIENT_ID not set")
-        raise typer.Exit(1)
+    # Get pool and client IDs from env or config
+    pool_id = _get_pool_id()
+    client_id = _get_client_id()
 
     try:
         import boto3
-        from daylib.config import get_settings
 
-        settings = get_settings()
-        region = settings.get_effective_region()
+        region = _get_cognito_region()
         cognito = boto3.client("cognito-idp", region_name=region)
 
         # Get current client config
@@ -217,10 +241,8 @@ def set_admin(
 
     try:
         from daylib.workset_customer import CustomerManager
-        from daylib.config import get_settings
 
-        settings = get_settings()
-        region = settings.aws_default_region
+        region = _get_cognito_region()
         profile = os.environ.get("AWS_PROFILE")
 
         console.print(f"[dim]Region: {region}, Profile: {profile}[/dim]")
@@ -257,15 +279,14 @@ def set_password(
     """Set password for a Cognito user."""
     _check_aws_profile()
 
+    # Get pool ID from env or config
+    pool_id = _get_pool_id()
+
     try:
         import boto3
 
-        pool_id = os.environ.get("COGNITO_USER_POOL_ID")
-        if not pool_id:
-            console.print("[red]✗[/red]  COGNITO_USER_POOL_ID not set")
-            raise typer.Exit(1)
-
-        cognito = boto3.client("cognito-idp")
+        region = _get_cognito_region()
+        cognito = boto3.client("cognito-idp", region_name=region)
         cognito.admin_set_user_password(
             UserPoolId=pool_id,
             Username=email,
@@ -281,13 +302,61 @@ def set_password(
 
 
 def _get_pool_id() -> str:
-    """Get user pool ID from env or raise error."""
+    """Get user pool ID from env var or config file.
+
+    Priority order:
+    1. COGNITO_USER_POOL_ID environment variable
+    2. cognito_user_pool_id in ~/.ursa/ursa-config.yaml
+
+    Raises:
+        typer.Exit(1) if not configured anywhere.
+    """
+    from daylib.ursa_config import get_ursa_config, DEFAULT_CONFIG_PATH
+
+    # First check environment variable
     pool_id = os.environ.get("COGNITO_USER_POOL_ID")
-    if not pool_id:
-        console.print("[red]✗[/red]  COGNITO_USER_POOL_ID not set")
-        console.print("   Set it with: [cyan]export COGNITO_USER_POOL_ID=your-pool-id[/cyan]")
-        raise typer.Exit(1)
-    return pool_id
+    if pool_id:
+        return pool_id
+
+    # Then check config file
+    ursa_config = get_ursa_config()
+    if ursa_config.cognito_user_pool_id:
+        return ursa_config.cognito_user_pool_id
+
+    # Not configured anywhere
+    console.print("[red]✗[/red]  Cognito User Pool ID not configured")
+    console.print("   Set via environment: [cyan]export COGNITO_USER_POOL_ID=your-pool-id[/cyan]")
+    console.print(f"   Or in config file:   [cyan]{DEFAULT_CONFIG_PATH}[/cyan] → [dim]cognito_user_pool_id: ...[/dim]")
+    raise typer.Exit(1)
+
+
+def _get_client_id() -> str:
+    """Get app client ID from env var or config file.
+
+    Priority order:
+    1. COGNITO_APP_CLIENT_ID environment variable
+    2. cognito_app_client_id in ~/.ursa/ursa-config.yaml
+
+    Raises:
+        typer.Exit(1) if not configured anywhere.
+    """
+    from daylib.ursa_config import get_ursa_config, DEFAULT_CONFIG_PATH
+
+    # First check environment variable
+    client_id = os.environ.get("COGNITO_APP_CLIENT_ID")
+    if client_id:
+        return client_id
+
+    # Then check config file
+    ursa_config = get_ursa_config()
+    if ursa_config.cognito_app_client_id:
+        return ursa_config.cognito_app_client_id
+
+    # Not configured anywhere
+    console.print("[red]✗[/red]  Cognito App Client ID not configured")
+    console.print("   Set via environment: [cyan]export COGNITO_APP_CLIENT_ID=your-client-id[/cyan]")
+    console.print(f"   Or in config file:   [cyan]{DEFAULT_CONFIG_PATH}[/cyan] → [dim]cognito_app_client_id: ...[/dim]")
+    raise typer.Exit(1)
 
 
 def _generate_temp_password() -> str:
@@ -330,10 +399,8 @@ def add_user(
 
     try:
         import boto3
-        from daylib.config import get_settings
 
-        settings = get_settings()
-        region = settings.get_effective_region()
+        region = _get_cognito_region()
         cognito = boto3.client("cognito-idp", region_name=region)
 
         # Generate password if not provided
@@ -390,10 +457,8 @@ def list_users(
 
     try:
         import boto3
-        from daylib.config import get_settings
 
-        settings = get_settings()
-        region = settings.get_effective_region()
+        region = _get_cognito_region()
         cognito = boto3.client("cognito-idp", region_name=region)
 
         table = Table(title=f"Cognito Users ({pool_id})")
@@ -453,10 +518,8 @@ def export_users(
         from datetime import datetime
 
         import boto3
-        from daylib.config import get_settings
 
-        settings = get_settings()
-        region = settings.get_effective_region()
+        region = _get_cognito_region()
         cognito = boto3.client("cognito-idp", region_name=region)
 
         console.print(f"[cyan]Exporting users from pool {pool_id}...[/cyan]")
@@ -513,10 +576,8 @@ def delete_user(
 
     try:
         import boto3
-        from daylib.config import get_settings
 
-        settings = get_settings()
-        region = settings.get_effective_region()
+        region = _get_cognito_region()
         cognito = boto3.client("cognito-idp", region_name=region)
 
         cognito.admin_delete_user(UserPoolId=pool_id, Username=email)
@@ -544,10 +605,8 @@ def delete_all_users(
 
     try:
         import boto3
-        from daylib.config import get_settings
 
-        settings = get_settings()
-        region = settings.get_effective_region()
+        region = _get_cognito_region()
         cognito = boto3.client("cognito-idp", region_name=region)
 
         console.print(f"[cyan]Deleting all users from pool {pool_id}...[/cyan]")
@@ -582,10 +641,8 @@ def teardown(
 
     try:
         import boto3
-        from daylib.config import get_settings
 
-        settings = get_settings()
-        region = settings.get_effective_region()
+        region = _get_cognito_region()
         cognito = boto3.client("cognito-idp", region_name=region)
 
         # Get pool ID from env or find by name

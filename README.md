@@ -168,7 +168,7 @@ AWS_DEFAULT_REGION=us-west-2
 
 # S3 Configuration
 # NOTE: S3 buckets are discovered from cluster tags (aws-parallelcluster-monitor-bucket)
-# No bucket environment variables are required. See ~/.ursa/ursa.yaml for region config.
+# No bucket environment variables are required. See ~/.ursa/ursa-config.yaml for region config.
 
 # DynamoDB Tables (auto-created if missing)
 WORKSET_TABLE_NAME=daylily-worksets

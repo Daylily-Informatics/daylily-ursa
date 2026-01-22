@@ -93,25 +93,30 @@ def start(
         console.print(f"   URL: [cyan]http://{host}:{port}[/cyan]")
         return
 
-    # Check AWS_PROFILE
-    if not os.environ.get("AWS_PROFILE"):
+    # Check AWS_PROFILE (from env or config file)
+    from daylib.ursa_config import get_ursa_config, DEFAULT_CONFIG_PATH
+    ursa_config = get_ursa_config()
+
+    aws_profile = os.environ.get("AWS_PROFILE") or ursa_config.aws_profile
+    if not aws_profile:
         console.print("[red]✗[/red]  AWS_PROFILE not set")
-        console.print("   Set it with: [cyan]export AWS_PROFILE=your-profile[/cyan]")
+        console.print("   Set via environment: [cyan]export AWS_PROFILE=your-profile[/cyan]")
+        console.print(f"   Or in config file:   [cyan]{DEFAULT_CONFIG_PATH}[/cyan]")
         raise typer.Exit(1)
 
-    # Check ~/.ursa/config.yaml for region/bucket configuration
-    from daylib.ursa_config import get_ursa_config
-    ursa_config = get_ursa_config()
+    # Set in environment for subprocess and boto3
+    if not os.environ.get("AWS_PROFILE"):
+        os.environ["AWS_PROFILE"] = aws_profile
+
+    # Check config file for region configuration
     if not ursa_config.is_configured:
-        console.print("[yellow]⚠[/yellow]  No regions configured in ~/.ursa/config.yaml")
-        console.print("   Cluster discovery requires region-to-bucket mappings.")
-        console.print("   Create [cyan]~/.ursa/config.yaml[/cyan] with:")
+        console.print(f"[yellow]⚠[/yellow]  No regions configured in {DEFAULT_CONFIG_PATH}")
+        console.print("   Cluster discovery requires region definitions.")
+        console.print(f"   Create [cyan]{DEFAULT_CONFIG_PATH}[/cyan] with:")
         console.print("")
         console.print("[dim]   regions:")
-        console.print("     us-west-2:")
-        console.print("       bucket: s3://your-bucket-us-west-2")
-        console.print("     us-east-1:")
-        console.print("       bucket: s3://your-bucket-us-east-1[/dim]")
+        console.print("     - us-west-2")
+        console.print("     - us-east-1[/dim]")
     else:
         regions = ursa_config.get_allowed_regions()
         console.print(f"[green]✓[/green]  Ursa config loaded: [cyan]{len(regions)} regions[/cyan]")

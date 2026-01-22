@@ -1483,7 +1483,7 @@ def create_app(
             - manifest_tsv_content: Raw stage_samples.tsv content
 
             Bucket is determined by:
-            - preferred_cluster: If provided, bucket is derived from cluster's region via ~/.ursa/config.yaml
+            - preferred_cluster: If provided, bucket is derived from cluster's tags (aws-parallelcluster-monitor-bucket)
             - Fallback to legacy DAYLILY_CONTROL_BUCKET env var if no cluster selected
             """
             from daylib.ursa_config import get_ursa_config
@@ -3155,7 +3155,7 @@ def create_app(
                 return {
                     "clusters": [],
                     "regions": [],
-                    "error": "No regions configured. Create ~/.ursa/config.yaml with region definitions.",
+                    "error": "No regions configured. Create ~/.ursa/ursa-config.yaml with region definitions.",
                 }
 
             # Use global singleton to share cache across requests

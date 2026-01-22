@@ -143,6 +143,17 @@ if [ "$_URSA_ACTIVATE_OK" -eq 1 ]; then
     else
         log_warn "Failed to install package - some features may not work"
     fi
+
+    # ========== Check Ursa Config File ==========
+    URSA_CONFIG_FILE="${HOME}/.ursa/ursa-config.yaml"
+    URSA_CONFIG_EXAMPLE="${SCRIPT_DIR}/config/ursa-config.example.yaml"
+
+    if [ -f "$URSA_CONFIG_FILE" ]; then
+        log_success "Config file found: ${URSA_CONFIG_FILE}"
+    else
+        log_warn "Config file not found: ${URSA_CONFIG_FILE}"
+        printf "   Create it with: ${CYAN}mkdir -p ~/.ursa && cp ${URSA_CONFIG_EXAMPLE} ${URSA_CONFIG_FILE}${NC}\n"
+    fi
 fi
 
 # ========== Tab Completion ==========

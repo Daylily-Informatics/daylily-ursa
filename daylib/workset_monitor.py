@@ -138,7 +138,7 @@ class MonitorOptions:
     """Monitor configuration options.
 
     Note: The monitor does not have a default bucket. Each workset has its own bucket
-    assigned during creation based on the selected cluster's region (from ~/.ursa/config.yaml).
+    assigned during creation based on the selected cluster's region (from ~/.ursa/ursa-config.yaml).
     """
 
     prefix: str
@@ -898,7 +898,7 @@ class WorksetMonitor:
                 LOGGER.error(
                     "Workset %s has no bucket assigned in DynamoDB. "
                     "Worksets must be created via the portal with a cluster selection "
-                    "to assign a region-specific bucket from ~/.ursa/config.yaml.",
+                    "to assign a region-specific bucket from ~/.ursa/ursa-config.yaml.",
                     workset_id
                 )
                 continue
