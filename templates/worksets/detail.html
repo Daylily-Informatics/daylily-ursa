@@ -248,14 +248,12 @@
 
     <!-- Cost, Resource, and Execution Cards Row -->
     <div class="metrics-row mb-lg">
-        <!-- Cost Summary -->
+        <!-- Compute Cost -->
         <div class="card metrics-card" id="cost-card">
-            <h4 class="card-title-sm"><i class="fas fa-dollar-sign"></i> Cost</h4>
-            <div class="metric-main" id="cost-main-display">${{ "%.2f"|format(workset.cost_usd | default(0)) }}</div>
+            <h4 class="card-title-sm"><i class="fas fa-microchip"></i> Compute Cost</h4>
+            <div class="metric-main" id="cost-main-display">${{ "%.2f"|format(workset.compute_cost | default(workset.cost_usd | default(0))) }}</div>
             <div class="metric-breakdown" id="cost-breakdown-display">
-                <span id="compute-cost-display">Compute: ${{ "%.2f"|format(workset.compute_cost | default(0)) }}</span>
-                <span>Storage: ${{ "%.2f"|format(workset.storage_cost | default(0)) }}</span>
-                <span>Transfer: ${{ "%.2f"|format(workset.transfer_cost | default(0)) }}</span>
+                <span id="compute-cost-display" class="text-muted">Pipeline execution cost</span>
             </div>
             <div id="actual-cost-badge" class="mt-xs" style="display: none;">
                 <span class="badge badge-success" style="font-size: 0.7rem;">
@@ -298,7 +296,7 @@
         <!-- Storage Costs -->
         {% if workset.storage_available and workset.state in ['complete', 'error', 'archived'] %}
         <div class="card metrics-card">
-            <h4 class="card-title-sm"><i class="fas fa-dollar-sign"></i> Storage Cost</h4>
+            <h4 class="card-title-sm"><i class="fas fa-database"></i> Storage Cost</h4>
             <div class="metric-breakdown-vertical">
                 <div>
                     <span class="text-muted">Daily:</span>
@@ -309,6 +307,42 @@
                     <span class="text-muted">Total:</span>
                     ${{ "%.2f"|format(workset.storage_cost_total | default(0)) }}
                     <span class="text-xs text-muted">({{ workset.storage_days | default(0) }} days)</span>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Transfer Costs -->
+        {% if workset.storage_available and workset.state in ['complete', 'error', 'archived'] %}
+        <div class="card metrics-card">
+            <h4 class="card-title-sm"><i class="fas fa-exchange-alt"></i> Transfer Cost</h4>
+            <div class="metric-breakdown-vertical">
+                <div>
+                    <span class="text-muted">Internet:</span>
+                    {% if workset.transfer_cost_internet >= 1 %}
+                    ${{ "%.2f"|format(workset.transfer_cost_internet | default(0)) }}
+                    {% else %}
+                    ${{ "%.4f"|format(workset.transfer_cost_internet | default(0)) }}
+                    {% endif %}
+                    <span class="text-xs text-muted">($0.09/GB)</span>
+                </div>
+                <div>
+                    <span class="text-muted">Cross-Region:</span>
+                    {% if workset.transfer_cost_cross_region >= 1 %}
+                    ${{ "%.2f"|format(workset.transfer_cost_cross_region | default(0)) }}
+                    {% else %}
+                    ${{ "%.4f"|format(workset.transfer_cost_cross_region | default(0)) }}
+                    {% endif %}
+                    <span class="text-xs text-muted">($0.02/GB)</span>
+                </div>
+                <div>
+                    <span class="text-muted">Same-Region:</span>
+                    {% if workset.transfer_cost_same_region >= 1 %}
+                    ${{ "%.2f"|format(workset.transfer_cost_same_region | default(0)) }}
+                    {% else %}
+                    ${{ "%.4f"|format(workset.transfer_cost_same_region | default(0)) }}
+                    {% endif %}
+                    <span class="text-xs text-muted">($0.01/GB)</span>
                 </div>
             </div>
         </div>
@@ -367,13 +401,13 @@
                     <i class="fas fa-spinner fa-spin"></i> Loading performance metrics...
                 </div>
                 <div id="performance-metrics-content" style="display: none; padding: var(--spacing-md);">
-                    <!-- Cost Summary -->
+                    <!-- Compute Cost -->
                     <div id="cost-summary-section" style="display: none;">
-                        <h4 class="text-sm mb-sm"><i class="fas fa-dollar-sign text-success"></i> Cost Summary</h4>
+                        <h4 class="text-sm mb-sm"><i class="fas fa-microchip text-success"></i> Compute Cost</h4>
                         <div class="grid grid-3 gap-md mb-md">
                             <div class="text-center">
                                 <div class="text-lg" id="total-cost">-</div>
-                                <div class="text-muted text-xs">Total Cost</div>
+                                <div class="text-muted text-xs">Compute Cost</div>
                             </div>
                             <div class="text-center">
                                 <div class="text-lg" id="rule-count">-</div>
@@ -679,14 +713,10 @@ async function downloadSnakemakeLogs(wsId) {
 // Update cost card with actual compute costs from performance metrics
 function updateCostCard(costSummary) {
     const totalActualCost = costSummary.total_cost || 0;
-    const storageCost = {{ workset.storage_cost | default(0) }};
-    const transferCost = {{ workset.transfer_cost | default(0) }};
-    const totalCost = totalActualCost + storageCost + transferCost;
 
-    // Update main cost display
-    document.getElementById('cost-main-display').textContent = `$${totalCost.toFixed(2)}`;
-    document.getElementById('compute-cost-display').innerHTML =
-        `Compute: <strong>$${totalActualCost.toFixed(2)}</strong>`;
+    // Update main cost display (compute cost only)
+    document.getElementById('cost-main-display').textContent = `$${totalActualCost.toFixed(2)}`;
+    document.getElementById('compute-cost-display').textContent = 'Pipeline execution cost';
 
     // Show actual cost badge
     document.getElementById('actual-cost-badge').style.display = 'block';

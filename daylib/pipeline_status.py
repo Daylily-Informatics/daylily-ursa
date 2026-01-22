@@ -489,8 +489,11 @@ class PipelineStatusFetcher:
                 - per_sample_costs: Dict[sample_name, cost]
                 - total_cost: Total cost for all rules
                 - rule_count: Number of rules
-                - sample_count: Number of unique samples
+                - sample_count: Number of unique samples (excludes pseudo-samples like 'all.')
         """
+        # Pseudo-samples that are aggregate rules, not real samples
+        PSEUDO_SAMPLES = {"all.", "all", "unknown"}
+
         per_sample: Dict[str, float] = {}
         total_cost = 0.0
 
@@ -504,11 +507,14 @@ class PipelineStatusFetcher:
             except (ValueError, TypeError):
                 continue
 
+        # Filter out pseudo-samples for the per-sample cost display
+        real_sample_costs = {k: v for k, v in per_sample.items() if k not in PSEUDO_SAMPLES}
+
         return {
-            "per_sample_costs": per_sample,
+            "per_sample_costs": real_sample_costs,
             "total_cost": round(total_cost, 4),
             "rule_count": len(benchmark_data),
-            "sample_count": len(per_sample),
+            "sample_count": len(real_sample_costs),
         }
 
     # ==========================================================================

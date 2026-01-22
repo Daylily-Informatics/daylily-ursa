@@ -225,6 +225,16 @@ def _extract_workset_metrics(workset: Dict[str, Any]) -> Dict[str, Any]:
     workset["storage_cost_total"] = round(workset["storage_cost_daily"] * storage_days, 2) if storage_days > 0 else 0
     workset["storage_class"] = "S3 Standard"  # Default for recent exports
 
+    # Calculate transfer costs based on storage size
+    # AWS data transfer pricing (approximate, varies by region)
+    TRANSFER_INTERNET_PER_GB = 0.09  # Data transfer out to internet
+    TRANSFER_CROSS_REGION_PER_GB = 0.02  # Data transfer to different AWS region
+    TRANSFER_SAME_REGION_PER_GB = 0.01  # Data transfer within same region
+
+    workset["transfer_cost_internet"] = round(storage_gb * TRANSFER_INTERNET_PER_GB, 4) if storage_gb > 0 else 0
+    workset["transfer_cost_cross_region"] = round(storage_gb * TRANSFER_CROSS_REGION_PER_GB, 4) if storage_gb > 0 else 0
+    workset["transfer_cost_same_region"] = round(storage_gb * TRANSFER_SAME_REGION_PER_GB, 4) if storage_gb > 0 else 0
+
     # Extract vCPU hours and memory GB-hours from benchmark_data
     vcpu_hours = 0.0
     memory_gb_hours = 0.0
