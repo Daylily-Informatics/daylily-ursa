@@ -145,6 +145,7 @@ class WorksetCreate(BaseModel):
     workset_type: WorksetType = Field(WorksetType.RUO, description="Workset classification type (clinical, ruo, lsmc)")
     metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata (must include samples)")
     customer_id: str = Field(..., description="Customer ID who owns this workset (required)")
+    preferred_cluster: Optional[str] = Field(None, description="User-selected preferred cluster for execution")
 
 
 class WorksetResponse(BaseModel):

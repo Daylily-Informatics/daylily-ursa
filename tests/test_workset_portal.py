@@ -1446,3 +1446,146 @@ class TestFileSearchAPI:
 
         assert len(results_upper) == len(results_lower) == len(results_mixed) == 2
 
+
+# ========== Tests for multi-region awareness features ==========
+
+
+class TestBucketRegionDetectionAPI:
+    """Test bucket region detection API endpoint."""
+
+    def test_bucket_region_detection_us_east_1(self, client):
+        """Test bucket region detection returns us-east-1 for None location."""
+        with patch("daylib.workset_api.boto3.Session") as mock_session:
+            mock_s3 = MagicMock()
+            mock_session.return_value.client.return_value = mock_s3
+            # S3 returns None for us-east-1 buckets
+            mock_s3.get_bucket_location.return_value = {"LocationConstraint": None}
+
+            response = client.get("/api/s3/bucket-region/test-bucket-east")
+
+            assert response.status_code == 200
+            data = response.json()
+            assert data["bucket"] == "test-bucket-east"
+            assert data["region"] == "us-east-1"
+
+    def test_bucket_region_detection_us_west_2(self, client):
+        """Test bucket region detection returns correct region."""
+        with patch("daylib.workset_api.boto3.Session") as mock_session:
+            mock_s3 = MagicMock()
+            mock_session.return_value.client.return_value = mock_s3
+            mock_s3.get_bucket_location.return_value = {"LocationConstraint": "us-west-2"}
+
+            response = client.get("/api/s3/bucket-region/test-bucket-west")
+
+            assert response.status_code == 200
+            data = response.json()
+            assert data["bucket"] == "test-bucket-west"
+            assert data["region"] == "us-west-2"
+
+    def test_bucket_region_detection_not_found(self, client):
+        """Test bucket region detection handles non-existent bucket."""
+        from botocore.exceptions import ClientError
+
+        with patch("daylib.workset_api.boto3.Session") as mock_session:
+            mock_s3 = MagicMock()
+            mock_session.return_value.client.return_value = mock_s3
+            mock_s3.get_bucket_location.side_effect = ClientError(
+                {"Error": {"Code": "NoSuchBucket", "Message": "Bucket not found"}},
+                "GetBucketLocation",
+            )
+
+            response = client.get("/api/s3/bucket-region/nonexistent-bucket")
+
+            assert response.status_code == 404
+            data = response.json()
+            assert "not found" in data["detail"].lower() or "NoSuchBucket" in data["detail"]
+
+    def test_bucket_region_detection_access_denied(self, client):
+        """Test bucket region detection handles access denied."""
+        from botocore.exceptions import ClientError
+
+        with patch("daylib.workset_api.boto3.Session") as mock_session:
+            mock_s3 = MagicMock()
+            mock_session.return_value.client.return_value = mock_s3
+            mock_s3.get_bucket_location.side_effect = ClientError(
+                {"Error": {"Code": "AccessDenied", "Message": "Access Denied"}},
+                "GetBucketLocation",
+            )
+
+            response = client.get("/api/s3/bucket-region/private-bucket")
+
+            assert response.status_code == 403
+            data = response.json()
+            assert "access" in data["detail"].lower() or "denied" in data["detail"].lower()
+
+
+class TestWorksetCreationWithPreferredCluster:
+    """Test workset creation with preferred_cluster field."""
+
+    def test_create_workset_with_preferred_cluster(self, client, mock_state_db):
+        """Test creating workset with preferred_cluster."""
+        mock_state_db.register_workset.return_value = True
+        mock_state_db.get_workset.return_value = {
+            "workset_id": "test-ws-cluster",
+            "state": "ready",
+            "priority": "normal",
+            "workset_type": "ruo",
+            "bucket": "test-bucket",
+            "prefix": "worksets/test/",
+            "created_at": "2024-01-15T10:00:00Z",
+            "updated_at": "2024-01-15T10:00:00Z",
+            "preferred_cluster": "daylily-us-west-2-001",
+        }
+
+        response = client.post(
+            "/worksets",
+            json={
+                "workset_id": "test-ws-cluster",
+                "bucket": "test-bucket",
+                "prefix": "worksets/test/",
+                "priority": "normal",
+                "workset_type": "ruo",
+                "customer_id": "test-customer",
+                "metadata": {"samples": [{"sample_id": "S1"}]},
+                "preferred_cluster": "daylily-us-west-2-001",
+            },
+        )
+
+        assert response.status_code == 201
+        # Verify register_workset was called with preferred_cluster
+        mock_state_db.register_workset.assert_called_once()
+        call_kwargs = mock_state_db.register_workset.call_args.kwargs
+        assert call_kwargs.get("preferred_cluster") == "daylily-us-west-2-001"
+
+    def test_create_workset_without_preferred_cluster(self, client, mock_state_db):
+        """Test creating workset without preferred_cluster."""
+        mock_state_db.register_workset.return_value = True
+        mock_state_db.get_workset.return_value = {
+            "workset_id": "test-ws-no-cluster",
+            "state": "ready",
+            "priority": "normal",
+            "workset_type": "ruo",
+            "bucket": "test-bucket",
+            "prefix": "worksets/test/",
+            "created_at": "2024-01-15T10:00:00Z",
+            "updated_at": "2024-01-15T10:00:00Z",
+        }
+
+        response = client.post(
+            "/worksets",
+            json={
+                "workset_id": "test-ws-no-cluster",
+                "bucket": "test-bucket",
+                "prefix": "worksets/test/",
+                "priority": "normal",
+                "workset_type": "ruo",
+                "customer_id": "test-customer",
+                "metadata": {"samples": [{"sample_id": "S1"}]},
+            },
+        )
+
+        assert response.status_code == 201
+        # Verify register_workset was called with preferred_cluster=None
+        mock_state_db.register_workset.assert_called_once()
+        call_kwargs = mock_state_db.register_workset.call_args.kwargs
+        assert call_kwargs.get("preferred_cluster") is None

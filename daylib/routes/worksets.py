@@ -60,6 +60,7 @@ def create_worksets_router(
                 workset_type=workset.workset_type,
                 metadata=workset.metadata,
                 customer_id=workset.customer_id,
+                preferred_cluster=workset.preferred_cluster,
             )
         except ValueError as e:
             raise HTTPException(

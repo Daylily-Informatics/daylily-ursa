@@ -27,7 +27,14 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     supported_actions = ", ".join(
         WorksetMonitor.DEFAULT_ACTION_SEQUENCE + WorksetMonitor.OPTIONAL_ACTIONS
     )
-    parser.add_argument("config", type=Path, help="Path to the YAML configuration file")
+    parser.add_argument(
+        "config",
+        type=Path,
+        nargs="?",
+        default=None,
+        help="Path to the YAML configuration file. If omitted, searches: "
+             "~/.ursa/workset-monitor-config.yaml, then ./config/workset-monitor-config.yaml",
+    )
     parser.add_argument(
         "--once",
         action="store_true",
@@ -176,7 +183,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     args = parse_args(argv)
     configure_logging(args.verbose)
 
-    config = MonitorConfig.load(args.config)
+    # Find config file using search path priority
+    try:
+        config_path = MonitorConfig.find_config(args.config)
+    except FileNotFoundError as e:
+        LOGGER.error("%s", e)
+        return 1
+
+    config = MonitorConfig.load(config_path)
     if args.once and not args.actions:
         config.monitor.continuous = False
 

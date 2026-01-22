@@ -244,6 +244,13 @@ class WorksetReportRow:
         return self.display_state or self.state
 
 
+# Default config search paths (in priority order)
+DEFAULT_CONFIG_SEARCH_PATHS: Tuple[str, ...] = (
+    "~/.ursa/workset-monitor-config.yaml",
+    "./config/workset-monitor-config.yaml",
+)
+
+
 @dataclasses.dataclass
 class MonitorConfig:
     aws: AWSConfig
@@ -261,6 +268,47 @@ class MonitorConfig:
         pipeline_cfg = PipelineOptions(**data["pipeline"])
         return MonitorConfig(
             aws=aws_cfg, monitor=monitor_cfg, cluster=cluster_cfg, pipeline=pipeline_cfg
+        )
+
+    @staticmethod
+    def find_config(explicit_path: Optional[Path] = None) -> Path:
+        """Find config file using search path priority.
+
+        Priority order:
+        1. Explicit path (if provided and exists)
+        2. ~/.ursa/workset-monitor-config.yaml
+        3. ./config/workset-monitor-config.yaml
+
+        Args:
+            explicit_path: Optional explicit config path from CLI
+
+        Returns:
+            Path to the config file
+
+        Raises:
+            FileNotFoundError: If no config file found
+        """
+        # If explicit path provided, use it (let load() handle missing file error)
+        if explicit_path is not None:
+            expanded = Path(os.path.expanduser(str(explicit_path)))
+            if expanded.exists():
+                LOGGER.info("Using explicit config: %s", expanded)
+                return expanded
+            # If explicit path doesn't exist, still return it to get proper error
+            return expanded
+
+        # Search default paths in priority order
+        for search_path in DEFAULT_CONFIG_SEARCH_PATHS:
+            expanded = Path(os.path.expanduser(search_path))
+            if expanded.exists():
+                LOGGER.info("Found config at: %s", expanded)
+                return expanded
+
+        # No config found
+        searched = ", ".join(DEFAULT_CONFIG_SEARCH_PATHS)
+        raise FileNotFoundError(
+            f"No config file found. Searched: {searched}\n"
+            f"Create one at ~/.ursa/workset-monitor-config.yaml or provide explicit path."
         )
 
 
@@ -1595,7 +1643,7 @@ class WorksetMonitor:
 
     def _process_workset(self, workset: Workset) -> None:
         inputs = self._load_workset_inputs(workset)
-        cluster_name = self._ensure_cluster(inputs.work_yaml)
+        cluster_name = self._ensure_cluster(inputs.work_yaml, workset)
         LOGGER.info("Using cluster %s for workset %s", cluster_name, workset.name)
         self._update_metrics(workset, {"cluster_name": cluster_name})
 
@@ -3935,12 +3983,77 @@ class WorksetMonitor:
             cluster_name,
         )
 
-    def _ensure_cluster(self, work_yaml: Dict[str, object]) -> str:
+    def _ensure_cluster(
+        self, work_yaml: Dict[str, object], workset: Optional[Workset] = None
+    ) -> str:
+        """Ensure a cluster is available for workset processing.
+
+        Priority order:
+        1. Workset-specific preferred_cluster (user selection via portal)
+        2. Config-level reuse_cluster_name (global config default)
+        3. Find existing running cluster
+        4. Create new cluster
+
+        User selections override global defaults to allow per-workset cluster targeting.
+
+        Args:
+            work_yaml: Workset configuration
+            workset: Optional workset to check for preferred cluster
+
+        Returns:
+            Cluster name to use for processing
+        """
+        # 1. Check for user-selected preferred cluster from DynamoDB (highest priority)
+        preferred_cluster = None
+        if workset and self.state_db:
+            try:
+                workset_data = self.state_db.get_workset(workset.name)
+                if workset_data:
+                    preferred_cluster = workset_data.get("preferred_cluster")
+                    if preferred_cluster:
+                        # Verify the preferred cluster is available
+                        details = self._describe_cluster(preferred_cluster)
+                        if details and self._cluster_is_ready(details):
+                            LOGGER.info(
+                                "Using user-preferred cluster %s for workset %s (overrides global config)",
+                                preferred_cluster,
+                                workset.name,
+                            )
+                            return preferred_cluster
+                        else:
+                            LOGGER.warning(
+                                "Preferred cluster %s is not available for workset %s, "
+                                "falling back to config/discovery",
+                                preferred_cluster,
+                                workset.name,
+                            )
+            except Exception as e:
+                LOGGER.warning(
+                    "Failed to check preferred cluster for %s: %s",
+                    workset.name,
+                    str(e),
+                )
+
+        # 2. Config-level reuse_cluster_name (global default)
         if self.config.cluster.reuse_cluster_name:
+            LOGGER.info(
+                "Using config-specified cluster: %s",
+                self.config.cluster.reuse_cluster_name,
+            )
             return self.config.cluster.reuse_cluster_name
+
+        # 3. Find existing running cluster
         existing = self._find_existing_cluster()
         if existing:
+            if preferred_cluster:
+                LOGGER.info(
+                    "Fallback: using existing cluster %s instead of unavailable preferred cluster %s",
+                    existing,
+                    preferred_cluster,
+                )
             return existing
+
+        # 4. Create new cluster
         return self._create_cluster(work_yaml)
 
     def _pcluster_env(self) -> Dict[str, str]:

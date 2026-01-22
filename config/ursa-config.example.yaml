@@ -1,0 +1,28 @@
+# Ursa Configuration Example
+# Copy this file to ~/.ursa/config.yaml and customize
+#
+# This file defines:
+# - AWS regions to scan for ParallelCluster instances
+# - S3 bucket for each region (used for workset registration)
+
+# Optional: Default AWS profile (can be overridden by AWS_PROFILE env var)
+# aws_profile: lsmc
+
+# Region to bucket mappings
+# Each region should have a bucket in that region for data locality
+regions:
+  us-west-2:
+    bucket: s3://your-bucket-us-west-2
+    # enabled: true  # default
+
+  us-east-1:
+    bucket: s3://your-bucket-us-east-1
+
+  eu-west-1:
+    bucket: s3://your-bucket-eu-west-1
+
+  # Disable a region without removing it
+  # eu-central-1:
+  #   bucket: s3://your-bucket-eu-central-1
+  #   enabled: false
+

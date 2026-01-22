@@ -466,6 +466,7 @@ def create_app(
                 workset_type=workset.workset_type,
                 metadata=workset.metadata,
                 customer_id=workset.customer_id,
+                preferred_cluster=workset.preferred_cluster,
             )
         except ValueError as e:
             raise HTTPException(
@@ -1468,6 +1469,7 @@ def create_app(
             yaml_content: Optional[str] = Body(None, embed=True),
             manifest_id: Optional[str] = Body(None, embed=True),
             manifest_tsv_content: Optional[str] = Body(None, embed=True),
+            preferred_cluster: Optional[str] = Body(None, embed=True),
         ):
             """Create a new workset for a customer from the portal form.
 
@@ -1479,7 +1481,13 @@ def create_app(
             - yaml_content: YAML with samples array
             - manifest_id: ID of a saved manifest (retrieves TSV from ManifestRegistry)
             - manifest_tsv_content: Raw stage_samples.tsv content
+
+            Bucket is determined by:
+            - preferred_cluster: If provided, bucket is derived from cluster's region via ~/.ursa/config.yaml
+            - Fallback to legacy DAYLILY_CONTROL_BUCKET env var if no cluster selected
             """
+            from daylib.ursa_config import get_ursa_config
+
             if not customer_manager:
                 raise HTTPException(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -1506,20 +1514,48 @@ def create_app(
             date_suffix = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d")
             workset_id = f"{safe_name}-{uuid.uuid4().hex[:8]}-{date_suffix}"
 
-            # Use control-plane bucket (monitor bucket) for workset registration
+            # Determine bucket from preferred_cluster's region or fallback
             bucket = None
-            if integration and integration.bucket:
-                bucket = integration.bucket
+            cluster_region = None
+            ursa_config = get_ursa_config()
+
+            if preferred_cluster:
+                # Extract region from cluster name (e.g., "lfg-usw2d" -> need to look up)
+                # First, try to get cluster info to find its region
+                try:
+                    from daylib.cluster_service import ClusterService
+                    service = ClusterService(
+                        regions=ursa_config.get_allowed_regions() or settings.get_allowed_regions(),
+                        aws_profile=ursa_config.aws_profile or settings.aws_profile,
+                    )
+                    all_clusters = service.get_all_clusters_with_status(force_refresh=False)
+                    for c in all_clusters:
+                        if c.cluster_name == preferred_cluster:
+                            cluster_region = c.region
+                            break
+                except Exception as e:
+                    LOGGER.warning("Failed to look up cluster %s region: %s", preferred_cluster, e)
+
+                # Get bucket from region config
+                if cluster_region and ursa_config.is_configured:
+                    bucket = ursa_config.get_bucket_name_for_region(cluster_region)
+                    if bucket:
+                        LOGGER.info("Using bucket %s from cluster %s in region %s",
+                                    bucket, preferred_cluster, cluster_region)
+
+            # Fallback: integration layer bucket or legacy env var
             if not bucket:
-                # Get from settings via app.state
-                app_settings = request.app.state.settings
-                bucket = app_settings.get_control_bucket()
+                if integration and integration.bucket:
+                    bucket = integration.bucket
+                if not bucket:
+                    app_settings = request.app.state.settings
+                    bucket = app_settings.get_control_bucket()
+
             if not bucket:
                 error_detail = (
                     "Control bucket is not configured for workset registration. "
-                    "Please set DAYLILY_CONTROL_BUCKET or DAYLILY_MONITOR_BUCKET environment variable, "
-                    "or pass --control-bucket to the API server. "
-                    "See CONTROL_BUCKET_CONFIGURATION_GUIDE.md for details."
+                    "Either select a cluster (bucket derived from ~/.ursa/config.yaml), "
+                    "or configure DAYLILY_CONTROL_BUCKET environment variable."
                 )
                 LOGGER.error(error_detail)
                 raise HTTPException(
@@ -1622,15 +1658,28 @@ def create_app(
                 "sample_count": len(normalized_samples),
                 "data_bucket": config.s3_bucket,
                 "data_buckets": [config.s3_bucket] if config.s3_bucket else [],
+                "preferred_cluster": preferred_cluster,
+                "cluster_region": cluster_region,
             }
 
             # If we have raw TSV content (from manifest), pass it for direct S3 write
             if manifest_tsv_for_s3:
                 metadata["stage_samples_tsv"] = manifest_tsv_for_s3
 
-            # Use integration layer if available for unified registration
-            if integration:
-                success = integration.register_workset(
+            # Use integration layer for unified registration (DynamoDB + S3)
+            # If no global integration exists but we have a bucket, create one ad-hoc
+            effective_integration = integration
+            if not effective_integration and bucket and INTEGRATION_AVAILABLE:
+                LOGGER.info("Creating ad-hoc integration for bucket %s", bucket)
+                effective_integration = WorksetIntegration(
+                    state_db=state_db,
+                    bucket=bucket,
+                    region=ursa_config.get_region_for_bucket(bucket) or settings.aws_region,
+                    profile=ursa_config.aws_profile or settings.aws_profile,
+                )
+
+            if effective_integration:
+                success = effective_integration.register_workset(
                     workset_id=workset_id,
                     bucket=bucket,
                     prefix=prefix,
@@ -1638,11 +1687,13 @@ def create_app(
                     workset_type=ws_type.value,
                     metadata=metadata,
                     customer_id=customer_id,
+                    preferred_cluster=preferred_cluster,
                     write_s3=True,
                     write_dynamodb=True,
                 )
             else:
-                # Fallback to DynamoDB-only registration
+                # Fallback to DynamoDB-only registration (no S3 files)
+                LOGGER.warning("No integration layer available - S3 files will NOT be created")
                 try:
                     ws_priority = WorksetPriority(priority)
                 except ValueError:
@@ -1657,6 +1708,7 @@ def create_app(
                         workset_type=ws_type,
                         metadata=metadata,
                         customer_id=customer_id,
+                        preferred_cluster=preferred_cluster,
                     )
                 except ValueError as e:
                     raise HTTPException(
@@ -3018,6 +3070,50 @@ def create_app(
             "apply_command": f"aws s3api put-bucket-policy --bucket {bucket_name} --policy file://bucket-policy.json",
         }
 
+    @app.get("/api/s3/bucket-region/{bucket_name}", tags=["utilities"])
+    async def get_bucket_region(
+        bucket_name: str,
+        current_user: Optional[Dict] = Depends(get_current_user),
+    ):
+        """Get the AWS region where an S3 bucket is located.
+
+        Args:
+            bucket_name: S3 bucket name
+
+        Returns:
+            Bucket region information.
+        """
+        import boto3
+        from botocore.exceptions import ClientError
+
+        try:
+            session_kwargs = {}
+            if profile:
+                session_kwargs["profile_name"] = profile
+            session = boto3.Session(**session_kwargs)
+            s3_client = session.client("s3")
+
+            # get_bucket_location returns None for us-east-1, otherwise the region
+            response = s3_client.get_bucket_location(Bucket=bucket_name)
+            location = response.get("LocationConstraint")
+            # us-east-1 returns None or empty string
+            bucket_region = location if location else "us-east-1"
+
+            return {
+                "bucket": bucket_name,
+                "region": bucket_region,
+            }
+        except ClientError as e:
+            error_code = e.response.get("Error", {}).get("Code", "Unknown")
+            if error_code == "NoSuchBucket":
+                raise HTTPException(status_code=404, detail=f"Bucket '{bucket_name}' not found")
+            elif error_code == "AccessDenied":
+                raise HTTPException(status_code=403, detail=f"Access denied to bucket '{bucket_name}'")
+            else:
+                raise HTTPException(status_code=500, detail=f"Failed to get bucket region: {str(e)}")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to get bucket region: {str(e)}")
+
     # ========== Cluster Management Endpoints ==========
 
     @app.get("/api/clusters", tags=["clusters"])
@@ -3037,18 +3133,25 @@ def create_app(
         """
         try:
             from daylib.cluster_service import ClusterService
+            from daylib.ursa_config import get_ursa_config
 
-            allowed_regions = settings.get_allowed_regions()
+            # Use UrsaConfig for regions (preferred) with fallback to legacy env var
+            ursa_config = get_ursa_config()
+            if ursa_config.is_configured:
+                allowed_regions = ursa_config.get_allowed_regions()
+            else:
+                allowed_regions = settings.get_allowed_regions()
+
             if not allowed_regions:
                 return {
                     "clusters": [],
                     "regions": [],
-                    "error": "No regions configured. Set URSA_ALLOWED_REGIONS environment variable.",
+                    "error": "No regions configured. Create ~/.ursa/config.yaml with region definitions.",
                 }
 
             service = ClusterService(
                 regions=allowed_regions,
-                aws_profile=settings.aws_profile,
+                aws_profile=ursa_config.aws_profile or settings.aws_profile,
                 cache_ttl_seconds=300,
             )
 
@@ -3069,7 +3172,7 @@ def create_app(
             LOGGER.error(f"Failed to list clusters: {e}")
             return {
                 "clusters": [],
-                "regions": settings.get_allowed_regions(),
+                "regions": [],
                 "error": str(e),
             }
 

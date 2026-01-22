@@ -81,7 +81,7 @@ cluster:
   
   # Optional: Reuse an existing cluster instead of creating new ones
   # Leave empty ("") to create clusters dynamically
-  reuse_cluster_name: "lfg-usw2d"
+  reuse_cluster_name: ""
 
 # -----------------------------------------------------------------------------
 # Pipeline Configuration

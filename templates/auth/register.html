@@ -120,6 +120,23 @@
                 </div>
             </div>
 
+            <div id="auto-provision-section">
+                <div class="form-group">
+                    <label for="bucket_region" class="form-label">Bucket Region</label>
+                    <select id="bucket_region" name="bucket_region" class="form-control form-select">
+                        {% for region in allowed_regions | default(['us-west-2', 'us-east-1', 'eu-west-1']) %}
+                        <option value="{{ region }}" {% if region == default_region %}selected{% endif %}>
+                            {{ region }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                    <p class="form-text">
+                        <i class="fas fa-info-circle text-info"></i>
+                        Select the AWS region closest to your data and compute resources to minimize transfer costs.
+                    </p>
+                </div>
+            </div>
+
             <div id="byob-section" style="display: none;">
                 <div class="form-group">
                     <label for="custom_s3_bucket" class="form-label">Your S3 Bucket Name</label>
@@ -222,8 +239,11 @@
 <script>
 function toggleBucketInput() {
     const byobSection = document.getElementById('byob-section');
+    const autoProvisionSection = document.getElementById('auto-provision-section');
     const byobRadio = document.querySelector('input[name="s3_option"][value="byob"]');
-    byobSection.style.display = byobRadio.checked ? 'block' : 'none';
+    const isByob = byobRadio.checked;
+    byobSection.style.display = isByob ? 'block' : 'none';
+    autoProvisionSection.style.display = isByob ? 'none' : 'block';
 }
 
 async function validateBucket() {

@@ -118,6 +118,18 @@ def info():
     config_dir = Path.home() / ".ursa"
     table.add_row("Config Dir", str(config_dir))
 
+    # Ursa config (regions/buckets)
+    from daylib.ursa_config import get_ursa_config
+    ursa_config = get_ursa_config()
+    if ursa_config.is_configured:
+        regions = ursa_config.get_allowed_regions()
+        table.add_row("Ursa Config", f"[green]{len(regions)} regions[/green]")
+        for region in regions:
+            bucket = ursa_config.get_bucket_name_for_region(region)
+            table.add_row(f"  {region}", f"[dim]{bucket}[/dim]")
+    else:
+        table.add_row("Ursa Config", "[yellow]not configured[/yellow]")
+
     # Check if server is running
     pid_file = config_dir / "server.pid"
     if pid_file.exists():

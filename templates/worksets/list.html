@@ -93,6 +93,7 @@
                     <th>DynamoDB Status</th>
                     <th>S3 Status</th>
                     <th>Cluster</th>
+                    <th>Region</th>
                     <th>Pipeline</th>
                     <th>Samples</th>
                     <th>Progress</th>
@@ -146,6 +147,15 @@
                     <td>
                         {% if ws.execution_cluster_name or ws.cluster_name %}
                         <code style="font-size: 0.75rem;">{{ ws.execution_cluster_name or ws.cluster_name }}</code>
+                        {% else %}
+                        <span class="text-muted">—</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if ws.execution_cluster_region or ws.assigned_cluster_region %}
+                        <span class="badge badge-secondary" style="font-size: 0.7rem; font-weight: normal;" title="AWS Region">
+                            {{ ws.execution_cluster_region or ws.assigned_cluster_region }}
+                        </span>
                         {% else %}
                         <span class="text-muted">—</span>
                         {% endif %}

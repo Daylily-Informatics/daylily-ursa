@@ -273,6 +273,7 @@ class WorksetStateDB:
         customer_id: Optional[str] = None,
         skip_validation: bool = False,
         workset_type: Optional[WorksetType] = None,
+        preferred_cluster: Optional[str] = None,
     ) -> bool:
         """Register a new workset in the database.
 
@@ -286,6 +287,7 @@ class WorksetStateDB:
             skip_validation: If True, skip customer_id and sample validation
                            (used for monitor-discovered worksets from S3)
             workset_type: Classification type (clinical, ruo, lsmc). Defaults to RUO.
+            preferred_cluster: Optional user-selected cluster for execution
 
         Returns:
             True if registered, False if already exists
@@ -324,6 +326,11 @@ class WorksetStateDB:
         # Add customer_id as a top-level field if provided
         if customer_id:
             item["customer_id"] = customer_id
+
+        # Add preferred_cluster if specified
+        if preferred_cluster:
+            item["preferred_cluster"] = preferred_cluster
+            item["affinity_reason"] = "user_selected"
 
         if metadata:
             item["metadata"] = self._serialize_metadata(metadata)

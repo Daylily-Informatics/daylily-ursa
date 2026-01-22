@@ -595,10 +595,19 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
     @router.get("/portal/register", response_class=HTMLResponse)
     async def portal_register(request: Request, error: Optional[str] = None, success: Optional[str] = None):
         """Registration page."""
+        # Get allowed regions for bucket provisioning
+        allowed_regions = deps.settings.get_allowed_regions() if deps.settings else ["us-west-2"]
+        default_region = deps.settings.aws_default_region if deps.settings else "us-west-2"
         return deps.templates.TemplateResponse(
             request,
             "auth/register.html",
-            _get_template_context(request, deps, error=error, success=success),
+            _get_template_context(
+                request, deps,
+                error=error,
+                success=success,
+                allowed_regions=allowed_regions,
+                default_region=default_region,
+            ),
         )
 
     @router.post("/portal/register", response_class=HTMLResponse)
@@ -612,6 +621,7 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         cost_center: Optional[str] = Form(None),
         s3_option: str = Form("auto"),
         custom_s3_bucket: Optional[str] = Form(None),
+        bucket_region: Optional[str] = Form(None),
     ):
         """Handle registration form submission."""
         if not deps.customer_manager:
@@ -631,6 +641,7 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
 
         try:
             custom_bucket = None
+            effective_bucket_region = bucket_region if s3_option == "auto" else None
             if s3_option == "byob" and custom_s3_bucket:
                 custom_bucket = custom_s3_bucket.strip()
                 if custom_bucket:
@@ -651,6 +662,7 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                 billing_account_id=billing_account_id,
                 cost_center=cost_center,
                 custom_s3_bucket=custom_bucket,
+                bucket_region=effective_bucket_region,
             )
             LOGGER.info(f"Registration: enable_auth={deps.enable_auth}, cognito_auth={'SET' if deps.cognito_auth else 'NONE'}")
             if deps.enable_auth and deps.cognito_auth:

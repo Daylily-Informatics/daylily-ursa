@@ -99,6 +99,23 @@ def start(
         console.print("   Set it with: [cyan]export AWS_PROFILE=your-profile[/cyan]")
         raise typer.Exit(1)
 
+    # Check ~/.ursa/config.yaml for region/bucket configuration
+    from daylib.ursa_config import get_ursa_config
+    ursa_config = get_ursa_config()
+    if not ursa_config.is_configured:
+        console.print("[yellow]⚠[/yellow]  No regions configured in ~/.ursa/config.yaml")
+        console.print("   Cluster discovery requires region-to-bucket mappings.")
+        console.print("   Create [cyan]~/.ursa/config.yaml[/cyan] with:")
+        console.print("")
+        console.print("[dim]   regions:")
+        console.print("     us-west-2:")
+        console.print("       bucket: s3://your-bucket-us-west-2")
+        console.print("     us-east-1:")
+        console.print("       bucket: s3://your-bucket-us-east-1[/dim]")
+    else:
+        regions = ursa_config.get_allowed_regions()
+        console.print(f"[green]✓[/green]  Ursa config loaded: [cyan]{len(regions)} regions[/cyan]")
+
     # Get project root (where bin/ directory is)
     project_root = Path(__file__).parent.parent.parent
     api_script = project_root / "bin" / "daylily-workset-api"

@@ -215,26 +215,47 @@ class ClusterService:
 
     def _run_pcluster_command(self, args: List[str], timeout: int = 30) -> Dict[str, Any]:
         """Run a pcluster CLI command and return parsed JSON output."""
-        cmd = ["pcluster"] + args
-        if self.aws_profile:
-            env_vars = {"AWS_PROFILE": self.aws_profile}
-        else:
-            env_vars = None
-        LOGGER.debug(f"Running: {' '.join(cmd)}")
+        import os
+        import shutil
+
+        # Find pcluster binary - prefer conda env path
+        pcluster_path = shutil.which("pcluster")
+        if not pcluster_path:
+            LOGGER.error("pcluster CLI not found in PATH")
+            return {"error": "pcluster CLI not installed"}
+
+        cmd = [pcluster_path] + args
+        # Always set AWS_PROFILE - use explicit value, fall back to env, then 'default'
+        profile = self.aws_profile or os.environ.get("AWS_PROFILE", "default")
+        LOGGER.info(f"Running: AWS_PROFILE={profile} {' '.join(cmd)}")
+        LOGGER.debug(f"PATH: {os.environ.get('PATH', 'not set')[:200]}")
         try:
-            import os
             env = os.environ.copy()
-            if env_vars:
-                env.update(env_vars)
+            env["AWS_PROFILE"] = profile
             result = subprocess.run(
                 cmd, capture_output=True, text=True, timeout=timeout, env=env
             )
+            # Log stderr always for debugging
+            if result.stderr.strip():
+                LOGGER.info(f"pcluster stderr: {result.stderr.strip()[:500]}")
+
+            # Try to parse stdout as JSON first - pcluster may emit warnings to stderr
+            # even on success (e.g., pkg_resources deprecation warnings)
+            if result.stdout.strip():
+                try:
+                    parsed = json.loads(result.stdout)
+                    return parsed
+                except json.JSONDecodeError:
+                    LOGGER.warning(f"Failed to parse stdout as JSON: {result.stdout[:200]}")
+                    pass  # Fall through to error handling
+
+            # No valid JSON output - check return code
             if result.returncode != 0:
-                LOGGER.warning(f"pcluster command failed: {result.stderr}")
+                LOGGER.warning(f"pcluster command failed (exit {result.returncode}): {result.stderr}")
                 return {"error": result.stderr.strip() or f"Exit code {result.returncode}"}
-            if not result.stdout.strip():
-                return {}
-            return json.loads(result.stdout)
+
+            # Return code 0 but no output
+            return {}
         except subprocess.TimeoutExpired:
             LOGGER.error(f"pcluster command timed out after {timeout}s")
             return {"error": f"Command timed out after {timeout}s"}
@@ -251,11 +272,14 @@ class ClusterService:
     def list_clusters_in_region(self, region: str) -> List[str]:
         """List all cluster names in a region."""
         result = self._run_pcluster_command(["list-clusters", "--region", region])
+        LOGGER.info(f"list-clusters {region} returned: {result}")
         if "error" in result:
             LOGGER.warning(f"Failed to list clusters in {region}: {result['error']}")
             return []
         clusters = result.get("clusters", [])
-        return [c.get("clusterName", "") for c in clusters if c.get("clusterName")]
+        names = [c.get("clusterName", "") for c in clusters if c.get("clusterName")]
+        LOGGER.info(f"Found {len(names)} clusters in {region}: {names}")
+        return names
 
     def describe_cluster(self, cluster_name: str, region: str) -> ClusterInfo:
         """Get detailed information about a cluster."""

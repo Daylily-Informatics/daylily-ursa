@@ -399,6 +399,12 @@ async function submitWorkset(event) {
             data.manifest_tsv_content = window.manifestTsvContent;
         }
 
+        // Include preferred cluster if selected
+        const preferredCluster = document.getElementById('preferred_cluster')?.value;
+        if (preferredCluster) {
+            data.preferred_cluster = preferredCluster;
+        }
+
         showLoading('Creating workset...');
         const result = await DaylilyAPI.worksets.create(customerId, data);
         showToast('success', 'Workset Submitted', 'Your workset has been queued for processing');
@@ -942,4 +948,128 @@ function formatFileSize(bytes) {
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
+
+// ========== Cluster Selection Functions ==========
+
+// Store loaded clusters for suggestion logic
+let availableClusters = [];
+
+/**
+ * Refresh the cluster list from the API and populate the dropdown.
+ */
+async function refreshClusterList() {
+    const select = document.getElementById('preferred_cluster');
+    const tbody = document.getElementById('cluster-list-body');
+    const container = document.getElementById('cluster-list-container');
+    const suggestionText = document.getElementById('cluster-suggestion-text');
+
+    if (!select) return;
+
+    // Show loading state
+    select.innerHTML = '<option value="">Loading clusters...</option>';
+    if (tbody) {
+        tbody.innerHTML = '<tr><td colspan="5" class="text-center"><i class="fas fa-spinner fa-spin"></i> Loading...</td></tr>';
+    }
+    if (container) container.style.display = 'block';
+
+    try {
+        const response = await fetch('/api/clusters?refresh=true');
+        if (!response.ok) throw new Error(`Failed to load clusters (${response.status})`);
+
+        const data = await response.json();
+        availableClusters = data.clusters || [];
+
+        // Populate the dropdown
+        select.innerHTML = '<option value="">Auto-select (recommended)</option>';
+        let tableHtml = '';
+
+        // Get detected file regions from manifest generator (if available)
+        const r1Region = window.r1FileRegion;
+        const r2Region = window.r2FileRegion;
+        const fileRegion = r1Region || r2Region;
+
+        // Sort clusters: running first, then by region match
+        const sortedClusters = [...availableClusters].sort((a, b) => {
+            // Prefer running clusters
+            const aRunning = a.cluster_status === 'CREATE_COMPLETE';
+            const bRunning = b.cluster_status === 'CREATE_COMPLETE';
+            if (aRunning && !bRunning) return -1;
+            if (!aRunning && bRunning) return 1;
+
+            // Then prefer region match
+            if (fileRegion) {
+                const aMatch = a.region === fileRegion;
+                const bMatch = b.region === fileRegion;
+                if (aMatch && !bMatch) return -1;
+                if (!aMatch && bMatch) return 1;
+            }
+
+            return a.cluster_name.localeCompare(b.cluster_name);
+        });
+
+        sortedClusters.forEach(cluster => {
+            const isRunning = cluster.cluster_status === 'CREATE_COMPLETE';
+            const regionMatch = fileRegion && cluster.region === fileRegion;
+            const statusClass = isRunning ? 'badge-success' : 'badge-secondary';
+            const statusText = isRunning ? 'Running' : (cluster.cluster_status || 'Unknown');
+            const matchBadge = regionMatch
+                ? '<span class="badge badge-info" title="Same region as your data"><i class="fas fa-check"></i> Match</span>'
+                : '<span class="text-muted">—</span>';
+
+            // Add to dropdown
+            const optionText = `${cluster.cluster_name} (${cluster.region})${regionMatch ? ' ★' : ''}`;
+            select.innerHTML += `<option value="${cluster.cluster_name}" data-region="${cluster.region}">${optionText}</option>`;
+
+            // Add to table
+            tableHtml += `
+                <tr onclick="selectCluster('${cluster.cluster_name}')" style="cursor: pointer;">
+                    <td><input type="radio" name="cluster_radio" value="${cluster.cluster_name}"></td>
+                    <td><code style="font-size: 0.8rem;">${cluster.cluster_name}</code></td>
+                    <td><span class="badge badge-secondary" style="font-size: 0.7rem;">${cluster.region}</span></td>
+                    <td><span class="badge ${statusClass}" style="font-size: 0.7rem;">${statusText}</span></td>
+                    <td>${matchBadge}</td>
+                </tr>
+            `;
+        });
+
+        if (tbody) tbody.innerHTML = tableHtml || '<tr><td colspan="5" class="text-center text-muted">No clusters available</td></tr>';
+
+        // Update suggestion text
+        if (suggestionText && fileRegion) {
+            const matchingClusters = availableClusters.filter(c => c.region === fileRegion && c.cluster_status === 'CREATE_COMPLETE');
+            if (matchingClusters.length > 0) {
+                suggestionText.innerHTML = `<i class="fas fa-lightbulb text-warning"></i> <strong>Recommended:</strong> ${matchingClusters.length} cluster(s) in <code>${fileRegion}</code> match your data location.`;
+            } else {
+                suggestionText.innerHTML = `<i class="fas fa-exclamation-triangle text-warning"></i> No running clusters in <code>${fileRegion}</code>. Data transfer costs may apply.`;
+            }
+        }
+
+    } catch (error) {
+        console.error('Failed to load clusters:', error);
+        select.innerHTML = '<option value="">Auto-select (recommended)</option>';
+        if (tbody) {
+            tbody.innerHTML = `<tr><td colspan="5" class="text-center text-error"><i class="fas fa-exclamation-triangle"></i> Failed to load clusters</td></tr>`;
+        }
+    }
+}
+
+/**
+ * Select a cluster from the table view.
+ */
+function selectCluster(clusterName) {
+    const select = document.getElementById('preferred_cluster');
+    if (select) {
+        select.value = clusterName;
+    }
+    // Update radio button
+    const radio = document.querySelector(`input[name="cluster_radio"][value="${clusterName}"]`);
+    if (radio) radio.checked = true;
+}
+
+// Load clusters when the page loads (if on workset new page)
+document.addEventListener('DOMContentLoaded', () => {
+    if (document.getElementById('preferred_cluster')) {
+        refreshClusterList();
+    }
+});
 

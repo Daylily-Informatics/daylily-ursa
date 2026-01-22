@@ -204,6 +204,46 @@
 
             <hr style="border: none; border-top: 1px solid var(--color-gray-700); margin: var(--spacing-lg) 0;">
 
+            <h4 style="margin-bottom: var(--spacing-md);">Cluster Selection</h4>
+            <p class="text-muted mb-md">Select a compute cluster for workset execution. For optimal performance and cost, choose a cluster in the same region as your data files.</p>
+
+            <div class="form-group">
+                <label for="preferred_cluster" class="form-label">Preferred Cluster</label>
+                <div class="input-group">
+                    <select id="preferred_cluster" name="preferred_cluster" class="form-control form-select">
+                        <option value="">Auto-select (recommended)</option>
+                    </select>
+                    <button type="button" class="btn btn-outline" onclick="refreshClusterList()">
+                        <i class="fas fa-sync-alt"></i>
+                    </button>
+                </div>
+                <p class="form-text" id="cluster-suggestion-text">
+                    <i class="fas fa-info-circle text-info"></i>
+                    Auto-select will choose the best available cluster based on your data location.
+                </p>
+            </div>
+
+            <div id="cluster-list-container" class="mt-md" style="display: none;">
+                <div class="table-container" style="max-height: 200px; overflow-y: auto;">
+                    <table class="table table-sm" id="cluster-list-table">
+                        <thead>
+                            <tr>
+                                <th style="width: 30px;"></th>
+                                <th>Cluster Name</th>
+                                <th>Region</th>
+                                <th>Status</th>
+                                <th>Match</th>
+                            </tr>
+                        </thead>
+                        <tbody id="cluster-list-body">
+                            <tr><td colspan="5" class="text-center text-muted">Loading clusters...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <hr style="border: none; border-top: 1px solid var(--color-gray-700); margin: var(--spacing-lg) 0;">
+
             <h4 style="margin-bottom: var(--spacing-md);">Output Options</h4>
 
             <div class="form-group">
