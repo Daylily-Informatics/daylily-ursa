@@ -349,6 +349,10 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                 stats["active_worksets"] = stats["in_progress_worksets"]
 
                 # Calculate actual costs and storage from completed worksets with performance metrics
+                # Cost calculation constants
+                S3_STORAGE_COST_PER_GB_MONTH = 0.023  # S3 Standard storage
+                TRANSFER_COST_PER_GB = 0.10  # Placeholder transfer cost
+
                 total_actual_cost = 0.0
                 total_workset_storage_bytes = 0
                 completed = [w for w in all_worksets if w.get("state") == "complete"]
@@ -365,10 +369,20 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                     else:
                         # Fall back to estimated cost if no performance metrics
                         total_actual_cost += float(ws.get("cost_usd", 0) or ws.get("metadata", {}).get("cost_usd", 0) or 0)
-                stats["cost_this_month"] = round(total_actual_cost, 2)
+
+                # Calculate cost breakdown
+                workset_storage_gb = total_workset_storage_bytes / (1024**3)
+                storage_cost = workset_storage_gb * S3_STORAGE_COST_PER_GB_MONTH
+                transfer_cost = workset_storage_gb * TRANSFER_COST_PER_GB
+                total_cost = total_actual_cost + storage_cost + transfer_cost
+
+                stats["compute_cost_usd"] = round(total_actual_cost, 2)
+                stats["storage_cost_usd"] = round(storage_cost, 4)
+                stats["transfer_cost_usd"] = round(transfer_cost, 4)
+                stats["cost_this_month"] = round(total_cost, 2)
                 stats["actual_cost_total"] = round(total_actual_cost, 2)
                 stats["workset_storage_bytes"] = total_workset_storage_bytes
-                stats["workset_storage_gb"] = round(total_workset_storage_bytes / (1024**3), 2)
+                stats["workset_storage_gb"] = round(workset_storage_gb, 2)
                 stats["workset_storage_human"] = _format_bytes(total_workset_storage_bytes)
 
                 if deps.file_registry:
@@ -1646,7 +1660,21 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         if auth_redirect:
             return auth_redirect
         customer = None
-        usage = {"total_cost": 0, "cost_change": 0, "vcpu_hours": 0, "memory_gb_hours": 0, "storage_gb": 0, "active_worksets": 0}
+        # Cost calculation constants
+        S3_STORAGE_COST_PER_GB_MONTH = 0.023  # S3 Standard storage
+        TRANSFER_COST_PER_GB = 0.10  # Placeholder transfer cost
+
+        usage = {
+            "total_cost": 0,
+            "compute_cost_usd": 0,
+            "storage_cost_usd": 0,
+            "transfer_cost_usd": 0,
+            "cost_change": 0,
+            "vcpu_hours": 0,
+            "memory_gb_hours": 0,
+            "storage_gb": 0,
+            "active_worksets": 0,
+        }
         usage_details: List[Dict[str, Any]] = []
         if deps.customer_manager:
             customers = deps.customer_manager.list_customers()
@@ -1701,10 +1729,41 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                 usage_details.sort(key=lambda x: x["date"], reverse=True)
                 # Sort storage breakdown by size descending
                 workset_storage_breakdown.sort(key=lambda x: x["storage_bytes"], reverse=True)
-                usage["total_cost"] = round(total_actual_compute, 2)
+
+                # Calculate cost breakdown
+                workset_storage_gb = total_workset_storage_bytes / (1024**3)
+                storage_cost = workset_storage_gb * S3_STORAGE_COST_PER_GB_MONTH
+                # Transfer cost placeholder: assume 1 transfer per workset at $0.10/GB
+                transfer_cost = workset_storage_gb * TRANSFER_COST_PER_GB
+
+                usage["compute_cost_usd"] = round(total_actual_compute, 2)
+                usage["storage_cost_usd"] = round(storage_cost, 4)
+                usage["transfer_cost_usd"] = round(transfer_cost, 4)
+                usage["total_cost"] = round(total_actual_compute + storage_cost + transfer_cost, 2)
                 usage["workset_storage_bytes"] = total_workset_storage_bytes
-                usage["workset_storage_gb"] = round(total_workset_storage_bytes / (1024**3), 2)
+                usage["workset_storage_gb"] = round(workset_storage_gb, 2)
                 usage["workset_storage_human"] = _format_bytes(total_workset_storage_bytes)
+
+                # Add storage cost entry to usage_details if there's storage
+                if workset_storage_gb > 0:
+                    usage_details.append({
+                        "date": "-",
+                        "type": "Storage",
+                        "workset_id": "All worksets",
+                        "quantity": round(workset_storage_gb, 2),
+                        "unit": "GB/month",
+                        "cost": storage_cost,
+                        "is_actual": True,
+                    })
+                    usage_details.append({
+                        "date": "-",
+                        "type": "Transfer",
+                        "workset_id": "Placeholder",
+                        "quantity": round(workset_storage_gb, 2),
+                        "unit": "GB",
+                        "cost": transfer_cost,
+                        "is_actual": False,
+                    })
             except Exception as e:
                 LOGGER.warning(f"Failed to load usage details: {e}")
 

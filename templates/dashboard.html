@@ -60,6 +60,9 @@
             <div>
                 <div class="stat-value">${{ "%.2f"|format(stats.cost_this_month | default(0)) }}</div>
                 <div class="stat-label">This Month</div>
+                <div class="stat-subtext">
+                    Compute: ${{ "%.2f"|format(stats.compute_cost_usd | default(0)) }}
+                </div>
             </div>
         </a>
     </div>
@@ -77,16 +80,16 @@
             </div>
         </a>
 
-        <div class="stat-card">
+        <a href="/portal/usage" class="stat-card stat-card-clickable">
             <div class="card-icon info">
-                <i class="fas fa-flask"></i>
+                <i class="fas fa-database"></i>
             </div>
             <div>
-                <div class="stat-value">—</div>
-                <div class="stat-label">Experiments</div>
-                <div class="stat-subtext">Coming soon</div>
+                <div class="stat-value">${{ "%.4f"|format(stats.storage_cost_usd | default(0)) }}</div>
+                <div class="stat-label">Storage Cost</div>
+                <div class="stat-subtext">{{ stats.workset_storage_human | default('0 B') }}</div>
             </div>
-        </div>
+        </a>
 
         <a href="/portal/usage" class="stat-card stat-card-clickable">
             <div class="card-icon success">

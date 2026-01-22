@@ -2586,8 +2586,10 @@ def create_app(
         ):
             """Get cost breakdown by category.
 
-            Returns compute costs from benchmark data. Currently all costs are compute.
-            Future: breakdown by storage, data transfer, etc.
+            Returns compute, storage, and transfer costs.
+            - Compute: From benchmark data (actual) or estimates
+            - Storage: $0.023/GB/month for S3 Standard
+            - Transfer: $0.10/GB placeholder rate
             """
             if not customer_manager:
                 raise HTTPException(
@@ -2602,12 +2604,16 @@ def create_app(
                     detail=f"Customer {customer_id} not found",
                 )
 
+            # Cost calculation constants
+            S3_STORAGE_COST_PER_GB_MONTH = 0.023  # S3 Standard storage
+            TRANSFER_COST_PER_GB = 0.10  # Placeholder transfer cost
+
             # Get all completed worksets
             completed_worksets = state_db.list_worksets_by_state(WorksetState.COMPLETE, limit=500)
             customer_worksets = [ws for ws in completed_worksets if verify_workset_ownership(ws, customer_id)]
 
             total_compute_cost = 0.0
-            total_estimated_cost = 0.0
+            total_storage_bytes = 0
 
             for ws in customer_worksets:
                 pm = ws.get("performance_metrics", {})
@@ -2615,23 +2621,63 @@ def create_app(
                     cost_summary = pm.get("cost_summary", {})
                     if cost_summary and isinstance(cost_summary, dict):
                         total_compute_cost += float(cost_summary.get("total_cost", 0))
-                        continue
+                    else:
+                        # Fall back to estimated
+                        cost = float(ws.get("cost_usd", 0) or 0)
+                        if cost == 0:
+                            metadata = ws.get("metadata", {})
+                            if isinstance(metadata, dict):
+                                cost = float(metadata.get("cost_usd", 0) or metadata.get("estimated_cost_usd", 0) or 0)
+                        total_compute_cost += cost
 
-                # Fall back to estimated
-                cost = float(ws.get("cost_usd", 0) or 0)
-                if cost == 0:
-                    metadata = ws.get("metadata", {})
-                    if isinstance(metadata, dict):
-                        cost = float(metadata.get("cost_usd", 0) or metadata.get("estimated_cost_usd", 0) or 0)
-                total_estimated_cost += cost
+                    # Collect storage from export metrics
+                    export_metrics = pm.get("post_export_metrics", {}) or pm.get("pre_export_metrics", {})
+                    if export_metrics and isinstance(export_metrics, dict):
+                        total_storage_bytes += int(export_metrics.get("analysis_directory_size_bytes", 0) or 0)
+                else:
+                    # Fall back to estimated cost
+                    cost = float(ws.get("cost_usd", 0) or 0)
+                    if cost == 0:
+                        metadata = ws.get("metadata", {})
+                        if isinstance(metadata, dict):
+                            cost = float(metadata.get("cost_usd", 0) or metadata.get("estimated_cost_usd", 0) or 0)
+                    total_compute_cost += cost
 
-            # Return breakdown - currently just compute, but structure allows expansion
-            total = total_compute_cost + total_estimated_cost
+            # Calculate storage and transfer costs
+            storage_gb = total_storage_bytes / (1024**3)
+            storage_cost = storage_gb * S3_STORAGE_COST_PER_GB_MONTH
+            transfer_cost = storage_gb * TRANSFER_COST_PER_GB
+
+            # Build response with all three categories
+            categories = []
+            values = []
+
+            if total_compute_cost > 0:
+                categories.append("Compute")
+                values.append(round(total_compute_cost, 2))
+
+            if storage_cost > 0:
+                categories.append("Storage")
+                values.append(round(storage_cost, 4))
+
+            if transfer_cost > 0:
+                categories.append("Transfer")
+                values.append(round(transfer_cost, 4))
+
+            # Default if no costs
+            if not categories:
+                categories = ["Compute"]
+                values = [0]
+
+            total = total_compute_cost + storage_cost + transfer_cost
             return {
-                "categories": ["Compute (Actual)", "Compute (Estimated)"] if total_estimated_cost > 0 else ["Compute"],
-                "values": [round(total_compute_cost, 2), round(total_estimated_cost, 2)] if total_estimated_cost > 0 else [round(total_compute_cost, 2)],
+                "categories": categories,
+                "values": values,
                 "total": round(total, 2),
                 "has_actual_costs": total_compute_cost > 0,
+                "compute_cost_usd": round(total_compute_cost, 2),
+                "storage_cost_usd": round(storage_cost, 4),
+                "transfer_cost_usd": round(transfer_cost, 4),
             }
 
     # ========== Workset Validation Endpoints ==========

@@ -39,34 +39,37 @@
                 </div>
             </div>
         </div>
-        
+
         <div class="stat-card">
             <div class="card-icon success">
                 <i class="fas fa-microchip"></i>
             </div>
             <div>
-                <div class="stat-value">{{ usage.vcpu_hours | default(0) }}</div>
-                <div class="stat-label">vCPU Hours</div>
+                <div class="stat-value">${{ "%.2f"|format(usage.compute_cost_usd | default(0)) }}</div>
+                <div class="stat-label">Compute Cost</div>
+                <div class="text-muted text-xs">Pipeline execution</div>
             </div>
         </div>
-        
+
         <div class="stat-card">
             <div class="card-icon warning">
-                <i class="fas fa-memory"></i>
+                <i class="fas fa-database"></i>
             </div>
             <div>
-                <div class="stat-value">{{ usage.memory_gb_hours | default(0) }}</div>
-                <div class="stat-label">Memory GB-Hours</div>
+                <div class="stat-value">${{ "%.4f"|format(usage.storage_cost_usd | default(0)) }}</div>
+                <div class="stat-label">Storage Cost</div>
+                <div class="text-muted text-xs">{{ usage.workset_storage_human | default('0 B') }} @ $0.023/GB</div>
             </div>
         </div>
-        
+
         <div class="stat-card">
-            <div class="card-icon error">
-                <i class="fas fa-folder"></i>
+            <div class="card-icon accent">
+                <i class="fas fa-exchange-alt"></i>
             </div>
             <div>
-                <div class="stat-value">{{ usage.workset_storage_human | default('0 B') }}</div>
-                <div class="stat-label">Workset Storage</div>
+                <div class="stat-value">${{ "%.4f"|format(usage.transfer_cost_usd | default(0)) }}</div>
+                <div class="stat-label">Transfer Cost</div>
+                <div class="text-muted text-xs">Placeholder @ $0.10/GB</div>
             </div>
         </div>
     </div>
