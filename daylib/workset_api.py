@@ -2195,6 +2195,57 @@ def create_app(
                                 str(e),
                             )
 
+                # Calculate S3 directory size for completed worksets with force_refresh
+                if force_refresh and results_s3_uri and is_terminal_state:
+                    try:
+                        from urllib.parse import urlparse
+                        parsed = urlparse(results_s3_uri)
+                        bucket = parsed.netloc
+                        prefix = parsed.path.lstrip("/")
+                        if prefix and not prefix.endswith("/"):
+                            prefix = prefix + "/"
+
+                        session_kwargs = {"region_name": settings.get_effective_region()}
+                        if settings.aws_profile:
+                            session_kwargs["profile_name"] = settings.aws_profile
+                        session = boto3.Session(**session_kwargs)
+                        s3_client = session.client("s3")
+                        paginator = s3_client.get_paginator("list_objects_v2")
+
+                        total_size = 0
+                        for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+                            for obj in page.get("Contents", []):
+                                total_size += obj.get("Size", 0)
+
+                        if total_size > 0:
+                            # Format human-readable size
+                            def format_bytes(size_bytes: int) -> str:
+                                for unit in ["B", "KB", "MB", "GB", "TB"]:
+                                    if abs(size_bytes) < 1024.0:
+                                        return f"{size_bytes:.1f}{unit}"
+                                    size_bytes /= 1024.0
+                                return f"{size_bytes:.1f}PB"
+
+                            post_export_metrics = {
+                                "analysis_directory_size_bytes": total_size,
+                                "analysis_directory_size_human": format_bytes(total_size),
+                            }
+                            if metrics_data is None:
+                                metrics_data = {}
+                            metrics_data["post_export_metrics"] = post_export_metrics
+                            LOGGER.info(
+                                "Calculated S3 directory size for %s: %s (%d bytes)",
+                                workset_id,
+                                post_export_metrics["analysis_directory_size_human"],
+                                total_size,
+                            )
+                    except Exception as e:
+                        LOGGER.warning(
+                            "Failed to calculate S3 directory size for %s: %s",
+                            workset_id,
+                            str(e),
+                        )
+
             # Cache the results if we got any
             if metrics_data and any(metrics_data.values()):
                 # Cache with is_final=True if workset is in terminal state
@@ -2207,7 +2258,7 @@ def create_app(
                 "cached": False,
                 "is_final": is_terminal_state,
                 "source": metrics_source,
-                **(metrics_data or {"alignment_stats": None, "benchmark_data": None, "cost_summary": None}),
+                **(metrics_data or {"alignment_stats": None, "benchmark_data": None, "cost_summary": None, "duration_info": None, "post_export_metrics": None}),
             }
 
         @app.get(

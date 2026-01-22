@@ -609,6 +609,108 @@ class PipelineStatusFetcher:
         # Fall back to mqc file
         return self.fetch_tsv_from_s3(results_s3_uri, "rules_benchmark_data_mqc.tsv", region)
 
+    def fetch_duration_from_s3(
+        self, results_s3_uri: str, region: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Parse pipeline duration from Snakemake logs in S3.
+
+        Extracts start time from log filename and end time from last timestamp
+        in the log content.
+
+        Args:
+            results_s3_uri: Base S3 URI where results were exported
+            region: AWS region for S3 client
+
+        Returns:
+            Dict with duration_seconds, start_time, end_time, or None if unavailable
+        """
+        import datetime as dt
+
+        # Build path to .snakemake/log/ directory
+        parsed = urlparse(results_s3_uri)
+        bucket = parsed.netloc
+        base_prefix = parsed.path.lstrip("/")
+        if not base_prefix.endswith("/"):
+            base_prefix = base_prefix + "/"
+        log_prefix = f"{base_prefix}daylily-omics-analysis/.snakemake/log/"
+
+        try:
+            s3_client = boto3.client("s3", region_name=region) if region else boto3.client("s3")
+
+            # List log files
+            resp = s3_client.list_objects_v2(Bucket=bucket, Prefix=log_prefix, MaxKeys=100)
+            log_files = [
+                obj for obj in resp.get("Contents", [])
+                if obj["Key"].endswith(".snakemake.log")
+            ]
+
+            if not log_files:
+                LOGGER.debug("No snakemake log files found at %s", log_prefix)
+                return None
+
+            # Get the most recent log file (by LastModified)
+            log_files.sort(key=lambda x: x["LastModified"], reverse=True)
+            latest_log = log_files[0]
+            log_key = latest_log["Key"]
+            log_filename = log_key.split("/")[-1]
+
+            # Parse start time from filename: 2026-01-21T222820.936299.snakemake.log
+            # Format: YYYY-MM-DDTHHMMSS.microseconds.snakemake.log
+            start_time = None
+            match = re.match(r"(\d{4}-\d{2}-\d{2})T(\d{2})(\d{2})(\d{2})\.(\d+)\.snakemake\.log", log_filename)
+            if match:
+                date_str = match.group(1)
+                hour, minute, second = match.group(2), match.group(3), match.group(4)
+                try:
+                    start_time = dt.datetime.strptime(
+                        f"{date_str} {hour}:{minute}:{second}", "%Y-%m-%d %H:%M:%S"
+                    ).replace(tzinfo=dt.timezone.utc)
+                except ValueError:
+                    pass
+
+            if not start_time:
+                LOGGER.debug("Could not parse start time from log filename: %s", log_filename)
+                return None
+
+            # Fetch log content to find end time
+            resp = s3_client.get_object(Bucket=bucket, Key=log_key)
+            content = resp["Body"].read().decode("utf-8", errors="ignore")
+
+            # Parse timestamps from log content - format: [Wed Jan 21 23:09:06 2026]
+            timestamp_pattern = re.compile(r"\[(\w{3} \w{3} \d{1,2} \d{2}:\d{2}:\d{2} \d{4})\]")
+            timestamps = timestamp_pattern.findall(content)
+
+            end_time = None
+            if timestamps:
+                # Get the last timestamp
+                last_ts = timestamps[-1]
+                try:
+                    end_time = dt.datetime.strptime(last_ts, "%a %b %d %H:%M:%S %Y").replace(tzinfo=dt.timezone.utc)
+                except ValueError:
+                    pass
+
+            if not end_time:
+                # Fall back to S3 object LastModified
+                end_time = latest_log["LastModified"]
+
+            duration_seconds = int((end_time - start_time).total_seconds())
+            if duration_seconds < 0:
+                duration_seconds = 0
+
+            return {
+                "duration_seconds": duration_seconds,
+                "start_time": start_time.isoformat(),
+                "end_time": end_time.isoformat(),
+                "log_file": log_filename,
+            }
+
+        except ClientError as e:
+            LOGGER.debug("Failed to fetch duration from S3: %s", e)
+            return None
+        except Exception as e:
+            LOGGER.warning("Error parsing duration from S3 logs: %s", e)
+            return None
+
     def fetch_performance_metrics_from_s3(
         self, results_s3_uri: str, region: Optional[str] = None
     ) -> Dict[str, Any]:
@@ -622,12 +724,13 @@ class PipelineStatusFetcher:
             region: AWS region for S3 client
 
         Returns:
-            Dict with alignment_stats, benchmark_data, cost_summary
+            Dict with alignment_stats, benchmark_data, cost_summary, duration_info
         """
         result: Dict[str, Any] = {
             "alignment_stats": None,
             "benchmark_data": None,
             "cost_summary": None,
+            "duration_info": None,
         }
 
         # Fetch alignment stats
@@ -640,6 +743,11 @@ class PipelineStatusFetcher:
         if benchmark_data:
             result["benchmark_data"] = benchmark_data
             result["cost_summary"] = self._compute_cost_summary(benchmark_data)
+
+        # Fetch duration from Snakemake logs
+        duration_info = self.fetch_duration_from_s3(results_s3_uri, region)
+        if duration_info:
+            result["duration_info"] = duration_info
 
         return result
 

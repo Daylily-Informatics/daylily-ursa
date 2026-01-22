@@ -282,9 +282,37 @@
                     <span class="text-muted">—</span>
                     {% endif %}
                 </div>
-                <div><span class="text-muted">Duration:</span> {{ workset.duration | default('N/A') }}</div>
+                <div>
+                    <span class="text-muted">Duration:</span>
+                    {% if workset.duration_formatted %}
+                    {{ workset.duration_formatted }}
+                    {% elif workset.duration %}
+                    {{ workset.duration }}
+                    {% else %}
+                    <span class="text-muted">—</span>
+                    {% endif %}
+                </div>
             </div>
         </div>
+
+        <!-- Storage Costs -->
+        {% if workset.storage_available and workset.state in ['complete', 'error', 'archived'] %}
+        <div class="card metrics-card">
+            <h4 class="card-title-sm"><i class="fas fa-dollar-sign"></i> Storage Cost</h4>
+            <div class="metric-breakdown-vertical">
+                <div>
+                    <span class="text-muted">Daily:</span>
+                    ${{ "%.4f"|format(workset.storage_cost_daily | default(0)) }}/day
+                    <span class="text-xs text-muted">({{ workset.storage_class | default('S3 Standard') }})</span>
+                </div>
+                <div>
+                    <span class="text-muted">Total:</span>
+                    ${{ "%.2f"|format(workset.storage_cost_total | default(0)) }}
+                    <span class="text-xs text-muted">({{ workset.storage_days | default(0) }} days)</span>
+                </div>
+            </div>
+        </div>
+        {% endif %}
 
         <!-- Execution Environment -->
         {% if workset.execution_cluster_name or workset.execution_s3_bucket or workset.results_s3_uri %}

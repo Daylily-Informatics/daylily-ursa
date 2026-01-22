@@ -154,21 +154,26 @@ def _format_bytes(size_bytes: int) -> str:
     return f"{size:.1f} {units[unit_index]}"
 
 
-def _extract_workset_storage(workset: Dict[str, Any]) -> Dict[str, Any]:
-    """Extract storage size data from workset performance_metrics.
+def _extract_workset_metrics(workset: Dict[str, Any]) -> Dict[str, Any]:
+    """Extract resource usage metrics from workset performance_metrics.
 
-    Populates storage_gb, storage_bytes, and storage_human fields from
-    performance_metrics.post_export_metrics.analysis_directory_size_bytes.
-
-    Falls back to pre_export_metrics for backwards compatibility with
-    worksets completed before the migration to post-export metrics collection.
+    Populates:
+    - storage_gb, storage_bytes, storage_human from post_export_metrics or pre_export_metrics
+    - vcpu_hours: Total vCPU seconds from benchmark_data converted to hours
+    - memory_gb_hours: Total memory usage (max_rss * duration) from benchmark_data
+    - duration_formatted: Pipeline duration as "Xh Ym" from duration_info
+    - storage_cost_daily: Daily S3 storage cost ($0.023/GB/month)
+    - storage_cost_total: Cumulative storage cost based on days stored
+    - storage_days: Number of days data has been stored
 
     Args:
-        workset: Workset dict to extract and enrich with storage info
+        workset: Workset dict to extract and enrich with metrics
 
     Returns:
-        The workset dict with storage fields added
+        The workset dict with resource usage fields added
     """
+    from datetime import datetime, timezone
+
     pm = workset.get("performance_metrics", {})
 
     # Try post_export_metrics first (new format), fall back to pre_export_metrics (legacy)
@@ -186,13 +191,89 @@ def _extract_workset_storage(workset: Dict[str, Any]) -> Dict[str, Any]:
         size_bytes = int(export_metrics.get("analysis_directory_size_bytes", 0) or 0)
         size_human = export_metrics.get("analysis_directory_size_human", "")
 
-    # Populate the fields
+    # Populate storage fields
     workset["storage_bytes"] = size_bytes
     workset["storage_gb"] = round(size_bytes / (1024**3), 2) if size_bytes > 0 else 0
     workset["storage_human"] = size_human if size_human else (_format_bytes(size_bytes) if size_bytes > 0 else "")
     workset["storage_available"] = size_bytes > 0
 
+    # Calculate storage costs (S3 Standard: $0.023/GB/month)
+    S3_STANDARD_RATE_PER_GB_MONTH = 0.023
+    storage_gb = workset["storage_gb"]
+    daily_rate = S3_STANDARD_RATE_PER_GB_MONTH / 30.0  # ~$0.000767/GB/day
+
+    workset["storage_cost_daily"] = round(storage_gb * daily_rate, 4) if storage_gb > 0 else 0
+
+    # Calculate days stored since completion
+    storage_days = 0
+    completed_at = workset.get("completed_at") or workset.get("updated_at")
+    if completed_at and workset.get("state") in ("complete", "error", "archived"):
+        try:
+            if isinstance(completed_at, str):
+                # Parse ISO format timestamp
+                if completed_at.endswith("Z"):
+                    completed_at = completed_at[:-1] + "+00:00"
+                completed_dt = datetime.fromisoformat(completed_at)
+            else:
+                completed_dt = completed_at
+            now = datetime.now(timezone.utc)
+            storage_days = max(1, (now - completed_dt).days)  # At least 1 day
+        except (ValueError, TypeError):
+            storage_days = 1
+
+    workset["storage_days"] = storage_days
+    workset["storage_cost_total"] = round(workset["storage_cost_daily"] * storage_days, 2) if storage_days > 0 else 0
+    workset["storage_class"] = "S3 Standard"  # Default for recent exports
+
+    # Extract vCPU hours and memory GB-hours from benchmark_data
+    vcpu_hours = 0.0
+    memory_gb_hours = 0.0
+    if pm and isinstance(pm, dict):
+        benchmark_data = pm.get("benchmark_data", [])
+        if benchmark_data and isinstance(benchmark_data, list):
+            for entry in benchmark_data:
+                if not isinstance(entry, dict):
+                    continue
+                # cpu_time is in seconds - sum all cpu_time and convert to hours
+                try:
+                    cpu_time_s = float(entry.get("cpu_time", 0) or 0)
+                    vcpu_hours += cpu_time_s / 3600.0
+                except (ValueError, TypeError):
+                    pass
+                # memory: max_rss (in MB) * duration (s) / 3600 / 1024 = GB-hours
+                try:
+                    max_rss_mb = float(entry.get("max_rss", 0) or 0)
+                    duration_s = float(entry.get("s", 0) or 0)
+                    memory_gb_hours += (max_rss_mb / 1024.0) * (duration_s / 3600.0)
+                except (ValueError, TypeError):
+                    pass
+
+    workset["vcpu_hours"] = round(vcpu_hours, 2)
+    workset["memory_gb_hours"] = round(memory_gb_hours, 2)
+
+    # Extract duration from duration_info (parsed from Snakemake logs)
+    duration_info = pm.get("duration_info", {}) if pm and isinstance(pm, dict) else {}
+    duration_seconds = duration_info.get("duration_seconds", 0) if duration_info else 0
+
+    if duration_seconds > 0:
+        hours = duration_seconds // 3600
+        minutes = (duration_seconds % 3600) // 60
+        if hours > 0:
+            workset["duration_formatted"] = f"{hours}h {minutes}m"
+        else:
+            workset["duration_formatted"] = f"{minutes}m"
+        workset["duration_seconds"] = duration_seconds
+    else:
+        workset["duration_formatted"] = None
+        workset["duration_seconds"] = 0
+
     return workset
+
+
+# Backwards compatibility alias
+def _extract_workset_storage(workset: Dict[str, Any]) -> Dict[str, Any]:
+    """Alias for _extract_workset_metrics for backwards compatibility."""
+    return _extract_workset_metrics(workset)
 
 
 def create_portal_router(deps: PortalDependencies) -> APIRouter:
