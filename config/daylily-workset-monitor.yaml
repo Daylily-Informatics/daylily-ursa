@@ -7,16 +7,19 @@ aws:
   # Optional session duration for profile authentication in seconds.
   session_duration_seconds: 3600
 
+# NOTE: The monitor does not have a default bucket. Each workset has its own bucket
+# assigned during creation based on the selected cluster's region (from ~/.ursa/config.yaml).
 monitor:
-  bucket: my-daylily-bucket
   prefix: daylily_monitoring/active_worksets/
   archive_prefix: daylily_monitoring/archived_worksets/
   poll_interval_seconds: 60
   ready_lock_backoff_seconds: 30
   # Set to true to keep looping forever.  When false the monitor performs one scan and exits.
   continuous: true
-  # Where to mirror sentinel state listings (in the same bucket/prefix).
-  sentinel_index_prefix: daylily_monitoring/
+  max_concurrent_worksets: 1
+  # Optional: Sentinel index for global state tracking
+  # sentinel_index_prefix: daylily_monitoring/
+  # sentinel_index_bucket: my-daylily-bucket
 
 cluster:
   # Reuse an existing cluster when available, otherwise create from this template.

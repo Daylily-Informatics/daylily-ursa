@@ -1868,8 +1868,9 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
             "AWS_ACCESS_KEY_ID": "***" if os.getenv("AWS_ACCESS_KEY_ID") else None,
             "AWS_SECRET_ACCESS_KEY": "***" if os.getenv("AWS_SECRET_ACCESS_KEY") else None,
             "AWS_ACCOUNT_ID": app_settings.aws_account_id,
-            "DAYLILY_CONTROL_BUCKET": app_settings.daylily_control_bucket,
-            "DAYLILY_MONITOR_BUCKET": app_settings.daylily_monitor_bucket,
+            # NOTE: Bucket env vars are deprecated - buckets discovered from cluster tags
+            "DAYLILY_CONTROL_BUCKET (deprecated)": app_settings.daylily_control_bucket,
+            "DAYLILY_MONITOR_BUCKET (deprecated)": app_settings.daylily_monitor_bucket,
             "WORKSET_TABLE_NAME": app_settings.workset_table_name,
             "CUSTOMER_TABLE_NAME": app_settings.customer_table_name,
             "COGNITO_USER_POOL_ID": app_settings.cognito_user_pool_id,
@@ -1931,15 +1932,25 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         # Check if user is admin to determine if we should fetch SSH status
         is_admin = customer and customer.is_admin
         try:
-            from daylib.cluster_service import ClusterService
+            from daylib.cluster_service import get_cluster_service
+            from daylib.ursa_config import get_ursa_config
 
-            allowed_regions = deps.settings.get_allowed_regions()
-            regions = allowed_regions
+            # Use UrsaConfig for regions (preferred) with fallback to legacy env var
+            ursa_config = get_ursa_config()
+            if ursa_config.is_configured:
+                allowed_regions = ursa_config.get_allowed_regions()
+                aws_profile = ursa_config.aws_profile or deps.settings.aws_profile
+            else:
+                allowed_regions = deps.settings.get_allowed_regions()
+                aws_profile = deps.settings.aws_profile
+
+            regions = allowed_regions or []
 
             if allowed_regions:
-                service = ClusterService(
+                # Use global singleton to share cache across requests
+                service = get_cluster_service(
                     regions=allowed_regions,
-                    aws_profile=deps.settings.aws_profile,
+                    aws_profile=aws_profile,
                     cache_ttl_seconds=300,
                 )
                 # Only fetch SSH status for admin users

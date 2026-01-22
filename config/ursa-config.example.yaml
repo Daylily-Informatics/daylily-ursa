@@ -1,28 +1,24 @@
 # Ursa Configuration Example
-# Copy this file to ~/.ursa/config.yaml and customize
+# Copy this file to ~/.ursa/ursa.yaml and customize
 #
 # This file defines:
 # - AWS regions to scan for ParallelCluster instances
-# - S3 bucket for each region (used for workset registration)
+# - AWS profile and Cognito settings
+#
+# NOTE: S3 buckets are discovered from cluster tags (aws-parallelcluster-monitor-bucket)
+# rather than being configured here. Each cluster's bucket is set during cluster creation.
 
-# Optional: Default AWS profile (can be overridden by AWS_PROFILE env var)
-# aws_profile: lsmc
+# AWS profile to use (overridden by AWS_PROFILE env var if set)
+aws_profile: lsmc
 
-# Region to bucket mappings
-# Each region should have a bucket in that region for data locality
+# List of AWS regions to scan for ParallelCluster instances
+# Clusters in these regions will be available for workset execution
 regions:
-  us-west-2:
-    bucket: s3://your-bucket-us-west-2
-    # enabled: true  # default
+  - us-west-2
+  - us-east-1
+  - eu-central-1
+  - ap-south-1
 
-  us-east-1:
-    bucket: s3://your-bucket-us-east-1
-
-  eu-west-1:
-    bucket: s3://your-bucket-eu-west-1
-
-  # Disable a region without removing it
-  # eu-central-1:
-  #   bucket: s3://your-bucket-eu-central-1
-  #   enabled: false
-
+# Cognito configuration (overridden by env vars COGNITO_USER_POOL_ID, COGNITO_APP_CLIENT_ID)
+# cognito_user_pool_id: us-west-2_xxxxxxxx
+# cognito_app_client_id: xxxxxxxxxxxxxxxxxxxxxxxxxx

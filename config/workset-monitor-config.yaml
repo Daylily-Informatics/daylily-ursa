@@ -34,10 +34,10 @@ aws:
 # -----------------------------------------------------------------------------
 # Monitor Configuration
 # -----------------------------------------------------------------------------
+# NOTE: The monitor does not have a default bucket. Each workset has its own bucket
+# assigned during creation based on the selected cluster's region. Bucket mappings
+# are defined in ~/.ursa/config.yaml.
 monitor:
-  # S3 bucket where worksets are stored
-  bucket: lsmc-dayoa-omics-analysis-us-west-2
-
   # S3 prefix for active worksets (must end with /)
   # This must match the server's S3_PREFIX setting (default: worksets/)
   prefix: worksets/
@@ -54,8 +54,12 @@ monitor:
   # Run continuously (true) or single scan and exit (false)
   continuous: true
 
-  # S3 prefix for sentinel index files (state tracking)
-  sentinel_index_prefix: worksets/.monitor/
+  # Maximum number of worksets to process concurrently
+  max_concurrent_worksets: 1
+
+  # Optional: Sentinel index for global state tracking
+  # sentinel_index_prefix: worksets/.monitor/
+  # sentinel_index_bucket: lsmc-dayoa-omics-analysis-us-west-2
 
 # -----------------------------------------------------------------------------
 # Cluster Configuration

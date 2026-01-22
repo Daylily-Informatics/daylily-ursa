@@ -95,17 +95,20 @@ class Settings(BaseSettings):
     )
 
     # ========== S3 Configuration ==========
+    # NOTE: DAYLILY_CONTROL_BUCKET and DAYLILY_MONITOR_BUCKET are DEPRECATED.
+    # S3 buckets are now discovered from cluster tags (aws-parallelcluster-monitor-bucket).
+    # These fields are kept for backward compatibility during migration.
     daylily_control_bucket: Optional[str] = Field(
         default=None,
-        description="S3 bucket for control plane data (worksets, configs)",
+        description="DEPRECATED - S3 bucket for control plane data. Use cluster tags instead.",
     )
     daylily_monitor_bucket: Optional[str] = Field(
         default=None,
-        description="S3 bucket for monitoring (legacy alias for control bucket)",
+        description="DEPRECATED - S3 bucket for monitoring. Use cluster tags instead.",
     )
     s3_bucket: Optional[str] = Field(
         default=None,
-        description="Default S3 bucket for workset data",
+        description="DEPRECATED - Default S3 bucket for workset data. Use cluster tags instead.",
     )
     s3_prefix: str = Field(
         default="worksets/",
@@ -295,11 +298,22 @@ class Settings(BaseSettings):
         return origins
 
     def get_control_bucket(self) -> Optional[str]:
-        """Get control bucket, preferring DAYLILY_CONTROL_BUCKET over legacy DAYLILY_MONITOR_BUCKET.
+        """Get control bucket (DEPRECATED).
+
+        DEPRECATED: S3 buckets are now discovered from cluster tags
+        (aws-parallelcluster-monitor-bucket). This method is kept for
+        backward compatibility but should not be used in new code.
 
         Returns bucket name with s3:// prefix stripped if present.
         """
         bucket = self.daylily_control_bucket or self.daylily_monitor_bucket
+        if bucket:
+            import logging
+            logging.getLogger(__name__).warning(
+                "DEPRECATED: get_control_bucket() called with env var bucket %s. "
+                "S3 buckets should be discovered from cluster tags instead.",
+                bucket
+            )
         return normalize_bucket_name(bucket)
 
     def get_effective_region(self) -> str:

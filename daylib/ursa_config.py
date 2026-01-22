@@ -1,13 +1,18 @@
-"""Ursa configuration loader for ~/.ursa/config.yaml.
+"""Ursa configuration loader for ~/.ursa/ursa.yaml.
 
-This module provides region-to-bucket mappings and other Ursa-wide settings.
+This module provides:
+- List of AWS regions to scan for ParallelCluster instances
+- AWS profile and Cognito settings (overridden by environment variables)
+
+S3 buckets are discovered from cluster tags (aws-parallelcluster-monitor-bucket)
+rather than being configured statically per region.
 """
 
 import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 import yaml
 
@@ -15,40 +20,30 @@ LOGGER = logging.getLogger(__name__)
 
 # Config search paths (in priority order)
 CONFIG_SEARCH_PATHS = [
-    Path.home() / ".ursa" / "config.yaml",
     Path.home() / ".ursa" / "ursa.yaml",
+    Path.home() / ".ursa" / "config.yaml",
 ]
 
 
 @dataclass
-class RegionConfig:
-    """Configuration for a single AWS region."""
-
-    bucket: str
-    """S3 bucket URI for this region (e.g., s3://my-bucket-us-west-2)."""
-
-    enabled: bool = True
-    """Whether this region is enabled for cluster discovery."""
-
-    @property
-    def bucket_name(self) -> str:
-        """Return bucket name without s3:// prefix."""
-        b = self.bucket
-        if b.startswith("s3://"):
-            b = b[5:]
-        # Remove trailing path if present
-        return b.split("/")[0]
-
-
-@dataclass
 class UrsaConfig:
-    """Ursa configuration loaded from ~/.ursa/config.yaml."""
+    """Ursa configuration loaded from ~/.ursa/ursa.yaml.
 
-    regions: Dict[str, RegionConfig] = field(default_factory=dict)
-    """Region name -> RegionConfig mapping."""
+    S3 buckets are NOT configured here - they are discovered dynamically from
+    cluster tags (aws-parallelcluster-monitor-bucket) when a cluster is selected.
+    """
+
+    regions: List[str] = field(default_factory=list)
+    """List of AWS regions to scan for ParallelCluster instances."""
 
     aws_profile: Optional[str] = None
-    """Default AWS profile to use."""
+    """AWS profile to use (overridden by AWS_PROFILE env var)."""
+
+    cognito_user_pool_id: Optional[str] = None
+    """Cognito User Pool ID (overridden by COGNITO_USER_POOL_ID env var)."""
+
+    cognito_app_client_id: Optional[str] = None
+    """Cognito App Client ID (overridden by COGNITO_APP_CLIENT_ID env var)."""
 
     _config_path: Optional[Path] = None
     """Path where config was loaded from."""
@@ -57,12 +52,17 @@ class UrsaConfig:
     def load(cls, config_path: Optional[Path] = None) -> "UrsaConfig":
         """Load configuration from YAML file.
 
+        Environment variables take precedence over config file values:
+        - AWS_PROFILE overrides aws_profile
+        - COGNITO_USER_POOL_ID overrides cognito_user_pool_id
+        - COGNITO_APP_CLIENT_ID overrides cognito_app_client_id
+
         Args:
             config_path: Path to config file. If not provided, searches
                          CONFIG_SEARCH_PATHS in order.
 
         Returns:
-            UrsaConfig instance (empty if file doesn't exist).
+            UrsaConfig instance (empty regions list if file doesn't exist).
         """
         # Find config file
         if config_path:
@@ -86,20 +86,34 @@ class UrsaConfig:
             LOGGER.error("Failed to load Ursa config from %s: %s", path, e)
             return cls(_config_path=path)
 
-        regions = {}
-        for region_name, region_data in data.get("regions", {}).items():
-            if isinstance(region_data, dict):
-                regions[region_name] = RegionConfig(
-                    bucket=region_data.get("bucket", ""),
-                    enabled=region_data.get("enabled", True),
-                )
-            elif isinstance(region_data, str):
-                # Simple format: region: bucket_uri
-                regions[region_name] = RegionConfig(bucket=region_data)
+        # Parse regions - support both list format and legacy dict format
+        regions_data = data.get("regions", [])
+        if isinstance(regions_data, list):
+            # New format: simple list of region names
+            regions = [r for r in regions_data if isinstance(r, str)]
+        elif isinstance(regions_data, dict):
+            # Legacy format: dict with region -> bucket mappings
+            # Extract just the region names, ignore bucket mappings
+            regions = list(regions_data.keys())
+            LOGGER.warning(
+                "Legacy region-to-bucket config format detected in %s. "
+                "Buckets are now discovered from cluster tags. "
+                "Consider updating to: regions: [%s]",
+                path, ", ".join(regions)
+            )
+        else:
+            regions = []
+
+        # Environment variables take precedence over config file
+        aws_profile = os.environ.get("AWS_PROFILE") or data.get("aws_profile")
+        cognito_user_pool_id = os.environ.get("COGNITO_USER_POOL_ID") or data.get("cognito_user_pool_id")
+        cognito_app_client_id = os.environ.get("COGNITO_APP_CLIENT_ID") or data.get("cognito_app_client_id")
 
         config = cls(
             regions=regions,
-            aws_profile=data.get("aws_profile"),
+            aws_profile=aws_profile,
+            cognito_user_pool_id=cognito_user_pool_id,
+            cognito_app_client_id=cognito_app_client_id,
             _config_path=path,
         )
 
@@ -107,51 +121,8 @@ class UrsaConfig:
         return config
 
     def get_allowed_regions(self) -> List[str]:
-        """Get list of enabled region names."""
-        return [r for r, cfg in self.regions.items() if cfg.enabled]
-
-    def get_bucket_for_region(self, region: str) -> Optional[str]:
-        """Get the bucket URI for a region.
-
-        Args:
-            region: AWS region name (e.g., 'us-west-2').
-
-        Returns:
-            Bucket URI (e.g., 's3://my-bucket') or None if region not configured.
-        """
-        cfg = self.regions.get(region)
-        return cfg.bucket if cfg else None
-
-    def get_bucket_name_for_region(self, region: str) -> Optional[str]:
-        """Get the bucket name (without s3://) for a region.
-
-        Args:
-            region: AWS region name.
-
-        Returns:
-            Bucket name or None if region not configured.
-        """
-        cfg = self.regions.get(region)
-        return cfg.bucket_name if cfg else None
-
-    def get_region_for_bucket(self, bucket: str) -> Optional[str]:
-        """Look up region for a bucket name.
-
-        Args:
-            bucket: Bucket name (with or without s3:// prefix).
-
-        Returns:
-            Region name or None if bucket not found in config.
-        """
-        # Normalize bucket name
-        if bucket.startswith("s3://"):
-            bucket = bucket[5:]
-        bucket = bucket.split("/")[0]
-
-        for region, cfg in self.regions.items():
-            if cfg.bucket_name == bucket:
-                return region
-        return None
+        """Get list of region names to scan for clusters."""
+        return self.regions
 
     @property
     def is_configured(self) -> bool:

@@ -118,15 +118,14 @@ def info():
     config_dir = Path.home() / ".ursa"
     table.add_row("Config Dir", str(config_dir))
 
-    # Ursa config (regions/buckets)
+    # Ursa config (regions to scan)
     from daylib.ursa_config import get_ursa_config
     ursa_config = get_ursa_config()
     if ursa_config.is_configured:
         regions = ursa_config.get_allowed_regions()
         table.add_row("Ursa Config", f"[green]{len(regions)} regions[/green]")
-        for region in regions:
-            bucket = ursa_config.get_bucket_name_for_region(region)
-            table.add_row(f"  {region}", f"[dim]{bucket}[/dim]")
+        table.add_row("  Scan regions", f"[dim]{', '.join(regions)}[/dim]")
+        table.add_row("  Bucket source", "[dim]cluster tags (aws-parallelcluster-monitor-bucket)[/dim]")
     else:
         table.add_row("Ursa Config", "[yellow]not configured[/yellow]")
 

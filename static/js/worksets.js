@@ -365,33 +365,6 @@ async function submitWorkset(event) {
     showLoading('Preparing workset...');
 
     try {
-        // Upload selected files to S3 first (if any)
-        const selectedFiles = window.getSelectedFiles ? window.getSelectedFiles() : [];
-        if (selectedFiles.length > 0) {
-            showLoading(`Uploading ${selectedFiles.length} file(s) to S3...`);
-            try {
-                const uploadResult = await window.uploadFilesToS3(customerId, worksetPrefix);
-                if (!uploadResult.success) {
-                    throw new Error('File upload failed');
-                }
-                showToast('success', 'Files Uploaded', `Uploaded ${uploadResult.uploadedFiles.length} file(s) to S3`);
-            } catch (uploadError) {
-                showToast('error', 'Upload Failed', uploadError.message);
-                hideLoading();
-                return;
-            }
-        }
-
-        // Include samples from global worksetSamples array (now with S3 paths after upload)
-        if (window.worksetSamples && window.worksetSamples.length > 0) {
-            data.samples = window.worksetSamples;
-        }
-
-        // Include fileset if selected
-        if (window.selectedFileset) {
-            data.fileset_id = window.selectedFileset.fileset_id;
-        }
-
         // Include manifest - either saved manifest ID or uploaded TSV content
         if (window.selectedManifestId) {
             data.manifest_id = window.selectedManifestId;
@@ -399,11 +372,14 @@ async function submitWorkset(event) {
             data.manifest_tsv_content = window.manifestTsvContent;
         }
 
-        // Include preferred cluster if selected
+        // Cluster selection is required - bucket is derived from cluster tags
         const preferredCluster = document.getElementById('preferred_cluster')?.value;
-        if (preferredCluster) {
-            data.preferred_cluster = preferredCluster;
+        if (!preferredCluster || preferredCluster === '__create_cluster__') {
+            showToast('error', 'Cluster Required', 'Please select a cluster for workset execution. The S3 bucket is derived from the cluster tags.');
+            hideLoading();
+            return;
         }
+        data.preferred_cluster = preferredCluster;
 
         showLoading('Creating workset...');
         const result = await DaylilyAPI.worksets.create(customerId, data);
@@ -551,18 +527,13 @@ document.addEventListener('DOMContentLoaded', function() {
         cb.addEventListener('change', updateBulkActions);
     });
 
-    // Initialize fileset selector if on new workset page
-    if (document.getElementById('fileset-select')) {
-        loadFilesetOptions();
-    }
-
     // Initialize saved manifests dropdown if on new workset page
     if (document.getElementById('saved-manifest-select')) {
         refreshSavedManifestsList();
     }
 
     // Add cost calculation listeners
-    const costTriggers = ['pipeline_type', 'reference_genome', 'priority', 'enable_qc', 'fileset-select'];
+    const costTriggers = ['pipeline_type', 'reference_genome', 'priority', 'enable_qc'];
     costTriggers.forEach(id => {
         const el = document.getElementById(id);
         if (el) {
@@ -570,112 +541,6 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 });
-
-// Tab switching for workset creation
-function switchTab(tabName) {
-    // Hide all tab contents
-    document.querySelectorAll('.tab-content').forEach(tc => tc.classList.remove('active'));
-    // Deactivate all tab items
-    document.querySelectorAll('.tab-item').forEach(ti => ti.classList.remove('active'));
-
-    // Show selected tab content
-    const tabContent = document.getElementById(`tab-${tabName}`);
-    if (tabContent) tabContent.classList.add('active');
-
-    // Activate selected tab item
-    const tabItems = document.querySelectorAll('.tab-item');
-    tabItems.forEach(ti => {
-        if (ti.textContent.toLowerCase().includes(tabName.toLowerCase()) ||
-            ti.onclick?.toString().includes(`'${tabName}'`)) {
-            ti.classList.add('active');
-        }
-    });
-
-    // Store selected input method
-    window.selectedInputMethod = tabName;
-
-    // Recalculate cost
-    calculateCostEstimate();
-}
-
-// Load fileset options for selector
-async function loadFilesetOptions() {
-    const select = document.getElementById('fileset-select');
-    if (!select) return;
-
-    const customerId = window.UrsaConfig?.customerId;
-    if (!customerId) return;
-
-    try {
-        const response = await fetch(`/api/v1/files/filesets?customer_id=${encodeURIComponent(customerId)}`);
-        if (!response.ok) throw new Error('Failed to load filesets');
-
-        const filesets = await response.json();
-
-        select.innerHTML = '<option value="">Choose a file set...</option>';
-        filesets.forEach(fs => {
-            const option = document.createElement('option');
-            option.value = fs.fileset_id;
-            option.textContent = `${fs.name} (${fs.file_count} files)`;
-            option.dataset.fileCount = fs.file_count;
-            option.dataset.description = fs.description || '';
-            select.appendChild(option);
-        });
-    } catch (error) {
-        console.error('Failed to load filesets:', error);
-        select.innerHTML = '<option value="">Error loading file sets</option>';
-    }
-}
-
-// Load fileset preview when selected
-async function loadFilesetPreview() {
-    const select = document.getElementById('fileset-select');
-    const preview = document.getElementById('fileset-preview');
-    if (!select || !preview) return;
-
-    const filesetId = select.value;
-    if (!filesetId) {
-        preview.classList.add('d-none');
-        window.selectedFileset = null;
-        calculateCostEstimate();
-        return;
-    }
-
-    try {
-        const response = await fetch(`/api/v1/files/filesets/${filesetId}`);
-        if (!response.ok) throw new Error('Failed to load fileset');
-
-        const fileset = await response.json();
-        window.selectedFileset = fileset;
-
-        document.getElementById('fileset-name').textContent = fileset.name;
-        document.getElementById('fileset-file-count').textContent = `${fileset.files?.length || 0} files`;
-        document.getElementById('fileset-description').textContent = fileset.description || 'No description';
-
-        // Show file preview (first 5 files)
-        const filesPreview = document.getElementById('fileset-files-preview');
-        if (filesPreview && fileset.files) {
-            const displayFiles = fileset.files.slice(0, 5);
-            filesPreview.innerHTML = displayFiles.map(f => `
-                <div class="d-flex align-center gap-sm" style="padding: var(--spacing-xs) 0; border-bottom: 1px solid #2a3a44;">
-                    <i class="fas fa-file text-muted"></i>
-                    <span class="text-sm">${f.filename || f.file_id}</span>
-                    <span class="text-muted text-sm ml-auto">${formatFileSize(f.file_size || 0)}</span>
-                </div>
-            `).join('');
-
-            if (fileset.files.length > 5) {
-                filesPreview.innerHTML += `<div class="text-muted text-sm mt-sm">...and ${fileset.files.length - 5} more files</div>`;
-            }
-        }
-
-        preview.classList.remove('d-none');
-        calculateCostEstimate();
-    } catch (error) {
-        console.error('Failed to load fileset preview:', error);
-        preview.classList.add('d-none');
-    }
-}
 
 // Preview manifest file
 function previewManifest(input) {
@@ -832,20 +697,15 @@ function calculateCostEstimate() {
         pipeline,
         priority,
         enableQc,
-        selectedFileset: !!window.selectedFileset,
         manifestSampleCount: window.manifestSampleCount,
         selectedManifestId: window.selectedManifestId
     });
 
-    // Determine sample count based on input method
+    // Determine sample count from manifest (uploaded or saved)
     let sampleCount = 0;
     let totalDataSize = 0; // in GB
 
-    if (window.selectedFileset) {
-        sampleCount = Math.ceil((window.selectedFileset.files?.length || 0) / 2); // Assume paired-end
-        totalDataSize = (window.selectedFileset.files || []).reduce((sum, f) => sum + (f.file_size || 0), 0) / (1024 * 1024 * 1024);
-        console.log('Using selectedFileset:', sampleCount, 'samples');
-    } else if (window.manifestSampleCount > 0) {
+    if (window.manifestSampleCount > 0) {
         // Use sample count from uploaded or selected manifest
         sampleCount = window.manifestSampleCount;
         totalDataSize = sampleCount * 30; // Estimate 30GB per sample
@@ -856,12 +716,8 @@ function calculateCostEstimate() {
         sampleCount = 1;
         totalDataSize = 30;
         console.warn('Manifest selected but sample_count not available, using estimate');
-    } else if (window.worksetSamples?.length) {
-        sampleCount = window.worksetSamples.length;
-        totalDataSize = sampleCount * 30;
-        console.log('Using worksetSamples:', sampleCount, 'samples');
     } else {
-        console.log('No sample source found, sampleCount=0');
+        console.log('No manifest selected, sampleCount=0');
     }
 
     // Base costs per sample (in USD) - map actual pipeline types to cost profiles
@@ -981,8 +837,8 @@ async function refreshClusterList() {
         const data = await response.json();
         availableClusters = data.clusters || [];
 
-        // Populate the dropdown
-        select.innerHTML = '<option value="">Auto-select (recommended)</option>';
+        // Populate the dropdown - cluster selection is required
+        select.innerHTML = '<option value="">-- Select a cluster --</option>';
         let tableHtml = '';
 
         // Get detected file regions from manifest generator (if available)
@@ -990,15 +846,13 @@ async function refreshClusterList() {
         const r2Region = window.r2FileRegion;
         const fileRegion = r1Region || r2Region;
 
-        // Sort clusters: running first, then by region match
-        const sortedClusters = [...availableClusters].sort((a, b) => {
-            // Prefer running clusters
-            const aRunning = a.cluster_status === 'CREATE_COMPLETE';
-            const bRunning = b.cluster_status === 'CREATE_COMPLETE';
-            if (aRunning && !bRunning) return -1;
-            if (!aRunning && bRunning) return 1;
+        // Filter to only running clusters (CREATE_COMPLETE) for workset creation
+        // Users should only be able to select clusters that are actually available
+        const runningClusters = availableClusters.filter(c => c.cluster_status === 'CREATE_COMPLETE');
 
-            // Then prefer region match
+        // Sort running clusters: prefer region match, then alphabetically
+        const sortedClusters = [...runningClusters].sort((a, b) => {
+            // Prefer region match
             if (fileRegion) {
                 const aMatch = a.region === fileRegion;
                 const bMatch = b.region === fileRegion;
@@ -1010,10 +864,7 @@ async function refreshClusterList() {
         });
 
         sortedClusters.forEach(cluster => {
-            const isRunning = cluster.cluster_status === 'CREATE_COMPLETE';
             const regionMatch = fileRegion && cluster.region === fileRegion;
-            const statusClass = isRunning ? 'badge-success' : 'badge-secondary';
-            const statusText = isRunning ? 'Running' : (cluster.cluster_status || 'Unknown');
             const matchBadge = regionMatch
                 ? '<span class="badge badge-info" title="Same region as your data"><i class="fas fa-check"></i> Match</span>'
                 : '<span class="text-muted">—</span>';
@@ -1028,31 +879,86 @@ async function refreshClusterList() {
                     <td><input type="radio" name="cluster_radio" value="${cluster.cluster_name}"></td>
                     <td><code style="font-size: 0.8rem;">${cluster.cluster_name}</code></td>
                     <td><span class="badge badge-secondary" style="font-size: 0.7rem;">${cluster.region}</span></td>
-                    <td><span class="badge ${statusClass}" style="font-size: 0.7rem;">${statusText}</span></td>
+                    <td><span class="badge badge-success" style="font-size: 0.7rem;">Running</span></td>
                     <td>${matchBadge}</td>
                 </tr>
             `;
         });
 
-        if (tbody) tbody.innerHTML = tableHtml || '<tr><td colspan="5" class="text-center text-muted">No clusters available</td></tr>';
+        // Add "Create Cluster" option at the end of the dropdown
+        select.innerHTML += '<option value="__create_cluster__" style="font-style: italic;">➕ Create New Cluster...</option>';
+
+        if (tbody) tbody.innerHTML = tableHtml || '<tr><td colspan="5" class="text-center text-muted">No running clusters available</td></tr>';
 
         // Update suggestion text
         if (suggestionText && fileRegion) {
-            const matchingClusters = availableClusters.filter(c => c.region === fileRegion && c.cluster_status === 'CREATE_COMPLETE');
+            // Use the already-filtered running clusters for suggestion
+            const matchingClusters = runningClusters.filter(c => c.region === fileRegion);
             if (matchingClusters.length > 0) {
                 suggestionText.innerHTML = `<i class="fas fa-lightbulb text-warning"></i> <strong>Recommended:</strong> ${matchingClusters.length} cluster(s) in <code>${fileRegion}</code> match your data location.`;
-            } else {
+            } else if (runningClusters.length > 0) {
                 suggestionText.innerHTML = `<i class="fas fa-exclamation-triangle text-warning"></i> No running clusters in <code>${fileRegion}</code>. Data transfer costs may apply.`;
+            } else {
+                suggestionText.innerHTML = `<i class="fas fa-exclamation-triangle text-danger"></i> No running clusters available. Use "Create New Cluster" below.`;
             }
+        } else if (suggestionText && runningClusters.length === 0) {
+            suggestionText.innerHTML = `<i class="fas fa-exclamation-triangle text-danger"></i> No running clusters available. Use "Create New Cluster" option.`;
         }
+
+        // Add change handler for "Create Cluster" option
+        select.addEventListener('change', handleClusterSelectChange);
 
     } catch (error) {
         console.error('Failed to load clusters:', error);
-        select.innerHTML = '<option value="">Auto-select (recommended)</option>';
+        select.innerHTML = '<option value="">-- Select a cluster --</option><option value="__create_cluster__">➕ Create New Cluster...</option>';
         if (tbody) {
             tbody.innerHTML = `<tr><td colspan="5" class="text-center text-error"><i class="fas fa-exclamation-triangle"></i> Failed to load clusters</td></tr>`;
         }
     }
+}
+
+/**
+ * Handle cluster dropdown change - show modal if "Create Cluster" selected.
+ */
+function handleClusterSelectChange(event) {
+    if (event.target.value === '__create_cluster__') {
+        event.target.value = '';  // Reset selection
+        showCreateClusterModal();
+    }
+}
+
+/**
+ * Show the create cluster modal dialog.
+ */
+function showCreateClusterModal() {
+    const modal = document.getElementById('create-cluster-modal');
+    if (modal) {
+        modal.style.display = 'flex';
+        document.body.style.overflow = 'hidden';
+    }
+}
+
+/**
+ * Close the create cluster modal dialog.
+ */
+function closeCreateClusterModal() {
+    const modal = document.getElementById('create-cluster-modal');
+    if (modal) {
+        modal.style.display = 'none';
+        document.body.style.overflow = '';
+    }
+}
+
+/**
+ * Open cluster creation in the cluster manager (new tab).
+ */
+function openClusterCreation() {
+    const regionSelect = document.getElementById('new-cluster-region');
+    const region = regionSelect ? regionSelect.value : 'us-west-2';
+    // Open cluster manager with region pre-selected
+    window.open(`/portal/clusters?action=create&region=${region}`, '_blank');
+    closeCreateClusterModal();
+    showToast('info', 'Cluster Manager Opened', 'Create your cluster in the new tab, then refresh this page to select it.');
 }
 
 /**

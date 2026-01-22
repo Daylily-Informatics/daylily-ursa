@@ -204,14 +204,14 @@
 
             <hr style="border: none; border-top: 1px solid var(--color-gray-700); margin: var(--spacing-lg) 0;">
 
-            <h4 style="margin-bottom: var(--spacing-md);">Cluster Selection</h4>
-            <p class="text-muted mb-md">Select a compute cluster for workset execution. For optimal performance and cost, choose a cluster in the same region as your data files.</p>
+            <h4 style="margin-bottom: var(--spacing-md);">Cluster Selection <span class="text-error">*</span></h4>
+            <p class="text-muted mb-md">Select a compute cluster for workset execution. The S3 bucket for your workset data is determined by the cluster you select.</p>
 
             <div class="form-group">
-                <label for="preferred_cluster" class="form-label">Preferred Cluster</label>
+                <label for="preferred_cluster" class="form-label">Cluster <span class="text-error">*</span></label>
                 <div class="input-group">
-                    <select id="preferred_cluster" name="preferred_cluster" class="form-control form-select">
-                        <option value="">Auto-select (recommended)</option>
+                    <select id="preferred_cluster" name="preferred_cluster" class="form-control form-select" required>
+                        <option value="">-- Select a cluster --</option>
                     </select>
                     <button type="button" class="btn btn-outline" onclick="refreshClusterList()">
                         <i class="fas fa-sync-alt"></i>
@@ -219,8 +219,36 @@
                 </div>
                 <p class="form-text" id="cluster-suggestion-text">
                     <i class="fas fa-info-circle text-info"></i>
-                    Auto-select will choose the best available cluster based on your data location.
+                    Choose a cluster in the same region as your data for optimal performance.
                 </p>
+            </div>
+
+            <!-- Region selection modal for "Create Cluster" option -->
+            <div id="create-cluster-modal" class="modal" style="display: none;">
+                <div class="modal-backdrop" onclick="closeCreateClusterModal()"></div>
+                <div class="modal-content" style="max-width: 450px;">
+                    <div class="modal-header">
+                        <h5 class="modal-title"><i class="fas fa-plus-circle"></i> Create New Cluster</h5>
+                        <button type="button" class="close" onclick="closeCreateClusterModal()">&times;</button>
+                    </div>
+                    <div class="modal-body">
+                        <p class="text-muted mb-md">Select the region where you want to create a new cluster. This should match where your data is stored.</p>
+                        <div class="form-group">
+                            <label for="new-cluster-region" class="form-label">Region</label>
+                            <select id="new-cluster-region" class="form-control form-select">
+                                {% for region in allowed_regions | default(['us-west-2', 'eu-central-1', 'ap-south-1']) %}
+                                <option value="{{ region }}">{{ region }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" onclick="closeCreateClusterModal()">Cancel</button>
+                        <button type="button" class="btn btn-primary" onclick="openClusterCreation()">
+                            <i class="fas fa-external-link-alt"></i> Open Cluster Manager
+                        </button>
+                    </div>
+                </div>
             </div>
 
             <div id="cluster-list-container" class="mt-md" style="display: none;">
@@ -339,6 +367,5 @@
 
 {% block extra_js %}
 <script src="/static/js/worksets.js?v={{ cache_bust | default('1') }}"></script>
-<script src="/static/js/file-upload.js?v={{ cache_bust | default('1') }}"></script>
 {% endblock %}
 

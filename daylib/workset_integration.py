@@ -117,6 +117,7 @@ class WorksetIntegration:
         metadata: Optional[Dict[str, Any]] = None,
         customer_id: Optional[str] = None,
         preferred_cluster: Optional[str] = None,
+        cluster_region: Optional[str] = None,
         *,
         write_s3: bool = True,
         write_dynamodb: bool = True,
@@ -132,6 +133,7 @@ class WorksetIntegration:
             metadata: Additional workset metadata
             customer_id: Customer ID who owns this workset
             preferred_cluster: User-selected cluster for execution
+            cluster_region: AWS region of the preferred cluster (for pcluster commands)
             write_s3: Whether to write S3 sentinel files
             write_dynamodb: Whether to write DynamoDB record
 
@@ -161,10 +163,14 @@ class WorksetIntegration:
             except ValueError:
                 ws_type = WorksetType.RUO
 
-            # Extract preferred_cluster from metadata if not passed directly
+            # Extract preferred_cluster and cluster_region from metadata if not passed directly
             effective_preferred_cluster = preferred_cluster
-            if not effective_preferred_cluster and metadata:
-                effective_preferred_cluster = metadata.get("preferred_cluster")
+            effective_cluster_region = cluster_region
+            if metadata:
+                if not effective_preferred_cluster:
+                    effective_preferred_cluster = metadata.get("preferred_cluster")
+                if not effective_cluster_region:
+                    effective_cluster_region = metadata.get("cluster_region")
 
             db_success = self.state_db.register_workset(
                 workset_id=workset_id,
@@ -175,6 +181,7 @@ class WorksetIntegration:
                 metadata=metadata,
                 customer_id=customer_id,
                 preferred_cluster=effective_preferred_cluster,
+                cluster_region=effective_cluster_region,
             )
             if not db_success:
                 LOGGER.warning("DynamoDB registration failed for %s", workset_id)

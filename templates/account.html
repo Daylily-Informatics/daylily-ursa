@@ -217,26 +217,17 @@
                         </thead>
                         <tbody>
                             <tr>
-                                <td><code>DAYLILY_CONTROL_BUCKET</code></td>
-                                <td>{% if env_vars.DAYLILY_CONTROL_BUCKET %}<span class="env-value set">{{ env_vars.DAYLILY_CONTROL_BUCKET }}</span>{% else %}<span class="env-value not-set">Not set</span>{% endif %}</td>
-                                <td>S3 bucket for workset registration and management (primary)</td>
-                            </tr>
-                            <tr>
-                                <td><code>DAYLILY_MONITOR_BUCKET</code></td>
-                                <td>{% if env_vars.DAYLILY_MONITOR_BUCKET %}<span class="env-value set">{{ env_vars.DAYLILY_MONITOR_BUCKET }}</span>{% else %}<span class="env-value not-set">Not set</span>{% endif %}</td>
-                                <td>S3 bucket for workset monitoring (fallback if DAYLILY_CONTROL_BUCKET not set)</td>
+                                <td colspan="3" class="text-center text-muted">
+                                    <em>S3 buckets are now discovered from cluster tags.</em><br>
+                                    <small>Each cluster has an <code>aws-parallelcluster-monitor-bucket</code> tag that specifies its bucket.</small>
+                                </td>
                             </tr>
                         </tbody>
                     </table>
                 </div>
-                <div class="alert alert-warning mt-md">
-                    <strong>Configuration Priority:</strong>
-                    <ol class="mb-0">
-                        <li>CLI argument: <code>--control-bucket</code></li>
-                        <li>Environment variable: <code>DAYLILY_CONTROL_BUCKET</code></li>
-                        <li>Environment variable: <code>DAYLILY_MONITOR_BUCKET</code></li>
-                        <li>Integration layer configuration</li>
-                    </ol>
+                <div class="alert alert-info mt-md">
+                    <strong>Bucket Configuration:</strong>
+                    <p class="mb-0">S3 buckets are automatically discovered from the cluster you select during workset creation. Each ParallelCluster has a tag <code>aws-parallelcluster-monitor-bucket</code> that specifies its associated bucket.</p>
                 </div>
             </div>
 

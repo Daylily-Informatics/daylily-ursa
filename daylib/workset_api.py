@@ -1514,57 +1514,60 @@ def create_app(
             date_suffix = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d")
             workset_id = f"{safe_name}-{uuid.uuid4().hex[:8]}-{date_suffix}"
 
-            # Determine bucket from preferred_cluster's region or fallback
+            # Determine bucket from cluster tags (aws-parallelcluster-monitor-bucket)
+            # A cluster MUST be selected - bucket is discovered from its tags
             bucket = None
             cluster_region = None
             ursa_config = get_ursa_config()
 
-            if preferred_cluster:
-                # Fast lookup of cluster region using cached mapping
-                try:
-                    from daylib.cluster_service import get_cluster_service
-                    service = get_cluster_service(
-                        regions=ursa_config.get_allowed_regions() or settings.get_allowed_regions(),
-                        aws_profile=ursa_config.aws_profile or settings.aws_profile,
-                    )
-                    # Try fast cache lookup first (no API calls)
-                    cluster_region = service.get_region_for_cluster(preferred_cluster)
-                    if not cluster_region:
-                        # Cache miss - need to refresh (but use existing cache if available)
-                        LOGGER.debug("Cluster %s not in cache, checking full cluster list", preferred_cluster)
-                        all_clusters = service.get_all_clusters(force_refresh=False)
-                        for c in all_clusters:
-                            if c.cluster_name == preferred_cluster:
-                                cluster_region = c.region
-                                break
-                except Exception as e:
-                    LOGGER.warning("Failed to look up cluster %s region: %s", preferred_cluster, e)
-
-                # Get bucket from region config
-                if cluster_region and ursa_config.is_configured:
-                    bucket = ursa_config.get_bucket_name_for_region(cluster_region)
-                    if bucket:
-                        LOGGER.info("Using bucket %s from cluster %s in region %s",
-                                    bucket, preferred_cluster, cluster_region)
-
-            # Fallback: integration layer bucket or legacy env var
-            if not bucket:
-                if integration and integration.bucket:
-                    bucket = integration.bucket
-                if not bucket:
-                    app_settings = request.app.state.settings
-                    bucket = app_settings.get_control_bucket()
-
-            if not bucket:
-                error_detail = (
-                    "Control bucket is not configured for workset registration. "
-                    "Either select a cluster (bucket derived from ~/.ursa/config.yaml), "
-                    "or configure DAYLILY_CONTROL_BUCKET environment variable."
-                )
-                LOGGER.error(error_detail)
+            if not preferred_cluster:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=error_detail,
+                    detail="A cluster must be selected for workset creation. "
+                           "The S3 bucket is derived from the cluster's aws-parallelcluster-monitor-bucket tag.",
+                )
+
+            # Look up cluster to get region and bucket from tags
+            try:
+                from daylib.cluster_service import get_cluster_service, ClusterInfo
+                service = get_cluster_service(
+                    regions=ursa_config.get_allowed_regions() or settings.get_allowed_regions(),
+                    aws_profile=ursa_config.aws_profile or settings.aws_profile,
+                )
+                # Get cluster info (includes tags with bucket)
+                cluster_info = service.get_cluster_by_name(preferred_cluster, force_refresh=False)
+                if not cluster_info:
+                    # Try refreshing cache in case cluster was just created
+                    cluster_info = service.get_cluster_by_name(preferred_cluster, force_refresh=True)
+
+                if cluster_info:
+                    cluster_region = cluster_info.region
+                    bucket = cluster_info.get_monitor_bucket_name()
+                    if bucket:
+                        LOGGER.info(
+                            "Using bucket %s from cluster %s tag (region %s)",
+                            bucket, preferred_cluster, cluster_region
+                        )
+                    else:
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=f"Cluster '{preferred_cluster}' does not have a monitor bucket tag set. "
+                                   f"Clusters must have the '{ClusterInfo.MONITOR_BUCKET_TAG}' tag "
+                                   f"with the S3 bucket URI (e.g., s3://your-bucket).",
+                        )
+                else:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail=f"Cluster '{preferred_cluster}' not found in configured regions. "
+                               f"Scanned regions: {', '.join(ursa_config.get_allowed_regions() or settings.get_allowed_regions())}",
+                    )
+            except HTTPException:
+                raise
+            except Exception as e:
+                LOGGER.error("Failed to look up cluster %s: %s", preferred_cluster, e)
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Failed to query cluster metadata: {e}",
                 )
 
             # Use provided prefix or generate one based on workset ID
@@ -1674,11 +1677,11 @@ def create_app(
             # If no global integration exists but we have a bucket, create one ad-hoc
             effective_integration = integration
             if not effective_integration and bucket and INTEGRATION_AVAILABLE:
-                LOGGER.info("Creating ad-hoc integration for bucket %s", bucket)
+                LOGGER.info("Creating ad-hoc integration for bucket %s (region %s)", bucket, cluster_region)
                 effective_integration = WorksetIntegration(
                     state_db=state_db,
                     bucket=bucket,
-                    region=ursa_config.get_region_for_bucket(bucket) or settings.aws_region,
+                    region=cluster_region or settings.aws_region,
                     profile=ursa_config.aws_profile or settings.aws_profile,
                 )
 
@@ -1692,6 +1695,7 @@ def create_app(
                     metadata=metadata,
                     customer_id=customer_id,
                     preferred_cluster=preferred_cluster,
+                    cluster_region=cluster_region,
                     write_s3=True,
                     write_dynamodb=True,
                 )
@@ -1713,6 +1717,7 @@ def create_app(
                         metadata=metadata,
                         customer_id=customer_id,
                         preferred_cluster=preferred_cluster,
+                        cluster_region=cluster_region,
                     )
                 except ValueError as e:
                     raise HTTPException(

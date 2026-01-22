@@ -173,6 +173,31 @@ class ClusterInfo:
             version=data.get("version"),
         )
 
+    # Tag key for monitor bucket (set during cluster creation)
+    MONITOR_BUCKET_TAG = "aws-parallelcluster-monitor-bucket"
+
+    def get_monitor_bucket(self) -> Optional[str]:
+        """Get the monitor bucket from cluster tags.
+
+        Returns:
+            S3 bucket URI (e.g., 's3://my-bucket') or None if tag not set.
+        """
+        return self.tags.get(self.MONITOR_BUCKET_TAG)
+
+    def get_monitor_bucket_name(self) -> Optional[str]:
+        """Get the monitor bucket name (without s3:// prefix) from cluster tags.
+
+        Returns:
+            Bucket name or None if tag not set.
+        """
+        bucket = self.get_monitor_bucket()
+        if not bucket:
+            return None
+        if bucket.startswith("s3://"):
+            bucket = bucket[5:]
+        # Remove any path component
+        return bucket.split("/")[0]
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return {
@@ -194,6 +219,7 @@ class ClusterInfo:
             "error_message": self.error_message,
             "budget_info": self.budget_info.to_dict() if self.budget_info else None,
             "job_queue": self.job_queue.to_dict() if self.job_queue else None,
+            "monitor_bucket": self.get_monitor_bucket(),
         }
 
 
@@ -435,6 +461,37 @@ class ClusterService:
             else:
                 by_region[cluster.region] = [cluster]
         return by_region
+
+    def get_cluster_by_name(self, cluster_name: str, force_refresh: bool = False) -> Optional[ClusterInfo]:
+        """Get a specific cluster by name.
+
+        Args:
+            cluster_name: Name of the cluster to find.
+            force_refresh: If True, bypass cache and fetch fresh data.
+
+        Returns:
+            ClusterInfo if found, None otherwise.
+        """
+        all_clusters = self.get_all_clusters(force_refresh=force_refresh)
+        for cluster in all_clusters:
+            if cluster.cluster_name == cluster_name:
+                return cluster
+        return None
+
+    def get_bucket_for_cluster(self, cluster_name: str, force_refresh: bool = False) -> Optional[str]:
+        """Get the monitor bucket name for a cluster.
+
+        Args:
+            cluster_name: Name of the cluster.
+            force_refresh: If True, bypass cache and fetch fresh data.
+
+        Returns:
+            Bucket name (without s3:// prefix) or None if cluster not found or has no bucket tag.
+        """
+        cluster = self.get_cluster_by_name(cluster_name, force_refresh=force_refresh)
+        if cluster:
+            return cluster.get_monitor_bucket_name()
+        return None
 
     def _run_ssh_command(
         self,

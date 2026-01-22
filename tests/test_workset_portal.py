@@ -442,16 +442,32 @@ def mock_integration():
 class TestWorksetCreationValidation:
     """Tests for workset creation validation logic.
 
-    Note: These tests require DAYLILY_CONTROL_BUCKET to be set since worksets
-    are now registered to the control-plane bucket, not customer buckets.
+    Note: These tests mock the cluster service to provide bucket discovery.
+    S3 buckets are now discovered from cluster tags (aws-parallelcluster-monitor-bucket).
     """
 
     @pytest.fixture(autouse=True)
-    def setup_control_bucket(self, monkeypatch):
-        """Set up control bucket for all tests in this class."""
+    def setup_cluster_mock(self, monkeypatch):
+        """Set up mocked cluster service for all tests in this class."""
         from daylib.config import clear_settings_cache
-        monkeypatch.setenv("DAYLILY_CONTROL_BUCKET", "test-control-bucket")
-        # Clear settings cache so the new env var is picked up
+        from daylib.cluster_service import ClusterInfo
+
+        # Create a mock cluster with monitor bucket tag
+        mock_cluster = MagicMock(spec=ClusterInfo)
+        mock_cluster.cluster_name = "test-cluster"
+        mock_cluster.region = "us-west-2"
+        mock_cluster.get_monitor_bucket_name.return_value = "test-control-bucket"
+
+        mock_service = MagicMock()
+        mock_service.get_cluster_by_name.return_value = mock_cluster
+
+        # Patch the get_cluster_service function at its source module
+        # (it's imported locally inside workset_api functions)
+        monkeypatch.setattr(
+            "daylib.cluster_service.get_cluster_service",
+            lambda **kwargs: mock_service
+        )
+        # Clear settings cache
         clear_settings_cache()
 
     def test_create_workset_rejects_empty_customer_id(self, mock_state_db, mock_customer_manager_with_email_lookup):
@@ -539,6 +555,7 @@ class TestWorksetCreationValidation:
                 "workset_name": "Empty Workset",
                 "pipeline_type": "wgs",
                 "reference_genome": "hg38",
+                "preferred_cluster": "test-cluster",
                 "samples": [],
             }
         )
@@ -560,6 +577,7 @@ class TestWorksetCreationValidation:
                 "workset_name": "No Samples Workset",
                 "pipeline_type": "wgs",
                 "reference_genome": "hg38",
+                "preferred_cluster": "test-cluster",
                 # No samples field at all
             }
         )
@@ -569,9 +587,8 @@ class TestWorksetCreationValidation:
     def test_create_workset_allows_customer_without_bucket(self, mock_state_db, mock_integration):
         """Test that customer without S3 bucket configured can still create worksets.
 
-        With the control-plane architecture, worksets are registered to the
-        control bucket, not the customer bucket. Customer's s3_bucket is only
-        used for data locality hints.
+        With cluster-based bucket discovery, worksets get their bucket from the
+        selected cluster's tags. Customer's s3_bucket is only used for data locality hints.
         """
         mock_mgr = MagicMock()
         mock_customer = MagicMock()
@@ -594,10 +611,11 @@ class TestWorksetCreationValidation:
                 "workset_name": "Test Workset",
                 "pipeline_type": "wgs",
                 "reference_genome": "hg38",
+                "preferred_cluster": "test-cluster",
                 "samples": [{"sample_id": "s1", "r1_file": "s1_R1.fq.gz", "r2_file": "s1_R2.fq.gz"}],
             }
         )
-        # Should succeed - uses control bucket, not customer bucket
+        # Should succeed - uses bucket from cluster tags
         assert response.status_code == 200
 
     def test_create_workset_success_with_valid_samples(
@@ -605,13 +623,13 @@ class TestWorksetCreationValidation:
     ):
         """Test successful workset creation with valid samples.
 
-        Note: Worksets are now registered to the control bucket, not customer bucket.
+        Note: Worksets get bucket from cluster tags (aws-parallelcluster-monitor-bucket).
         """
         mock_state_db.register_workset.return_value = True
         mock_state_db.get_workset.return_value = {
             "workset_id": "test-workset-12345678",
             "state": "ready",
-            "bucket": "test-control-bucket",  # Control bucket
+            "bucket": "test-control-bucket",  # From cluster tag
             "prefix": "worksets/test-workset-12345678/",
             "customer_id": "cust-001",
         }
@@ -630,6 +648,7 @@ class TestWorksetCreationValidation:
                 "workset_name": "Valid Workset",
                 "pipeline_type": "wgs",
                 "reference_genome": "hg38",
+                "preferred_cluster": "test-cluster",
                 "samples": [
                     {"sample_id": "sample1", "r1_file": "s1_R1.fq.gz", "r2_file": "s1_R2.fq.gz"},
                     {"sample_id": "sample2", "r1_file": "s2_R1.fq.gz", "r2_file": "s2_R2.fq.gz"},
@@ -642,17 +661,17 @@ class TestWorksetCreationValidation:
         mock_integration.register_workset.assert_called_once()
         call_kwargs = mock_integration.register_workset.call_args[1]
         assert call_kwargs["customer_id"] == "cust-001"
-        # Bucket should be control bucket from env var
+        # Bucket should be from cluster tags
         assert call_kwargs["bucket"] == "test-control-bucket"
 
-    def test_create_workset_uses_control_bucket_not_customer_bucket(
+    def test_create_workset_uses_cluster_bucket_not_customer_bucket(
         self, mock_state_db, mock_customer_manager_with_email_lookup, mock_integration
     ):
-        """Test that control bucket is used for workset registration.
+        """Test that cluster bucket is used for workset registration.
 
-        With the control-plane architecture, worksets are always registered
-        to the control bucket (DAYLILY_CONTROL_BUCKET), not customer buckets.
-        The s3_bucket parameter is ignored in favor of the control bucket.
+        With cluster-based bucket discovery, worksets are always registered
+        to the bucket from the cluster's aws-parallelcluster-monitor-bucket tag.
+        The s3_bucket parameter is ignored in favor of the cluster bucket.
         """
         mock_state_db.get_workset.return_value = {
             "workset_id": "test-workset-12345678",
@@ -673,13 +692,14 @@ class TestWorksetCreationValidation:
                 "workset_name": "Test Workset",
                 "pipeline_type": "wgs",
                 "reference_genome": "hg38",
+                "preferred_cluster": "test-cluster",
                 "s3_bucket": "different-bucket",  # This should be ignored
                 "samples": [{"sample_id": "s1", "r1_file": "s1_R1.fq.gz", "r2_file": "s1_R2.fq.gz"}],
             }
         )
         assert response.status_code == 200
 
-        # Should use control bucket from env, not customer or provided bucket
+        # Should use bucket from cluster tags, not customer or provided bucket
         call_kwargs = mock_integration.register_workset.call_args[1]
         assert call_kwargs["bucket"] == "test-control-bucket"
 
@@ -703,6 +723,7 @@ class TestWorksetCreationValidation:
                 "workset_name": "Test Workset",
                 "pipeline_type": "wgs",
                 "reference_genome": "hg38",
+                "preferred_cluster": "test-cluster",
                 "s3_prefix": "my/custom/path",  # No trailing slash
                 "samples": [{"sample_id": "s1", "r1_file": "s1_R1.fq.gz", "r2_file": "s1_R2.fq.gz"}],
             }
@@ -742,6 +763,7 @@ samples:
                 "workset_name": "YAML Workset",
                 "pipeline_type": "wgs",
                 "reference_genome": "hg38",
+                "preferred_cluster": "test-cluster",
                 "yaml_content": yaml_content,
             }
         )
@@ -773,6 +795,7 @@ samples: []
                 "workset_name": "Empty YAML Workset",
                 "pipeline_type": "wgs",
                 "reference_genome": "hg38",
+                "preferred_cluster": "test-cluster",
                 "yaml_content": yaml_content,
             }
         )
@@ -803,6 +826,7 @@ R0\tA1\tE1\tblood\tnoampwgs\tILMN\tNOVASEQX\t0\tS1\t\ts3://bucket/sample.R1.fast
                 "workset_name": "Manifest TSV Workset",
                 "pipeline_type": "wgs",
                 "reference_genome": "hg38",
+                "preferred_cluster": "test-cluster",
                 "manifest_tsv_content": manifest_tsv,
             }
         )
@@ -839,6 +863,7 @@ R0\tA1\tE1\tblood\tnoampwgs\tILMN\tNOVASEQX\t0\tS1\t\ts3://bucket/sample.R1.fast
                 "workset_name": "Empty Manifest Workset",
                 "pipeline_type": "wgs",
                 "reference_genome": "hg38",
+                "preferred_cluster": "test-cluster",
                 "manifest_tsv_content": manifest_tsv,
             }
         )

@@ -87,6 +87,7 @@
                         </label>
                     </th>
                     <th>Workset ID</th>
+                    <th>Workset Name</th>
                     <th>Created</th>
                     <th>Type</th>
                     <th>Customer</th>
@@ -116,6 +117,11 @@
                     <td>
                         <a href="/portal/worksets/{{ ws.workset_id }}" class="text-accent" style="font-family: monospace; font-size: 0.8rem;">
                             {{ ws.workset_id }}
+                        </a>
+                    </td>
+                    <td>
+                        <a href="/portal/worksets/{{ ws.workset_id }}" class="text-accent" style="font-weight: 500;">
+                            {{ ws.workset_name or ws.workset_id[:20] ~ '...' }}
                         </a>
                     </td>
                     <td style="font-size: 0.8rem;" data-sort-value="{{ ws.created_at | default('') }}">{% if ws.created_at %}{{ ws.created_at[:16] | replace('T', ' ') }}{% else %}—{% endif %}</td>
@@ -231,7 +237,7 @@
                 {% endfor %}
                 {% else %}
                 <tr id="empty-row">
-                    <td colspan="15">
+                    <td colspan="16">
                         <div class="empty-state">
                             <div class="empty-state-icon"><i class="fas fa-folder-open"></i></div>
                             <h4 class="empty-state-title">No worksets yet</h4>

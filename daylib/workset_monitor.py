@@ -135,12 +135,18 @@ class AWSConfig:
 
 @dataclasses.dataclass
 class MonitorOptions:
-    bucket: str
+    """Monitor configuration options.
+
+    Note: The monitor does not have a default bucket. Each workset has its own bucket
+    assigned during creation based on the selected cluster's region (from ~/.ursa/config.yaml).
+    """
+
     prefix: str
     poll_interval_seconds: int = 60
     ready_lock_backoff_seconds: int = 30
     continuous: bool = True
     sentinel_index_prefix: Optional[str] = None
+    sentinel_index_bucket: Optional[str] = None  # Bucket for sentinel index (optional global feature)
     archive_prefix: Optional[str] = None
     max_concurrent_worksets: int = 1
 
@@ -224,6 +230,7 @@ class Workset:
     sentinels: Dict[str, str]
     has_required_files: bool = False
     is_archived: bool = False
+    bucket: Optional[str] = None  # Workset-specific bucket from DynamoDB
 
     def sentinel_timestamp(self, sentinel: str) -> Optional[str]:
         return self.sentinels.get(sentinel)
@@ -467,8 +474,7 @@ class WorksetMonitor:
         """
         LOGGER.info("Starting Daylily workset monitor in %s", self.config.aws.region)
         LOGGER.info(
-            "Monitoring bucket: %s prefix: %s",
-            self.config.monitor.bucket,
+            "Monitoring prefix: %s (worksets carry individual buckets from cluster region)",
             self.config.monitor.normalised_prefix(),
         )
         LOGGER.info(
@@ -819,8 +825,18 @@ class WorksetMonitor:
         sentinels: Optional[Dict[str, str]] = None,
         has_required_files: bool = True,
         is_archived: bool = False,
+        bucket: Optional[str] = None,
     ) -> Workset:
-        """Create a Workset object for direct processing."""
+        """Create a Workset object for direct processing.
+
+        Args:
+            workset_id: Workset identifier
+            prefix: S3 prefix (defaults to monitor prefix + workset_id)
+            sentinels: Sentinel file timestamps
+            has_required_files: Whether all required files are present
+            is_archived: Whether workset is archived
+            bucket: S3 bucket (defaults to monitor bucket if not specified)
+        """
         normalized_prefix = prefix or f"{self.config.monitor.normalised_prefix()}{workset_id}/"
         return Workset(
             name=workset_id,
@@ -828,6 +844,7 @@ class WorksetMonitor:
             sentinels=sentinels or {},
             has_required_files=has_required_files,
             is_archived=is_archived,
+            bucket=bucket,
         )
 
     def write_sentinel(self, workset: Workset, sentinel_name: str, value: str) -> None:
@@ -876,7 +893,15 @@ class WorksetMonitor:
                 continue
 
             # Get workset details from DynamoDB
-            bucket = db_workset.get("bucket", self.config.monitor.bucket)
+            bucket = db_workset.get("bucket")
+            if not bucket:
+                LOGGER.error(
+                    "Workset %s has no bucket assigned in DynamoDB. "
+                    "Worksets must be created via the portal with a cluster selection "
+                    "to assign a region-specific bucket from ~/.ursa/config.yaml.",
+                    workset_id
+                )
+                continue
             prefix = db_workset.get("prefix", f"{self.config.monitor.normalised_prefix()}{workset_id}/")
             state = db_workset.get("state", "ready")
             lock_owner = db_workset.get("lock_owner")
@@ -914,6 +939,7 @@ class WorksetMonitor:
                 sentinels=sentinels,
                 has_required_files=has_required,
                 is_archived=False,
+                bucket=bucket,
             )
 
     def _s3_folder_exists(self, bucket: str, prefix: str) -> bool:
@@ -937,9 +963,21 @@ class WorksetMonitor:
             LOGGER.warning("Error checking S3 folder existence for %s/%s: %s", bucket, prefix, e)
             return False
 
-    def _list_sentinels(self, workset_prefix: str) -> Dict[str, str]:
-        """List all sentinel files for a workset with pagination safety."""
-        bucket = self.config.monitor.bucket
+    def _list_sentinels(self, workset_prefix: str, bucket: str) -> Dict[str, str]:
+        """List all sentinel files for a workset with pagination safety.
+
+        Args:
+            workset_prefix: S3 prefix for the workset
+            bucket: S3 bucket name (required - worksets must have assigned buckets)
+
+        Returns:
+            Dict mapping sentinel filename to its content/timestamp
+
+        Raises:
+            ValueError: If bucket is not provided
+        """
+        if not bucket:
+            raise ValueError(f"Bucket required to list sentinels for prefix: {workset_prefix}")
         paginator = self._s3.get_paginator("list_objects_v2")
         sentinel_timestamps: Dict[str, str] = {}
         for page in paginator.paginate(Bucket=bucket, Prefix=workset_prefix):
@@ -952,17 +990,21 @@ class WorksetMonitor:
                     sentinel_timestamps[name] = self._read_object_text(bucket, key)
         return sentinel_timestamps
 
-    def _verify_core_files(self, workset_prefix: str, bucket: Optional[str] = None) -> bool:
+    def _verify_core_files(self, workset_prefix: str, bucket: str) -> bool:
         """Verify that a workset directory has all required files.
 
         Args:
             workset_prefix: S3 prefix for the workset
-            bucket: S3 bucket name (defaults to monitor bucket)
+            bucket: S3 bucket name (required - worksets must have assigned buckets)
 
         Returns:
             True if all required files are present
+
+        Raises:
+            ValueError: If bucket is not provided
         """
-        bucket = bucket or self.config.monitor.bucket
+        if not bucket:
+            raise ValueError(f"Bucket required to verify core files for prefix: {workset_prefix}")
         expected = [
             DEFAULT_STAGE_SAMPLES_NAME,
             WORK_YAML_NAME,
@@ -1098,21 +1140,32 @@ class WorksetMonitor:
     # Sentinel logging
     # ------------------------------------------------------------------
     def _update_sentinel_indexes(self, worksets: Sequence[Workset]) -> None:
+        """Update global sentinel index files (optional feature).
+
+        Requires both sentinel_index_prefix and sentinel_index_bucket to be configured.
+        """
+        if not self.config.monitor.sentinel_index_prefix:
+            return
+        if not self.config.monitor.sentinel_index_bucket:
+            LOGGER.debug(
+                "Sentinel index prefix configured but no sentinel_index_bucket set - skipping index update"
+            )
+            return
+
         states: Dict[str, List[str]] = defaultdict(list)
         for workset in worksets:
             for sentinel, timestamp in workset.sentinels.items():
                 if sentinel in OPTIONAL_SENTINELS or sentinel == SENTINEL_FILES["ready"]:
                     states[sentinel].append(f"{workset.name}\t{timestamp}")
-        if not self.config.monitor.sentinel_index_prefix:
-            return
-        bucket = self.config.monitor.bucket
+
+        bucket = self.config.monitor.sentinel_index_bucket
         base_prefix = self.config.monitor.sentinel_index_prefix
         base_prefix = base_prefix.rstrip("/") + "/" if base_prefix else ""
         for sentinel_name, rows in states.items():
             key = f"{base_prefix}{sentinel_name}.log"
             body = "\n".join(sorted(rows)).encode("utf-8")
             LOGGER.debug(
-                "Updating sentinel index %s with %d entries", key, len(rows)
+                "Updating sentinel index %s in bucket %s with %d entries", key, bucket, len(rows)
             )
             if self.dry_run:
                 continue
@@ -1556,7 +1609,7 @@ class WorksetMonitor:
         workset.sentinels[SENTINEL_FILES["lock"]] = timestamp
         LOGGER.debug("Wrote lock sentinel for %s", workset.name)
         time.sleep(self.config.monitor.ready_lock_backoff_seconds)
-        refreshed = self._list_sentinels(workset.prefix)
+        refreshed = self._list_sentinels(workset.prefix, bucket=workset.bucket)
         unexpected = set(refreshed) - set(initial_snapshot)
         # If anything else changed besides our lock, treat as contention and back off (no error).
         if unexpected - {SENTINEL_FILES["lock"]}:
@@ -1584,7 +1637,7 @@ class WorksetMonitor:
     # ------------------------------------------------------------------
     def _load_workset_inputs(self, workset: Workset) -> WorksetInputs:
         manifest_bytes = self._read_required_object(
-            workset.prefix, DEFAULT_STAGE_SAMPLES_NAME
+            workset, DEFAULT_STAGE_SAMPLES_NAME
         )
         self._validate_stage_manifest(manifest_bytes, workset)
         manifest_path = self._write_temp_file(
@@ -1592,7 +1645,7 @@ class WorksetMonitor:
         )
         manifest_path = self._copy_manifest_to_local(workset, manifest_path)
 
-        work_yaml_bytes = self._read_required_object(workset.prefix, WORK_YAML_NAME)
+        work_yaml_bytes = self._read_required_object(workset, WORK_YAML_NAME)
         work_yaml = yaml.safe_load(work_yaml_bytes.decode("utf-8"))
 
         workdir_name = self._workdir_name(workset, work_yaml)
@@ -4005,26 +4058,30 @@ class WorksetMonitor:
         """
         # 1. Check for user-selected preferred cluster from DynamoDB (highest priority)
         preferred_cluster = None
+        cluster_region = None
         if workset and self.state_db:
             try:
                 workset_data = self.state_db.get_workset(workset.name)
                 if workset_data:
                     preferred_cluster = workset_data.get("preferred_cluster")
+                    cluster_region = workset_data.get("cluster_region")
                     if preferred_cluster:
-                        # Verify the preferred cluster is available
-                        details = self._describe_cluster(preferred_cluster)
+                        # Verify the preferred cluster is available (use stored region if available)
+                        details = self._describe_cluster(preferred_cluster, region=cluster_region)
                         if details and self._cluster_is_ready(details):
                             LOGGER.info(
-                                "Using user-preferred cluster %s for workset %s (overrides global config)",
+                                "Using user-preferred cluster %s (region=%s) for workset %s (overrides global config)",
                                 preferred_cluster,
+                                cluster_region or self.config.aws.region,
                                 workset.name,
                             )
                             return preferred_cluster
                         else:
                             LOGGER.warning(
-                                "Preferred cluster %s is not available for workset %s, "
+                                "Preferred cluster %s (region=%s) is not available for workset %s, "
                                 "falling back to config/discovery",
                                 preferred_cluster,
+                                cluster_region or self.config.aws.region,
                                 workset.name,
                             )
             except Exception as e:
@@ -4076,8 +4133,11 @@ class WorksetMonitor:
             LOGGER.debug("Failed to decode pcluster output as JSON: %s", exc)
             return None
 
-    def _describe_cluster(self, cluster_name: str) -> Optional[Dict[str, object]]:
-        cmd = ["pcluster", "describe-cluster", "--region", self.config.aws.region, "-n", cluster_name]
+    def _describe_cluster(
+        self, cluster_name: str, region: Optional[str] = None
+    ) -> Optional[Dict[str, object]]:
+        effective_region = region or self.config.aws.region
+        cmd = ["pcluster", "describe-cluster", "--region", effective_region, "-n", cluster_name]
         result = self._run_command(cmd, check=False, env=self._pcluster_env())
         if result.returncode != 0:
             LOGGER.debug(
@@ -4218,6 +4278,9 @@ class WorksetMonitor:
 
         Skips validation for headnode-local paths (e.g., /fsx/data/genomic_data/...)
         which are reference data that already exist on the headnode filesystem.
+
+        Raises:
+            MonitorError: If workset has no bucket or sample file is missing
         """
         # Skip validation for headnode-local paths - these are validated at runtime
         if self._is_headnode_local_path(relative_path):
@@ -4226,31 +4289,52 @@ class WorksetMonitor:
             )
             return
 
+        if not workset.bucket:
+            raise MonitorError(f"Workset {workset.name} has no bucket assigned - cannot verify sample file")
         key = f"{workset.prefix}{SAMPLE_DATA_DIRNAME}/{relative_path.lstrip('/')}"
         try:
-            self._s3.head_object(Bucket=self.config.monitor.bucket, Key=key)
+            self._s3.head_object(Bucket=workset.bucket, Key=key)
         except ClientError as exc:
             raise MonitorError(f"Sample data file missing for {workset.name}: {relative_path}") from exc
-    def _read_required_object(self, workset_prefix: str, filename: str) -> bytes:
-        bucket = self.config.monitor.bucket
-        key = f"{workset_prefix}{filename}"
+    def _read_required_object(self, workset: Workset, filename: str) -> bytes:
+        """Read a required file from the workset's S3 location.
+
+        Args:
+            workset: Workset object with assigned bucket
+            filename: Name of the file to read
+
+        Returns:
+            File contents as bytes
+
+        Raises:
+            MonitorError: If workset has no bucket or file cannot be read
+        """
+        if not workset.bucket:
+            raise MonitorError(f"Workset {workset.name} has no bucket assigned - cannot read {filename}")
+        key = f"{workset.prefix}{filename}"
         try:
-            response = self._s3.get_object(Bucket=bucket, Key=key)
+            response = self._s3.get_object(Bucket=workset.bucket, Key=key)
         except ClientError as exc:
             raise MonitorError(
-                f"Missing required file {filename} in {workset_prefix}: {exc}"
+                f"Missing required file {filename} in {workset.prefix}: {exc}"
             ) from exc
         content: bytes = response["Body"].read()
         return content
 
     def _write_sentinel(self, workset: Workset, sentinel_name: str, value: str) -> None:
-        bucket = self.config.monitor.bucket
+        """Write a sentinel file to the workset's S3 location.
+
+        Raises:
+            MonitorError: If workset has no bucket assigned
+        """
+        if not workset.bucket:
+            raise MonitorError(f"Workset {workset.name} has no bucket assigned - cannot write sentinel {sentinel_name}")
         key = f"{workset.prefix}{sentinel_name}"
         body = value.encode("utf-8")
-        LOGGER.debug("Writing sentinel %s for %s", sentinel_name, workset.name)
+        LOGGER.debug("Writing sentinel %s for %s to bucket %s", sentinel_name, workset.name, workset.bucket)
         if self.dry_run:
             return
-        self._s3.put_object(Bucket=bucket, Key=key, Body=body)
+        self._s3.put_object(Bucket=workset.bucket, Key=key, Body=body)
         self._record_terminal_metrics(workset, sentinel_name, value)
 
         # Also update DynamoDB state if integration layer is available
@@ -4331,12 +4415,18 @@ class WorksetMonitor:
         return False
 
     def _delete_sentinel(self, workset: Workset, sentinel_name: str) -> None:
-        bucket = self.config.monitor.bucket
+        """Delete a sentinel file from the workset's S3 location.
+
+        Raises:
+            MonitorError: If workset has no bucket assigned
+        """
+        if not workset.bucket:
+            raise MonitorError(f"Workset {workset.name} has no bucket assigned - cannot delete sentinel {sentinel_name}")
         key = f"{workset.prefix}{sentinel_name}"
-        LOGGER.debug("Deleting sentinel %s for %s", sentinel_name, workset.name)
+        LOGGER.debug("Deleting sentinel %s for %s from bucket %s", sentinel_name, workset.name, workset.bucket)
         if self.dry_run:
             return
-        self._s3.delete_object(Bucket=bucket, Key=key)
+        self._s3.delete_object(Bucket=workset.bucket, Key=key)
 
     # ------------------------------------------------------------------
     # DynamoDB state reconciliation
@@ -4529,6 +4619,8 @@ class WorksetMonitor:
         """Flush buffered command log to S3.
 
         Appends to existing log file if present.
+
+        If workset has no bucket, logs a warning and clears the buffer without writing.
         """
         if workset.name not in self._command_log_buffer:
             return
@@ -4541,13 +4633,20 @@ class WorksetMonitor:
             self._command_log_buffer[workset.name] = []
             return
 
-        bucket = self.config.monitor.bucket
+        if not workset.bucket:
+            LOGGER.warning(
+                "Workset %s has no bucket assigned - cannot flush command log (%d lines)",
+                workset.name, len(buffer)
+            )
+            self._command_log_buffer[workset.name] = []
+            return
+
         key = f"{workset.prefix}{self.COMMAND_LOG_FILENAME}"
 
         # Try to read existing log
         existing_content = ""
         try:
-            response = self._s3.get_object(Bucket=bucket, Key=key)
+            response = self._s3.get_object(Bucket=workset.bucket, Key=key)
             existing_content = response["Body"].read().decode("utf-8")
         except self._s3.exceptions.NoSuchKey:
             pass
@@ -4559,7 +4658,7 @@ class WorksetMonitor:
 
         try:
             self._s3.put_object(
-                Bucket=bucket,
+                Bucket=workset.bucket,
                 Key=key,
                 Body=new_content.encode("utf-8"),
                 ContentType="text/plain",
@@ -4618,12 +4717,23 @@ class WorksetMonitor:
     def _stage_reference_bucket(self) -> str:
         """
         Return the S3 reference bucket to pass to the staging command.
-        Uses pipeline.reference_bucket if set; otherwise defaults to the monitor's bucket.
-        Always ends with a trailing '/'.
+
+        Requires pipeline.reference_bucket to be configured. There is no fallback
+        since the monitor no longer has a default bucket.
+
+        Returns:
+            S3 URI with trailing slash
+
+        Raises:
+            MonitorError: If pipeline.reference_bucket is not configured
         """
         bucket = self.config.pipeline.reference_bucket
         if not bucket:
-            bucket = f"s3://{self.config.monitor.bucket}"
+            raise MonitorError(
+                "pipeline.reference_bucket must be configured in monitor config. "
+                "The monitor no longer has a default bucket - each workset carries its own bucket "
+                "from cluster region, and reference data location must be explicitly configured."
+            )
         if not bucket.endswith("/"):
             bucket += "/"
         return bucket

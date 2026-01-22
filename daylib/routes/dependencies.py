@@ -146,6 +146,7 @@ class WorksetCreate(BaseModel):
     metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata (must include samples)")
     customer_id: str = Field(..., description="Customer ID who owns this workset (required)")
     preferred_cluster: Optional[str] = Field(None, description="User-selected preferred cluster for execution")
+    cluster_region: Optional[str] = Field(None, description="AWS region of the preferred cluster")
 
 
 class WorksetResponse(BaseModel):
