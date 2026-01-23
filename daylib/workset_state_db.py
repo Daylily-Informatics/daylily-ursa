@@ -1406,6 +1406,7 @@ class WorksetStateDB:
         """Archive a workset.
 
         Updates state to ARCHIVED and records archival metadata.
+        Preserves original_state for display and restore purposes.
 
         Args:
             workset_id: Workset identifier
@@ -1415,12 +1416,20 @@ class WorksetStateDB:
         Returns:
             True if successful
         """
+        # First get the current workset to preserve original_state
+        workset = self.get_workset(workset_id)
+        if not workset:
+            LOGGER.error("Cannot archive workset %s: not found", workset_id)
+            return False
+
+        original_state = workset.get("state", "unknown")
         now = dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
-        update_expr = "SET #state = :state, archived_at = :archived_at, archived_by = :archived_by"
+        update_expr = "SET #state = :state, archived_at = :archived_at, archived_by = :archived_by, original_state = :original_state"
         expr_values = {
             ":state": WorksetState.ARCHIVED.value,
             ":archived_at": now,
             ":archived_by": archived_by,
+            ":original_state": original_state,
         }
         expr_names = {"#state": "state"}
 
@@ -1435,7 +1444,7 @@ class WorksetStateDB:
                 ExpressionAttributeNames=expr_names,
                 ExpressionAttributeValues=expr_values,
             )
-            LOGGER.info("Archived workset %s by %s", workset_id, archived_by)
+            LOGGER.info("Archived workset %s (was %s) by %s", workset_id, original_state, archived_by)
             return True
         except ClientError as e:
             LOGGER.error("Failed to archive workset %s: %s", workset_id, str(e))

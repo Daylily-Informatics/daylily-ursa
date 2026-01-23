@@ -926,9 +926,14 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
             if customers:
                 customer = convert_customer_for_template(customers[0])
                 all_archived = deps.state_db.list_archived_worksets(limit=500)
+                LOGGER.info("Found %d total archived worksets in DynamoDB", len(all_archived))
                 customer_config = deps.customer_manager.get_customer_config(customers[0].customer_id)
                 if customer_config:
+                    LOGGER.debug("Customer bucket: %s", customer_config.s3_bucket)
                     archived_worksets = [w for w in all_archived if w.get("bucket") == customer_config.s3_bucket]
+                    LOGGER.info("After customer bucket filter: %d archived worksets", len(archived_worksets))
+                else:
+                    LOGGER.warning("No customer config found for %s", customers[0].customer_id)
         # Ensure workset_type is available for each archived workset
         for ws in archived_worksets:
             metadata = ws.get("metadata", {})
@@ -1870,9 +1875,6 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
             "AWS_ACCESS_KEY_ID": "***" if os.getenv("AWS_ACCESS_KEY_ID") else None,
             "AWS_SECRET_ACCESS_KEY": "***" if os.getenv("AWS_SECRET_ACCESS_KEY") else None,
             "AWS_ACCOUNT_ID": app_settings.aws_account_id,
-            # NOTE: Bucket env vars are deprecated - buckets discovered from cluster tags
-            "DAYLILY_CONTROL_BUCKET (deprecated)": app_settings.daylily_control_bucket,
-            "DAYLILY_MONITOR_BUCKET (deprecated)": app_settings.daylily_monitor_bucket,
             "WORKSET_TABLE_NAME": app_settings.workset_table_name,
             "CUSTOMER_TABLE_NAME": app_settings.customer_table_name,
             "COGNITO_USER_POOL_ID": app_settings.cognito_user_pool_id,

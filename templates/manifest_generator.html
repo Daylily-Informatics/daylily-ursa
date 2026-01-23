@@ -11,208 +11,204 @@
         <p class="page-subtitle">Create a <code>stage_samples.tsv</code> file defining analysis inputs for your pipeline run</p>
     </div>
     
-    <div class="grid" style="grid-template-columns: 1fr 1fr; gap: var(--spacing-xl);">
-        <!-- Form Column -->
-        <div>
-            <form id="manifest-form" onsubmit="generateManifest(event)">
-                <!-- Run Configuration -->
-                <div class="card">
-                    <h3 class="card-title"><i class="fas fa-cogs"></i> Run Configuration</h3>
-                    
-                    <div class="grid grid-2">
-                        <div class="form-group">
-                            <label for="run_id" class="form-label required">Run ID</label>
-                            <input type="text" id="run_id" name="run_id" class="form-control" 
-                                   placeholder="RUN001" required oninput="updateManifestPreview()">
-                            <small class="text-muted">Unique identifier for this analysis run</small>
-                        </div>
-                        <div class="form-group">
-                            <label for="stage_target" class="form-label">Stage Target</label>
-                            <input type="text" id="stage_target" name="stage_target" class="form-control" 
-                                   value="/fsx/staged_sample_data/" oninput="updateManifestPreview()">
-                        </div>
+    <!-- Single column layout -->
+    <div style="max-width: 95%; margin: 0 auto;">
+        <form id="manifest-form" onsubmit="generateManifest(event)">
+            <!-- Run Configuration -->
+            <div class="card">
+                <h3 class="card-title"><i class="fas fa-cogs"></i> Run Configuration</h3>
+
+                <div class="grid grid-2">
+                    <div class="form-group">
+                        <label for="run_id" class="form-label required">Run ID</label>
+                        <input type="text" id="run_id" name="run_id" class="form-control"
+                               placeholder="RU1" required oninput="updateManifestPreview()">
+                        <small class="text-muted">Unique identifier for this analysis run</small>
                     </div>
-                </div>
-                
-                <!-- Analysis Inputs (Samples) -->
-                <div class="card">
-                    <div class="card-header">
-                        <h3 class="card-title"><i class="fas fa-dna"></i> Analysis Inputs</h3>
-                        <button type="button" class="btn btn-outline btn-sm" onclick="addAnalysisInput()">
-                            <i class="fas fa-plus"></i> Add Input
-                        </button>
+                    <div class="form-group">
+                        <label for="stage_target" class="form-label">Stage Target</label>
+                        <input type="text" id="stage_target" name="stage_target" class="form-control"
+                               value="/fsx/staged_sample_data/" oninput="updateManifestPreview()">
                     </div>
-                    
-                    <p class="text-muted mb-md" style="font-size: 0.875rem;">
-                        Each analysis input represents a sequencing library to be processed. 
-                        This corresponds to a row in <code>stage_samples.tsv</code>.
-                    </p>
-
-                    <div id="inputs-container">
-                        <!-- Analysis input rows will be added here -->
-                    </div>
-
-                    <div class="mt-lg">
-                        <input type="file" id="tsv-upload" accept=".tsv,.csv,.txt" class="d-none" onchange="loadInputsFromTSV(this)">
-                        <div class="d-flex gap-sm flex-wrap">
-                            <button type="button" class="btn btn-outline btn-sm" onclick="document.getElementById('tsv-upload').click()">
-                                <i class="fas fa-file-upload"></i> Import TSV/CSV
-                            </button>
-                            <button type="button" class="btn btn-outline btn-sm" onclick="downloadTemplate()">
-                                <i class="fas fa-file-download"></i> Download Template
-                            </button>
-                            <button type="button" class="btn btn-outline btn-sm" onclick="discoverFromS3()">
-                                <i class="fas fa-search"></i> Discover from S3
-                            </button>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Terminology Guide -->
-                <div class="card">
-                    <details>
-                        <summary class="card-title" style="cursor: pointer;">
-                            <i class="fas fa-book"></i> Terminology Guide (GA4GH Standards)
-                        </summary>
-                        <div class="mt-lg terminology-guide">
-                            <dl>
-                                <dt><strong>Analysis Input (SAMPLE_ID)</strong></dt>
-                                <dd>Pipeline input identifier - uniquely identifies a sequencing library for analysis</dd>
-
-                                <dt><strong>Subject/Individual (EXTERNAL_SAMPLE_ID)</strong></dt>
-                                <dd>Source organism identifier (e.g., patient ID, HG002). Multiple libraries may come from one subject.</dd>
-
-                                <dt><strong>Biosample</strong></dt>
-                                <dd>Physical specimen (tissue type, collection info). Captured in SAMPLE_TYPE field.</dd>
-
-                                <dt><strong>Sequencing Library</strong></dt>
-                                <dd>Prepared DNA/RNA with specific protocol. Captured in LIB_PREP, SEQ_VENDOR, SEQ_PLATFORM.</dd>
-
-                                <dt><strong>FASTQ Files</strong></dt>
-                                <dd>Raw sequencing output files (R1_FQ, R2_FQ). Include full S3 paths.</dd>
-                            </dl>
-                        </div>
-                    </details>
-                </div>
-
-                <!-- Column Mapping Help -->
-                <div class="card">
-                    <details>
-                        <summary class="card-title" style="cursor: pointer;">
-                            <i class="fas fa-columns"></i> Column Mapping Reference
-                        </summary>
-                        <div class="mt-lg">
-                            <table class="table table-sm" style="width: 100%; border-collapse: collapse;">
-                                <thead>
-                                    <tr style="border-bottom: 2px solid var(--color-gray-300);">
-                                        <th style="padding: var(--spacing-sm); text-align: left;">Column Name</th>
-                                        <th style="padding: var(--spacing-sm); text-align: left;">Description</th>
-                                        <th style="padding: var(--spacing-sm); text-align: left;">Example</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    <tr style="border-bottom: 1px solid var(--color-gray-200);">
-                                        <td style="padding: var(--spacing-sm);"><code>SAMPLE_ID</code></td>
-                                        <td style="padding: var(--spacing-sm);">Unique identifier for this analysis input</td>
-                                        <td style="padding: var(--spacing-sm);">LIB001</td>
-                                    </tr>
-                                    <tr style="border-bottom: 1px solid var(--color-gray-200);">
-                                        <td style="padding: var(--spacing-sm);"><code>EXTERNAL_SAMPLE_ID</code></td>
-                                        <td style="padding: var(--spacing-sm);">Subject/individual ID (e.g., patient ID)</td>
-                                        <td style="padding: var(--spacing-sm);">SUBJ001</td>
-                                    </tr>
-                                    <tr style="border-bottom: 1px solid var(--color-gray-200);">
-                                        <td style="padding: var(--spacing-sm);"><code>SAMPLE_TYPE</code></td>
-                                        <td style="padding: var(--spacing-sm);">Type of biological sample</td>
-                                        <td style="padding: var(--spacing-sm);">Blood, Saliva, Tissue</td>
-                                    </tr>
-                                    <tr style="border-bottom: 1px solid var(--color-gray-200);">
-                                        <td style="padding: var(--spacing-sm);"><code>LIB_PREP</code></td>
-                                        <td style="padding: var(--spacing-sm);">Library preparation method</td>
-                                        <td style="padding: var(--spacing-sm);">PCR-free, Nextera</td>
-                                    </tr>
-                                    <tr style="border-bottom: 1px solid var(--color-gray-200);">
-                                        <td style="padding: var(--spacing-sm);"><code>SEQ_VENDOR</code></td>
-                                        <td style="padding: var(--spacing-sm);">Sequencing vendor/platform</td>
-                                        <td style="padding: var(--spacing-sm);">Illumina, PacBio</td>
-                                    </tr>
-                                    <tr style="border-bottom: 1px solid var(--color-gray-200);">
-                                        <td style="padding: var(--spacing-sm);"><code>SEQ_PLATFORM</code></td>
-                                        <td style="padding: var(--spacing-sm);">Specific sequencing platform</td>
-                                        <td style="padding: var(--spacing-sm);">NovaSeq, HiSeq</td>
-                                    </tr>
-                                    <tr style="border-bottom: 1px solid var(--color-gray-200);">
-                                        <td style="padding: var(--spacing-sm);"><code>R1_FQ</code></td>
-                                        <td style="padding: var(--spacing-sm);">S3 path to forward read FASTQ file</td>
-                                        <td style="padding: var(--spacing-sm);">s3://bucket/sample_R1.fastq.gz</td>
-                                    </tr>
-                                    <tr style="border-bottom: 1px solid var(--color-gray-200);">
-                                        <td style="padding: var(--spacing-sm);"><code>R2_FQ</code></td>
-                                        <td style="padding: var(--spacing-sm);">S3 path to reverse read FASTQ file (optional for single-end)</td>
-                                        <td style="padding: var(--spacing-sm);">s3://bucket/sample_R2.fastq.gz</td>
-                                    </tr>
-                                </tbody>
-                            </table>
-                        </div>
-                    </details>
-                </div>
-            </form>
-        </div>
-        
-        <!-- Preview Column -->
-        <div>
-            <div class="card" style="position: sticky; top: 90px;">
-                <div class="card-header">
-                    <h3 class="card-title">Manifest Preview (TSV)</h3>
-                    <div class="d-flex gap-sm">
-                        <button class="btn btn-outline btn-sm" onclick="copyManifest()">
-                            <i class="fas fa-copy"></i> Copy
-                        </button>
-	                        <button class="btn btn-outline btn-sm" onclick="saveManifest()">
-	                            <i class="fas fa-save"></i> Save
-	                        </button>
-                        <button class="btn btn-primary btn-sm" onclick="downloadManifest()">
-                            <i class="fas fa-download"></i> Download
-                        </button>
-                    </div>
-                </div>
-                <div class="code-block" style="max-height: 500px; overflow: auto;">
-                    <pre id="manifest-preview" style="white-space: pre; overflow-x: auto;"># Add analysis inputs to generate the manifest</pre>
-                </div>
-	                
-	                <!-- Saved Manifests -->
-	                <div class="p-md" style="border-top: 1px solid var(--color-gray-200);">
-	                    <div class="d-flex gap-sm" style="align-items: end;">
-	                        <div class="form-group" style="flex: 1; margin-bottom: 0;">
-	                            <label for="manifest-save-name" class="form-label">Save name (optional)</label>
-	                            <input id="manifest-save-name" class="form-control" placeholder="e.g. RUN001" />
-	                        </div>
-	                        <button class="btn btn-outline btn-sm" onclick="refreshSavedManifests()">
-	                            <i class="fas fa-sync"></i> Refresh
-	                        </button>
-	                    </div>
-	                    <div class="d-flex gap-sm mt-sm" style="align-items: end;">
-	                        <div class="form-group" style="flex: 1; margin-bottom: 0;">
-	                            <label for="saved-manifest-select" class="form-label">Load saved manifest</label>
-	                            <select id="saved-manifest-select" class="form-control">
-	                                <option value="">(none)</option>
-	                            </select>
-	                        </div>
-	                        <button class="btn btn-primary btn-sm" onclick="loadSelectedManifest()">
-	                            <i class="fas fa-upload"></i> Load
-	                        </button>
-	                        <button class="btn btn-outline btn-sm" onclick="downloadSelectedManifest()">
-	                            <i class="fas fa-download"></i> Download
-	                        </button>
-	                    </div>
-	                </div>
-                
-                <!-- Column Reference -->
-                <div class="mt-md p-md" style="background: var(--color-gray-100); border-radius: var(--radius-md); font-size: 0.8rem;">
-                    <strong>Required Columns:</strong>
-                    <code>RUN_ID, SAMPLE_ID, EXPERIMENTID, SAMPLE_TYPE, LIB_PREP, SEQ_VENDOR, SEQ_PLATFORM, LANE, SEQBC_ID, PATH_TO_CONCORDANCE_DATA_DIR, R1_FQ, R2_FQ, STAGE_DIRECTIVE, STAGE_TARGET, SUBSAMPLE_PCT, IS_POS_CTRL, IS_NEG_CTRL, N_X, N_Y, EXTERNAL_SAMPLE_ID</code>
                 </div>
             </div>
+
+            <!-- Analysis Inputs (Samples) -->
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title"><i class="fas fa-dna"></i> Analysis Inputs</h3>
+                    <button type="button" class="btn btn-outline btn-sm" onclick="addAnalysisInput()">
+                        <i class="fas fa-plus"></i> Add Input
+                    </button>
+                </div>
+
+                <p class="text-muted mb-md" style="font-size: 0.875rem;">
+                    Each analysis input represents a sequencing library to be processed.
+                    This corresponds to a row in <code>stage_samples.tsv</code>.
+                </p>
+
+                <div id="inputs-container">
+                    <!-- Analysis input rows will be added here -->
+                </div>
+
+                <div class="mt-lg">
+                    <input type="file" id="tsv-upload" accept=".tsv,.csv,.txt" class="d-none" onchange="loadInputsFromTSV(this)">
+                    <div class="d-flex gap-sm flex-wrap">
+                        <button type="button" class="btn btn-outline btn-sm" onclick="document.getElementById('tsv-upload').click()">
+                            <i class="fas fa-file-upload"></i> Import TSV/CSV
+                        </button>
+                        <button type="button" class="btn btn-outline btn-sm" onclick="downloadTemplate()">
+                            <i class="fas fa-file-download"></i> Download Template
+                        </button>
+                        <button type="button" class="btn btn-outline btn-sm" onclick="discoverFromS3()">
+                            <i class="fas fa-search"></i> Discover from S3
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </form>
+
+        <!-- Manifest Preview Card -->
+        <div class="card">
+            <div class="card-header">
+                <div class="d-flex gap-sm">
+                    <button class="btn btn-outline btn-sm" onclick="copyManifest()">
+                        <i class="fas fa-copy"></i> Copy
+                    </button>
+                    <button class="btn btn-outline btn-sm" onclick="saveManifest()">
+                        <i class="fas fa-save"></i> Save
+                    </button>
+                    <button class="btn btn-primary btn-sm" onclick="downloadManifest()">
+                        <i class="fas fa-download"></i> Download
+                    </button>
+                </div>
+                <h3 class="card-title">Manifest Preview (TSV)</h3>
+            </div>
+            <div class="code-block" style="max-height: 250px; overflow: auto;">
+                <pre id="manifest-preview" style="white-space: pre; overflow-x: auto;"># Add analysis inputs to generate the manifest</pre>
+            </div>
+
+            <!-- Saved Manifests -->
+            <div class="p-md" style="border-top: 1px solid var(--color-gray-200);">
+                <div class="d-flex gap-sm" style="align-items: end;">
+                    <div class="form-group" style="flex: 1; margin-bottom: 0;">
+                        <label for="manifest-save-name" class="form-label required">Manifest name</label>
+                        <input id="manifest-save-name" class="form-control" placeholder="WK1234" required />
+                    </div>
+                    <button class="btn btn-outline btn-sm" onclick="refreshSavedManifests()">
+                        <i class="fas fa-sync"></i> Refresh
+                    </button>
+                </div>
+                <div class="d-flex gap-sm mt-sm" style="align-items: end;">
+                    <div class="form-group" style="flex: 1; margin-bottom: 0;">
+                        <label for="saved-manifest-select" class="form-label">Load saved manifest</label>
+                        <select id="saved-manifest-select" class="form-control">
+                            <option value="">(none)</option>
+                        </select>
+                    </div>
+                    <button class="btn btn-primary btn-sm" onclick="loadSelectedManifest()">
+                        <i class="fas fa-upload"></i> Load
+                    </button>
+                    <button class="btn btn-outline btn-sm" onclick="downloadSelectedManifest()">
+                        <i class="fas fa-download"></i> Download
+                    </button>
+                </div>
+            </div>
+
+            <!-- Column Reference -->
+            <div class="mt-md p-md" style="background: var(--color-gray-100); border-radius: var(--radius-md); font-size: 0.8rem;">
+                <strong>Required Columns:</strong>
+                <code>RUN_ID, SAMPLE_ID, EXPERIMENTID, SAMPLE_TYPE, LIB_PREP, SEQ_VENDOR, SEQ_PLATFORM, LANE, SEQBC_ID, PATH_TO_CONCORDANCE_DATA_DIR, R1_FQ, R2_FQ, STAGE_DIRECTIVE, STAGE_TARGET, SUBSAMPLE_PCT, IS_POS_CTRL, IS_NEG_CTRL, N_X, N_Y, EXTERNAL_SAMPLE_ID</code>
+            </div>
+        </div>
+
+        <!-- Terminology Guide -->
+        <div class="card">
+            <details>
+                <summary class="card-title" style="cursor: pointer;">
+                    <i class="fas fa-book"></i> Terminology Guide (GA4GH Standards)
+                </summary>
+                <div class="mt-lg terminology-guide">
+                    <dl>
+                        <dt><strong>Analysis Input (SAMPLE_ID)</strong></dt>
+                        <dd>Pipeline input identifier - uniquely identifies a sequencing library for analysis</dd>
+
+                        <dt><strong>Subject/Individual (EXTERNAL_SAMPLE_ID)</strong></dt>
+                        <dd>Source organism identifier (e.g., patient ID, HG002). Multiple libraries may come from one subject.</dd>
+
+                        <dt><strong>Biosample</strong></dt>
+                        <dd>Physical specimen (tissue type, collection info). Captured in SAMPLE_TYPE field.</dd>
+
+                        <dt><strong>Sequencing Library</strong></dt>
+                        <dd>Prepared DNA/RNA with specific protocol. Captured in LIB_PREP, SEQ_VENDOR, SEQ_PLATFORM.</dd>
+
+                        <dt><strong>FASTQ Files</strong></dt>
+                        <dd>Raw sequencing output files (R1_FQ, R2_FQ). Include full S3 paths.</dd>
+                    </dl>
+                </div>
+            </details>
+        </div>
+
+        <!-- Column Mapping Help -->
+        <div class="card">
+            <details>
+                <summary class="card-title" style="cursor: pointer;">
+                    <i class="fas fa-columns"></i> Column Mapping Reference
+                </summary>
+                <div class="mt-lg">
+                    <table class="table table-sm" style="width: 100%; border-collapse: collapse;">
+                        <thead>
+                            <tr style="border-bottom: 2px solid var(--color-gray-300);">
+                                <th style="padding: var(--spacing-sm); text-align: left;">Column Name</th>
+                                <th style="padding: var(--spacing-sm); text-align: left;">Description</th>
+                                <th style="padding: var(--spacing-sm); text-align: left;">Example</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr style="border-bottom: 1px solid var(--color-gray-200);">
+                                <td style="padding: var(--spacing-sm);"><code>SAMPLE_ID</code></td>
+                                <td style="padding: var(--spacing-sm);">Unique identifier for this analysis input</td>
+                                <td style="padding: var(--spacing-sm);">LIB001</td>
+                            </tr>
+                            <tr style="border-bottom: 1px solid var(--color-gray-200);">
+                                <td style="padding: var(--spacing-sm);"><code>EXTERNAL_SAMPLE_ID</code></td>
+                                <td style="padding: var(--spacing-sm);">Subject/individual ID (e.g., patient ID)</td>
+                                <td style="padding: var(--spacing-sm);">SUBJ001</td>
+                            </tr>
+                            <tr style="border-bottom: 1px solid var(--color-gray-200);">
+                                <td style="padding: var(--spacing-sm);"><code>SAMPLE_TYPE</code></td>
+                                <td style="padding: var(--spacing-sm);">Type of biological sample</td>
+                                <td style="padding: var(--spacing-sm);">Blood, Saliva, Tissue</td>
+                            </tr>
+                            <tr style="border-bottom: 1px solid var(--color-gray-200);">
+                                <td style="padding: var(--spacing-sm);"><code>LIB_PREP</code></td>
+                                <td style="padding: var(--spacing-sm);">Library preparation method</td>
+                                <td style="padding: var(--spacing-sm);">PCR-free, Nextera</td>
+                            </tr>
+                            <tr style="border-bottom: 1px solid var(--color-gray-200);">
+                                <td style="padding: var(--spacing-sm);"><code>SEQ_VENDOR</code></td>
+                                <td style="padding: var(--spacing-sm);">Sequencing vendor/platform</td>
+                                <td style="padding: var(--spacing-sm);">Illumina, PacBio</td>
+                            </tr>
+                            <tr style="border-bottom: 1px solid var(--color-gray-200);">
+                                <td style="padding: var(--spacing-sm);"><code>SEQ_PLATFORM</code></td>
+                                <td style="padding: var(--spacing-sm);">Specific sequencing platform</td>
+                                <td style="padding: var(--spacing-sm);">NovaSeq, HiSeq</td>
+                            </tr>
+                            <tr style="border-bottom: 1px solid var(--color-gray-200);">
+                                <td style="padding: var(--spacing-sm);"><code>R1_FQ</code></td>
+                                <td style="padding: var(--spacing-sm);">S3 path to forward read FASTQ file</td>
+                                <td style="padding: var(--spacing-sm);">s3://bucket/sample_R1.fastq.gz</td>
+                            </tr>
+                            <tr style="border-bottom: 1px solid var(--color-gray-200);">
+                                <td style="padding: var(--spacing-sm);"><code>R2_FQ</code></td>
+                                <td style="padding: var(--spacing-sm);">S3 path to reverse read FASTQ file (optional for single-end)</td>
+                                <td style="padding: var(--spacing-sm);">s3://bucket/sample_R2.fastq.gz</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </details>
         </div>
     </div>
 </div>

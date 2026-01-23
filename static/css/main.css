@@ -131,6 +131,7 @@ p { margin-bottom: var(--spacing-md); }
 
 .container-sm { max-width: 800px; }
 .container-lg { max-width: 1600px; }
+.container-wide { max-width: 95%; width: 95%; }
 
 /* Header & Navigation */
 .header {
@@ -642,6 +643,21 @@ p { margin-bottom: var(--spacing-md); }
 
 .table tbody tr:last-child td {
     border-bottom: none;
+}
+
+/* Worksets Table - Compact Layout */
+#worksets-table th,
+#worksets-table td {
+    padding: var(--spacing-sm) var(--spacing-md);
+    font-size: 0.85rem;
+}
+
+#worksets-table th {
+    font-size: 0.8rem;
+}
+
+#worksets-table tbody tr {
+    font-size: 0.85rem;
 }
 
 /* Badges */

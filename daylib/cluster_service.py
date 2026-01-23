@@ -293,13 +293,21 @@ class ClusterService:
             return {"error": "pcluster CLI not installed"}
 
         cmd = [pcluster_path] + args
-        # Always set AWS_PROFILE - use explicit value, fall back to env, then 'default'
-        profile = self.aws_profile or os.environ.get("AWS_PROFILE", "default")
-        LOGGER.info(f"Running: AWS_PROFILE={profile} {' '.join(cmd)}")
+        # Set AWS_PROFILE - use explicit value or fall back to env (no 'default' fallback)
+        profile = self.aws_profile or os.environ.get("AWS_PROFILE")
+        if profile:
+            LOGGER.info(f"Running: AWS_PROFILE={profile} {' '.join(cmd)}")
+        else:
+            LOGGER.warning(
+                "No AWS profile configured for pcluster command. "
+                "Set aws_profile in ~/.ursa/ursa-config.yaml"
+            )
+            LOGGER.info(f"Running: {' '.join(cmd)}")
         LOGGER.debug(f"PATH: {os.environ.get('PATH', 'not set')[:200]}")
         try:
             env = os.environ.copy()
-            env["AWS_PROFILE"] = profile
+            if profile:
+                env["AWS_PROFILE"] = profile
             # Use explicit PIPE for stdin to avoid "bad file descriptor" errors
             # when running from ThreadPoolExecutor threads
             result = subprocess.run(

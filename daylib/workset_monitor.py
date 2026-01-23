@@ -398,6 +398,14 @@ class WorksetMonitor:
         self._futures: Dict[concurrent.futures.Future, str] = {}  # future -> workset_name
         self._shutdown_event = threading.Event()  # signals graceful shutdown
 
+        # Load ursa config for region-specific settings (e.g., SSH keys)
+        self.ursa_config: Optional[Any] = None
+        try:
+            from daylib.ursa_config import get_ursa_config
+            self.ursa_config = get_ursa_config()
+        except Exception:
+            LOGGER.debug("UrsaConfig not available; region-specific SSH keys disabled")
+
     # ------------------------------------------------------------------
     # Public entrypoints
     # ------------------------------------------------------------------
@@ -701,7 +709,7 @@ class WorksetMonitor:
                 if cluster_name is None:
                     raise MonitorError("Cluster is required to stage data")
                 stage_artifacts = self._stage_samples(
-                    workset, inputs.manifest_path, cluster_name
+                    workset, inputs.manifest_path, cluster_name, region=cluster_region
                 )
                 continue
 
@@ -1800,10 +1808,10 @@ class WorksetMonitor:
                 )
             else:
                 stage_future = executor.submit(
-                    self._stage_samples, workset, manifest_path, cluster_name
+                    self._stage_samples, workset, manifest_path, cluster_name, region
                 )
             cluster_future = executor.submit(
-                self._wait_for_cluster_ready, cluster_name
+                self._wait_for_cluster_ready, cluster_name, region
             )
             cluster_details = cluster_future.result()
             # Track progress: cluster is ready
@@ -2727,14 +2735,30 @@ class WorksetMonitor:
                     self._assert_sample_file_exists(workset, value)
 
     def _stage_samples(
-        self, workset: Workset, manifest_path: Path, cluster_name: str
+        self,
+        workset: Workset,
+        manifest_path: Path,
+        cluster_name: str,
+        region: Optional[str] = None,
     ) -> StageArtifacts:
+        """Stage sample files for workset processing.
+
+        Args:
+            workset: The workset being processed
+            manifest_path: Path to the analysis_samples manifest
+            cluster_name: Name of the target cluster
+            region: AWS region for the cluster (uses config.aws.region if None)
+
+        Returns:
+            StageArtifacts with paths to staged files and manifests
+        """
+        effective_region = region or self.config.aws.region
         manifest_argument = self._relative_manifest_argument(manifest_path)
-        reference_bucket = self._stage_reference_bucket()
+        reference_bucket = self._stage_reference_bucket(region=effective_region)
         output_dir = self._local_state_dir(workset)
         cmd = self.config.pipeline.stage_command.format(
             profile=self.config.aws.profile,
-            region=self.config.aws.region,
+            region=effective_region,
             cluster=cluster_name,
             analysis_samples=manifest_argument,
             reference_bucket=reference_bucket,
@@ -2747,7 +2771,10 @@ class WorksetMonitor:
             output_dir=shlex.quote(str(output_dir)),
         )
         LOGGER.info(
-            "Staging samples for cluster %s with command: %s", cluster_name, cmd
+            "Staging samples for cluster %s (region=%s) with command: %s",
+            cluster_name,
+            effective_region,
+            cmd,
         )
         result = self._run_monitored_command("stage_samples", cmd, check=True)
         artifacts = self._parse_stage_samples_output(result)
@@ -2836,10 +2863,17 @@ class WorksetMonitor:
             units_manifest=units_manifest,
         )
 
-    def _wait_for_cluster_ready(self, cluster_name: str) -> Optional[Dict[str, object]]:
-        LOGGER.info("Waiting for cluster %s to become ready", cluster_name)
+    def _wait_for_cluster_ready(
+        self, cluster_name: str, region: Optional[str] = None
+    ) -> Optional[Dict[str, object]]:
+        effective_region = region or self.config.aws.region
+        LOGGER.info(
+            "Waiting for cluster %s to become ready (region=%s)",
+            cluster_name,
+            effective_region,
+        )
         for attempt in range(60):
-            details = self._describe_cluster(cluster_name)
+            details = self._describe_cluster(cluster_name, region=region)
             if details and self._cluster_is_ready(details):
                 LOGGER.debug(
                     "Cluster %s ready (checked %d times)", cluster_name, attempt + 1
@@ -4182,9 +4216,34 @@ class WorksetMonitor:
         return (self._create_cluster(work_yaml), None)
 
     def _pcluster_env(self) -> Dict[str, str]:
+        """Build environment for pcluster CLI commands.
+
+        Sets AWS_PROFILE to ensure pcluster uses correct credentials.
+        Priority: config.aws.profile > UrsaConfig.aws_profile > AWS_PROFILE env
+
+        Raises warning if no profile is configured (profile must be set in ursa-config.yaml).
+        """
         env = os.environ.copy()
-        if self.config.aws.profile:
-            env["AWS_PROFILE"] = self.config.aws.profile
+        # Determine profile with fallback chain (no 'default' fallback)
+        profile = self.config.aws.profile
+        if not profile:
+            # Fall back to UrsaConfig
+            try:
+                from daylib.ursa_config import get_ursa_config
+                ursa_config = get_ursa_config()
+                profile = ursa_config.get_effective_aws_profile()
+            except Exception:
+                pass
+        if not profile:
+            # Fall back to existing env var (but not 'default')
+            profile = os.environ.get("AWS_PROFILE")
+        if profile:
+            env["AWS_PROFILE"] = profile
+        else:
+            LOGGER.warning(
+                "No AWS profile configured. Set aws_profile in ~/.ursa/ursa-config.yaml "
+                "or aws.profile in workset-monitor-config.yaml"
+            )
         return env
 
     def _load_pcluster_json(self, raw: bytes) -> Optional[Any]:
@@ -4782,12 +4841,17 @@ class WorksetMonitor:
         except ValueError:
             return str(manifest_path)
 
-    def _stage_reference_bucket(self) -> str:
+    def _stage_reference_bucket(self, region: Optional[str] = None) -> str:
         """
         Return the S3 reference bucket to pass to the staging command.
 
-        Requires pipeline.reference_bucket to be configured. There is no fallback
-        since the monitor no longer has a default bucket.
+        If pipeline.reference_bucket is configured and contains a region placeholder
+        (e.g., 's3://bucket-{region}/'), the placeholder will be substituted with
+        the provided region. Otherwise, the configured bucket is used as-is.
+
+        Args:
+            region: AWS region for region-specific bucket naming. If the configured
+                   bucket contains '{region}', this will be substituted.
 
         Returns:
             S3 URI with trailing slash
@@ -4802,6 +4866,27 @@ class WorksetMonitor:
                 "The monitor no longer has a default bucket - each workset carries its own bucket "
                 "from cluster region, and reference data location must be explicitly configured."
             )
+
+        # Substitute region placeholder if present (e.g., 's3://bucket-{region}/')
+        if "{region}" in bucket and region:
+            bucket = bucket.format(region=region)
+        elif region:
+            # If bucket has a region suffix pattern like '-us-west-2', try to replace it
+            # Pattern: s3://prefix-{old-region}/ -> s3://prefix-{new-region}/
+            import re
+            # Match common region patterns at end of bucket name before trailing slash
+            region_pattern = r"-(us-west-[12]|us-east-[12]|eu-central-1|eu-west-[123]|ap-south-1|ap-northeast-[123]|ap-southeast-[12]|sa-east-1|ca-central-1)(/?)$"
+            match = re.search(region_pattern, bucket.rstrip("/"))
+            if match:
+                old_region = match.group(1)
+                if old_region != region:
+                    bucket = bucket.rstrip("/").replace(f"-{old_region}", f"-{region}")
+                    LOGGER.debug(
+                        "Substituted region in reference bucket: %s -> %s",
+                        old_region,
+                        region,
+                    )
+
         if not bucket.endswith("/"):
             bucket += "/"
         return bucket
@@ -5073,8 +5158,11 @@ class WorksetMonitor:
         run_shell = shell
         if isinstance(command, str) and not shell:
             run_command = shlex.split(command)
+        # Use DEVNULL for stdin to avoid "bad file descriptor" errors
+        # when running from ThreadPoolExecutor threads
         result = subprocess.run(
             run_command,
+            stdin=subprocess.DEVNULL,
             check=False,
             cwd=cwd,
             shell=run_shell,
@@ -5101,7 +5189,25 @@ class WorksetMonitor:
             raise MonitorError(f"Command failed: {cmd_display}")
         return result
 
-    def _ssh_identity(self) -> Optional[str]:
+    def _ssh_identity(self, region: Optional[str] = None) -> Optional[str]:
+        """Get the SSH identity file path, optionally region-specific.
+
+        Args:
+            region: AWS region to get SSH key for. If provided and a region-specific
+                    SSH key is configured in ursa-config.yaml, that key is used.
+                    Falls back to the global ssh_identity_file from monitor config.
+
+        Returns:
+            Expanded path to SSH private key file, or None if not configured.
+        """
+        # Try region-specific SSH key first
+        if region and self.ursa_config:
+            region_key = self.ursa_config.get_ssh_key_for_region(region)
+            if region_key:
+                LOGGER.debug("Using region-specific SSH key for %s: %s", region, region_key)
+                return region_key
+
+        # Fall back to global ssh_identity_file
         identity = self.config.pipeline.ssh_identity_file
         if not identity:
             return None
@@ -5178,7 +5284,7 @@ class WorksetMonitor:
         remote_command = self._build_remote_command(command, cwd=cwd, shell=shell)
         headnode = self._headnode_ip(cluster_name, region=region)
         ssh_cmd: List[str] = ["ssh"]
-        identity = self._ssh_identity()
+        identity = self._ssh_identity(region=region)
         if identity:
             ssh_cmd.extend(["-i", identity])
         ssh_cmd.extend(self._ssh_options())
@@ -5195,7 +5301,7 @@ class WorksetMonitor:
     ) -> List[str]:
         headnode = self._headnode_ip(cluster_name, region=region)
         scp_cmd: List[str] = ["scp"]
-        identity = self._ssh_identity()
+        identity = self._ssh_identity(region=region)
         if identity:
             scp_cmd.extend(["-i", identity])
         scp_cmd.extend(self._ssh_options())

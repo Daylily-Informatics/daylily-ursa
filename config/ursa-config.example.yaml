@@ -21,11 +21,15 @@ aws_profile: lsmc
 
 # List of AWS regions to scan for ParallelCluster instances
 # Clusters in these regions will be available for workset execution
+# Each region can have an optional ssh_pem for region-specific SSH keys
 regions:
-  - us-west-2
-  - us-east-1
-  - eu-central-1
-  - ap-south-1
+  - us-west-2:
+      ssh_pem: ~/.ssh/<some>-us-west-2.pem
+  - us-east-1:
+      ssh_pem: ~/.ssh/<some>-us-east-1.pem
+  - eu-central-1:
+      ssh_pem: ~/.ssh/<some>-eu-central-1.pem
+
 
 # =============================================================================
 # DynamoDB Region (Single Source of Truth)

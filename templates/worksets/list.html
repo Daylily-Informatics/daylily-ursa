@@ -4,7 +4,7 @@
 {% block title %}Worksets - Daylily Customer Portal{% endblock %}
 
 {% block content %}
-<div class="container">
+<div class="container container-wide">
     <!-- Page Header -->
     <div class="page-header d-flex justify-between align-center flex-wrap gap-lg">
         <div>
@@ -228,6 +228,10 @@
                             </button>
                             {% elif ws.state == 'error' %}
                             <button class="btn btn-outline btn-sm" onclick="retryWorkset('{{ ws.workset_id }}')" title="Retry">
+                                <i class="fas fa-redo"></i>
+                            </button>
+                            {% elif ws.state == 'canceled' %}
+                            <button class="btn btn-outline btn-sm" onclick="retryWorkset('{{ ws.workset_id }}')" title="Restart">
                                 <i class="fas fa-redo"></i>
                             </button>
                             {% endif %}

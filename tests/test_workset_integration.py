@@ -1084,3 +1084,212 @@ class TestUpdateExecutionEnvironmentHeadnodePath:
         assert ":exec_cluster" in expr_values
         assert ":exec_ip" in expr_values
         assert ":analysis_path" in expr_values
+
+
+class TestStageReferenceBucket:
+    """Tests for _stage_reference_bucket region substitution."""
+
+    @pytest.fixture
+    def mock_monitor(self):
+        """Create a mock monitor with config for testing."""
+        from daylib.workset_monitor import WorksetMonitor
+
+        monitor = WorksetMonitor.__new__(WorksetMonitor)
+        monitor.config = MagicMock()
+        return monitor
+
+    def test_returns_configured_bucket_without_region(self, mock_monitor):
+        """Test that configured bucket is returned as-is when no region specified."""
+        mock_monitor.config.pipeline.reference_bucket = "s3://my-bucket/"
+
+        result = mock_monitor._stage_reference_bucket()
+
+        assert result == "s3://my-bucket/"
+
+    def test_adds_trailing_slash(self, mock_monitor):
+        """Test that trailing slash is added if missing."""
+        mock_monitor.config.pipeline.reference_bucket = "s3://my-bucket"
+
+        result = mock_monitor._stage_reference_bucket()
+
+        assert result == "s3://my-bucket/"
+
+    def test_substitutes_region_placeholder(self, mock_monitor):
+        """Test that {region} placeholder is substituted."""
+        mock_monitor.config.pipeline.reference_bucket = "s3://bucket-{region}/"
+
+        result = mock_monitor._stage_reference_bucket(region="eu-central-1")
+
+        assert result == "s3://bucket-eu-central-1/"
+
+    def test_substitutes_region_suffix_us_west_2_to_eu_central_1(self, mock_monitor):
+        """Test region suffix substitution from us-west-2 to eu-central-1."""
+        mock_monitor.config.pipeline.reference_bucket = "s3://lsmc-dayoa-omics-analysis-us-west-2/"
+
+        result = mock_monitor._stage_reference_bucket(region="eu-central-1")
+
+        assert result == "s3://lsmc-dayoa-omics-analysis-eu-central-1/"
+
+    def test_substitutes_region_suffix_eu_central_1_to_us_west_2(self, mock_monitor):
+        """Test region suffix substitution from eu-central-1 to us-west-2."""
+        mock_monitor.config.pipeline.reference_bucket = "s3://lsmc-dayoa-omics-analysis-eu-central-1/"
+
+        result = mock_monitor._stage_reference_bucket(region="us-west-2")
+
+        assert result == "s3://lsmc-dayoa-omics-analysis-us-west-2/"
+
+    def test_substitutes_region_suffix_us_east_1(self, mock_monitor):
+        """Test region suffix substitution to us-east-1."""
+        mock_monitor.config.pipeline.reference_bucket = "s3://bucket-us-west-2/"
+
+        result = mock_monitor._stage_reference_bucket(region="us-east-1")
+
+        assert result == "s3://bucket-us-east-1/"
+
+    def test_substitutes_region_suffix_ap_south_1(self, mock_monitor):
+        """Test region suffix substitution to ap-south-1."""
+        mock_monitor.config.pipeline.reference_bucket = "s3://bucket-us-west-2/"
+
+        result = mock_monitor._stage_reference_bucket(region="ap-south-1")
+
+        assert result == "s3://bucket-ap-south-1/"
+
+    def test_no_substitution_when_region_matches(self, mock_monitor):
+        """Test no substitution when target region matches bucket region."""
+        mock_monitor.config.pipeline.reference_bucket = "s3://bucket-us-west-2/"
+
+        result = mock_monitor._stage_reference_bucket(region="us-west-2")
+
+        assert result == "s3://bucket-us-west-2/"
+
+    def test_no_substitution_for_non_regional_bucket(self, mock_monitor):
+        """Test no substitution for bucket without region suffix."""
+        mock_monitor.config.pipeline.reference_bucket = "s3://my-generic-bucket/"
+
+        result = mock_monitor._stage_reference_bucket(region="eu-central-1")
+
+        assert result == "s3://my-generic-bucket/"
+
+    def test_raises_error_when_not_configured(self, mock_monitor):
+        """Test MonitorError raised when reference_bucket not configured."""
+        from daylib.workset_monitor import MonitorError
+
+        mock_monitor.config.pipeline.reference_bucket = None
+
+        with pytest.raises(MonitorError, match="pipeline.reference_bucket must be configured"):
+            mock_monitor._stage_reference_bucket()
+
+    def test_raises_error_for_empty_string(self, mock_monitor):
+        """Test MonitorError raised for empty string."""
+        from daylib.workset_monitor import MonitorError
+
+        mock_monitor.config.pipeline.reference_bucket = ""
+
+        with pytest.raises(MonitorError, match="pipeline.reference_bucket must be configured"):
+            mock_monitor._stage_reference_bucket()
+
+
+class TestStageSamplesMultiRegion:
+    """Tests for _stage_samples multi-region support."""
+
+    @pytest.fixture
+    def mock_monitor(self):
+        """Create a mock monitor with required attributes for staging."""
+        from daylib.workset_monitor import WorksetMonitor
+        import tempfile
+        from pathlib import Path
+
+        monitor = WorksetMonitor.__new__(WorksetMonitor)
+        monitor.config = MagicMock()
+        monitor.config.aws.profile = "test-profile"
+        monitor.config.aws.region = "us-west-2"
+        monitor.config.pipeline.reference_bucket = "s3://bucket-us-west-2/"
+        monitor.config.pipeline.stage_command = (
+            "./bin/stage --profile {profile} --region {region} "
+            "--reference-bucket {reference_bucket} --config-dir {output_dir} {analysis_samples}"
+        )
+        monitor.config.pipeline.ssh_identity_file = "~/.ssh/key.pem"
+        monitor.config.pipeline.ssh_user = "ubuntu"
+        monitor.config.pipeline.ssh_extra_args = []
+
+        # Mock methods
+        monitor._stage_artifacts = {}
+        monitor._relative_manifest_argument = MagicMock(return_value="manifest.tsv")
+
+        # Use temp directory for output
+        tmpdir = tempfile.mkdtemp()
+        monitor._local_state_dir = MagicMock(return_value=Path(tmpdir))
+
+        return monitor
+
+    def test_uses_cluster_region_in_command(self, mock_monitor):
+        """Test that cluster region is used in staging command."""
+        mock_monitor._run_monitored_command = MagicMock()
+        mock_monitor._run_monitored_command.return_value = MagicMock(
+            stdout="Remote FSx stage directory: /fsx/data/staged/remote_stage_123\nStaged files (1):\n  /fsx/data/staged/remote_stage_123/sample.fq.gz",
+            stderr="",
+        )
+        mock_monitor._parse_stage_samples_output = MagicMock()
+
+        workset = MagicMock()
+        workset.name = "test-workset"
+        manifest_path = MagicMock()
+
+        mock_monitor._stage_samples(workset, manifest_path, "euc1a-jem", region="eu-central-1")
+
+        # Verify the command was called with correct region
+        call_args = mock_monitor._run_monitored_command.call_args
+        cmd = call_args[0][1]  # Second positional arg is the command string
+
+        assert "--region eu-central-1" in cmd
+        assert "--reference-bucket s3://bucket-eu-central-1/" in cmd
+
+    def test_uses_config_region_when_none_provided(self, mock_monitor):
+        """Test that config region is used when no region parameter provided."""
+        mock_monitor._run_monitored_command = MagicMock()
+        mock_monitor._run_monitored_command.return_value = MagicMock(stdout="", stderr="")
+        mock_monitor._parse_stage_samples_output = MagicMock()
+
+        workset = MagicMock()
+        workset.name = "test-workset"
+        manifest_path = MagicMock()
+
+        mock_monitor._stage_samples(workset, manifest_path, "usw2d-B", region=None)
+
+        call_args = mock_monitor._run_monitored_command.call_args
+        cmd = call_args[0][1]
+
+        assert "--region us-west-2" in cmd
+        assert "--reference-bucket s3://bucket-us-west-2/" in cmd
+
+    def test_different_regions_produce_different_commands(self, mock_monitor):
+        """Test that different regions produce different staging commands."""
+        mock_monitor._run_monitored_command = MagicMock()
+        mock_monitor._run_monitored_command.return_value = MagicMock(stdout="", stderr="")
+        mock_monitor._parse_stage_samples_output = MagicMock()
+
+        workset = MagicMock()
+        workset.name = "test-workset"
+        manifest_path = MagicMock()
+
+        # Stage to us-west-2
+        mock_monitor._stage_samples(workset, manifest_path, "usw2d-B", region="us-west-2")
+        usw2_cmd = mock_monitor._run_monitored_command.call_args[0][1]
+
+        # Stage to eu-central-1
+        mock_monitor._stage_samples(workset, manifest_path, "euc1a-jem", region="eu-central-1")
+        euc1_cmd = mock_monitor._run_monitored_command.call_args[0][1]
+
+        # Stage to ap-south-1
+        mock_monitor._stage_samples(workset, manifest_path, "aps1-cluster", region="ap-south-1")
+        aps1_cmd = mock_monitor._run_monitored_command.call_args[0][1]
+
+        # Verify each has correct region
+        assert "--region us-west-2" in usw2_cmd
+        assert "--region eu-central-1" in euc1_cmd
+        assert "--region ap-south-1" in aps1_cmd
+
+        # Verify each has correct bucket
+        assert "bucket-us-west-2" in usw2_cmd
+        assert "bucket-eu-central-1" in euc1_cmd
+        assert "bucket-ap-south-1" in aps1_cmd

@@ -109,8 +109,17 @@ async function saveManifest() {
         return;
     }
 
+    // Validate manifest name is provided
+    const nameInput = document.getElementById('manifest-save-name');
+    const name = nameInput?.value?.trim();
+    if (!name) {
+        nameInput?.focus();
+        showToast?.('error', 'Name required', 'Please enter a manifest name') ||
+            alert('Please enter a manifest name');
+        return;
+    }
+
     const tsv = generateManifestTSV();
-    const name = document.getElementById('manifest-save-name')?.value || null;
 
     try {
         const resp = await fetch(`/api/customers/${customerId}/manifests`, {

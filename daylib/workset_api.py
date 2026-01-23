@@ -1484,9 +1484,9 @@ def create_app(
             - manifest_id: ID of a saved manifest (retrieves TSV from ManifestRegistry)
             - manifest_tsv_content: Raw stage_samples.tsv content
 
-            Bucket is determined by:
-            - preferred_cluster: If provided, bucket is derived from cluster's tags (aws-parallelcluster-monitor-bucket)
-            - Fallback to legacy DAYLILY_CONTROL_BUCKET env var if no cluster selected
+            Bucket is determined from the selected cluster's tags:
+            - The cluster's aws-parallelcluster-monitor-bucket tag specifies the S3 bucket
+            - A cluster must be selected for workset creation
             """
             from daylib.ursa_config import get_ursa_config
 
@@ -1769,7 +1769,7 @@ def create_app(
                     detail="Workset does not belong to this customer",
                 )
 
-            state_db.update_state(workset_id, WorksetState.ERROR, "Cancelled by user")
+            state_db.update_state(workset_id, WorksetState.CANCELED, "Canceled by user")
             updated = state_db.get_workset(workset_id)
             return updated
 
@@ -2083,43 +2083,51 @@ def create_app(
             # Attempt to fetch live pipeline status from headnode
             pipeline_status = None
             if PIPELINE_STATUS_AVAILABLE and PipelineStatusFetcher is not None:
-                cluster_name = workset.get("cluster_name")
                 workset_name = workset.get("name") or workset.get("workset_name")
+                # Use cached headnode IP from DynamoDB (stored by monitor when workset started)
+                headnode_ip = workset.get("execution_headnode_ip")
 
-                if cluster_name and workset_name:
+                if headnode_ip and workset_name:
                     try:
-                        # Create fetcher with settings from environment
+                        # Get workset region for region-specific SSH key
+                        workset_region = (
+                            workset.get("execution_cluster_region")
+                            or workset.get("cluster_region")
+                            or settings.get_effective_region()
+                        )
+
+                        # Try to get region-specific SSH key from ursa_config
+                        ssh_key = settings.pipeline_ssh_identity_file
+                        try:
+                            from daylib.ursa_config import get_ursa_config
+                            ursa_cfg = get_ursa_config()
+                            region_key = ursa_cfg.get_ssh_key_for_region(workset_region)
+                            if region_key:
+                                ssh_key = region_key
+                                LOGGER.debug("Using region-specific SSH key for %s: %s", workset_region, ssh_key)
+                        except Exception as e:
+                            LOGGER.debug("Could not load ursa_config for region SSH key: %s", e)
+
+                        # Create fetcher with region-aware SSH key
                         fetcher = PipelineStatusFetcher(
                             ssh_user=settings.pipeline_ssh_user,
-                            ssh_identity_file=settings.pipeline_ssh_identity_file,
+                            ssh_identity_file=ssh_key,
                             timeout=settings.pipeline_ssh_timeout,
                             clone_dest_root=settings.pipeline_clone_dest_root,
                             repo_dir_name=settings.pipeline_repo_dir_name,
                         )
 
-                        # Get headnode IP from cluster
-                        headnode_ip = fetcher.get_headnode_ip(
-                            cluster_name,
-                            region=settings.get_effective_region(),
-                            profile=settings.aws_profile,
+                        # Use headnode IP from DynamoDB (no pcluster call needed)
+                        # Derive tmux session name (matches monitor convention)
+                        tmux_session = f"daylily-{workset_name}"
+
+                        # Fetch status
+                        status_obj = fetcher.fetch_status(
+                            headnode_ip=headnode_ip,
+                            workset_name=workset_name,
+                            tmux_session_name=tmux_session,
                         )
-
-                        if headnode_ip:
-                            # Derive tmux session name (matches monitor convention)
-                            tmux_session = f"daylily-{workset_name}"
-
-                            # Fetch status
-                            status_obj = fetcher.fetch_status(
-                                headnode_ip=headnode_ip,
-                                workset_name=workset_name,
-                                tmux_session_name=tmux_session,
-                            )
-                            pipeline_status = status_obj.to_dict()
-                        else:
-                            LOGGER.debug(
-                                "Could not get headnode IP for cluster %s",
-                                cluster_name,
-                            )
+                        pipeline_status = status_obj.to_dict()
                     except Exception as e:
                         LOGGER.warning(
                             "Failed to fetch pipeline status for %s: %s",
@@ -2200,33 +2208,45 @@ def create_app(
             metrics_source = None
 
             if PIPELINE_STATUS_AVAILABLE and PipelineStatusFetcher is not None:
-                cluster_name = workset.get("cluster_name") or workset.get("execution_cluster_name")
                 workset_name = workset.get("name") or workset.get("workset_name") or workset_id
                 results_s3_uri = workset.get("results_s3_uri")
+                # Use cached headnode IP from DynamoDB (stored by monitor when workset started)
+                headnode_ip = workset.get("execution_headnode_ip")
+
+                # Get workset region for region-specific SSH key
+                workset_region = (
+                    workset.get("execution_cluster_region")
+                    or workset.get("cluster_region")
+                    or settings.get_effective_region()
+                )
+
+                # Try to get region-specific SSH key from ursa_config
+                ssh_key = settings.pipeline_ssh_identity_file
+                try:
+                    from daylib.ursa_config import get_ursa_config
+                    ursa_cfg = get_ursa_config()
+                    region_key = ursa_cfg.get_ssh_key_for_region(workset_region)
+                    if region_key:
+                        ssh_key = region_key
+                except Exception:
+                    pass
 
                 fetcher = PipelineStatusFetcher(
                     ssh_user=settings.pipeline_ssh_user,
-                    ssh_identity_file=settings.pipeline_ssh_identity_file,
+                    ssh_identity_file=ssh_key,
                     timeout=settings.pipeline_ssh_timeout,
                     clone_dest_root=settings.pipeline_clone_dest_root,
                     repo_dir_name=settings.pipeline_repo_dir_name,
                 )
 
-                # Try headnode first (for running worksets)
-                if cluster_name and workset_name and not is_terminal_state:
+                # Try headnode first (for running worksets) - use IP from DynamoDB
+                if headnode_ip and workset_name and not is_terminal_state:
                     try:
-                        headnode_ip = fetcher.get_headnode_ip(
-                            cluster_name,
-                            region=settings.get_effective_region(),
-                            profile=settings.aws_profile,
+                        metrics_data = fetcher.fetch_performance_metrics(
+                            headnode_ip, workset_name
                         )
-
-                        if headnode_ip:
-                            metrics_data = fetcher.fetch_performance_metrics(
-                                headnode_ip, workset_name
-                            )
-                            if metrics_data and any(metrics_data.values()):
-                                metrics_source = "headnode"
+                        if metrics_data and any(metrics_data.values()):
+                            metrics_source = "headnode"
                     except Exception as e:
                         LOGGER.warning(
                             "Failed to fetch performance metrics from headnode for %s: %s",
@@ -2388,35 +2408,42 @@ def create_app(
                     detail="Pipeline status module not available",
                 )
 
-            cluster_name = workset.get("cluster_name")
             workset_name = workset.get("name") or workset.get("workset_name")
+            # Use cached headnode IP from DynamoDB (stored by monitor when workset started)
+            headnode_ip = workset.get("execution_headnode_ip")
 
-            if not cluster_name or not workset_name:
+            if not headnode_ip or not workset_name:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Workset missing cluster_name or name",
+                    detail="Workset missing execution_headnode_ip or name",
                 )
+
+            # Get workset region for region-specific SSH key
+            workset_region = (
+                workset.get("execution_cluster_region")
+                or workset.get("cluster_region")
+                or settings.get_effective_region()
+            )
+
+            # Try to get region-specific SSH key from ursa_config
+            ssh_key = settings.pipeline_ssh_identity_file
+            try:
+                from daylib.ursa_config import get_ursa_config
+                ursa_cfg = get_ursa_config()
+                region_key = ursa_cfg.get_ssh_key_for_region(workset_region)
+                if region_key:
+                    ssh_key = region_key
+            except Exception:
+                pass
 
             try:
                 fetcher = PipelineStatusFetcher(
                     ssh_user=settings.pipeline_ssh_user,
-                    ssh_identity_file=settings.pipeline_ssh_identity_file,
+                    ssh_identity_file=ssh_key,
                     timeout=settings.pipeline_ssh_timeout,
                     clone_dest_root=settings.pipeline_clone_dest_root,
                     repo_dir_name=settings.pipeline_repo_dir_name,
                 )
-
-                headnode_ip = fetcher.get_headnode_ip(
-                    cluster_name,
-                    region=settings.get_effective_region(),
-                    profile=settings.aws_profile,
-                )
-
-                if not headnode_ip:
-                    raise HTTPException(
-                        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                        detail=f"Could not connect to cluster {cluster_name}",
-                    )
 
                 content = fetcher.get_full_log_content(headnode_ip, workset_name, log_filename)
                 if content is None:

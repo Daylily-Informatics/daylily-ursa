@@ -16,7 +16,6 @@ import uvicorn
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from daylib.config import normalize_bucket_name
 from daylib.workset_api import create_app
 from daylib.workset_state_db import WorksetStateDB
 from daylib.workset_scheduler import WorksetScheduler
@@ -86,17 +85,6 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         action="store_true",
         help="Enable debug logging",
     )
-    parser.add_argument(
-        "--control-bucket",
-        default=None,
-        help="S3 control bucket (monitor bucket) for workset registration. "
-             "Can also be set via DAYLILY_CONTROL_BUCKET or DAYLILY_MONITOR_BUCKET env vars",
-    )
-    parser.add_argument(
-        "--control-prefix",
-        default="daylily_monitoring/active_worksets/",
-        help="S3 prefix within control bucket for worksets (default: daylily_monitoring/active_worksets/)",
-    )
     return parser.parse_args(argv)
 
 
@@ -111,7 +99,6 @@ def configure_logging(verbose: bool) -> None:
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     """Main entry point."""
-    from daylib.workset_integration import WorksetIntegration
     from daylib.ursa_config import get_ursa_config
 
     args = parse_args(argv)
@@ -151,25 +138,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         LOGGER.info("Enabling scheduler")
         scheduler = WorksetScheduler(state_db)
 
-    # Initialize integration layer with control bucket
+    # Integration layer is created per-workset using bucket from cluster tags
+    # (aws-parallelcluster-monitor-bucket). No global integration needed at startup.
     integration = None
-    raw_bucket = args.control_bucket or os.getenv("DAYLILY_CONTROL_BUCKET") or os.getenv("DAYLILY_MONITOR_BUCKET")
-    control_bucket = normalize_bucket_name(raw_bucket)
-    if control_bucket:
-        LOGGER.info("Initializing integration layer with control bucket: %s", control_bucket)
-        try:
-            integration = WorksetIntegration(
-                state_db=state_db,
-                bucket=control_bucket,
-                prefix=args.control_prefix,
-                region=args.region,
-                profile=args.profile,
-            )
-            LOGGER.info("Integration layer initialized successfully")
-        except Exception as e:
-            LOGGER.warning("Failed to initialize integration layer: %s", e)
-    else:
-        LOGGER.warning("No control bucket configured. Set DAYLILY_CONTROL_BUCKET or use --control-bucket")
 
     # Initialize CustomerManager for user registration and management
     customer_manager = None
@@ -277,6 +248,29 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         LOGGER.warning("Failed to initialize FileRegistry: %s", e)
         import traceback
         LOGGER.debug("FileRegistry init traceback: %s", traceback.format_exc())
+
+    # Initialize BiospecimenRegistry for biospecimen management
+    biospecimen_registry = None
+    try:
+        from daylib.biospecimen import BiospecimenRegistry
+        biospecimen_registry = BiospecimenRegistry(
+            region=args.region,
+            profile=args.profile,
+        )
+        # Ensure the tables exist
+        try:
+            biospecimen_registry.create_tables_if_not_exist()
+            LOGGER.info("BiospecimenRegistry initialized (tables: %s, %s, %s, %s)",
+                        biospecimen_registry.subjects_table_name,
+                        biospecimen_registry.biospecimens_table_name,
+                        biospecimen_registry.biosamples_table_name,
+                        biospecimen_registry.libraries_table_name)
+        except Exception as table_err:
+            LOGGER.warning("Could not verify/create biospecimen tables: %s", table_err)
+    except Exception as e:
+        LOGGER.warning("Failed to initialize BiospecimenRegistry: %s", e)
+        import traceback
+        LOGGER.debug("BiospecimenRegistry init traceback: %s", traceback.format_exc())
 
     # Create FastAPI app
     LOGGER.info("Creating FastAPI app with customer_manager=%s, file_registry=%s",

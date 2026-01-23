@@ -2,6 +2,7 @@
 
 This module provides:
 - List of AWS regions to scan for ParallelCluster instances
+- Per-region SSH key configuration for multi-region cluster access
 - AWS profile and Cognito settings (overridden by environment variables)
 
 S3 buckets are discovered from cluster tags (aws-parallelcluster-monitor-bucket)
@@ -17,6 +18,26 @@ from typing import Dict, List, Optional, Tuple
 import yaml
 
 LOGGER = logging.getLogger(__name__)
+
+
+@dataclass
+class RegionConfig:
+    """Configuration for a single AWS region.
+
+    Attributes:
+        name: AWS region name (e.g., 'us-west-2', 'eu-central-1')
+        ssh_pem: Path to SSH private key for this region's clusters.
+                 If None, falls back to global ssh_identity_file in monitor config.
+    """
+
+    name: str
+    ssh_pem: Optional[str] = None
+
+    def get_expanded_ssh_pem(self) -> Optional[str]:
+        """Get the SSH key path with ~ expanded."""
+        if not self.ssh_pem:
+            return None
+        return str(Path(self.ssh_pem).expanduser())
 
 # Canonical config path
 DEFAULT_CONFIG_PATH = Path.home() / ".ursa" / "ursa-config.yaml"
@@ -75,13 +96,25 @@ def validate_config_file(path: Path) -> Tuple[bool, List[str], List[str]]:
         if key not in known_fields:
             warnings.append(f"Unknown field '{key}' (will be ignored)")
 
-    # Validate regions field
+    # Validate regions field - accepts multiple formats:
+    # 1. Simple list of strings: ["us-west-2", "eu-central-1"]
+    # 2. List of dicts with region config: [{"us-west-2": {"ssh_pem": "~/.ssh/key.pem"}}]
+    # 3. Legacy dict format: {"us-west-2": "bucket-name"}
     if "regions" in data:
         regions = data["regions"]
         if isinstance(regions, list):
             for i, r in enumerate(regions):
-                if not isinstance(r, str):
-                    errors.append(f"regions[{i}] must be a string, got {type(r).__name__}")
+                if isinstance(r, str):
+                    pass  # Valid: simple region name
+                elif isinstance(r, dict):
+                    # Valid: region with config like {"us-west-2": {"ssh_pem": "..."}}
+                    for region_name, region_opts in r.items():
+                        if not isinstance(region_name, str):
+                            errors.append(f"regions[{i}] key must be a string, got {type(region_name).__name__}")
+                        if region_opts is not None and not isinstance(region_opts, dict):
+                            errors.append(f"regions[{i}]['{region_name}'] must be a dict or null, got {type(region_opts).__name__}")
+                else:
+                    errors.append(f"regions[{i}] must be a string or dict, got {type(r).__name__}")
         elif isinstance(regions, dict):
             warnings.append("Legacy region-to-bucket format detected; consider updating to list format")
         else:
@@ -105,8 +138,8 @@ class UrsaConfig:
     cluster tags (aws-parallelcluster-monitor-bucket) when a cluster is selected.
     """
 
-    regions: List[str] = field(default_factory=list)
-    """List of AWS regions to scan for ParallelCluster instances."""
+    regions: List[RegionConfig] = field(default_factory=list)
+    """List of region configurations to scan for ParallelCluster instances."""
 
     aws_profile: Optional[str] = None
     """AWS profile to use (overridden by AWS_PROFILE env var)."""
@@ -135,6 +168,9 @@ class UrsaConfig:
 
     _from_legacy_path: bool = False
     """Whether config was loaded from a legacy path."""
+
+    _region_map: Dict[str, RegionConfig] = field(default_factory=dict, repr=False)
+    """Internal map from region name to RegionConfig for fast lookup."""
 
     @classmethod
     def load(cls, config_path: Optional[Path] = None) -> "UrsaConfig":
@@ -197,23 +233,42 @@ class UrsaConfig:
             LOGGER.error("Failed to load Ursa config from %s: %s", path, e)
             return cls(_config_path=path)
 
-        # Parse regions - support both list format and legacy dict format
+        # Parse regions - support multiple formats for backward compatibility
         regions_data = data.get("regions", [])
+        region_configs: List[RegionConfig] = []
+        region_map: Dict[str, RegionConfig] = {}
+
         if isinstance(regions_data, list):
-            # New format: simple list of region names
-            regions = [r for r in regions_data if isinstance(r, str)]
+            for item in regions_data:
+                if isinstance(item, str):
+                    # Simple string format: "us-west-2"
+                    rc = RegionConfig(name=item)
+                    region_configs.append(rc)
+                    region_map[item] = rc
+                elif isinstance(item, dict):
+                    # Dict format: {"us-west-2": {"ssh_pem": "~/.ssh/key.pem"}}
+                    # or {"us-west-2": null} for region without SSH key
+                    for region_name, region_opts in item.items():
+                        if isinstance(region_name, str):
+                            ssh_pem = None
+                            if isinstance(region_opts, dict):
+                                ssh_pem = region_opts.get("ssh_pem")
+                            rc = RegionConfig(name=region_name, ssh_pem=ssh_pem)
+                            region_configs.append(rc)
+                            region_map[region_name] = rc
         elif isinstance(regions_data, dict):
             # Legacy format: dict with region -> bucket mappings
             # Extract just the region names, ignore bucket mappings
-            regions = list(regions_data.keys())
+            for region_name in regions_data.keys():
+                rc = RegionConfig(name=region_name)
+                region_configs.append(rc)
+                region_map[region_name] = rc
             LOGGER.warning(
                 "Legacy region-to-bucket config format detected in %s. "
                 "Buckets are now discovered from cluster tags. "
                 "Consider updating to: regions: [%s]",
-                path, ", ".join(regions)
+                path, ", ".join(region_map.keys())
             )
-        else:
-            regions = []
 
         # Environment variables take precedence over config file
         aws_profile = os.environ.get("AWS_PROFILE") or data.get("aws_profile")
@@ -223,7 +278,7 @@ class UrsaConfig:
         cognito_region = os.environ.get("COGNITO_REGION") or data.get("cognito_region")
 
         config = cls(
-            regions=regions,
+            regions=region_configs,
             aws_profile=aws_profile,
             dynamo_db_region=dynamo_db_region,
             cognito_user_pool_id=cognito_user_pool_id,
@@ -231,14 +286,40 @@ class UrsaConfig:
             cognito_region=cognito_region,
             _config_path=path,
             _from_legacy_path=from_legacy,
+            _region_map=region_map,
         )
 
-        LOGGER.info("Loaded Ursa config from %s with %d regions", path, len(regions))
+        LOGGER.info("Loaded Ursa config from %s with %d regions", path, len(region_configs))
         return config
 
     def get_allowed_regions(self) -> List[str]:
         """Get list of region names to scan for clusters."""
-        return self.regions
+        return [rc.name for rc in self.regions]
+
+    def get_region_config(self, region: str) -> Optional[RegionConfig]:
+        """Get the RegionConfig for a specific region.
+
+        Args:
+            region: AWS region name (e.g., 'us-west-2', 'eu-central-1')
+
+        Returns:
+            RegionConfig if found, None otherwise.
+        """
+        return self._region_map.get(region)
+
+    def get_ssh_key_for_region(self, region: str) -> Optional[str]:
+        """Get the SSH key path for a specific region.
+
+        Args:
+            region: AWS region name (e.g., 'us-west-2', 'eu-central-1')
+
+        Returns:
+            Expanded path to SSH private key file, or None if not configured.
+        """
+        rc = self._region_map.get(region)
+        if rc:
+            return rc.get_expanded_ssh_pem()
+        return None
 
     @property
     def is_configured(self) -> bool:
