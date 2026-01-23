@@ -201,6 +201,8 @@ def create_app(
                 region=region,
                 profile=profile,
             )
+            # Ensure table exists
+            manifest_registry.create_table_if_not_exists()
             LOGGER.info("Manifest storage enabled (table: %s)", settings.daylily_manifest_table)
         except Exception as e:
             LOGGER.warning("Failed to initialize ManifestRegistry: %s", str(e))
@@ -3204,6 +3206,8 @@ def create_app(
         if BIOSPECIMEN_AVAILABLE:
             try:
                 biospecimen_registry_for_portal = BiospecimenRegistry(region=region, profile=profile)
+                # Ensure tables exist
+                biospecimen_registry_for_portal.create_tables_if_not_exist()
                 LOGGER.info("Biospecimen registry initialized for portal")
             except Exception as e:
                 LOGGER.warning("Failed to initialize biospecimen registry for portal: %s", str(e))

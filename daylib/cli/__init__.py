@@ -28,7 +28,7 @@ def _validate_aws_env() -> None:
     - AWS_PROFILE environment variable
     - aws_profile in ~/.ursa/ursa-config.yaml
 
-    AWS_DEFAULT_REGION is no longer required - regions are configured in the config file.
+    Regions are configured in ~/.ursa/ursa-config.yaml and explicitly passed to AWS API calls.
     """
     from daylib.ursa_config import get_ursa_config
 

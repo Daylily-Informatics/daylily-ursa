@@ -146,6 +146,13 @@ def start(
     # Set auth env var for the API server
     if auth:
         env["DAYLILY_ENABLE_AUTH"] = "true"
+        # Pass Cognito config from ursa config to environment if not already set
+        if ursa_config.cognito_user_pool_id and not os.environ.get("COGNITO_USER_POOL_ID"):
+            env["COGNITO_USER_POOL_ID"] = ursa_config.cognito_user_pool_id
+        if ursa_config.cognito_app_client_id and not os.environ.get("COGNITO_APP_CLIENT_ID"):
+            env["COGNITO_APP_CLIENT_ID"] = ursa_config.cognito_app_client_id
+        if ursa_config.cognito_region and not os.environ.get("COGNITO_REGION"):
+            env["COGNITO_REGION"] = ursa_config.cognito_region
         console.print("[green]✓[/green]  Authentication ENABLED")
     else:
         env["DAYLILY_ENABLE_AUTH"] = "false"

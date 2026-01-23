@@ -51,10 +51,6 @@ class Settings(BaseSettings):
     )
 
     # ========== AWS Configuration ==========
-    aws_default_region: str = Field(
-        default="us-west-2",
-        description="AWS region for all services",
-    )
     aws_profile: Optional[str] = Field(
         default=None,
         description="AWS profile name (None uses default credentials chain)",
@@ -89,10 +85,8 @@ class Settings(BaseSettings):
         default="daylily-linked-buckets",
         description="DynamoDB table for linked bucket management",
     )
-    daylily_file_registry_table: str = Field(
-        default="daylily-file-registry",
-        description="DynamoDB table for file registry",
-    )
+    # NOTE: FileRegistry uses hardcoded table names: daylily-files, daylily-filesets,
+    # daylily-file-workset-usage. These are created via FileRegistry.create_tables_if_not_exist().
 
     # ========== S3 Configuration ==========
     # NOTE: DAYLILY_CONTROL_BUCKET and DAYLILY_MONITOR_BUCKET are DEPRECATED.
@@ -317,17 +311,20 @@ class Settings(BaseSettings):
         return normalize_bucket_name(bucket)
 
     def get_effective_region(self) -> str:
-        """Get the effective AWS region, considering overrides.
+        """Get the effective AWS region.
 
         Priority order:
         1. DAY_AWS_REGION (Daylily-specific override)
-        2. AWS_DEFAULT_REGION (standard AWS env var)
-        3. aws_default_region setting (config file or default)
+        2. AWS_REGION (standard AWS SDK env var)
+        3. Fallback to 'us-west-2'
+
+        Note: AWS_DEFAULT_REGION is intentionally not used. In a multi-region
+        architecture, regions must be explicitly specified per API call.
         """
         return (
             self.day_aws_region
-            or os.environ.get("AWS_DEFAULT_REGION")
-            or self.aws_default_region
+            or os.environ.get("AWS_REGION")
+            or "us-west-2"
         )
 
     @property

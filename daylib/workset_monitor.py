@@ -651,6 +651,7 @@ class WorksetMonitor:
         proceed = True
         inputs: Optional[WorksetInputs] = None
         cluster_name: Optional[str] = None
+        cluster_region: Optional[str] = None
         pipeline_dir: Optional[PurePosixPath] = None
         stage_artifacts: Optional[StageArtifacts] = None
         session_name: Optional[str] = None
@@ -692,8 +693,8 @@ class WorksetMonitor:
                 "shutdown_cluster",
             }
             if requires_cluster and cluster_name is None:
-                cluster_name = self._ensure_cluster(inputs.work_yaml)
-                LOGGER.info("Using cluster %s for workset %s", cluster_name, workset.name)
+                cluster_name, cluster_region = self._ensure_cluster(inputs.work_yaml, workset)
+                LOGGER.info("Using cluster %s (region=%s) for workset %s", cluster_name, cluster_region or self.config.aws.region, workset.name)
                 self._update_metrics(workset, {"cluster_name": cluster_name})
 
             if action == "stage_data":
@@ -813,9 +814,10 @@ class WorksetMonitor:
 
             if action == "shutdown_cluster":
                 if cluster_name is None:
-                    cluster_name = self._ensure_cluster(inputs.work_yaml)
+                    cluster_name, cluster_region = self._ensure_cluster(inputs.work_yaml, workset)
                 self._shutdown_cluster(cluster_name)
                 cluster_name = None
+                cluster_region = None
 
     def build_workset(
         self,
@@ -1261,11 +1263,37 @@ class WorksetMonitor:
             )
             return False
 
-        cluster_name = self._ensure_cluster(inputs.work_yaml)
+        # For in-progress worksets, use the STORED execution environment from DynamoDB
+        # This ensures we check the correct cluster/region where the workset is actually running
+        cluster_name: Optional[str] = None
+        cluster_region: Optional[str] = None
+        if self.state_db:
+            try:
+                workset_data = self.state_db.get_workset(workset.name)
+                if workset_data:
+                    cluster_name = workset_data.get("execution_cluster_name")
+                    cluster_region = workset_data.get("execution_cluster_region")
+                    if cluster_name and cluster_region:
+                        LOGGER.debug(
+                            "Using stored execution environment for %s: cluster=%s, region=%s",
+                            workset.name,
+                            cluster_name,
+                            cluster_region,
+                        )
+            except Exception as e:
+                LOGGER.warning(
+                    "Failed to load execution environment for %s: %s",
+                    workset.name,
+                    str(e),
+                )
+
+        # Fall back to _ensure_cluster if no stored execution environment
+        if not cluster_name:
+            cluster_name, cluster_region = self._ensure_cluster(inputs.work_yaml, workset)
 
         # Check pipeline sentinel status on headnode
         try:
-            status = self._pipeline_sentinel_status(cluster_name, pipeline_dir)
+            status = self._pipeline_sentinel_status(cluster_name, pipeline_dir, region=cluster_region)
         except Exception as e:
             LOGGER.warning(
                 "Failed to check pipeline status for %s: %s",
@@ -1285,7 +1313,7 @@ class WorksetMonitor:
             # Clear tmux session markers
             existing_session = self._load_tmux_session(workset)
             if existing_session:
-                self._terminate_tmux_session(cluster_name, existing_session)
+                self._terminate_tmux_session(cluster_name, existing_session, region=cluster_region)
                 self._clear_tmux_session(workset)
             self._clear_pipeline_start(workset)
 
@@ -1369,7 +1397,7 @@ class WorksetMonitor:
             # Clear tmux session
             existing_session = self._load_tmux_session(workset)
             if existing_session:
-                self._terminate_tmux_session(cluster_name, existing_session)
+                self._terminate_tmux_session(cluster_name, existing_session, region=cluster_region)
                 self._clear_tmux_session(workset)
             self._clear_pipeline_start(workset)
 
@@ -1393,7 +1421,7 @@ class WorksetMonitor:
             existing_session = self._load_tmux_session(workset)
             if existing_session:
                 try:
-                    session_exists = self._tmux_session_exists(cluster_name, existing_session)
+                    session_exists = self._tmux_session_exists(cluster_name, existing_session, region=cluster_region)
                     if session_exists:
                         LOGGER.info(
                             "Workset %s pipeline still running (session %s)",
@@ -1696,13 +1724,13 @@ class WorksetMonitor:
 
     def _process_workset(self, workset: Workset) -> None:
         inputs = self._load_workset_inputs(workset)
-        cluster_name = self._ensure_cluster(inputs.work_yaml, workset)
-        LOGGER.info("Using cluster %s for workset %s", cluster_name, workset.name)
+        cluster_name, cluster_region = self._ensure_cluster(inputs.work_yaml, workset)
+        LOGGER.info("Using cluster %s (region=%s) for workset %s", cluster_name, cluster_region or self.config.aws.region, workset.name)
         self._update_metrics(workset, {"cluster_name": cluster_name})
 
         # Capture execution environment metadata
         self._capture_execution_environment(
-            workset, cluster_name, inputs.target_export_uri
+            workset, cluster_name, inputs.target_export_uri, cluster_region
         )
 
         completed_commands: Set[str] = set()
@@ -1716,7 +1744,7 @@ class WorksetMonitor:
         else:
             # No clone; ensure fallback dir on headnode
             pipeline_dir = self._prepare_pipeline_workspace(
-                workset, cluster_name, clone_args, run_clone=False
+                workset, cluster_name, clone_args, run_clone=False, region=cluster_region
             )
 
         retry_attempted = False
@@ -1731,6 +1759,7 @@ class WorksetMonitor:
                     target_export_uri,
                     pipeline_dir,
                     completed_commands,
+                    region=cluster_region,
                 )
                 break
             except CommandFailedError as exc:
@@ -1754,6 +1783,7 @@ class WorksetMonitor:
         target_export_uri: Optional[str],
         pipeline_dir: Optional[PurePosixPath],
         completed_commands: Set[str],
+        region: Optional[str] = None,
     ) -> PurePosixPath:
         # Track progress: staging and cluster provisioning in parallel
         self._update_progress_step(workset, "staging", "Staging samples and waiting for cluster")
@@ -1800,7 +1830,7 @@ class WorksetMonitor:
         if clone_needed:
             LOGGER.info("Running pipeline clone for %s", workset.name)
             pipeline_dir = self._prepare_pipeline_workspace(
-                workset, cluster_name, clone_args, run_clone=True
+                workset, cluster_name, clone_args, run_clone=True, region=region
             )
             completed_commands.add(clone_label)
         elif clone_args:
@@ -1810,7 +1840,7 @@ class WorksetMonitor:
             )
             if pipeline_dir is None:
                 pipeline_dir = self._prepare_pipeline_workspace(
-                    workset, cluster_name, clone_args, run_clone=False
+                    workset, cluster_name, clone_args, run_clone=False, region=region
                 )
 
         if pipeline_dir is None:
@@ -1826,7 +1856,7 @@ class WorksetMonitor:
             )
         else:
             self._push_stage_files_to_pipeline(
-                cluster_name, pipeline_dir, manifest_path, stage_artifacts
+                cluster_name, pipeline_dir, manifest_path, stage_artifacts, region=region
             )
             completed_commands.add(push_label)
 
@@ -1840,7 +1870,7 @@ class WorksetMonitor:
                 workset.name,
             )
         else:
-            self._run_pipeline(workset, cluster_name, pipeline_dir, run_suffix)
+            self._run_pipeline(workset, cluster_name, pipeline_dir, run_suffix, region=region)
             completed_commands.add(run_label)
 
         # Track progress: pipeline completed, starting export
@@ -1878,7 +1908,7 @@ class WorksetMonitor:
                     "Skipping headnode cleanup for %s: already completed", workset.name
                 )
             else:
-                self._cleanup_headnode_directory(workset, cluster_name, pipeline_dir)
+                self._cleanup_headnode_directory(workset, cluster_name, pipeline_dir, region=region)
                 completed_commands.add(cleanup_label)
 
         # Collect post-export metrics from S3 (after export is complete)
@@ -1912,24 +1942,32 @@ class WorksetMonitor:
         workset: Workset,
         cluster_name: str,
         target_export_uri: Optional[str],
+        cluster_region: Optional[str] = None,
     ) -> None:
         """Capture execution environment metadata and store in DynamoDB.
 
         This records where and how the workset is being processed, including
         cluster details and output locations.
+
+        Args:
+            workset: Workset being processed
+            cluster_name: Name of the cluster
+            target_export_uri: S3 URI for export results
+            cluster_region: AWS region of the cluster (uses config region if None)
         """
         if not self.state_db:
             LOGGER.debug("No state_db configured; skipping execution environment capture")
             return
 
         now_iso = dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
+        effective_region = cluster_region or self.config.aws.region
 
         # Get headnode IP (may already be cached)
         headnode_ip: Optional[str] = None
         try:
-            headnode_ip = self._headnode_ip(cluster_name)
+            headnode_ip = self._headnode_ip(cluster_name, region=effective_region)
         except Exception as e:
-            LOGGER.warning("Unable to get headnode IP for %s: %s", cluster_name, str(e))
+            LOGGER.warning("Unable to get headnode IP for %s in %s: %s", cluster_name, effective_region, str(e))
 
         # Parse S3 bucket and prefix from export_uri
         execution_s3_bucket: Optional[str] = None
@@ -1944,7 +1982,7 @@ class WorksetMonitor:
             self.state_db.update_execution_environment(
                 workset_id=workset.name,
                 cluster_name=cluster_name,
-                cluster_region=self.config.aws.region,
+                cluster_region=effective_region,
                 headnode_ip=headnode_ip,
                 execution_s3_bucket=execution_s3_bucket,
                 execution_s3_prefix=execution_s3_prefix,
@@ -1954,7 +1992,7 @@ class WorksetMonitor:
                 "Captured execution environment for %s: cluster=%s, region=%s",
                 workset.name,
                 cluster_name,
-                self.config.aws.region,
+                effective_region,
             )
         except Exception as e:
             LOGGER.warning(
@@ -2818,6 +2856,7 @@ class WorksetMonitor:
         clone_args: str,
         *,
         run_clone: bool = True,
+        region: Optional[str] = None,
     ) -> PurePosixPath:
         if clone_args and run_clone:
             init = (self.config.pipeline.login_shell_init or "").strip()
@@ -2830,6 +2869,7 @@ class WorksetMonitor:
                 cluster_name=cluster_name,
                 check=True,
                 shell=True,  # pass as raw string to bash -lc
+                region=region,
             )
             location = self._parse_day_clone_location(result.stdout)
             if not location and result.stderr:
@@ -2866,7 +2906,7 @@ class WorksetMonitor:
         workset_name_with_date = ensure_date_suffix(workset.name)
         fallback = PurePosixPath(self.config.pipeline.workdir) / workset_name_with_date
         ensure_cmd = f"mkdir -p {shlex.quote(str(fallback))}"
-        self._run_headnode_command(cluster_name, ensure_cmd, check=True, shell=True)
+        self._run_headnode_command(cluster_name, ensure_cmd, check=True, shell=True, region=region)
         self._record_pipeline_location(workset, fallback)
         return fallback
 
@@ -2876,6 +2916,7 @@ class WorksetMonitor:
         pipeline_dir: PurePosixPath,
         manifest_path: Path,
         stage_artifacts: StageArtifacts,
+        region: Optional[str] = None,
     ) -> None:
         config_dir = pipeline_dir / "config"
         mkdir_cmd = f"mkdir -p {shlex.quote(str(config_dir))}"
@@ -2885,10 +2926,11 @@ class WorksetMonitor:
             cluster_name=cluster_name,
             check=True,
             shell=True,
+            region=region,
         )
         LOGGER.info("Copying staged artifacts into %s", pipeline_dir)
         self._copy_stage_artifacts_to_pipeline(
-            cluster_name, pipeline_dir, stage_artifacts, manifest_path
+            cluster_name, pipeline_dir, stage_artifacts, manifest_path, region=region
         )
 
     def _cleanup_pipeline_directory(
@@ -3293,6 +3335,7 @@ class WorksetMonitor:
         workset: Workset,
         cluster_name: str,
         pipeline_dir: PurePosixPath,
+        region: Optional[str] = None,
     ) -> None:
         """Clean up headnode working directory after successful export.
 
@@ -3307,6 +3350,7 @@ class WorksetMonitor:
             workset: The workset being cleaned up
             cluster_name: Name of the ParallelCluster
             pipeline_dir: Path to the pipeline directory on FSx
+            region: AWS region where the cluster is located (defaults to config region)
 
         Note:
             Cleanup failures are logged as warnings but do not fail the workset.
@@ -3336,6 +3380,7 @@ class WorksetMonitor:
                 cluster_name=cluster_name,
                 check=True,
                 shell=True,
+                region=region,
             )
             self._update_progress_step(
                 workset, "cleanup_complete", f"Headnode cleanup complete for {pipeline_dir}"
@@ -3361,6 +3406,7 @@ class WorksetMonitor:
         pipeline_dir: PurePosixPath,
         stage_artifacts: StageArtifacts,
         manifest_path: Path,
+        region: Optional[str] = None,
     ) -> None:
         sample_data_root = pipeline_dir / SAMPLE_DATA_DIRNAME
         mkdir_data = f"mkdir -p {shlex.quote(str(sample_data_root))}"
@@ -3370,6 +3416,7 @@ class WorksetMonitor:
             cluster_name=cluster_name,
             check=True,
             shell=True,
+            region=region,
         )
 
         for staged_file in stage_artifacts.staged_files:
@@ -3393,6 +3440,7 @@ class WorksetMonitor:
                 cluster_name=cluster_name,
                 check=True,
                 shell=True,
+                region=region,
             )
 
         config_dir = pipeline_dir / "config"
@@ -3407,6 +3455,7 @@ class WorksetMonitor:
                 samples_target,
                 label="push_stage_files",
                 check=False,
+                region=region,
             )
         copied_units = False
         if stage_artifacts.units_manifest:
@@ -3416,6 +3465,7 @@ class WorksetMonitor:
                 units_target,
                 label="push_stage_files",
                 check=False,
+                region=region,
             )
 
         if not copied_samples:
@@ -3423,7 +3473,7 @@ class WorksetMonitor:
                 "Falling back to SCP for samples manifest from %s", manifest_path
             )
             scp_samples = self._build_scp_command(
-                cluster_name, manifest_path, samples_target
+                cluster_name, manifest_path, samples_target, region=region
             )
             self._run_monitored_command("push_stage_files", scp_samples, check=True)
 
@@ -3437,7 +3487,7 @@ class WorksetMonitor:
                 "Falling back to SCP for units manifest from %s", units_src
             )
             scp_units = self._build_scp_command(
-                cluster_name, units_src, units_target
+                cluster_name, units_src, units_target, region=region
             )
             self._run_monitored_command("push_stage_files", scp_units, check=True)
         elif not copied_units and stage_artifacts.units_manifest is not None:
@@ -3460,6 +3510,7 @@ class WorksetMonitor:
         *,
         label: str,
         check: bool,
+        region: Optional[str] = None,
     ) -> bool:
         quoted_source = shlex.quote(str(source))
         quoted_dest = shlex.quote(str(destination))
@@ -3473,6 +3524,7 @@ class WorksetMonitor:
             cluster_name=cluster_name,
             check=check,
             shell=True,
+            region=region,
         )
         if check:
             return True
@@ -3487,36 +3539,37 @@ class WorksetMonitor:
         return True
 
     def _headnode_path_exists(
-        self, cluster_name: str, path: PurePosixPath
+        self, cluster_name: str, path: PurePosixPath, region: Optional[str] = None
     ) -> bool:
         cmd = f"test -e {shlex.quote(str(path))}"
         result = self._run_headnode_command(
-            cluster_name, cmd, check=False, shell=True
+            cluster_name, cmd, check=False, shell=True, region=region
         )
         return result.returncode == 0
 
     def _pipeline_sentinel_status(
-        self, cluster_name: str, pipeline_dir: PurePosixPath
+        self, cluster_name: str, pipeline_dir: PurePosixPath, region: Optional[str] = None
     ) -> str:
         success = pipeline_dir / PIPELINE_SUCCESS_SENTINEL
         failure = pipeline_dir / PIPELINE_FAILURE_SENTINEL
-        if self._headnode_path_exists(cluster_name, success):
+        if self._headnode_path_exists(cluster_name, success, region=region):
             return "success"
-        if self._headnode_path_exists(cluster_name, failure):
+        if self._headnode_path_exists(cluster_name, failure, region=region):
             return "failure"
         return "pending"
 
-    def _tmux_session_exists(self, cluster_name: str, session_name: str) -> bool:
+    def _tmux_session_exists(self, cluster_name: str, session_name: str, region: Optional[str] = None) -> bool:
         result = self._run_headnode_command(
             cluster_name,
             ["/usr/bin/tmux", "has-session", "-t", session_name],
             check=False,
             shell=False,
+            region=region,
         )
         return result.returncode == 0
 
     def _terminate_tmux_session(
-        self, cluster_name: str, session_name: Optional[str]
+        self, cluster_name: str, session_name: Optional[str], region: Optional[str] = None
     ) -> None:
         if not session_name:
             return
@@ -3525,10 +3578,11 @@ class WorksetMonitor:
             ["/usr/bin/tmux", "kill-session", "-t", session_name],
             check=False,
             shell=False,
+            region=region,
         )
 
     def _interrupt_tmux_session(
-        self, cluster_name: str, session_name: Optional[str]
+        self, cluster_name: str, session_name: Optional[str], region: Optional[str] = None
     ) -> None:
         if not session_name:
             return
@@ -3537,6 +3591,7 @@ class WorksetMonitor:
             ["/usr/bin/tmux", "send-keys", "-t", session_name, "C-x"],
             check=False,
             shell=False,
+            region=region,
         )
 
     def _run_pipeline(
@@ -3547,6 +3602,7 @@ class WorksetMonitor:
         run_suffix: Optional[str],
         *,
         monitor: bool = True,
+        region: Optional[str] = None,
     ) -> Optional[str]:
         if not run_suffix:
             raise MonitorError(
@@ -3554,18 +3610,18 @@ class WorksetMonitor:
                 "Provide one of: dy-r, dy_r, dy, run, run_suffix, run-suffix, run_cmd."
             )
 
-        status = self._pipeline_sentinel_status(cluster_name, pipeline_dir)
+        status = self._pipeline_sentinel_status(cluster_name, pipeline_dir, region=region)
         existing_session = self._load_tmux_session(workset)
         if status == "success":
             LOGGER.info(
                 "Pipeline already marked successful for %s; skipping rerun", workset.name
             )
-            self._terminate_tmux_session(cluster_name, existing_session)
+            self._terminate_tmux_session(cluster_name, existing_session, region=region)
             self._clear_tmux_session(workset)
             self._clear_pipeline_start(workset)
             return existing_session
         if status == "failure":
-            self._terminate_tmux_session(cluster_name, existing_session)
+            self._terminate_tmux_session(cluster_name, existing_session, region=region)
             self._clear_tmux_session(workset)
             self._clear_pipeline_start(workset)
             raise MonitorError(
@@ -3573,7 +3629,7 @@ class WorksetMonitor:
             )
 
         if existing_session and not self._tmux_session_exists(
-            cluster_name, existing_session
+            cluster_name, existing_session, region=region
         ):
             self._clear_tmux_session(workset)
             self._clear_pipeline_start(workset)
@@ -3628,7 +3684,7 @@ class WorksetMonitor:
                 run_command,
             )
             self._record_tmux_session(workset, session_name)
-            self._write_pipeline_sentinel(cluster_name, pipeline_dir, "START")
+            self._write_pipeline_sentinel(cluster_name, pipeline_dir, "START", region=region)
             try:
                 self._run_headnode_monitored_command(
                     "run_pipeline",
@@ -3636,12 +3692,14 @@ class WorksetMonitor:
                     cluster_name=cluster_name,
                     check=True,
                     shell=False,
+                    region=region,
                 )
                 self._run_headnode_command(
                     cluster_name,
                     ["/usr/bin/tmux", "has-session", "-t", session_name],
                     check=True,
                     shell=False,
+                    region=region,
                 )
                 self._record_pipeline_start(workset, dt.datetime.now(dt.timezone.utc))
                 # Track progress: pipeline is now running
@@ -3652,11 +3710,11 @@ class WorksetMonitor:
                 self._update_progress_step(workset, "pipeline_failed", "Failed to launch pipeline")
                 raise
             finally:
-                self._write_pipeline_sentinel(cluster_name, pipeline_dir, "END")
+                self._write_pipeline_sentinel(cluster_name, pipeline_dir, "END", region=region)
 
         if monitor:
             self._monitor_pipeline_session(
-                workset, cluster_name, pipeline_dir, session_name
+                workset, cluster_name, pipeline_dir, session_name, region=region
             )
         return session_name
 
@@ -3666,6 +3724,7 @@ class WorksetMonitor:
         cluster_name: str,
         pipeline_dir: PurePosixPath,
         session_name: str,
+        region: Optional[str] = None,
     ) -> None:
         poll_interval = max(10, min(60, self.config.monitor.poll_interval_seconds))
         start_time = self._load_pipeline_start(workset)
@@ -3676,22 +3735,22 @@ class WorksetMonitor:
         timeout_seconds = (timeout_minutes or 0) * 60 if timeout_minutes else None
 
         while True:
-            status = self._pipeline_sentinel_status(cluster_name, pipeline_dir)
+            status = self._pipeline_sentinel_status(cluster_name, pipeline_dir, region=region)
             if status == "success":
                 LOGGER.info("Pipeline completed successfully for %s", workset.name)
-                self._terminate_tmux_session(cluster_name, session_name)
+                self._terminate_tmux_session(cluster_name, session_name, region=region)
                 self._clear_tmux_session(workset)
                 self._clear_pipeline_start(workset)
                 return
             if status == "failure":
-                self._terminate_tmux_session(cluster_name, session_name)
+                self._terminate_tmux_session(cluster_name, session_name, region=region)
                 self._clear_tmux_session(workset)
                 self._clear_pipeline_start(workset)
                 raise MonitorError(
                     f"Pipeline failed for {workset.name}; see {PIPELINE_FAILURE_SENTINEL}"
                 )
 
-            if not self._tmux_session_exists(cluster_name, session_name):
+            if not self._tmux_session_exists(cluster_name, session_name, region=region):
                 self._clear_tmux_session(workset)
                 self._clear_pipeline_start(workset)
                 raise MonitorError(
@@ -3706,7 +3765,7 @@ class WorksetMonitor:
                         workset.name,
                         timeout_minutes,
                     )
-                    status = self._pipeline_sentinel_status(cluster_name, pipeline_dir)
+                    status = self._pipeline_sentinel_status(cluster_name, pipeline_dir, region=region)
                     if status == "success":
                         LOGGER.info(
                             "Pipeline for %s reported success sentinel during timeout handling",
@@ -3714,15 +3773,15 @@ class WorksetMonitor:
                         )
                         continue
                     if status == "failure":
-                        self._terminate_tmux_session(cluster_name, session_name)
+                        self._terminate_tmux_session(cluster_name, session_name, region=region)
                         self._clear_tmux_session(workset)
                         self._clear_pipeline_start(workset)
                         raise MonitorError(
                             f"Pipeline failed for {workset.name}; see {PIPELINE_FAILURE_SENTINEL}"
                         )
-                    self._interrupt_tmux_session(cluster_name, session_name)
+                    self._interrupt_tmux_session(cluster_name, session_name, region=region)
                     time.sleep(5)
-                    self._terminate_tmux_session(cluster_name, session_name)
+                    self._terminate_tmux_session(cluster_name, session_name, region=region)
                     self._clear_tmux_session(workset)
                     self._clear_pipeline_start(workset)
                     raise MonitorError(
@@ -3736,6 +3795,7 @@ class WorksetMonitor:
         cluster_name: str,
         pipeline_dir: PurePosixPath,
         state: str,
+        region: Optional[str] = None,
     ) -> None:
         """
         Append a one-line UTC timestamp + state to a local log on the headnode.
@@ -3753,6 +3813,7 @@ class WorksetMonitor:
             cluster_name=cluster_name,
             check=True,
             shell=True,
+            region=region,
         )
 
     def _export_results(
@@ -4038,7 +4099,7 @@ class WorksetMonitor:
 
     def _ensure_cluster(
         self, work_yaml: Dict[str, object], workset: Optional[Workset] = None
-    ) -> str:
+    ) -> Tuple[str, Optional[str]]:
         """Ensure a cluster is available for workset processing.
 
         Priority order:
@@ -4054,11 +4115,11 @@ class WorksetMonitor:
             workset: Optional workset to check for preferred cluster
 
         Returns:
-            Cluster name to use for processing
+            Tuple of (cluster_name, cluster_region) - region may be None if using default config region
         """
         # 1. Check for user-selected preferred cluster from DynamoDB (highest priority)
         preferred_cluster = None
-        cluster_region = None
+        cluster_region: Optional[str] = None
         if workset and self.state_db:
             try:
                 workset_data = self.state_db.get_workset(workset.name)
@@ -4075,15 +4136,22 @@ class WorksetMonitor:
                                 cluster_region or self.config.aws.region,
                                 workset.name,
                             )
-                            return preferred_cluster
+                            return (preferred_cluster, cluster_region)
                         else:
-                            LOGGER.warning(
-                                "Preferred cluster %s (region=%s) is not available for workset %s, "
-                                "falling back to config/discovery",
-                                preferred_cluster,
-                                cluster_region or self.config.aws.region,
-                                workset.name,
+                            # Fail immediately if preferred cluster is not ready
+                            # Do NOT fall back to another cluster - user explicitly chose this one
+                            effective_region = cluster_region or self.config.aws.region
+                            cluster_status = "not found"
+                            if details:
+                                cluster_status = details.get("clusterStatus", "unknown")
+                            raise MonitorError(
+                                f"Preferred cluster {preferred_cluster} (region={effective_region}) is not available "
+                                f"for workset {workset.name}. Cluster status: {cluster_status}. "
+                                f"Please select a different cluster or wait for the cluster to become ready."
                             )
+            except MonitorError:
+                # Re-raise MonitorError (from cluster unavailable check above)
+                raise
             except Exception as e:
                 LOGGER.warning(
                     "Failed to check preferred cluster for %s: %s",
@@ -4097,7 +4165,7 @@ class WorksetMonitor:
                 "Using config-specified cluster: %s",
                 self.config.cluster.reuse_cluster_name,
             )
-            return self.config.cluster.reuse_cluster_name
+            return (self.config.cluster.reuse_cluster_name, None)
 
         # 3. Find existing running cluster
         existing = self._find_existing_cluster()
@@ -4108,10 +4176,10 @@ class WorksetMonitor:
                     existing,
                     preferred_cluster,
                 )
-            return existing
+            return (existing, None)
 
         # 4. Create new cluster
-        return self._create_cluster(work_yaml)
+        return (self._create_cluster(work_yaml), None)
 
     def _pcluster_env(self) -> Dict[str, str]:
         env = os.environ.copy()
@@ -5048,11 +5116,22 @@ class WorksetMonitor:
             options.extend(self.config.pipeline.ssh_extra_args)
         return options
 
-    def _headnode_ip(self, cluster_name: str) -> str:
-        cached = self._headnode_ips.get(cluster_name)
+    def _headnode_ip(self, cluster_name: str, region: Optional[str] = None) -> str:
+        """Get the headnode IP for a cluster.
+
+        Args:
+            cluster_name: Name of the ParallelCluster
+            region: AWS region where the cluster resides. If None, uses config default.
+
+        Returns:
+            Public IP address of the headnode.
+        """
+        effective_region = region or self.config.aws.region
+        cache_key = f"{effective_region}:{cluster_name}"
+        cached = self._headnode_ips.get(cache_key)
         if cached:
             return cached
-        cmd = ["pcluster", "describe-cluster-instances", "--region", self.config.aws.region, "-n", cluster_name]
+        cmd = ["pcluster", "describe-cluster-instances", "--region", effective_region, "-n", cluster_name]
         result = self._run_command(cmd, check=True, env=self._pcluster_env())
         payload = self._load_pcluster_json(result.stdout)
         if isinstance(payload, dict):
@@ -5065,9 +5144,9 @@ class WorksetMonitor:
                     if isinstance(node_type, str) and node_type.lower() == "headnode":
                         ip = instance.get("publicIpAddress") or instance.get("PublicIpAddress")
                         if isinstance(ip, str) and ip:
-                            self._headnode_ips[cluster_name] = ip
+                            self._headnode_ips[cache_key] = ip
                             return ip
-        raise MonitorError(f"Unable to determine head node address for {cluster_name}")
+        raise MonitorError(f"Unable to determine head node address for {cluster_name} in {effective_region}")
 
     def _build_remote_command(
         self,
@@ -5094,9 +5173,10 @@ class WorksetMonitor:
         *,
         cwd: Optional[str] = None,
         shell: bool = False,
+        region: Optional[str] = None,
     ) -> List[str]:
         remote_command = self._build_remote_command(command, cwd=cwd, shell=shell)
-        headnode = self._headnode_ip(cluster_name)
+        headnode = self._headnode_ip(cluster_name, region=region)
         ssh_cmd: List[str] = ["ssh"]
         identity = self._ssh_identity()
         if identity:
@@ -5111,8 +5191,9 @@ class WorksetMonitor:
         cluster_name: str,
         local_path: Path,
         remote_path: PurePosixPath,
+        region: Optional[str] = None,
     ) -> List[str]:
-        headnode = self._headnode_ip(cluster_name)
+        headnode = self._headnode_ip(cluster_name, region=region)
         scp_cmd: List[str] = ["scp"]
         identity = self._ssh_identity()
         if identity:
@@ -5130,8 +5211,9 @@ class WorksetMonitor:
         check: bool,
         cwd: Optional[str] = None,
         shell: bool = False,
+        region: Optional[str] = None,
     ) -> subprocess.CompletedProcess:
-        ssh_cmd = self._build_ssh_command(cluster_name, command, cwd=cwd, shell=shell)
+        ssh_cmd = self._build_ssh_command(cluster_name, command, cwd=cwd, shell=shell, region=region)
         return self._run_command(ssh_cmd, check=check)
 
     def _run_headnode_monitored_command(
@@ -5143,8 +5225,9 @@ class WorksetMonitor:
         check: bool,
         cwd: Optional[str] = None,
         shell: bool = False,
+        region: Optional[str] = None,
     ) -> subprocess.CompletedProcess:
-        ssh_cmd = self._build_ssh_command(cluster_name, command, cwd=cwd, shell=shell)
+        ssh_cmd = self._build_ssh_command(cluster_name, command, cwd=cwd, shell=shell, region=region)
         return self._run_monitored_command(command_label, ssh_cmd, check=check)
 
     def _yaml_get_str(self, data: Dict[str, object], keys: Sequence[str]) -> Optional[str]:

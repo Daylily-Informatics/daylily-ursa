@@ -164,11 +164,15 @@ ursa env generate
 ```bash
 # AWS Configuration (required)
 AWS_PROFILE=your-profile-name
-AWS_DEFAULT_REGION=us-west-2
+
+# Region Configuration
+# Regions are configured in ~/.ursa/ursa-config.yaml
+# Use URSA_ALLOWED_REGIONS to specify regions to scan for clusters
+URSA_ALLOWED_REGIONS=us-west-2,us-east-1
 
 # S3 Configuration
 # NOTE: S3 buckets are discovered from cluster tags (aws-parallelcluster-monitor-bucket)
-# No bucket environment variables are required. See ~/.ursa/ursa-config.yaml for region config.
+# No bucket environment variables are required.
 
 # DynamoDB Tables (auto-created if missing)
 WORKSET_TABLE_NAME=daylily-worksets

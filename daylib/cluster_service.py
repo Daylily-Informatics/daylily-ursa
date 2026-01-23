@@ -385,11 +385,29 @@ class ClusterService:
             LOGGER.debug(f"No clusters found in {region}")
             return []
 
+        # Parallelize describe_cluster calls within this region
+        # Each pcluster describe-cluster takes ~1.5-2s, so this saves significant time
         clusters = []
-        for name in cluster_names:
-            cluster_info = self.describe_cluster(name, region)
+        if len(cluster_names) == 1:
+            # Single cluster - no need for thread overhead
+            cluster_info = self.describe_cluster(cluster_names[0], region)
             clusters.append(cluster_info)
-            LOGGER.debug(f"Found cluster: {name} ({cluster_info.cluster_status})")
+            LOGGER.debug(f"Found cluster: {cluster_names[0]} ({cluster_info.cluster_status})")
+        else:
+            # Multiple clusters - parallelize describe calls
+            with ThreadPoolExecutor(max_workers=min(len(cluster_names), 4)) as executor:
+                future_to_name = {
+                    executor.submit(self.describe_cluster, name, region): name
+                    for name in cluster_names
+                }
+                for future in as_completed(future_to_name):
+                    name = future_to_name[future]
+                    try:
+                        cluster_info = future.result()
+                        clusters.append(cluster_info)
+                        LOGGER.debug(f"Found cluster: {name} ({cluster_info.cluster_status})")
+                    except Exception as e:
+                        LOGGER.warning(f"Failed to describe cluster {name} in {region}: {e}")
         return clusters
 
     def get_all_clusters(self, force_refresh: bool = False) -> List[ClusterInfo]:
@@ -833,7 +851,10 @@ def get_cluster_service(
                 region_str = os.environ.get("URSA_ALLOWED_REGIONS", "")
                 regions = [r.strip() for r in region_str.split(",") if r.strip()]
                 if not regions:
-                    regions = [os.environ.get("AWS_DEFAULT_REGION", "us-west-2")]
+                    # Final fallback - use us-west-2
+                    # Note: AWS_DEFAULT_REGION is intentionally not used.
+                    # In a multi-region architecture, regions must be explicit.
+                    regions = ["us-west-2"]
 
             LOGGER.info(f"Creating global ClusterService for regions: {regions}")
             _global_service = ClusterService(

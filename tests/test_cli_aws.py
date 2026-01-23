@@ -19,7 +19,8 @@ def mock_settings():
     settings.get_effective_region.return_value = "us-west-2"
     settings.workset_table_name = "test-worksets"
     settings.customer_table_name = "test-customers"
-    settings.daylily_file_registry_table = "test-file-registry"
+    settings.daylily_linked_buckets_table = "test-linked-buckets"
+    settings.daylily_manifest_table = "test-manifests"
     return settings
 
 

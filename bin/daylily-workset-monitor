@@ -100,9 +100,9 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--parallel",
         type=int,
-        default=1,
+        default=None,
         metavar="N",
-        help="Maximum number of worksets to run in parallel (default: 1)",
+        help="Maximum number of worksets to run in parallel (overrides config file)",
     )
     return parser.parse_args(argv)
 
@@ -114,6 +114,8 @@ def setup_integration_components(
 
     Returns dict with state_db, integration, and notification_manager keys.
     """
+    from daylib.ursa_config import get_ursa_config
+
     components: dict[str, Any] = {
         "state_db": None,
         "integration": None,
@@ -125,13 +127,19 @@ def setup_integration_components(
         try:
             from daylib.workset_state_db import WorksetStateDB
 
+            # Use UrsaConfig for DynamoDB region (single source of truth)
+            ursa_config = get_ursa_config()
+            dynamo_region = ursa_config.get_effective_dynamo_db_region()
+            source = ursa_config.get_value_source("dynamo_db_region")
+            LOGGER.info("Using DynamoDB region from %s: %s", source if source != "not set" else "default", dynamo_region)
+
             state_db = WorksetStateDB(
                 table_name=args.dynamodb_table,
-                region=config.aws.region,
+                region=dynamo_region,
                 profile=config.aws.profile if config.aws.profile else None,
             )
             components["state_db"] = state_db
-            LOGGER.info("DynamoDB state tracking enabled (table: %s)", args.dynamodb_table)
+            LOGGER.info("DynamoDB state tracking enabled (table: %s, region: %s)", args.dynamodb_table, dynamo_region)
         except ImportError:
             LOGGER.warning("DynamoDB integration requested but workset_state_db module not available")
         except Exception as e:
@@ -194,8 +202,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if args.once and not args.actions:
         config.monitor.continuous = False
 
-    # Apply command-line parallel setting
-    if args.parallel > 0:
+    # Apply command-line parallel setting (only if explicitly provided)
+    if args.parallel is not None:
         config.monitor.max_concurrent_worksets = args.parallel
 
     # Initialize integration components

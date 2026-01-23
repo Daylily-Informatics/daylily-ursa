@@ -23,8 +23,11 @@ def _get_cognito_region() -> str:
 
     Priority order:
     1. UrsaConfig.cognito_region (from ~/.ursa/ursa-config.yaml or COGNITO_REGION env var)
-    2. AWS_DEFAULT_REGION environment variable
+    2. AWS_REGION environment variable (standard AWS SDK var)
     3. Fallback to 'us-west-2'
+
+    Note: AWS_DEFAULT_REGION is intentionally not used. In a multi-region
+    architecture, regions must be explicitly specified per API call.
 
     Returns:
         AWS region string (e.g., 'us-west-2')
@@ -35,8 +38,8 @@ def _get_cognito_region() -> str:
     if ursa_config.cognito_region:
         return ursa_config.cognito_region
 
-    # Fallback to AWS_DEFAULT_REGION or us-west-2
-    return os.environ.get("AWS_DEFAULT_REGION", "us-west-2")
+    # Fallback to AWS_REGION or us-west-2
+    return os.environ.get("AWS_REGION", "us-west-2")
 
 
 @cognito_app.command("status")
@@ -637,6 +640,8 @@ def teardown(
     force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation"),
 ):
     """Delete the Cognito User Pool and all its users."""
+    from daylib.ursa_config import get_ursa_config, DEFAULT_CONFIG_PATH
+
     _check_aws_profile()
 
     try:
@@ -644,9 +649,10 @@ def teardown(
 
         region = _get_cognito_region()
         cognito = boto3.client("cognito-idp", region_name=region)
+        ursa_config = get_ursa_config()
 
-        # Get pool ID from env or find by name
-        pool_id = os.environ.get("COGNITO_USER_POOL_ID")
+        # Get pool ID from env, config, or find by name
+        pool_id = os.environ.get("COGNITO_USER_POOL_ID") or ursa_config.cognito_user_pool_id
 
         if not pool_id and pool_name:
             pools = cognito.list_user_pools(MaxResults=60)
@@ -657,7 +663,9 @@ def teardown(
 
         if not pool_id:
             console.print("[red]✗[/red]  No pool ID found")
-            console.print("   Set COGNITO_USER_POOL_ID or use --name")
+            console.print("   Set via environment: [cyan]export COGNITO_USER_POOL_ID=...[/cyan]")
+            console.print(f"   Or in config file:   [cyan]{DEFAULT_CONFIG_PATH}[/cyan]")
+            console.print("   Or use --name to search by pool name")
             raise typer.Exit(1)
 
         # Get pool info for confirmation

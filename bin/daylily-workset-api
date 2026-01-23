@@ -112,15 +112,32 @@ def configure_logging(verbose: bool) -> None:
 def main(argv: Optional[Sequence[str]] = None) -> int:
     """Main entry point."""
     from daylib.workset_integration import WorksetIntegration
+    from daylib.ursa_config import get_ursa_config
 
     args = parse_args(argv)
     configure_logging(args.verbose)
 
+    # Load UrsaConfig for centralized settings
+    ursa_config = get_ursa_config()
+
+    # Determine DynamoDB region: CLI arg > UrsaConfig > default
+    # If --region was explicitly passed (not the default), use it
+    # Otherwise, prefer UrsaConfig's dynamo_db_region
+    if args.region != "us-west-2":
+        # User explicitly specified a different region via CLI
+        dynamo_region = args.region
+        LOGGER.info("Using DynamoDB region from CLI: %s", dynamo_region)
+    else:
+        # Use UrsaConfig (which has env var override and default fallback)
+        dynamo_region = ursa_config.get_effective_dynamo_db_region()
+        source = ursa_config.get_value_source("dynamo_db_region")
+        LOGGER.info("Using DynamoDB region from %s: %s", source if source != "not set" else "default", dynamo_region)
+
     # Initialize state database
-    LOGGER.info("Initializing workset state database: %s", args.table_name)
+    LOGGER.info("Initializing workset state database: %s (region: %s)", args.table_name, dynamo_region)
     state_db = WorksetStateDB(
         table_name=args.table_name,
-        region=args.region,
+        region=dynamo_region,
         profile=args.profile,
     )
 
@@ -190,24 +207,46 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             )
             return 1
 
-        # Get Cognito configuration from environment
-        user_pool_id = os.getenv("COGNITO_USER_POOL_ID")
-        # Support both COGNITO_CLIENT_ID and COGNITO_APP_CLIENT_ID
-        app_client_id = os.getenv("COGNITO_CLIENT_ID") or os.getenv("COGNITO_APP_CLIENT_ID")
+        # Get Cognito configuration from ursa config (with env var override)
+        from daylib.ursa_config import get_ursa_config
+        ursa_config = get_ursa_config()
+
+        # Env vars take precedence, then ursa config
+        user_pool_id = (
+            os.getenv("COGNITO_USER_POOL_ID")
+            or ursa_config.cognito_user_pool_id
+        )
+        app_client_id = (
+            os.getenv("COGNITO_CLIENT_ID")
+            or os.getenv("COGNITO_APP_CLIENT_ID")
+            or ursa_config.cognito_app_client_id
+        )
+        cognito_region = (
+            os.getenv("COGNITO_REGION")
+            or ursa_config.cognito_region
+            or args.region
+        )
 
         if not user_pool_id or not app_client_id:
             LOGGER.error(
                 "Authentication enabled but Cognito not configured. "
-                "Set COGNITO_USER_POOL_ID and COGNITO_CLIENT_ID environment variables."
+                "Set COGNITO_USER_POOL_ID and COGNITO_APP_CLIENT_ID in environment "
+                "or ~/.ursa/ursa-config.yaml"
             )
             return 1
 
-        LOGGER.info("Initializing Cognito authentication (pool: %s)", user_pool_id)
+        source_pool = ursa_config.get_value_source("cognito_user_pool_id")
+        source_client = ursa_config.get_value_source("cognito_app_client_id")
+        LOGGER.info(
+            "Initializing Cognito authentication (pool: %s [%s], client: [%s])",
+            user_pool_id, source_pool, source_client
+        )
+
         # Get settings for domain whitelist validation
         from daylib.config import get_settings
         settings = get_settings()
         cognito_auth = CognitoAuth(
-            region=args.region,
+            region=cognito_region,
             user_pool_id=user_pool_id,
             app_client_id=app_client_id,
             profile=args.profile,
@@ -225,13 +264,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             region=args.region,
             profile=args.profile,
         )
-        # Ensure the table exists
+        # Ensure the tables exist
         try:
-            file_registry.create_table_if_not_exists()
-            LOGGER.info("FileRegistry initialized (table: %s)", file_registry.table_name)
+            file_registry.create_tables_if_not_exist()
+            LOGGER.info("FileRegistry initialized (tables: %s, %s, %s)",
+                        file_registry.files_table_name,
+                        file_registry.filesets_table_name,
+                        file_registry.file_workset_usage_table_name)
         except Exception as table_err:
-            LOGGER.warning("Could not verify/create file registry table: %s", table_err)
-            LOGGER.info("FileRegistry initialized (table: %s, may need manual creation)", file_registry.table_name)
+            LOGGER.warning("Could not verify/create file registry tables: %s", table_err)
     except Exception as e:
         LOGGER.warning("Failed to initialize FileRegistry: %s", e)
         import traceback

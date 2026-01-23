@@ -158,9 +158,9 @@
                         {% endif %}
                     </td>
                     <td>
-                        {% if ws.execution_cluster_region or ws.assigned_cluster_region %}
+                        {% if ws.execution_cluster_region or ws.cluster_region %}
                         <span class="badge badge-secondary" style="font-size: 0.7rem; font-weight: normal;" title="AWS Region">
-                            {{ ws.execution_cluster_region or ws.assigned_cluster_region }}
+                            {{ ws.execution_cluster_region or ws.cluster_region }}
                         </span>
                         {% else %}
                         <span class="text-muted">—</span>

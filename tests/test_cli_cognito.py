@@ -53,10 +53,15 @@ class TestCognitoListUsers:
 
     def test_list_users_requires_pool_id(self):
         """Test that list-users fails without COGNITO_USER_POOL_ID."""
+        from daylib.ursa_config import UrsaConfig
+
+        # Mock the config to return empty config (no pool_id)
+        mock_config = UrsaConfig()
         with patch.dict(os.environ, {"AWS_PROFILE": "test"}, clear=True):
-            result = runner.invoke(cognito_app, ["list-users"])
-            assert result.exit_code == 1
-            assert "COGNITO_USER_POOL_ID" in result.output
+            with patch("daylib.ursa_config.get_ursa_config", return_value=mock_config):
+                result = runner.invoke(cognito_app, ["list-users"])
+                assert result.exit_code == 1
+                assert "Cognito User Pool ID not configured" in result.output
 
     def test_list_users_shows_users(self, mock_settings, mock_cognito_client):
         """Test that list-users displays users in a table."""
@@ -101,10 +106,15 @@ class TestCognitoExport:
 
     def test_export_requires_pool_id(self):
         """Test that export fails without COGNITO_USER_POOL_ID."""
+        from daylib.ursa_config import UrsaConfig
+
+        # Mock the config to return empty config (no pool_id)
+        mock_config = UrsaConfig()
         with patch.dict(os.environ, {"AWS_PROFILE": "test"}, clear=True):
-            result = runner.invoke(cognito_app, ["export"])
-            assert result.exit_code == 1
-            assert "COGNITO_USER_POOL_ID" in result.output
+            with patch("daylib.ursa_config.get_ursa_config", return_value=mock_config):
+                result = runner.invoke(cognito_app, ["export"])
+                assert result.exit_code == 1
+                assert "Cognito User Pool ID not configured" in result.output
 
 
 class TestCognitoDeleteUser:

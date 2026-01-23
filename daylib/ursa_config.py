@@ -31,6 +31,7 @@ LEGACY_CONFIG_PATHS = [
 VALID_FIELDS = {
     "regions": (list, "List of AWS regions to scan"),
     "aws_profile": (str, "AWS profile name"),
+    "dynamo_db_region": (str, "AWS region for DynamoDB tables (single source of truth)"),
     "cognito_region": (str, "AWS region for Cognito"),
     "cognito_user_pool_id": (str, "Cognito User Pool ID"),
     "cognito_app_client_id": (str, "Cognito App Client ID"),
@@ -87,7 +88,7 @@ def validate_config_file(path: Path) -> Tuple[bool, List[str], List[str]]:
             errors.append(f"'regions' must be a list, got {type(regions).__name__}")
 
     # Validate string fields
-    for field_name in ["aws_profile", "cognito_region", "cognito_user_pool_id", "cognito_app_client_id"]:
+    for field_name in ["aws_profile", "dynamo_db_region", "cognito_region", "cognito_user_pool_id", "cognito_app_client_id"]:
         if field_name in data and data[field_name] is not None:
             if not isinstance(data[field_name], str):
                 errors.append(f"'{field_name}' must be a string, got {type(data[field_name]).__name__}")
@@ -109,6 +110,16 @@ class UrsaConfig:
 
     aws_profile: Optional[str] = None
     """AWS profile to use (overridden by AWS_PROFILE env var)."""
+
+    dynamo_db_region: Optional[str] = None
+    """AWS region for DynamoDB tables - single source of truth for all worksets.
+
+    In a multi-region architecture, worksets may have S3 data and compute clusters
+    in different regions, but all workset state is stored in a single DynamoDB table
+    in this region. This ensures the API server and monitor see the same worksets.
+
+    Overridden by DYNAMO_DB_REGION env var. Defaults to 'us-west-2' if not set.
+    """
 
     cognito_user_pool_id: Optional[str] = None
     """Cognito User Pool ID (overridden by COGNITO_USER_POOL_ID env var)."""
@@ -206,6 +217,7 @@ class UrsaConfig:
 
         # Environment variables take precedence over config file
         aws_profile = os.environ.get("AWS_PROFILE") or data.get("aws_profile")
+        dynamo_db_region = os.environ.get("DYNAMO_DB_REGION") or data.get("dynamo_db_region")
         cognito_user_pool_id = os.environ.get("COGNITO_USER_POOL_ID") or data.get("cognito_user_pool_id")
         cognito_app_client_id = os.environ.get("COGNITO_APP_CLIENT_ID") or data.get("cognito_app_client_id")
         cognito_region = os.environ.get("COGNITO_REGION") or data.get("cognito_region")
@@ -213,6 +225,7 @@ class UrsaConfig:
         config = cls(
             regions=regions,
             aws_profile=aws_profile,
+            dynamo_db_region=dynamo_db_region,
             cognito_user_pool_id=cognito_user_pool_id,
             cognito_app_client_id=cognito_app_client_id,
             cognito_region=cognito_region,
@@ -258,17 +271,35 @@ class UrsaConfig:
         """
         return os.environ.get("COGNITO_REGION") or self.cognito_region
 
+    def get_effective_dynamo_db_region(self) -> str:
+        """Get the effective DynamoDB region (env var, config, or default).
+
+        This is the single region where all DynamoDB tables (worksets, customers,
+        manifests, etc.) are stored, regardless of which AWS regions worksets
+        execute in.
+
+        Priority:
+            1. DYNAMO_DB_REGION environment variable
+            2. dynamo_db_region from config file
+            3. Default: 'us-west-2'
+
+        Returns:
+            DynamoDB region string.
+        """
+        return os.environ.get("DYNAMO_DB_REGION") or self.dynamo_db_region or "us-west-2"
+
     def get_value_source(self, field: str) -> str:
         """Get the source of a configuration value.
 
         Args:
-            field: Field name (aws_profile, cognito_region, etc.)
+            field: Field name (aws_profile, cognito_region, dynamo_db_region, etc.)
 
         Returns:
             Source description: 'env', 'config', or 'not set'
         """
         env_map = {
             "aws_profile": "AWS_PROFILE",
+            "dynamo_db_region": "DYNAMO_DB_REGION",
             "cognito_region": "COGNITO_REGION",
             "cognito_user_pool_id": "COGNITO_USER_POOL_ID",
             "cognito_app_client_id": "COGNITO_APP_CLIENT_ID",

@@ -87,7 +87,7 @@ def start(
     background: bool = typer.Option(True, "--background/--foreground", "-b/-f", help="Run in background"),
     enable_dynamodb: bool = typer.Option(True, "--enable-dynamodb/--no-dynamodb", help="Enable DynamoDB state tracking (default: on)"),
     dynamodb_table: str = typer.Option("daylily-worksets", "--dynamodb-table", help="DynamoDB table name"),
-    parallel: int = typer.Option(1, "--parallel", "-p", help="Maximum number of worksets to run in parallel"),
+    parallel: Optional[int] = typer.Option(None, "--parallel", "-p", help="Maximum number of worksets to run in parallel (overrides config file)"),
 ):
     """Start the workset monitor daemon."""
     _ensure_dir()
@@ -137,7 +137,7 @@ def start(
         cmd.append("--dry-run")
     if enable_dynamodb:
         cmd.extend(["--enable-dynamodb", "--dynamodb-table", dynamodb_table])
-    if parallel > 0:
+    if parallel is not None:
         cmd.extend(["--parallel", str(parallel)])
 
     if background:

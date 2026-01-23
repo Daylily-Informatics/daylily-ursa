@@ -106,14 +106,17 @@ def _get_template_context(request: Request, deps: PortalDependencies, **kwargs) 
         "auth_enabled": deps.enable_auth,
         "current_year": datetime.now().year,
         "cache_bust": cache_bust,
-        **kwargs,
     }
     if "customer" in kwargs and kwargs["customer"]:
         context["customer_id"] = kwargs["customer"].customer_id
     if hasattr(request, "session") and request.session.get("user_email"):
         context["user_email"] = request.session.get("user_email")
         context["user_authenticated"] = True
-        context["is_admin"] = request.session.get("is_admin", False)
+        # Default is_admin from session, but allow explicit override via kwargs
+        if "is_admin" not in kwargs:
+            context["is_admin"] = request.session.get("is_admin", False)
+    # Apply kwargs last so explicit values take precedence
+    context.update(kwargs)
     return context
 
 
@@ -597,7 +600,7 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         """Registration page."""
         # Get allowed regions for bucket provisioning
         allowed_regions = deps.settings.get_allowed_regions() if deps.settings else ["us-west-2"]
-        default_region = deps.settings.aws_default_region if deps.settings else "us-west-2"
+        default_region = deps.settings.get_effective_region() if deps.settings else "us-west-2"
         return deps.templates.TemplateResponse(
             request,
             "auth/register.html",
@@ -1863,7 +1866,6 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
 
         env_vars = {
             "AWS_PROFILE": app_settings.aws_profile,
-            "AWS_DEFAULT_REGION": app_settings.aws_default_region,
             "AWS_REGION": app_settings.get_effective_region(),
             "AWS_ACCESS_KEY_ID": "***" if os.getenv("AWS_ACCESS_KEY_ID") else None,
             "AWS_SECRET_ACCESS_KEY": "***" if os.getenv("AWS_SECRET_ACCESS_KEY") else None,
@@ -1913,6 +1915,175 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
             request,
             "support.html",
             _get_template_context(request, deps, customer=customer, active_page="support"),
+        )
+
+    # ========== Monitor Dashboard Route ==========
+
+    @router.get("/portal/monitor", response_class=HTMLResponse)
+    async def portal_monitor(request: Request):
+        """Monitor dashboard - shows workset monitor daemon status and activity."""
+        auth_redirect = _require_portal_auth(request)
+        if auth_redirect:
+            return auth_redirect
+        customer, _ = _get_customer_for_session(request, deps)
+
+        # Import monitor-related utilities
+        from pathlib import Path
+        import os
+        import yaml as yaml_lib
+        from datetime import datetime, timezone
+
+        # Monitor paths (same as in daylib/cli/monitor.py)
+        config_dir = Path.home() / ".ursa"
+        log_dir = config_dir / "logs"
+        pid_file = config_dir / "monitor.pid"
+
+        # Check if monitor is running
+        monitor_pid = None
+        monitor_running = False
+        if pid_file.exists():
+            try:
+                pid = int(pid_file.read_text().strip())
+                os.kill(pid, 0)  # Check if process exists
+                monitor_pid = pid
+                monitor_running = True
+            except (ValueError, ProcessLookupError, PermissionError):
+                pass
+
+        # Get latest log file
+        latest_log_path = None
+        log_files = sorted(log_dir.glob("monitor_*.log"), reverse=True) if log_dir.exists() else []
+        if log_files:
+            latest_log_path = log_files[0]
+
+        # Calculate uptime if running (based on log file modification time)
+        uptime_str = None
+        start_time_str = None
+        if monitor_running and latest_log_path and latest_log_path.exists():
+            try:
+                # Use log file creation time as proxy for start time
+                log_stat = latest_log_path.stat()
+                start_time = datetime.fromtimestamp(log_stat.st_ctime, tz=timezone.utc)
+                start_time_str = start_time.strftime("%Y-%m-%d %H:%M:%S UTC")
+                uptime_seconds = (datetime.now(timezone.utc) - start_time).total_seconds()
+                hours = int(uptime_seconds // 3600)
+                minutes = int((uptime_seconds % 3600) // 60)
+                uptime_str = f"{hours}h {minutes}m" if hours > 0 else f"{minutes}m"
+            except Exception:
+                pass
+
+        # Load monitor config
+        monitor_config = {}
+        config_path = None
+        config_search_paths = [
+            config_dir / "monitor-config.yaml",
+            Path.cwd() / "config" / "workset-monitor-config.yaml",
+            Path.cwd() / "config" / "daylily-workset-monitor.yaml",
+        ]
+        for p in config_search_paths:
+            if p.exists():
+                config_path = p
+                break
+
+        if config_path:
+            try:
+                with config_path.open("r", encoding="utf-8") as f:
+                    monitor_config = yaml_lib.safe_load(f) or {}
+            except Exception as e:
+                LOGGER.warning(f"Failed to load monitor config: {e}")
+
+        # Extract config values for display
+        monitor_opts = monitor_config.get("monitor", {})
+        cluster_opts = monitor_config.get("cluster", {})
+        aws_opts = monitor_config.get("aws", {})
+
+        # Get max_concurrent_worksets from YAML config as default
+        max_concurrent_from_config = monitor_opts.get("max_concurrent_worksets", 1)
+        max_concurrent_runtime = max_concurrent_from_config
+
+        # If monitor is running, try to extract actual runtime value from log
+        # The monitor logs: "Poll interval: %ds, continuous: %s, max parallel: %d"
+        # Note: With verbose boto logging, this message can appear 100+ lines into the log
+        import re
+        if latest_log_path and latest_log_path.exists():
+            try:
+                with latest_log_path.open("r", encoding="utf-8", errors="replace") as f:
+                    # Read first ~200 lines to find startup message (boto debug logs can be verbose)
+                    for i, line in enumerate(f):
+                        if i > 200:
+                            break
+                        match = re.search(r"max parallel:\s*(\d+)", line, re.IGNORECASE)
+                        if match:
+                            max_concurrent_runtime = int(match.group(1))
+                            LOGGER.debug(f"Found max parallel in log line {i}: {max_concurrent_runtime}")
+                            break
+            except Exception as e:
+                LOGGER.warning(f"Failed to parse log file for max parallel: {e}")
+
+        config_display = {
+            "prefix": monitor_opts.get("prefix", "worksets/"),
+            "poll_interval_seconds": monitor_opts.get("poll_interval_seconds", 60),
+            "max_concurrent_worksets": max_concurrent_runtime,
+            "archive_prefix": monitor_opts.get("archive_prefix", ""),
+            "dynamodb_table": aws_opts.get("dynamodb_table", "daylily-worksets"),
+            "reuse_cluster_name": cluster_opts.get("reuse_cluster_name", ""),
+            "config_path": str(config_path) if config_path else "Not found",
+        }
+
+        # Get workset statistics from DynamoDB
+        stats = {
+            "in_progress": 0,
+            "ready": 0,
+            "complete": 0,
+            "error": 0,
+            "total_processed": 0,
+        }
+        try:
+            for ws_state in WorksetState:
+                batch = deps.state_db.list_worksets_by_state(ws_state, limit=500)
+                count = len(batch)
+                if ws_state == WorksetState.IN_PROGRESS:
+                    stats["in_progress"] = count
+                elif ws_state == WorksetState.READY:
+                    stats["ready"] = count
+                elif ws_state == WorksetState.COMPLETE:
+                    stats["complete"] = count
+                    stats["total_processed"] += count
+                elif ws_state == WorksetState.ERROR:
+                    stats["error"] = count
+                    stats["total_processed"] += count
+        except Exception as e:
+            LOGGER.warning(f"Failed to get workset stats: {e}")
+
+        # Read recent log lines
+        log_lines = []
+        log_error = None
+        if latest_log_path and latest_log_path.exists():
+            try:
+                with latest_log_path.open("r", encoding="utf-8", errors="replace") as f:
+                    all_lines = f.readlines()
+                    log_lines = all_lines[-100:]  # Last 100 lines
+            except Exception as e:
+                log_error = str(e)
+
+        return deps.templates.TemplateResponse(
+            request,
+            "monitor/dashboard.html",
+            _get_template_context(
+                request, deps,
+                customer=customer,
+                monitor_running=monitor_running,
+                monitor_pid=monitor_pid,
+                uptime_str=uptime_str,
+                start_time_str=start_time_str,
+                config_display=config_display,
+                stats=stats,
+                log_lines=log_lines,
+                log_error=log_error,
+                latest_log_path=str(latest_log_path) if latest_log_path else None,
+                log_files=[str(lf.name) for lf in log_files[:10]],
+                active_page="monitor",
+            ),
         )
 
     # ========== Clusters Routes ==========
@@ -1972,8 +2143,99 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                 regions=regions,
                 error=error,
                 active_page="clusters",
+                is_admin=is_admin,  # Explicitly pass to ensure template matches fetch_ssh_status
             ),
         )
+
+    # ========== Monitor API Endpoints (for AJAX) ==========
+
+    @router.get("/api/monitor/status")
+    async def api_monitor_status(request: Request):
+        """Get monitor status as JSON for AJAX updates."""
+        from pathlib import Path
+        import os
+
+        config_dir = Path.home() / ".ursa"
+        log_dir = config_dir / "logs"
+        pid_file = config_dir / "monitor.pid"
+
+        # Check if monitor is running
+        monitor_pid = None
+        monitor_running = False
+        if pid_file.exists():
+            try:
+                pid = int(pid_file.read_text().strip())
+                os.kill(pid, 0)
+                monitor_pid = pid
+                monitor_running = True
+            except (ValueError, ProcessLookupError, PermissionError):
+                pass
+
+        # Get workset statistics from DynamoDB
+        stats = {
+            "in_progress": 0,
+            "ready": 0,
+            "complete": 0,
+            "error": 0,
+        }
+        try:
+            for ws_state in WorksetState:
+                batch = deps.state_db.list_worksets_by_state(ws_state, limit=500)
+                count = len(batch)
+                if ws_state == WorksetState.IN_PROGRESS:
+                    stats["in_progress"] = count
+                elif ws_state == WorksetState.READY:
+                    stats["ready"] = count
+                elif ws_state == WorksetState.COMPLETE:
+                    stats["complete"] = count
+                elif ws_state == WorksetState.ERROR:
+                    stats["error"] = count
+        except Exception as e:
+            LOGGER.warning(f"Failed to get workset stats: {e}")
+
+        return {
+            "running": monitor_running,
+            "pid": monitor_pid,
+            "stats": stats,
+        }
+
+    @router.get("/api/monitor/logs")
+    async def api_monitor_logs(
+        request: Request,
+        lines: int = Query(100, ge=10, le=500),
+        level: Optional[str] = Query(None),
+    ):
+        """Get recent monitor log lines as JSON for AJAX updates."""
+        from pathlib import Path
+
+        config_dir = Path.home() / ".ursa"
+        log_dir = config_dir / "logs"
+
+        # Get latest log file
+        log_files = sorted(log_dir.glob("monitor_*.log"), reverse=True) if log_dir.exists() else []
+        if not log_files:
+            return {"lines": [], "error": None, "log_file": None}
+
+        latest_log = log_files[0]
+        log_lines = []
+        error = None
+
+        try:
+            with latest_log.open("r", encoding="utf-8", errors="replace") as f:
+                all_lines = f.readlines()
+                log_lines = [line.rstrip() for line in all_lines[-lines:]]
+
+                # Filter by level if specified
+                if level:
+                    log_lines = [line for line in log_lines if f"[{level}]" in line]
+        except Exception as e:
+            error = str(e)
+
+        return {
+            "lines": log_lines,
+            "error": error,
+            "log_file": str(latest_log.name),
+        }
 
     return router
 
