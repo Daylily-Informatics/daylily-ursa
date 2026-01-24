@@ -19,6 +19,7 @@ from botocore.exceptions import ClientError
 import yaml  # type: ignore[import-untyped]
 
 from daylib.config import normalize_bucket_name
+from daylib.s3_utils import RegionAwareS3Client
 
 if TYPE_CHECKING:
     from daylib.workset_state_db import WorksetStateDB, WorksetState, WorksetPriority
@@ -101,11 +102,11 @@ class WorksetIntegration:
         if s3_client:
             self._s3 = s3_client
         else:
-            session_kwargs = {"region_name": region}
-            if profile:
-                session_kwargs["profile_name"] = profile
-            session = boto3.Session(**session_kwargs)
-            self._s3 = session.client("s3")
+            # Use region-aware S3 client for cross-region bucket operations
+            self._s3 = RegionAwareS3Client(
+                default_region=region,
+                profile=profile,
+            )
 
     def register_workset(
         self,
@@ -140,7 +141,7 @@ class WorksetIntegration:
         Returns:
             True if registration successful
         """
-        target_bucket = bucket or self.bucket
+        target_bucket = normalize_bucket_name(bucket) or self.bucket
         if not target_bucket:
             raise ValueError("Bucket must be specified")
 
@@ -238,7 +239,7 @@ class WorksetIntegration:
         Returns:
             True if update successful
         """
-        target_bucket = bucket or self.bucket
+        target_bucket = normalize_bucket_name(bucket) or self.bucket
         workset_prefix = prefix or f"{self.prefix}{workset_id}/"
 
         now = dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
@@ -355,7 +356,7 @@ class WorksetIntegration:
             LOGGER.error("Workset %s not found in DynamoDB", workset_id)
             return False
 
-        bucket_name: str = workset.get("bucket") or self.bucket or ""
+        bucket_name: str = normalize_bucket_name(workset.get("bucket")) or self.bucket or ""
         if not bucket_name:
             LOGGER.error("No bucket configured for workset %s", workset_id)
             return False
@@ -425,7 +426,7 @@ class WorksetIntegration:
         Returns:
             True if lock acquired
         """
-        target_bucket = bucket or self.bucket
+        target_bucket = normalize_bucket_name(bucket) or self.bucket
         workset_prefix = prefix or f"{self.prefix}{workset_id}/"
 
         # Try DynamoDB lock first (authoritative)
@@ -467,7 +468,7 @@ class WorksetIntegration:
         Returns:
             True if lock released
         """
-        target_bucket = bucket or self.bucket
+        target_bucket = normalize_bucket_name(bucket) or self.bucket
         workset_prefix = prefix or f"{self.prefix}{workset_id}/"
 
         # Release DynamoDB lock

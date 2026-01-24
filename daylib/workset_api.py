@@ -508,22 +508,36 @@ def create_app(
     async def list_worksets(
         state: Optional[WorksetState] = Query(None, description="Filter by state"),
         priority: Optional[WorksetPriority] = Query(None, description="Filter by priority"),
+        customer_id: Optional[str] = Query(None, description="Filter by customer ownership"),
         limit: int = Query(100, ge=1, le=1000, description="Maximum results"),
     ):
-        """List worksets with optional filters."""
+        """List worksets with optional filters.
+
+        If customer_id is provided, only returns worksets owned by that customer.
+        """
+        # Fetch more if filtering by customer to account for non-matching worksets
+        fetch_limit = limit * 5 if customer_id else limit
+
         if state:
-            worksets = state_db.list_worksets_by_state(state, priority=priority, limit=limit)
+            worksets = state_db.list_worksets_by_state(state, priority=priority, limit=fetch_limit)
         else:
             # Get all states
             worksets = []
             for ws_state in WorksetState:
-                batch = state_db.list_worksets_by_state(ws_state, priority=priority, limit=limit)
+                batch = state_db.list_worksets_by_state(ws_state, priority=priority, limit=fetch_limit)
                 worksets.extend(batch)
-                if len(worksets) >= limit:
+                if len(worksets) >= fetch_limit:
                     break
-            worksets = worksets[:limit]
-        
-        return [WorksetResponse(**w) for w in worksets]
+            worksets = worksets[:fetch_limit]
+
+        # SECURITY: If customer_id provided, filter to only that customer's worksets
+        if customer_id:
+            worksets = [
+                w for w in worksets
+                if verify_workset_ownership(w, customer_id)
+            ]
+
+        return [WorksetResponse(**w) for w in worksets[:limit]]
 
     @app.put("/worksets/{workset_id}/state", response_model=WorksetResponse, tags=["worksets"])
     async def update_workset_state(workset_id: str, update: WorksetStateUpdate):
@@ -1355,7 +1369,7 @@ def create_app(
         ):
             """List worksets for a customer.
 
-            Filters worksets by the customer's S3 bucket.
+            Filters worksets by customer_id ownership (customer_id field or metadata.submitted_by).
             """
             if not customer_manager:
                 raise HTTPException(
@@ -1370,27 +1384,27 @@ def create_app(
                     detail=f"Customer {customer_id} not found",
                 )
 
-            # Get all worksets and filter by customer's bucket
+            # Get all worksets and filter by customer_id ownership
             all_worksets: List[Dict[str, Any]] = []
             if state:
                 try:
                     ws_state = WorksetState(state)
-                    all_worksets = state_db.list_worksets_by_state(ws_state, limit=limit)
+                    all_worksets = state_db.list_worksets_by_state(ws_state, limit=limit * 5)  # Fetch more to account for filtering
                 except ValueError:
                     # Invalid state value - return all states
                     for ws_state in WorksetState:
-                        batch = state_db.list_worksets_by_state(ws_state, limit=limit)
+                        batch = state_db.list_worksets_by_state(ws_state, limit=limit * 5)
                         all_worksets.extend(batch)
             else:
                 # Get worksets from all states
                 for ws_state in WorksetState:
-                    batch = state_db.list_worksets_by_state(ws_state, limit=limit)
+                    batch = state_db.list_worksets_by_state(ws_state, limit=limit * 5)
                     all_worksets.extend(batch)
 
-            # Filter to only this customer's worksets (by bucket)
+            # SECURITY: Filter to only this customer's worksets (by customer_id, not bucket)
             customer_worksets = [
                 w for w in all_worksets
-                if w.get("bucket") == config.s3_bucket
+                if verify_workset_ownership(w, customer_id)
             ]
 
             return {"worksets": customer_worksets[:limit]}
@@ -1411,10 +1425,11 @@ def create_app(
                     detail=f"Customer {customer_id} not found",
                 )
 
-            # Get all archived worksets and filter by customer's bucket
+            # SECURITY: Filter archived worksets by customer_id ownership (not bucket)
             all_archived = state_db.list_archived_worksets(limit=500)
             customer_archived = [
-                w for w in all_archived if w.get("bucket") == config.s3_bucket
+                w for w in all_archived
+                if verify_workset_ownership(w, customer_id)
             ]
             return customer_archived
 

@@ -16,6 +16,8 @@ import boto3
 from boto3.dynamodb.conditions import Attr
 from botocore.exceptions import ClientError
 
+from daylib.config import normalize_bucket_name
+
 LOGGER = logging.getLogger("daylily.workset_state_db")
 
 
@@ -178,6 +180,7 @@ class WorksetStateDB:
                 {"AttributeName": "state", "AttributeType": "S"},
                 {"AttributeName": "priority", "AttributeType": "S"},
                 {"AttributeName": "created_at", "AttributeType": "S"},
+                {"AttributeName": "customer_id", "AttributeType": "S"},
             ],
             GlobalSecondaryIndexes=[
                 {
@@ -193,6 +196,16 @@ class WorksetStateDB:
                     "KeySchema": [
                         {"AttributeName": "state", "KeyType": "HASH"},
                         {"AttributeName": "created_at", "KeyType": "RANGE"},
+                    ],
+                    "Projection": {"ProjectionType": "ALL"},
+                },
+                {
+                    # GSI for efficient multi-tenant queries
+                    # Allows filtering worksets by customer without full table scan
+                    "IndexName": "customer-id-state-index",
+                    "KeySchema": [
+                        {"AttributeName": "customer_id", "KeyType": "HASH"},
+                        {"AttributeName": "state", "KeyType": "RANGE"},
                     ],
                     "Projection": {"ProjectionType": "ALL"},
                 },
@@ -306,13 +319,18 @@ class WorksetStateDB:
         if workset_type is None:
             workset_type = WorksetType.RUO
 
+        # Normalize bucket name (strip s3:// prefix if present)
+        normalized_bucket = normalize_bucket_name(bucket)
+        if not normalized_bucket:
+            raise ValueError(f"Invalid bucket name: {bucket}")
+
         now = dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
         item: Dict[str, Any] = {
             "workset_id": workset_id,
             "state": WorksetState.READY.value,
             "priority": priority.value,
             "workset_type": workset_type.value,
-            "bucket": bucket,
+            "bucket": normalized_bucket,
             "prefix": prefix,
             "created_at": now,
             "updated_at": now,
@@ -870,6 +888,71 @@ class WorksetStateDB:
         except ClientError as e:
             LOGGER.warning("Failed to update execution environment for %s: %s", workset_id, str(e))
 
+    def set_execution_context(
+        self,
+        workset_id: str,
+        execution_context: Dict[str, Any],
+    ) -> bool:
+        """Store execution context for a workset.
+
+        The execution context captures all region/bucket/cluster details computed
+        at workset acquisition time. This ensures consistent values on resume.
+
+        Args:
+            workset_id: Workset identifier
+            execution_context: Dict with keys: cluster_name, cluster_region,
+                              execution_bucket, workset_prefix, ssh_key_path,
+                              reference_bucket, export_s3_uri, headnode_ip, pipeline_dir
+
+        Returns:
+            True if update succeeded
+        """
+        now_iso = dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
+
+        update_expr = "SET updated_at = :now, execution_context = :ctx"
+        expr_values: Dict[str, Any] = {
+            ":now": now_iso,
+            ":ctx": self._serialize_metadata(execution_context),
+        }
+
+        try:
+            self.table.update_item(
+                Key={"workset_id": workset_id},
+                UpdateExpression=update_expr,
+                ExpressionAttributeValues=expr_values,
+            )
+            LOGGER.info(
+                "Stored execution context for workset %s: cluster=%s, region=%s",
+                workset_id,
+                execution_context.get("cluster_name"),
+                execution_context.get("cluster_region"),
+            )
+            return True
+        except ClientError as e:
+            LOGGER.warning("Failed to store execution context for %s: %s", workset_id, str(e))
+            return False
+
+    def get_execution_context(self, workset_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieve stored execution context for a workset.
+
+        Args:
+            workset_id: Workset identifier
+
+        Returns:
+            Execution context dict or None if not found/not set
+        """
+        try:
+            response = self.table.get_item(
+                Key={"workset_id": workset_id},
+                ProjectionExpression="execution_context",
+            )
+            if "Item" in response and "execution_context" in response["Item"]:
+                return self._deserialize_item(response["Item"]["execution_context"])
+            return None
+        except ClientError as e:
+            LOGGER.warning("Failed to get execution context for %s: %s", workset_id, str(e))
+            return None
+
     def get_workset(self, workset_id: str) -> Optional[Dict[str, Any]]:
         """Retrieve workset details.
 
@@ -992,6 +1075,112 @@ class WorksetStateDB:
         except ClientError as e:
             LOGGER.error("Failed to list worksets: %s", str(e))
             return []
+
+    def list_worksets_by_customer(
+        self,
+        customer_id: str,
+        state: Optional[WorksetState] = None,
+        limit: int = 100,
+    ) -> List[Dict[str, Any]]:
+        """List worksets belonging to a specific customer using the customer GSI.
+
+        Uses the customer-id-state-index GSI for efficient multi-tenant queries
+        without requiring a full table scan.
+
+        Args:
+            customer_id: Customer ID to filter by (required)
+            state: Optional state filter (if provided, uses exact match)
+            limit: Maximum number of results
+
+        Returns:
+            List of workset records belonging to the customer
+        """
+        if not customer_id:
+            LOGGER.warning("list_worksets_by_customer called with empty customer_id")
+            return []
+
+        key_condition = "customer_id = :cid"
+        expr_values: Dict[str, str] = {":cid": customer_id}
+
+        if state:
+            key_condition += " AND #state = :state"
+            expr_names: Dict[str, str] = {"#state": "state"}
+            expr_values[":state"] = state.value
+        else:
+            expr_names = {}
+
+        query_kwargs: Dict[str, Any] = {
+            "IndexName": "customer-id-state-index",
+            "KeyConditionExpression": key_condition,
+            "ExpressionAttributeValues": expr_values,
+            "Limit": limit,
+        }
+        if expr_names:
+            query_kwargs["ExpressionAttributeNames"] = expr_names
+
+        try:
+            response = self.table.query(**query_kwargs)
+            items = [self._deserialize_item(item) for item in response.get("Items", [])]
+            LOGGER.debug(
+                "Found %d worksets for customer %s (state=%s)",
+                len(items),
+                customer_id,
+                state.value if state else "any",
+            )
+            return items
+        except ClientError as e:
+            error_code = e.response.get("Error", {}).get("Code", "")
+            if error_code == "ValidationException" and "customer-id-state-index" in str(e):
+                # GSI doesn't exist yet, fall back to scan with filter
+                LOGGER.warning(
+                    "GSI customer-id-state-index not found, falling back to scan for customer %s",
+                    customer_id,
+                )
+                return self._list_worksets_by_customer_scan(customer_id, state, limit)
+            LOGGER.error("Failed to list worksets for customer %s: %s", customer_id, str(e))
+            return []
+
+    def _list_worksets_by_customer_scan(
+        self,
+        customer_id: str,
+        state: Optional[WorksetState] = None,
+        limit: int = 100,
+    ) -> List[Dict[str, Any]]:
+        """Fallback method using scan when customer GSI is not available.
+
+        This is less efficient but provides backward compatibility for tables
+        created before the GSI was added.
+
+        Args:
+            customer_id: Customer ID to filter by
+            state: Optional state filter
+            limit: Maximum number of results
+
+        Returns:
+            List of workset records
+        """
+        filter_expr = Attr("customer_id").eq(customer_id)
+        if state:
+            filter_expr = filter_expr & Attr("state").eq(state.value)
+
+        items: List[Dict[str, Any]] = []
+        scan_kwargs: Dict[str, Any] = {
+            "FilterExpression": filter_expr,
+            "Limit": min(limit * 2, 500),  # Over-fetch since scan might skip non-matching
+        }
+
+        try:
+            while len(items) < limit:
+                response = self.table.scan(**scan_kwargs)
+                items.extend(response.get("Items", []))
+                if "LastEvaluatedKey" not in response:
+                    break
+                scan_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+        except ClientError as e:
+            LOGGER.error("Scan fallback failed for customer %s: %s", customer_id, str(e))
+            return []
+
+        return [self._deserialize_item(item) for item in items[:limit]]
 
     def list_locked_worksets(self, limit: int = 100) -> List[Dict[str, Any]]:
         """List worksets that currently have a lock owner.

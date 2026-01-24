@@ -388,9 +388,10 @@ class TestArchiveDeleteAPI:
         """Test listing archived worksets."""
         # Create fresh mock for this test
         mock_db = MagicMock(spec=WorksetStateDB)
+        # Include customer_id to pass customer isolation filtering
         mock_db.list_archived_worksets.return_value = [
-            {"workset_id": "ws-001", "state": "archived", "bucket": "test-bucket"},
-            {"workset_id": "ws-002", "state": "archived", "bucket": "test-bucket"},
+            {"workset_id": "ws-001", "state": "archived", "bucket": "test-bucket", "customer_id": "cust-001"},
+            {"workset_id": "ws-002", "state": "archived", "bucket": "test-bucket", "customer_id": "cust-001"},
         ]
 
         app = create_app(
@@ -1614,3 +1615,140 @@ class TestWorksetCreationWithPreferredCluster:
         mock_state_db.register_workset.assert_called_once()
         call_kwargs = mock_state_db.register_workset.call_args.kwargs
         assert call_kwargs.get("preferred_cluster") is None
+
+
+# ==================== Portal Customer Isolation Tests ====================
+
+
+class TestPortalCustomerIsolation:
+    """Tests for portal workset customer isolation (Phase 3A security).
+
+    These tests verify the filter logic for customer isolation.
+    Full HTTP integration tests require complex session mocking, so we test
+    the filtering logic directly using the verify_workset_ownership function.
+    """
+
+    def test_filter_worksets_by_customer_id(self):
+        """Test that workset list filtering works correctly."""
+        from daylib.routes.dependencies import verify_workset_ownership
+
+        # Worksets belonging to different customers
+        customer_a_worksets = [
+            {"workset_id": "ws-a-001", "customer_id": "customer-A"},
+            {"workset_id": "ws-a-002", "customer_id": "customer-A"},
+        ]
+        customer_b_worksets = [
+            {"workset_id": "ws-b-001", "customer_id": "customer-B"},
+        ]
+        all_worksets = customer_a_worksets + customer_b_worksets
+
+        # Filter for customer A - should only see A's worksets
+        filtered_a = [w for w in all_worksets if verify_workset_ownership(w, "customer-A")]
+        assert len(filtered_a) == 2
+        assert all(w["customer_id"] == "customer-A" for w in filtered_a)
+
+        # Filter for customer B - should only see B's worksets
+        filtered_b = [w for w in all_worksets if verify_workset_ownership(w, "customer-B")]
+        assert len(filtered_b) == 1
+        assert filtered_b[0]["workset_id"] == "ws-b-001"
+
+        # Filter for unknown customer - should see nothing
+        filtered_c = [w for w in all_worksets if verify_workset_ownership(w, "customer-C")]
+        assert len(filtered_c) == 0
+
+    def test_ownership_check_blocks_cross_customer_access(self):
+        """Test that ownership check prevents cross-customer access."""
+        from daylib.routes.dependencies import verify_workset_ownership
+
+        # Customer B's workset
+        workset_b = {"workset_id": "ws-b-001", "customer_id": "customer-B", "results_s3_uri": "s3://..."}
+
+        # Customer A should NOT have access
+        assert verify_workset_ownership(workset_b, "customer-A") is False
+
+        # Customer B SHOULD have access
+        assert verify_workset_ownership(workset_b, "customer-B") is True
+
+    def test_archived_worksets_filtered_by_customer(self):
+        """Test that archived worksets are also filtered by customer."""
+        from daylib.routes.dependencies import verify_workset_ownership
+
+        archived = [
+            {"workset_id": "ws-archived-a", "state": "archived", "customer_id": "customer-A"},
+            {"workset_id": "ws-archived-b", "state": "archived", "customer_id": "customer-B"},
+        ]
+
+        # Customer A should only see their archived workset
+        filtered = [w for w in archived if verify_workset_ownership(w, "customer-A")]
+        assert len(filtered) == 1
+        assert filtered[0]["workset_id"] == "ws-archived-a"
+
+    def test_empty_customer_id_returns_empty_list(self):
+        """Test that empty/None customer_id filters out all worksets."""
+        from daylib.routes.dependencies import verify_workset_ownership
+
+        worksets = [
+            {"workset_id": "ws-001", "customer_id": "customer-A"},
+            {"workset_id": "ws-002", "customer_id": "customer-B"},
+        ]
+
+        # None customer_id should filter out everything
+        filtered_none = [w for w in worksets if verify_workset_ownership(w, None)]
+        assert len(filtered_none) == 0
+
+        # Empty string customer_id should filter out everything
+        filtered_empty = [w for w in worksets if verify_workset_ownership(w, "")]
+        assert len(filtered_empty) == 0
+
+
+class TestVerifyWorksetOwnership:
+    """Unit tests for verify_workset_ownership helper function."""
+
+    def test_ownership_by_customer_id_field(self):
+        """Test ownership check using customer_id field."""
+        from daylib.routes.dependencies import verify_workset_ownership
+
+        workset = {"workset_id": "ws-001", "customer_id": "cust-A"}
+        assert verify_workset_ownership(workset, "cust-A") is True
+        assert verify_workset_ownership(workset, "cust-B") is False
+
+    def test_ownership_fallback_to_metadata_submitted_by(self):
+        """Test ownership check falls back to metadata.submitted_by."""
+        from daylib.routes.dependencies import verify_workset_ownership
+
+        workset = {
+            "workset_id": "ws-001",
+            # No customer_id field
+            "metadata": {"submitted_by": "cust-A"}
+        }
+        assert verify_workset_ownership(workset, "cust-A") is True
+        assert verify_workset_ownership(workset, "cust-B") is False
+
+    def test_ownership_fails_without_customer_info(self):
+        """Test ownership check fails when no customer info available."""
+        from daylib.routes.dependencies import verify_workset_ownership
+
+        workset = {"workset_id": "ws-001"}  # No customer_id or metadata.submitted_by
+        assert verify_workset_ownership(workset, "cust-A") is False
+
+    def test_ownership_handles_empty_inputs(self):
+        """Test ownership check handles None/empty inputs gracefully."""
+        from daylib.routes.dependencies import verify_workset_ownership
+
+        assert verify_workset_ownership(None, "cust-A") is False
+        assert verify_workset_ownership({}, "cust-A") is False
+        assert verify_workset_ownership({"customer_id": "cust-A"}, None) is False
+        assert verify_workset_ownership({"customer_id": "cust-A"}, "") is False
+
+    def test_ownership_customer_id_takes_precedence(self):
+        """Test that customer_id field takes precedence over metadata.submitted_by."""
+        from daylib.routes.dependencies import verify_workset_ownership
+
+        workset = {
+            "workset_id": "ws-001",
+            "customer_id": "cust-A",
+            "metadata": {"submitted_by": "cust-B"}  # Different from customer_id
+        }
+        # Should use customer_id field
+        assert verify_workset_ownership(workset, "cust-A") is True
+        assert verify_workset_ownership(workset, "cust-B") is False

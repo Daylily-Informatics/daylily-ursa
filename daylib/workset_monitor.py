@@ -27,6 +27,8 @@ import boto3
 from botocore.exceptions import ClientError
 import yaml  # type: ignore[import-untyped]
 
+from daylib.s3_utils import RegionAwareS3Client
+
 LOGGER = logging.getLogger("daylily.workset_monitor")
 
 READY_CLUSTER_STATUSES = {"CREATE_COMPLETE", "UPDATE_COMPLETE"}
@@ -224,6 +226,79 @@ class WorksetInputs:
 
 
 @dataclasses.dataclass
+class ExecutionContext:
+    """Canonical execution environment for a workset.
+
+    This dataclass captures all the execution-related context that should be
+    computed once at workset acquisition and reused throughout execution.
+    It eliminates scattered fallbacks and ensures consistent region/bucket usage.
+
+    Persisted to DynamoDB at workset start and retrieved on resume.
+    """
+
+    cluster_name: str
+    """Name of the ParallelCluster executing the workset."""
+
+    cluster_region: str
+    """AWS region of the execution cluster (e.g., 'us-west-2', 'eu-central-1')."""
+
+    execution_bucket: str
+    """S3 bucket for workset data (normalized, no s3:// prefix)."""
+
+    workset_prefix: str
+    """S3 prefix for workset files within execution_bucket."""
+
+    ssh_key_path: Optional[str] = None
+    """Path to SSH key for cluster access (region-specific)."""
+
+    reference_bucket: Optional[str] = None
+    """S3 bucket containing reference data (cluster-specific)."""
+
+    export_s3_uri: Optional[str] = None
+    """Target S3 URI for exporting results."""
+
+    headnode_ip: Optional[str] = None
+    """IP address of the cluster headnode (cached)."""
+
+    pipeline_dir: Optional[str] = None
+    """FSx path where pipeline is running (e.g., /fsx/analysis_results/ubuntu/<workset>/daylily-omics-analysis)."""
+
+    customer_id: Optional[str] = None
+    """Customer ID for cost attribution and AWS resource tagging via DAYLILY_PROJECT env var."""
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for DynamoDB storage."""
+        return {
+            "cluster_name": self.cluster_name,
+            "cluster_region": self.cluster_region,
+            "execution_bucket": self.execution_bucket,
+            "workset_prefix": self.workset_prefix,
+            "ssh_key_path": self.ssh_key_path,
+            "reference_bucket": self.reference_bucket,
+            "export_s3_uri": self.export_s3_uri,
+            "headnode_ip": self.headnode_ip,
+            "pipeline_dir": self.pipeline_dir,
+            "customer_id": self.customer_id,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "ExecutionContext":
+        """Create from dictionary (DynamoDB record)."""
+        return cls(
+            cluster_name=data["cluster_name"],
+            cluster_region=data["cluster_region"],
+            execution_bucket=data["execution_bucket"],
+            workset_prefix=data["workset_prefix"],
+            ssh_key_path=data.get("ssh_key_path"),
+            reference_bucket=data.get("reference_bucket"),
+            export_s3_uri=data.get("export_s3_uri"),
+            headnode_ip=data.get("headnode_ip"),
+            pipeline_dir=data.get("pipeline_dir"),
+            customer_id=data.get("customer_id"),
+        )
+
+
+@dataclasses.dataclass
 class Workset:
     name: str
     prefix: str
@@ -373,7 +448,11 @@ class WorksetMonitor:
         self.notification_manager = notification_manager
 
         self._session = boto3.session.Session(**config.aws.session_kwargs())
-        self._s3 = self._session.client("s3")
+        # Use region-aware S3 client for cross-region bucket operations
+        self._s3 = RegionAwareS3Client(
+            default_region=config.aws.region,
+            profile=config.aws.profile,
+        )
         self._sts = self._session.client("sts")
         self.lock_owner_id = f"{socket.gethostname()}-{os.getpid()}"
         self._sentinel_history: Dict[str, Dict[str, str]] = {}
@@ -663,6 +742,7 @@ class WorksetMonitor:
         pipeline_dir: Optional[PurePosixPath] = None
         stage_artifacts: Optional[StageArtifacts] = None
         session_name: Optional[str] = None
+        exec_context: Optional[ExecutionContext] = None
 
         for action in actions:
             LOGGER.debug("Executing %s for %s", action, workset.name)
@@ -704,6 +784,10 @@ class WorksetMonitor:
                 cluster_name, cluster_region = self._ensure_cluster(inputs.work_yaml, workset)
                 LOGGER.info("Using cluster %s (region=%s) for workset %s", cluster_name, cluster_region or self.config.aws.region, workset.name)
                 self._update_metrics(workset, {"cluster_name": cluster_name})
+                # Capture ExecutionContext for manual actions (includes customer_id for billing)
+                exec_context = self._capture_execution_environment(
+                    workset, cluster_name, inputs.target_export_uri, cluster_region=cluster_region
+                )
 
             if action == "stage_data":
                 if cluster_name is None:
@@ -722,6 +806,7 @@ class WorksetMonitor:
                     cluster_name,
                     inputs.clone_args,
                     run_clone=run_clone,
+                    region=cluster_region,
                 )
                 continue
 
@@ -734,6 +819,7 @@ class WorksetMonitor:
                         cluster_name,
                         inputs.clone_args,
                         run_clone=bool(inputs.clone_args),
+                        region=cluster_region,
                     )
                 if stage_artifacts is None:
                     stage_artifacts = self._stage_artifacts.get(workset.name)
@@ -742,7 +828,8 @@ class WorksetMonitor:
                         "Stage samples output unavailable; run stage-data before run-pipeline"
                     )
                 self._push_stage_files_to_pipeline(
-                    cluster_name, pipeline_dir, inputs.manifest_path, stage_artifacts
+                    cluster_name, pipeline_dir, inputs.manifest_path, stage_artifacts,
+                    region=cluster_region,
                 )
                 session_name = self._run_pipeline(
                     workset,
@@ -750,6 +837,8 @@ class WorksetMonitor:
                     pipeline_dir,
                     inputs.run_suffix,
                     monitor=False,
+                    region=cluster_region,
+                    customer_id=exec_context.customer_id if exec_context else None,
                 )
                 continue
 
@@ -762,6 +851,7 @@ class WorksetMonitor:
                         cluster_name,
                         inputs.clone_args,
                         run_clone=False,
+                        region=cluster_region,
                     )
                 if session_name is None:
                     session_name = self._load_tmux_session(workset)
@@ -770,7 +860,8 @@ class WorksetMonitor:
                         f"No tmux session recorded for {workset.name}; run run-pipeline first"
                     )
                 self._monitor_pipeline_session(
-                    workset, cluster_name, pipeline_dir, session_name
+                    workset, cluster_name, pipeline_dir, session_name,
+                    region=cluster_region,
                 )
                 continue
 
@@ -787,9 +878,11 @@ class WorksetMonitor:
                         cluster_name,
                         inputs.clone_args,
                         run_clone=False,
+                        region=cluster_region,
                     )
                 self._export_results(
-                    workset, cluster_name, inputs.target_export_uri, pipeline_dir
+                    workset, cluster_name, inputs.target_export_uri, pipeline_dir,
+                    region=cluster_region,
                 )
                 continue
 
@@ -802,8 +895,10 @@ class WorksetMonitor:
                         cluster_name,
                         inputs.clone_args,
                         run_clone=False,
+                        region=cluster_region,
                     )
-                self._cleanup_pipeline_directory(workset, cluster_name, pipeline_dir)
+                self._cleanup_pipeline_directory(workset, cluster_name, pipeline_dir,
+                    region=cluster_region)
                 pipeline_dir = None
                 continue
 
@@ -816,8 +911,10 @@ class WorksetMonitor:
                         cluster_name,
                         inputs.clone_args,
                         run_clone=False,
+                        region=cluster_region,
                     )
-                self._cleanup_headnode_directory(workset, cluster_name, pipeline_dir)
+                self._cleanup_headnode_directory(workset, cluster_name, pipeline_dir,
+                    region=cluster_region)
                 continue
 
             if action == "shutdown_cluster":
@@ -1113,6 +1210,62 @@ class WorksetMonitor:
         self._workdir_names[workset.name] = resolved
         return resolved
 
+    def _sanitize_shell_args(self, args: str, context: str) -> str:
+        """Sanitize shell arguments to prevent command injection.
+
+        Parses the args string, validates it contains no dangerous shell
+        metacharacters, and re-quotes each token for safe shell execution.
+
+        Args:
+            args: Raw arguments string from YAML
+            context: Description of where these args come from (for error messages)
+
+        Returns:
+            Sanitized arguments string with proper quoting
+
+        Raises:
+            MonitorError: If args contains potentially dangerous patterns
+        """
+        if not args:
+            return ""
+
+        # Dangerous shell metacharacters that should never appear in user args
+        # Note: We allow single quotes within quoted strings (handled by shlex)
+        dangerous_patterns = [
+            ';', '|', '&', '$', '`', '$(', '${',
+            '\n', '\r', '>', '<', '!',
+        ]
+        for pattern in dangerous_patterns:
+            if pattern in args:
+                raise MonitorError(
+                    f"{context} contain forbidden shell metacharacter: {pattern!r}"
+                )
+
+        try:
+            tokens = shlex.split(args)
+        except ValueError as e:
+            raise MonitorError(f"Failed to parse {context}: {e}") from e
+
+        # Re-quote each token to ensure safe execution
+        return " ".join(shlex.quote(token) for token in tokens)
+
+    def _sanitize_clone_args(self, clone_args: str) -> str:
+        """Sanitize clone_args to prevent command injection."""
+        return self._sanitize_shell_args(clone_args, "clone args")
+
+    def _sanitize_run_suffix(self, run_suffix: str) -> str:
+        """Sanitize run_suffix (dy-r command) to prevent command injection.
+
+        The run_suffix is expected to be a dy-r or snakemake command like:
+        - "dy-r wgs -p"
+        - "wgs -p"
+        - "dy-r wgs --samples-tsv samples.tsv -p"
+
+        This validates the input contains no dangerous shell metacharacters
+        and re-quotes all arguments.
+        """
+        return self._sanitize_shell_args(run_suffix, "run suffix (dy-r command)")
+
     def _format_clone_args(
         self, clone_args: str, workset: Workset, work_yaml: Dict[str, object]
     ) -> str:
@@ -1121,13 +1274,16 @@ class WorksetMonitor:
         # Ensure workset name has date suffix for day-clone destination
         workset_name_with_date = ensure_date_suffix(workset.name)
         mapping = {
-            "workset": workset_name_with_date,
+            "workset": self._sanitize_name(workset_name_with_date),
             "workdir_name": self._workdir_name(workset, work_yaml),
         }
         try:
-            return clone_args.format(**mapping)
+            formatted = clone_args.format(**mapping)
         except Exception:
-            return clone_args
+            formatted = clone_args
+
+        # Sanitize the formatted clone args to prevent command injection
+        return self._sanitize_clone_args(formatted)
 
     def _extract_dest_from_clone_args(self, clone_args: str) -> Optional[str]:
         if not clone_args:
@@ -1271,29 +1427,43 @@ class WorksetMonitor:
             )
             return False
 
-        # For in-progress worksets, use the STORED execution environment from DynamoDB
-        # This ensures we check the correct cluster/region where the workset is actually running
+        # For in-progress worksets, use the STORED ExecutionContext from DynamoDB
+        # This ensures we use the correct cluster/region where the workset is actually running
+        exec_ctx = self._load_execution_context(workset)
         cluster_name: Optional[str] = None
         cluster_region: Optional[str] = None
-        if self.state_db:
-            try:
-                workset_data = self.state_db.get_workset(workset.name)
-                if workset_data:
-                    cluster_name = workset_data.get("execution_cluster_name")
-                    cluster_region = workset_data.get("execution_cluster_region")
-                    if cluster_name and cluster_region:
-                        LOGGER.debug(
-                            "Using stored execution environment for %s: cluster=%s, region=%s",
-                            workset.name,
-                            cluster_name,
-                            cluster_region,
-                        )
-            except Exception as e:
-                LOGGER.warning(
-                    "Failed to load execution environment for %s: %s",
-                    workset.name,
-                    str(e),
-                )
+
+        if exec_ctx:
+            cluster_name = exec_ctx.cluster_name
+            cluster_region = exec_ctx.cluster_region
+            LOGGER.debug(
+                "Using stored ExecutionContext for %s: cluster=%s, region=%s, ssh_key=%s",
+                workset.name,
+                cluster_name,
+                cluster_region,
+                exec_ctx.ssh_key_path,
+            )
+        else:
+            # Legacy fallback: try to load from individual fields
+            if self.state_db:
+                try:
+                    workset_data = self.state_db.get_workset(workset.name)
+                    if workset_data:
+                        cluster_name = workset_data.get("execution_cluster_name")
+                        cluster_region = workset_data.get("execution_cluster_region")
+                        if cluster_name and cluster_region:
+                            LOGGER.debug(
+                                "Using legacy execution environment for %s: cluster=%s, region=%s",
+                                workset.name,
+                                cluster_name,
+                                cluster_region,
+                            )
+                except Exception as e:
+                    LOGGER.warning(
+                        "Failed to load execution environment for %s: %s",
+                        workset.name,
+                        str(e),
+                    )
 
         # Fall back to _ensure_cluster if no stored execution environment
         if not cluster_name:
@@ -1332,13 +1502,14 @@ class WorksetMonitor:
                     # Track progress: exporting (recovery path)
                     self._update_progress_step(workset, "exporting", f"Exporting results to {inputs.target_export_uri}")
                     results_s3_uri = self._export_results(
-                        workset, cluster_name, inputs.target_export_uri, pipeline_dir
+                        workset, cluster_name, inputs.target_export_uri, pipeline_dir,
+                        region=cluster_region,
                     )
                     # Track progress: export complete
                     self._update_progress_step(workset, "export_complete", "Export finished")
 
                     # Cleanup headnode directory after successful export (recovery path)
-                    self._cleanup_headnode_directory(workset, cluster_name, pipeline_dir)
+                    self._cleanup_headnode_directory(workset, cluster_name, pipeline_dir, region=cluster_region)
 
                     # Collect post-export metrics from S3 (recovery path)
                     try:
@@ -1736,10 +1907,11 @@ class WorksetMonitor:
         LOGGER.info("Using cluster %s (region=%s) for workset %s", cluster_name, cluster_region or self.config.aws.region, workset.name)
         self._update_metrics(workset, {"cluster_name": cluster_name})
 
-        # Capture execution environment metadata
-        self._capture_execution_environment(
+        # Capture execution environment metadata (includes customer_id for billing)
+        exec_context = self._capture_execution_environment(
             workset, cluster_name, inputs.target_export_uri, cluster_region
         )
+        customer_id = exec_context.customer_id if exec_context else None
 
         completed_commands: Set[str] = set()
         clone_args = inputs.clone_args
@@ -1768,6 +1940,7 @@ class WorksetMonitor:
                     pipeline_dir,
                     completed_commands,
                     region=cluster_region,
+                    customer_id=customer_id,
                 )
                 break
             except CommandFailedError as exc:
@@ -1792,6 +1965,7 @@ class WorksetMonitor:
         pipeline_dir: Optional[PurePosixPath],
         completed_commands: Set[str],
         region: Optional[str] = None,
+        customer_id: Optional[str] = None,
     ) -> PurePosixPath:
         # Track progress: staging and cluster provisioning in parallel
         self._update_progress_step(workset, "staging", "Staging samples and waiting for cluster")
@@ -1878,7 +2052,10 @@ class WorksetMonitor:
                 workset.name,
             )
         else:
-            self._run_pipeline(workset, cluster_name, pipeline_dir, run_suffix, region=region)
+            self._run_pipeline(
+                workset, cluster_name, pipeline_dir, run_suffix,
+                region=region, customer_id=customer_id
+            )
             completed_commands.add(run_label)
 
         # Track progress: pipeline completed, starting export
@@ -1903,7 +2080,8 @@ class WorksetMonitor:
                 # Track progress: exporting
                 self._update_progress_step(workset, "exporting", f"Exporting results to {target_export_uri}")
                 results_s3_uri = self._export_results(
-                    workset, cluster_name, target_export_uri, pipeline_dir
+                    workset, cluster_name, target_export_uri, pipeline_dir,
+                    region=region,
                 )
                 completed_commands.add(export_label)
                 # Track progress: export complete
@@ -1951,21 +2129,25 @@ class WorksetMonitor:
         cluster_name: str,
         target_export_uri: Optional[str],
         cluster_region: Optional[str] = None,
-    ) -> None:
+    ) -> Optional[ExecutionContext]:
         """Capture execution environment metadata and store in DynamoDB.
 
         This records where and how the workset is being processed, including
-        cluster details and output locations.
+        cluster details and output locations. Also creates and persists an
+        ExecutionContext for consistent usage throughout execution and on resume.
 
         Args:
             workset: Workset being processed
             cluster_name: Name of the cluster
             target_export_uri: S3 URI for export results
             cluster_region: AWS region of the cluster (uses config region if None)
+
+        Returns:
+            ExecutionContext if created successfully, None otherwise
         """
         if not self.state_db:
             LOGGER.debug("No state_db configured; skipping execution environment capture")
-            return
+            return None
 
         now_iso = dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
         effective_region = cluster_region or self.config.aws.region
@@ -1986,7 +2168,43 @@ class WorksetMonitor:
                 execution_s3_bucket = uri_parts[0]
                 execution_s3_prefix = uri_parts[1] if len(uri_parts) > 1 else ""
 
+        # Use workset bucket if no export URI specified
+        if not execution_s3_bucket:
+            execution_s3_bucket = workset.bucket
+            execution_s3_prefix = workset.prefix
+
+        # Get SSH key for this region
+        ssh_key_path = self._ssh_identity(region=effective_region)
+
+        # Get reference bucket from config
+        reference_bucket = self.config.pipeline.reference_bucket
+
+        # Get customer_id from DynamoDB workset record for cost attribution
+        customer_id: Optional[str] = None
         try:
+            workset_record = self.state_db.get_workset(workset.name)
+            if workset_record:
+                customer_id = workset_record.get("customer_id")
+                if customer_id:
+                    LOGGER.debug("Retrieved customer_id=%s for workset %s", customer_id, workset.name)
+        except Exception as e:
+            LOGGER.warning("Failed to retrieve customer_id for %s: %s", workset.name, str(e))
+
+        # Create ExecutionContext
+        exec_context = ExecutionContext(
+            cluster_name=cluster_name,
+            cluster_region=effective_region,
+            execution_bucket=execution_s3_bucket or workset.bucket,
+            workset_prefix=execution_s3_prefix or workset.prefix,
+            ssh_key_path=ssh_key_path,
+            reference_bucket=reference_bucket,
+            export_s3_uri=target_export_uri,
+            headnode_ip=headnode_ip,
+            customer_id=customer_id,
+        )
+
+        try:
+            # Store legacy fields for backward compatibility
             self.state_db.update_execution_environment(
                 workset_id=workset.name,
                 cluster_name=cluster_name,
@@ -1996,18 +2214,28 @@ class WorksetMonitor:
                 execution_s3_prefix=execution_s3_prefix,
                 execution_started_at=now_iso,
             )
+
+            # Store new consolidated ExecutionContext
+            self.state_db.set_execution_context(
+                workset_id=workset.name,
+                execution_context=exec_context.to_dict(),
+            )
+
             LOGGER.info(
-                "Captured execution environment for %s: cluster=%s, region=%s",
+                "Captured execution environment for %s: cluster=%s, region=%s, ssh_key=%s",
                 workset.name,
                 cluster_name,
                 effective_region,
+                ssh_key_path,
             )
+            return exec_context
         except Exception as e:
             LOGGER.warning(
                 "Failed to capture execution environment for %s: %s",
                 workset.name,
                 str(e),
             )
+            return None
 
     def _record_execution_ended(self, workset: Workset) -> None:
         """Record execution end time in DynamoDB."""
@@ -2027,6 +2255,33 @@ class WorksetMonitor:
                 workset.name,
                 str(e),
             )
+
+    def _load_execution_context(self, workset: Workset) -> Optional[ExecutionContext]:
+        """Load stored execution context for a workset.
+
+        Used during resume to get the original execution environment settings.
+
+        Args:
+            workset: Workset to load context for
+
+        Returns:
+            ExecutionContext if found, None otherwise
+        """
+        if not self.state_db:
+            return None
+
+        try:
+            ctx_data = self.state_db.get_execution_context(workset.name)
+            if ctx_data:
+                return ExecutionContext.from_dict(ctx_data)
+            return None
+        except Exception as e:
+            LOGGER.warning(
+                "Failed to load execution context for %s: %s",
+                workset.name,
+                str(e),
+            )
+            return None
 
     def _resolve_local_state_root(self) -> Path:
         """Resolve local state root to an absolute path.
@@ -2756,15 +3011,16 @@ class WorksetMonitor:
         manifest_argument = self._relative_manifest_argument(manifest_path)
         reference_bucket = self._stage_reference_bucket(region=effective_region)
         output_dir = self._local_state_dir(workset)
+        # Quote all values that could contain special characters (command injection hardening)
         cmd = self.config.pipeline.stage_command.format(
-            profile=self.config.aws.profile,
-            region=effective_region,
-            cluster=cluster_name,
-            analysis_samples=manifest_argument,
-            reference_bucket=reference_bucket,
-            ssh_identity_file=self.config.pipeline.ssh_identity_file or "",
-            pem=self.config.pipeline.ssh_identity_file or "",
-            ssh_user=self.config.pipeline.ssh_user,
+            profile=shlex.quote(self.config.aws.profile) if self.config.aws.profile else "",
+            region=shlex.quote(effective_region),
+            cluster=shlex.quote(cluster_name),
+            analysis_samples=shlex.quote(manifest_argument),
+            reference_bucket=shlex.quote(reference_bucket) if reference_bucket else "",
+            ssh_identity_file=shlex.quote(self.config.pipeline.ssh_identity_file) if self.config.pipeline.ssh_identity_file else "",
+            pem=shlex.quote(self.config.pipeline.ssh_identity_file) if self.config.pipeline.ssh_identity_file else "",
+            ssh_user=shlex.quote(self.config.pipeline.ssh_user),
             ssh_extra_args=" ".join(
                 shlex.quote(arg) for arg in self.config.pipeline.ssh_extra_args
             ),
@@ -2972,6 +3228,7 @@ class WorksetMonitor:
         workset: Workset,
         cluster_name: str,
         pipeline_dir: PurePosixPath,
+        region: Optional[str] = None,
     ) -> None:
         LOGGER.info(
             "Removing pipeline directory %s from cluster %s", pipeline_dir, cluster_name
@@ -2983,6 +3240,7 @@ class WorksetMonitor:
             cluster_name=cluster_name,
             check=True,
             shell=True,
+            region=region,
         )
         self._clear_pipeline_location(workset)
 
@@ -3117,7 +3375,7 @@ class WorksetMonitor:
             Total size in bytes
         """
         total_size = 0
-        paginator = self.s3_client.get_paginator("list_objects_v2")
+        paginator = self._s3.get_paginator("list_objects_v2")
 
         # Ensure prefix ends with / to list directory contents
         if prefix and not prefix.endswith("/"):
@@ -3143,7 +3401,7 @@ class WorksetMonitor:
             prefix: S3 prefix where results are stored
             per_sample_metrics: Dict to populate with per-sample metrics
         """
-        paginator = self.s3_client.get_paginator("list_objects_v2")
+        paginator = self._s3.get_paginator("list_objects_v2")
 
         # Ensure prefix ends with / to list directory contents
         if prefix and not prefix.endswith("/"):
@@ -3637,6 +3895,7 @@ class WorksetMonitor:
         *,
         monitor: bool = True,
         region: Optional[str] = None,
+        customer_id: Optional[str] = None,
     ) -> Optional[str]:
         if not run_suffix:
             raise MonitorError(
@@ -3673,8 +3932,16 @@ class WorksetMonitor:
 
         session_name = existing_session
         if not session_name:
+            # Sanitize run_suffix to prevent command injection from YAML input
+            sanitized_run_suffix = self._sanitize_run_suffix(run_suffix)
+
             # Build the main pipeline command
-            run_command = self.config.pipeline.run_prefix + run_suffix
+            run_command = self.config.pipeline.run_prefix + sanitized_run_suffix
+
+            # Prefix with DAYLILY_PROJECT for cost attribution and AWS resource tagging
+            if customer_id:
+                run_command = f"DAYLILY_PROJECT={shlex.quote(customer_id)} {run_command}"
+                LOGGER.info("Pipeline command prefixed with DAYLILY_PROJECT=%s", customer_id)
 
             # Automatically append benchmark data collection command
             # This ensures we always collect per-rule performance metrics after pipeline runs
@@ -3856,19 +4123,28 @@ class WorksetMonitor:
         cluster_name: str,
         target_uri: str,
         pipeline_dir: PurePosixPath,
+        region: Optional[str] = None,
     ) -> Optional[str]:
         """Export pipeline results to S3.
+
+        Args:
+            workset: The workset being exported
+            cluster_name: Name of the ParallelCluster
+            target_uri: S3 URI to export results to
+            pipeline_dir: Path to the pipeline directory on FSx
+            region: AWS region where the cluster is located (defaults to config region)
 
         Returns:
             The S3 URI of the exported results, or None if export was successful
             but URI was not captured.
         """
+        effective_region = region or self.config.aws.region
         output_dir = self._local_state_dir(workset)
         profile_value = self.config.aws.profile or ""
         command = self.config.pipeline.export_command.format(
             cluster=shlex.quote(cluster_name),
             target_uri=shlex.quote(target_uri),
-            region=shlex.quote(self.config.aws.region),
+            region=shlex.quote(effective_region),
             profile=shlex.quote(profile_value) if profile_value else "",
             output_dir=shlex.quote(str(output_dir)),
             workdir_name=self._resolve_workdir_name(workset),
@@ -3969,7 +4245,7 @@ class WorksetMonitor:
         # Derive S3 destination from workset bucket/prefix
         s3_key = f"{workset.prefix.rstrip('/')}/{FSX_EXPORT_STATUS_FILENAME}"
         try:
-            self.s3_client.upload_file(
+            self._s3.upload_file(
                 str(status_path),
                 workset.bucket,
                 s3_key,

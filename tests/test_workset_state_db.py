@@ -694,6 +694,10 @@ def test_archive_workset_with_reason(state_db, mock_dynamodb):
     """Test archiving a workset with a reason."""
     mock_table = mock_dynamodb["table"]
     mock_table.update_item.return_value = {}
+    # Mock get_workset to return a workset (archive_workset looks it up first)
+    mock_table.get_item.return_value = {
+        "Item": {"workset_id": "test-ws-001", "state": "complete"}
+    }
 
     result = state_db.archive_workset(
         workset_id="test-ws-001",
@@ -723,4 +727,92 @@ def test_delete_workset_with_reason(state_db, mock_dynamodb):
     call_args = mock_table.update_item.call_args
     expr_values = call_args.kwargs["ExpressionAttributeValues"]
     assert expr_values[":reason"] == "Customer request"
+
+
+# ========== Tests for Phase 1 bucket normalization fixes ==========
+
+
+class TestBucketNormalizationInStateDB:
+    """Test bucket names are normalized in WorksetStateDB.register_workset."""
+
+    def test_register_workset_normalizes_s3_prefix(self, state_db, mock_dynamodb):
+        """Test register_workset strips s3:// prefix from bucket."""
+        mock_table = mock_dynamodb["table"]
+        mock_table.put_item.return_value = {}
+
+        result = state_db.register_workset(
+            workset_id="test-ws-norm",
+            bucket="s3://my-bucket-with-prefix",
+            prefix="worksets/test/",
+            priority=WorksetPriority.NORMAL,
+            metadata={"samples": [{"sample_id": "S1"}], "sample_count": 1},
+            customer_id="test-customer",
+        )
+
+        assert result is True
+        call_args = mock_table.put_item.call_args
+        item = call_args.kwargs["Item"]
+        assert item["bucket"] == "my-bucket-with-prefix"
+
+    def test_register_workset_normalizes_bucket_with_path(self, state_db, mock_dynamodb):
+        """Test register_workset extracts bucket from s3://bucket/path format."""
+        mock_table = mock_dynamodb["table"]
+        mock_table.put_item.return_value = {}
+
+        result = state_db.register_workset(
+            workset_id="test-ws-path",
+            bucket="s3://my-bucket/some/path/component",
+            prefix="worksets/test/",
+            priority=WorksetPriority.NORMAL,
+            metadata={"samples": [{"sample_id": "S1"}], "sample_count": 1},
+            customer_id="test-customer",
+        )
+
+        assert result is True
+        call_args = mock_table.put_item.call_args
+        item = call_args.kwargs["Item"]
+        assert item["bucket"] == "my-bucket"
+
+    def test_register_workset_rejects_empty_bucket(self, state_db, mock_dynamodb):
+        """Test register_workset raises ValueError for empty bucket."""
+        with pytest.raises(ValueError, match="Invalid bucket name"):
+            state_db.register_workset(
+                workset_id="test-ws-empty",
+                bucket="",
+                prefix="worksets/test/",
+                priority=WorksetPriority.NORMAL,
+                metadata={"samples": [{"sample_id": "S1"}], "sample_count": 1},
+                customer_id="test-customer",
+            )
+
+    def test_register_workset_rejects_s3_only_bucket(self, state_db, mock_dynamodb):
+        """Test register_workset raises ValueError for 's3://' only bucket."""
+        with pytest.raises(ValueError, match="Invalid bucket name"):
+            state_db.register_workset(
+                workset_id="test-ws-s3only",
+                bucket="s3://",
+                prefix="worksets/test/",
+                priority=WorksetPriority.NORMAL,
+                metadata={"samples": [{"sample_id": "S1"}], "sample_count": 1},
+                customer_id="test-customer",
+            )
+
+    def test_register_workset_plain_bucket_unchanged(self, state_db, mock_dynamodb):
+        """Test register_workset leaves plain bucket name unchanged."""
+        mock_table = mock_dynamodb["table"]
+        mock_table.put_item.return_value = {}
+
+        result = state_db.register_workset(
+            workset_id="test-ws-plain",
+            bucket="plain-bucket-name",
+            prefix="worksets/test/",
+            priority=WorksetPriority.NORMAL,
+            metadata={"samples": [{"sample_id": "S1"}], "sample_count": 1},
+            customer_id="test-customer",
+        )
+
+        assert result is True
+        call_args = mock_table.put_item.call_args
+        item = call_args.kwargs["Item"]
+        assert item["bucket"] == "plain-bucket-name"
 

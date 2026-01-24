@@ -112,7 +112,7 @@ pipeline:
   # Command to stage samples to the headnode
   # Available variables: {profile}, {region}, {reference_bucket}, {analysis_samples}, {output_dir}
   # Note: --config-dir ensures generated samples.tsv/units.tsv are written to the workset state dir
-  stage_command: ./bin/daylily-stage-samples-from-local-to-headnode --profile {profile} --region {region} --reference-bucket {reference_bucket} --config-dir {output_dir} {analysis_samples}
+  stage_command: daylily-stage-samples-from-local-to-headnode --profile {profile} --region {region} --reference-bucket {reference_bucket} --config-dir {output_dir} {analysis_samples}
   
   # Command to clone the pipeline repository
   # Available variables: {clone_args}
@@ -129,7 +129,7 @@ pipeline:
   # Available variables: {cluster}, {target_uri}, {region}, {profile}, {output_dir},
   #                      {workdir_name}, {workset_dir}, {pipeline_dir}, {workset}
   # IMPORTANT: {output_dir} must be used for --output-dir to match where monitor looks for fsx_export.yaml
-  export_command: ./bin/daylily-export-fsx-to-s3-from-local --cluster {cluster} --target-uri analysis_results/ubuntu/{workdir_name} --region {region} --profile {profile} --output-dir {output_dir} --verbose
+  export_command: daylily-export-fsx-to-s3-from-local --cluster {cluster} --target-uri analysis_results/ubuntu/{workdir_name} --region {region} --profile {profile} --output-dir {output_dir} --verbose
   
   # Shell initialization command run before entering pipeline directory
   login_shell_init: source ~/.bashrc

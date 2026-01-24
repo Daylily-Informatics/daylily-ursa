@@ -58,6 +58,12 @@ cluster = [
 ursa = "daylib.cli:main"
 daylily-workset-api = "daylib.workset_api:main"
 daylily-workset-monitor = "daylib.workset_monitor:main"
+daylily-stage-samples-from-local-to-headnode = "daylib.stage_samples:main"
+daylily-export-fsx-to-s3-from-local = "daylib.export_fsx:main"
+daylily-purge-customer-data = "daylib.purge_customer:main"
+daylily-workset-report = "daylib.workset_report:main"
+daylily-workset-worker = "daylib.workset_worker:main"
+daylily-workset-metrics = "daylib.workset_metrics:main"
 
 [tool.setuptools_scm]
 version_scheme = "guess-next-dev"

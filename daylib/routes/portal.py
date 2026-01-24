@@ -26,6 +26,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from daylib.config import Settings
+from daylib.s3_utils import RegionAwareS3Client
 from daylib.file_registry import detect_file_format as _detect_file_format
 from daylib.routes.dependencies import (
     convert_customer_for_template,
@@ -33,6 +34,7 @@ from daylib.routes.dependencies import (
     get_file_icon,
     PortalFileAutoRegisterRequest,
     PortalFileAutoRegisterResponse,
+    verify_workset_ownership,
 )
 from daylib.workset_state_db import WorksetStateDB, WorksetState
 
@@ -706,6 +708,12 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
 
     # ========== Worksets Routes ==========
 
+    # Create region-aware S3 client for portal operations (supports cross-region buckets)
+    _portal_s3_client = RegionAwareS3Client(
+        default_region=deps.region,
+        profile=deps.profile,
+    )
+
     def _get_s3_sentinel_status(bucket: str, prefix: str) -> str:
         """Get workset status from S3 sentinel files.
 
@@ -717,12 +725,6 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         5. daylily.ready -> ready
         6. No sentinels -> unknown
         """
-        import boto3
-        session_kwargs = {"region_name": deps.region}
-        if deps.profile:
-            session_kwargs["profile_name"] = deps.profile
-        s3 = boto3.Session(**session_kwargs).client("s3")
-
         # Sentinel file names
         sentinels = {
             "daylily.complete": "complete",
@@ -737,7 +739,8 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
             prefix = prefix + "/"
 
         try:
-            response = s3.list_objects_v2(Bucket=bucket, Prefix=prefix, MaxKeys=100)
+            # Use region-aware S3 client to handle cross-region buckets
+            response = _portal_s3_client.list_objects_v2(Bucket=bucket, Prefix=prefix, MaxKeys=100)
             found_sentinels = set()
             for obj in response.get("Contents", []):
                 key = obj["Key"]
@@ -773,8 +776,33 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         auth_redirect = _require_portal_auth(request)
         if auth_redirect:
             return auth_redirect
-        customer, _ = _get_customer_for_session(request, deps)
+        customer, customer_config = _get_customer_for_session(request, deps)
         worksets = []
+
+        # Get customer_id for filtering (security: only show customer's own worksets)
+        session_customer_id = None
+        if customer:
+            session_customer_id = customer.customer_id
+        if not session_customer_id:
+            LOGGER.warning("No customer_id in session - returning empty workset list")
+            # Return empty list if no customer context (security)
+            return deps.templates.TemplateResponse(
+                request,
+                "worksets/list.html",
+                _get_template_context(
+                    request, deps,
+                    customer=customer,
+                    worksets=[],
+                    current_page=1,
+                    total_pages=1,
+                    total_count=0,
+                    filter_status=status,
+                    filter_type=type,
+                    filter_search=search,
+                    filter_sort=sort,
+                    active_page="worksets",
+                ),
+            )
 
         # Determine which states to query based on status filter
         excluded_states = {WorksetState.ARCHIVED, WorksetState.DELETED}
@@ -795,6 +823,12 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                     continue
                 batch = deps.state_db.list_worksets_by_state(ws_state, limit=100)
                 worksets.extend(batch)
+
+        # SECURITY: Filter to only this customer's worksets
+        worksets = [
+            w for w in worksets
+            if verify_workset_ownership(w, session_customer_id)
+        ]
 
         # Process worksets and apply additional filters
         filtered_worksets = []
@@ -919,21 +953,25 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         auth_redirect = _require_portal_auth(request)
         if auth_redirect:
             return auth_redirect
-        customer = None
+        customer, _ = _get_customer_for_session(request, deps)
         archived_worksets = []
-        if deps.customer_manager:
-            customers = deps.customer_manager.list_customers()
-            if customers:
-                customer = convert_customer_for_template(customers[0])
-                all_archived = deps.state_db.list_archived_worksets(limit=500)
-                LOGGER.info("Found %d total archived worksets in DynamoDB", len(all_archived))
-                customer_config = deps.customer_manager.get_customer_config(customers[0].customer_id)
-                if customer_config:
-                    LOGGER.debug("Customer bucket: %s", customer_config.s3_bucket)
-                    archived_worksets = [w for w in all_archived if w.get("bucket") == customer_config.s3_bucket]
-                    LOGGER.info("After customer bucket filter: %d archived worksets", len(archived_worksets))
-                else:
-                    LOGGER.warning("No customer config found for %s", customers[0].customer_id)
+
+        # Get customer_id for filtering (security: only show customer's own worksets)
+        session_customer_id = None
+        if customer:
+            session_customer_id = customer.customer_id
+
+        if session_customer_id:
+            all_archived = deps.state_db.list_archived_worksets(limit=500)
+            LOGGER.info("Found %d total archived worksets in DynamoDB", len(all_archived))
+            # SECURITY: Filter by customer_id ownership
+            archived_worksets = [
+                w for w in all_archived
+                if verify_workset_ownership(w, session_customer_id)
+            ]
+            LOGGER.info("After customer_id filter: %d archived worksets", len(archived_worksets))
+        else:
+            LOGGER.warning("No customer_id in session - returning empty archived workset list")
         # Ensure workset_type is available for each archived workset
         for ws in archived_worksets:
             metadata = ws.get("metadata", {})
@@ -961,6 +999,16 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         if not workset:
             raise HTTPException(status_code=404, detail="Workset not found")
         customer, _ = _get_customer_for_session(request, deps)
+
+        # SECURITY: Verify workset ownership before displaying
+        if customer and not verify_workset_ownership(workset, customer.customer_id):
+            LOGGER.warning(
+                "Access denied: customer %s attempted to view workset %s owned by %s",
+                customer.customer_id,
+                workset_id,
+                workset.get("customer_id", "unknown"),
+            )
+            raise HTTPException(status_code=404, detail="Workset not found")
         metadata = workset.get("metadata", {})
         if metadata:
             if "samples" in metadata and "samples" not in workset:
@@ -987,6 +1035,17 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         workset = deps.state_db.get_workset(workset_id)
         if not workset:
             raise HTTPException(status_code=404, detail="Workset not found")
+
+        # SECURITY: Verify workset ownership before allowing download
+        customer, _ = _get_customer_for_session(request, deps)
+        if customer and not verify_workset_ownership(workset, customer.customer_id):
+            LOGGER.warning(
+                "Access denied: customer %s attempted to download workset %s",
+                customer.customer_id,
+                workset_id,
+            )
+            raise HTTPException(status_code=404, detail="Workset not found")
+
         if workset.get("state") != "complete":
             raise HTTPException(status_code=400, detail=f"Workset is not complete (current state: {workset.get('state')})")
         bucket = workset.get("bucket")
@@ -1030,6 +1089,15 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         customer, _ = _get_customer_for_session(request, deps)
         workset = deps.state_db.get_workset(workset_id)
         if not workset:
+            raise HTTPException(status_code=404, detail="Workset not found")
+
+        # SECURITY: Verify workset ownership before allowing browse
+        if customer and not verify_workset_ownership(workset, customer.customer_id):
+            LOGGER.warning(
+                "Access denied: customer %s attempted to browse workset %s results",
+                customer.customer_id,
+                workset_id,
+            )
             raise HTTPException(status_code=404, detail="Workset not found")
 
         # Get results S3 URI
@@ -1153,6 +1221,16 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
             return auth_redirect
         workset = deps.state_db.get_workset(workset_id)
         if not workset:
+            raise HTTPException(status_code=404, detail="Workset not found")
+
+        # SECURITY: Verify workset ownership before allowing download
+        customer, _ = _get_customer_for_session(request, deps)
+        if customer and not verify_workset_ownership(workset, customer.customer_id):
+            LOGGER.warning(
+                "Access denied: customer %s attempted to download from workset %s",
+                customer.customer_id,
+                workset_id,
+            )
             raise HTTPException(status_code=404, detail="Workset not found")
 
         results_uri = workset.get("results_s3_uri")
