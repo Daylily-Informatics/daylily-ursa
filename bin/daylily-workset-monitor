@@ -180,9 +180,11 @@ def setup_integration_components(
         try:
             from daylib.workset_integration import WorksetIntegration
 
+            # Note: bucket is optional - each workset has its own bucket from cluster region
+            # Use sentinel_index_bucket if configured, otherwise None
             integration = WorksetIntegration(
                 state_db=components["state_db"],
-                bucket=config.monitor.bucket,
+                bucket=config.monitor.sentinel_index_bucket,
                 prefix=config.monitor.normalised_prefix(),
                 notification_manager=components["notification_manager"],
                 region=config.aws.region,

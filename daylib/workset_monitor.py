@@ -563,13 +563,40 @@ class WorksetMonitor:
         """Register all discovered clusters with the scheduler.
 
         Called during monitor startup to populate scheduler with available clusters.
+        Uses pcluster list-clusters to discover clusters in the configured region.
         """
         if not self.scheduler:
             return
 
         try:
-            clusters = self._list_clusters()
-            for cluster_name in clusters:
+            LOGGER.debug("Discovering clusters in %s for scheduler registration", self.config.aws.region)
+            cmd = ["pcluster", "list-clusters", "--region", self.config.aws.region]
+            result = self._run_command(cmd, check=False, env=self._pcluster_env())
+            if result.returncode != 0:
+                LOGGER.debug(
+                    "Unable to list clusters for scheduler (exit %s): %s",
+                    result.returncode,
+                    result.stderr.decode(errors="ignore"),
+                )
+                return
+
+            payload = self._load_pcluster_json(result.stdout)
+            if not isinstance(payload, dict):
+                LOGGER.debug("Unexpected list-clusters output for scheduler")
+                return
+
+            clusters = payload.get("clusters")
+            if not isinstance(clusters, list):
+                return
+
+            registered_count = 0
+            for cluster in clusters:
+                if not isinstance(cluster, dict):
+                    continue
+                name_raw = cluster.get("clusterName")
+                if not name_raw or not isinstance(name_raw, str):
+                    continue
+                cluster_name: str = name_raw
                 details = self._describe_cluster(cluster_name)
                 if details and self._cluster_is_ready(details):
                     zone = self._extract_cluster_zone(details) or "unknown"
@@ -578,6 +605,9 @@ class WorksetMonitor:
                         availability_zone=zone,
                     )
                     LOGGER.info("Registered cluster %s (zone=%s) with scheduler", cluster_name, zone)
+                    registered_count += 1
+
+            LOGGER.info("Registered %d cluster(s) with scheduler", registered_count)
         except Exception as e:
             LOGGER.warning("Failed to register clusters with scheduler: %s", str(e))
 
