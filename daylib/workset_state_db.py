@@ -1037,6 +1037,177 @@ class WorksetStateDB:
             LOGGER.warning("Failed to get performance metrics for %s: %s", workset_id, str(e))
             return None
 
+    def update_cost_report(
+        self,
+        workset_id: str,
+        total_compute_cost_usd: float,
+        per_sample_costs: Optional[Dict[str, float]] = None,
+        rule_count: Optional[int] = None,
+        sample_count: Optional[int] = None,
+    ) -> bool:
+        """Store parsed Snakemake cost report data in dedicated fields.
+
+        This stores the actual compute cost from the Snakemake benchmark data,
+        enabling accurate billing and cost tracking per workset.
+
+        Args:
+            workset_id: Workset identifier
+            total_compute_cost_usd: Total compute cost in USD from benchmark data
+            per_sample_costs: Dict mapping sample names to their compute costs
+            rule_count: Number of Snakemake rules executed
+            sample_count: Number of samples processed
+
+        Returns:
+            True if update succeeded
+        """
+        now_iso = dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
+
+        update_expr = "SET updated_at = :now, total_compute_cost_usd = :cost, cost_report_parsed_at = :parsed_at"
+        expr_values: Dict[str, Any] = {
+            ":now": now_iso,
+            ":cost": str(total_compute_cost_usd),  # Store as string for DynamoDB precision
+            ":parsed_at": now_iso,
+        }
+
+        if per_sample_costs is not None:
+            update_expr += ", per_sample_costs = :psc"
+            # Convert float values to strings for DynamoDB precision
+            expr_values[":psc"] = {k: str(v) for k, v in per_sample_costs.items()}
+
+        if rule_count is not None:
+            update_expr += ", cost_report_rule_count = :rc"
+            expr_values[":rc"] = rule_count
+
+        if sample_count is not None:
+            update_expr += ", cost_report_sample_count = :sc"
+            expr_values[":sc"] = sample_count
+
+        try:
+            self.table.update_item(
+                Key={"workset_id": workset_id},
+                UpdateExpression=update_expr,
+                ExpressionAttributeValues=expr_values,
+            )
+            LOGGER.info(
+                "Stored cost report for %s: $%.4f total (%d samples, %d rules)",
+                workset_id,
+                total_compute_cost_usd,
+                sample_count or 0,
+                rule_count or 0,
+            )
+            return True
+        except ClientError as e:
+            LOGGER.warning("Failed to store cost report for %s: %s", workset_id, str(e))
+            return False
+
+    def get_cost_report(self, workset_id: str) -> Optional[Dict[str, Any]]:
+        """Get stored cost report data for a workset.
+
+        Returns:
+            Dict with total_compute_cost_usd, per_sample_costs, cost_report_parsed_at,
+            cost_report_rule_count, cost_report_sample_count, or None if not found
+        """
+        try:
+            response = self.table.get_item(
+                Key={"workset_id": workset_id},
+                ProjectionExpression="total_compute_cost_usd, per_sample_costs, cost_report_parsed_at, cost_report_rule_count, cost_report_sample_count",
+            )
+            if "Item" not in response:
+                return None
+            item = response["Item"]
+            result: Dict[str, Any] = {}
+            if "total_compute_cost_usd" in item:
+                result["total_compute_cost_usd"] = float(item["total_compute_cost_usd"])
+            if "per_sample_costs" in item:
+                # Convert string values back to floats
+                result["per_sample_costs"] = {k: float(v) for k, v in item["per_sample_costs"].items()}
+            if "cost_report_parsed_at" in item:
+                result["cost_report_parsed_at"] = item["cost_report_parsed_at"]
+            if "cost_report_rule_count" in item:
+                result["cost_report_rule_count"] = int(item["cost_report_rule_count"])
+            if "cost_report_sample_count" in item:
+                result["cost_report_sample_count"] = int(item["cost_report_sample_count"])
+            return result if result else None
+        except ClientError as e:
+            LOGGER.warning("Failed to get cost report for %s: %s", workset_id, str(e))
+            return None
+
+    def update_storage_metrics(
+        self,
+        workset_id: str,
+        results_storage_bytes: int,
+        fsx_storage_bytes: Optional[int] = None,
+    ) -> bool:
+        """Store storage metrics for a workset.
+
+        This stores the actual storage consumption after export, enabling
+        per-GB billing and storage tracking.
+
+        Args:
+            workset_id: Workset identifier
+            results_storage_bytes: Total size of exported results in S3 (bytes)
+            fsx_storage_bytes: Size of FSx working directory before cleanup (bytes)
+
+        Returns:
+            True if update succeeded
+        """
+        now_iso = dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
+
+        update_expr = "SET updated_at = :now, results_storage_bytes = :rsb, storage_calculated_at = :calc_at"
+        expr_values: Dict[str, Any] = {
+            ":now": now_iso,
+            ":rsb": results_storage_bytes,
+            ":calc_at": now_iso,
+        }
+
+        if fsx_storage_bytes is not None:
+            update_expr += ", fsx_storage_bytes = :fsb"
+            expr_values[":fsb"] = fsx_storage_bytes
+
+        try:
+            self.table.update_item(
+                Key={"workset_id": workset_id},
+                UpdateExpression=update_expr,
+                ExpressionAttributeValues=expr_values,
+            )
+            LOGGER.info(
+                "Stored storage metrics for %s: %d bytes results, %s bytes FSx",
+                workset_id,
+                results_storage_bytes,
+                fsx_storage_bytes if fsx_storage_bytes is not None else "N/A",
+            )
+            return True
+        except ClientError as e:
+            LOGGER.warning("Failed to store storage metrics for %s: %s", workset_id, str(e))
+            return False
+
+    def get_storage_metrics(self, workset_id: str) -> Optional[Dict[str, Any]]:
+        """Get stored storage metrics for a workset.
+
+        Returns:
+            Dict with results_storage_bytes, fsx_storage_bytes, storage_calculated_at,
+            or None if not found
+        """
+        try:
+            response = self.table.get_item(
+                Key={"workset_id": workset_id},
+                ProjectionExpression="results_storage_bytes, fsx_storage_bytes, storage_calculated_at",
+            )
+            if "Item" not in response:
+                return None
+            item = response["Item"]
+            result: Dict[str, Any] = {}
+            if "results_storage_bytes" in item:
+                result["results_storage_bytes"] = int(item["results_storage_bytes"])
+            if "fsx_storage_bytes" in item:
+                result["fsx_storage_bytes"] = int(item["fsx_storage_bytes"])
+            if "storage_calculated_at" in item:
+                result["storage_calculated_at"] = item["storage_calculated_at"]
+            return result if result else None
+        except ClientError as e:
+            LOGGER.warning("Failed to get storage metrics for %s: %s", workset_id, str(e))
+            return None
+
     def list_worksets_by_state(
         self,
         state: WorksetState,

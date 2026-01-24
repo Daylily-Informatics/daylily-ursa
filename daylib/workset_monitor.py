@@ -151,6 +151,7 @@ class MonitorOptions:
     sentinel_index_bucket: Optional[str] = None  # Bucket for sentinel index (optional global feature)
     archive_prefix: Optional[str] = None
     max_concurrent_worksets: int = 1
+    use_concurrent_processor: bool = False  # Use ConcurrentWorksetProcessor instead of ThreadPoolExecutor
 
     def normalised_prefix(self) -> str:
         prefix = self.prefix.lstrip("/")
@@ -422,6 +423,7 @@ class WorksetMonitor:
         state_db: Optional[Any] = None,
         integration: Optional[Any] = None,
         notification_manager: Optional[Any] = None,
+        scheduler: Optional[Any] = None,
     ) -> None:
         """Initialize the workset monitor.
 
@@ -435,6 +437,7 @@ class WorksetMonitor:
             state_db: Optional DynamoDB state database for unified state tracking
             integration: Optional WorksetIntegration for unified state operations
             notification_manager: Optional notification manager for alerts
+            scheduler: Optional WorksetScheduler for priority-based workset selection
         """
         self.config = config
         self.dry_run = dry_run
@@ -446,6 +449,7 @@ class WorksetMonitor:
         self.state_db = state_db
         self.integration = integration
         self.notification_manager = notification_manager
+        self.scheduler = scheduler
 
         self._session = boto3.session.Session(**config.aws.session_kwargs())
         # Use region-aware S3 client for cross-region bucket operations
@@ -484,6 +488,258 @@ class WorksetMonitor:
             self.ursa_config = get_ursa_config()
         except Exception:
             LOGGER.debug("UrsaConfig not available; region-specific SSH keys disabled")
+
+    # ------------------------------------------------------------------
+    # Scheduler integration
+    # ------------------------------------------------------------------
+    def register_cluster_capacity(
+        self,
+        cluster_name: str,
+        availability_zone: str,
+        max_vcpus: int = 1000,
+        max_memory_gb: float = 4000.0,
+        max_concurrent_worksets: int = 3,
+        cost_per_vcpu_hour: float = 0.05,
+    ) -> None:
+        """Register a cluster's capacity with the scheduler.
+
+        Args:
+            cluster_name: Name of the cluster
+            availability_zone: AWS availability zone
+            max_vcpus: Maximum vCPUs available
+            max_memory_gb: Maximum memory in GB
+            max_concurrent_worksets: Max concurrent worksets on this cluster
+            cost_per_vcpu_hour: Cost per vCPU hour (for cost optimization)
+        """
+        if not self.scheduler:
+            LOGGER.debug("No scheduler configured; skipping cluster registration")
+            return
+
+        from daylib.workset_scheduler import ClusterCapacity
+
+        capacity = ClusterCapacity(
+            cluster_name=cluster_name,
+            availability_zone=availability_zone,
+            max_vcpus=max_vcpus,
+            current_vcpus_used=0,
+            max_memory_gb=max_memory_gb,
+            current_memory_gb_used=0.0,
+            active_worksets=0,
+            max_concurrent_worksets=max_concurrent_worksets,
+            cost_per_vcpu_hour=cost_per_vcpu_hour,
+        )
+        self.scheduler.register_cluster(capacity)
+
+    def update_cluster_utilization(
+        self,
+        cluster_name: str,
+        vcpus_used: int = 0,
+        memory_gb_used: float = 0.0,
+        active_worksets: Optional[int] = None,
+    ) -> None:
+        """Update cluster utilization metrics in the scheduler.
+
+        Args:
+            cluster_name: Name of the cluster
+            vcpus_used: Current vCPU usage
+            memory_gb_used: Current memory usage in GB
+            active_worksets: Number of active worksets (auto-calculated if None)
+        """
+        if not self.scheduler:
+            return
+
+        # Auto-calculate active worksets if not provided
+        if active_worksets is None:
+            active_worksets = self._get_active_count()
+
+        self.scheduler.update_cluster_utilization(
+            cluster_name=cluster_name,
+            vcpus_used=vcpus_used,
+            memory_gb_used=memory_gb_used,
+            active_worksets=active_worksets,
+        )
+
+    def _register_discovered_clusters(self) -> None:
+        """Register all discovered clusters with the scheduler.
+
+        Called during monitor startup to populate scheduler with available clusters.
+        """
+        if not self.scheduler:
+            return
+
+        try:
+            clusters = self._list_clusters()
+            for cluster_name in clusters:
+                details = self._describe_cluster(cluster_name)
+                if details and self._cluster_is_ready(details):
+                    zone = self._extract_cluster_zone(details) or "unknown"
+                    self.register_cluster_capacity(
+                        cluster_name=cluster_name,
+                        availability_zone=zone,
+                    )
+                    LOGGER.info("Registered cluster %s (zone=%s) with scheduler", cluster_name, zone)
+        except Exception as e:
+            LOGGER.warning("Failed to register clusters with scheduler: %s", str(e))
+
+    def _get_prioritized_worksets(self, worksets: List[Workset]) -> List[Workset]:
+        """Return worksets in priority order using the scheduler if available.
+
+        When a scheduler is configured, uses scheduler.get_next_workset() to
+        prioritize based on resource requirements and cost optimization.
+        Otherwise returns the worksets in original order.
+
+        Args:
+            worksets: List of discovered worksets
+
+        Returns:
+            List of worksets in priority order
+        """
+        if not self.scheduler:
+            return worksets
+
+        # Build a lookup from workset_id to Workset object
+        workset_lookup = {w.name: w for w in worksets}
+
+        # Get prioritized order from scheduler
+        prioritized: List[Workset] = []
+        processed_ids: set = set()
+
+        while True:
+            next_workset_data = self.scheduler.get_next_workset()
+            if not next_workset_data:
+                break
+
+            workset_id = next_workset_data.get("workset_id")
+            if not workset_id or workset_id in processed_ids:
+                break
+
+            processed_ids.add(workset_id)
+
+            # Map scheduler result back to our Workset object
+            if workset_id in workset_lookup:
+                prioritized.append(workset_lookup[workset_id])
+
+        # Append any worksets not returned by scheduler (edge case)
+        for workset in worksets:
+            if workset.name not in processed_ids:
+                prioritized.append(workset)
+
+        return prioritized
+
+    # ------------------------------------------------------------------
+    # Concurrent processor integration
+    # ------------------------------------------------------------------
+    def create_workset_executor(self) -> "Callable[[Dict, Any], bool]":
+        """Create a workset executor adapter for ConcurrentWorksetProcessor.
+
+        Returns a callable that wraps monitor._process_workset for use with
+        the ConcurrentWorksetProcessor's workset_executor parameter.
+
+        Returns:
+            Callable that processes a workset dict and returns success boolean
+        """
+        def executor(workset_data: Dict, decision: Any) -> bool:
+            """Execute a workset using the monitor's processing logic.
+
+            Args:
+                workset_data: Workset dict from DynamoDB
+                decision: SchedulingDecision from scheduler
+
+            Returns:
+                True if processing succeeded, False otherwise
+            """
+            workset_id = workset_data.get("workset_id", "")
+            if not workset_id:
+                LOGGER.error("Workset data missing workset_id")
+                return False
+
+            try:
+                # Build Workset object from dict
+                bucket = workset_data.get("bucket", "")
+                prefix = workset_data.get("prefix", f"{self.config.monitor.normalised_prefix()}{workset_id}/")
+                state = workset_data.get("state", "ready")
+
+                sentinels: Dict[str, str] = {}
+                created_at = workset_data.get("created_at", "")
+                if state == "ready":
+                    sentinels[SENTINEL_FILES["ready"]] = created_at
+                elif state == "in_progress":
+                    sentinels[SENTINEL_FILES["in_progress"]] = created_at
+
+                has_required = self._verify_core_files(prefix, bucket=bucket)
+
+                workset = Workset(
+                    name=workset_id,
+                    prefix=prefix,
+                    sentinels=sentinels,
+                    has_required_files=has_required,
+                    is_archived=False,
+                    bucket=bucket,
+                )
+
+                # Process the workset
+                self._handle_workset(workset)
+                return True
+
+            except Exception as e:
+                LOGGER.error("Executor failed for %s: %s", workset_id, str(e))
+                return False
+
+        return executor
+
+    def run_with_concurrent_processor(self) -> None:
+        """Run the monitor using ConcurrentWorksetProcessor.
+
+        This is an alternative to run() that uses the ConcurrentWorksetProcessor
+        for more advanced scheduling, validation, and retry handling.
+
+        Requires scheduler and state_db to be configured.
+        """
+        if not self.scheduler:
+            raise MonitorError("Scheduler is required for concurrent processor mode")
+        if not self.state_db:
+            raise MonitorError("DynamoDB state_db is required for concurrent processor mode")
+
+        from daylib.workset_concurrent_processor import (
+            ConcurrentWorksetProcessor,
+            ProcessorConfig,
+        )
+
+        LOGGER.info("Starting Daylily workset monitor in concurrent processor mode")
+        LOGGER.info("Region: %s, max_concurrent: %d",
+                    self.config.aws.region,
+                    self.config.monitor.max_concurrent_worksets)
+
+        # Register discovered clusters with scheduler
+        self._register_discovered_clusters()
+
+        # Create processor config from monitor config
+        processor_config = ProcessorConfig(
+            max_concurrent_worksets=self.config.monitor.max_concurrent_worksets,
+            max_workers=self.config.monitor.max_concurrent_worksets,
+            poll_interval_seconds=self.config.monitor.poll_interval_seconds,
+            enable_retry=True,
+            enable_validation=True,
+            enable_notifications=self.notification_manager is not None,
+        )
+
+        # Create processor with our workset executor
+        processor = ConcurrentWorksetProcessor(
+            state_db=self.state_db,
+            scheduler=self.scheduler,
+            config=processor_config,
+            validator=None,  # Could add validator support later
+            notification_manager=self.notification_manager,
+            workset_executor=self.create_workset_executor(),
+        )
+
+        try:
+            processor.start()
+        except KeyboardInterrupt:
+            LOGGER.info("Received interrupt, stopping processor...")
+            processor.stop()
+        finally:
+            LOGGER.info("Concurrent processor shutdown complete")
 
     # ------------------------------------------------------------------
     # Public entrypoints
@@ -536,12 +792,28 @@ class WorksetMonitor:
     def _handle_workset_async(self, workset: Workset) -> None:
         """Handle a single workset in a worker thread.
 
-        This method wraps _handle_workset to ensure proper cleanup of active state.
+        This method wraps _handle_workset to ensure proper cleanup of active state
+        and updates the scheduler with cluster utilization changes.
         """
+        cluster_name = None
         try:
             self._handle_workset(workset)
         finally:
+            # Get cluster name from workset metrics for scheduler update
+            metrics = self._workset_metrics.get(workset.name, {})
+            cluster_name = metrics.get("cluster_name")
+
             self._mark_workset_inactive(workset.name)
+
+            # Update scheduler with reduced cluster utilization
+            if self.scheduler and cluster_name:
+                try:
+                    self.update_cluster_utilization(
+                        cluster_name=cluster_name,
+                        active_worksets=self._get_active_count(),
+                    )
+                except Exception as e:
+                    LOGGER.debug("Failed to update scheduler after %s: %s", workset.name, str(e))
 
     def _collect_completed_futures(self) -> None:
         """Check for completed futures and clean up."""
@@ -558,6 +830,9 @@ class WorksetMonitor:
 
         Uses a ThreadPoolExecutor to process multiple worksets in parallel up to
         the configured max_concurrent_worksets limit.
+
+        If a scheduler is configured, it will be used for priority-based workset
+        selection and cluster capacity tracking.
         """
         LOGGER.info("Starting Daylily workset monitor in %s", self.config.aws.region)
         LOGGER.info(
@@ -565,11 +840,16 @@ class WorksetMonitor:
             self.config.monitor.normalised_prefix(),
         )
         LOGGER.info(
-            "Poll interval: %ds, continuous: %s, max parallel: %d",
+            "Poll interval: %ds, continuous: %s, max parallel: %d, scheduler: %s",
             self.config.monitor.poll_interval_seconds,
             self.config.monitor.continuous,
             self.config.monitor.max_concurrent_worksets,
+            "enabled" if self.scheduler else "disabled",
         )
+
+        # Register discovered clusters with scheduler at startup
+        if self.scheduler:
+            self._register_discovered_clusters()
 
         max_workers = self.config.monitor.max_concurrent_worksets
         self._executor = concurrent.futures.ThreadPoolExecutor(
@@ -601,8 +881,11 @@ class WorksetMonitor:
                     )
                     self._update_sentinel_indexes(worksets)
 
+                    # Prioritize worksets using scheduler if available
+                    prioritized_worksets = self._get_prioritized_worksets(worksets)
+
                     # Submit ready worksets to the thread pool
-                    for workset in worksets:
+                    for workset in prioritized_worksets:
                         # Skip if workset is already being processed
                         if self._is_workset_active(workset.name):
                             continue
@@ -3344,10 +3627,40 @@ class WorksetMonitor:
                             "Total compute cost for %s: $%.4f",
                             workset.name, total_cost,
                         )
+                    # Store cost report in dedicated DynamoDB fields (Phase 5B)
+                    if self.state_db:
+                        try:
+                            cost_summary = perf_metrics["cost_summary"]
+                            self.state_db.update_cost_report(
+                                workset_id=workset.name,
+                                total_compute_cost_usd=cost_summary.get("total_cost", 0.0),
+                                per_sample_costs=cost_summary.get("per_sample_costs"),
+                                rule_count=cost_summary.get("rule_count"),
+                                sample_count=cost_summary.get("sample_count"),
+                            )
+                        except Exception as cost_exc:
+                            LOGGER.warning(
+                                "Failed to store cost report for %s: %s",
+                                workset.name, cost_exc,
+                            )
         except Exception as exc:
             LOGGER.warning("Failed to fetch performance metrics from S3 for %s: %s", workset.name, exc)
 
-        # Store metrics in DynamoDB
+        # Store storage metrics in dedicated DynamoDB fields (Phase 5C)
+        if self.state_db and metrics.get("analysis_directory_size_bytes"):
+            try:
+                self.state_db.update_storage_metrics(
+                    workset_id=workset.name,
+                    results_storage_bytes=metrics["analysis_directory_size_bytes"],
+                    fsx_storage_bytes=None,  # FSx size not available after export
+                )
+            except Exception as storage_exc:
+                LOGGER.warning(
+                    "Failed to store storage metrics for %s: %s",
+                    workset.name, storage_exc,
+                )
+
+        # Store metrics in DynamoDB (legacy performance_metrics field)
         if metrics and self.state_db:
             try:
                 self.state_db.update_performance_metrics(

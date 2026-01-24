@@ -16,7 +16,7 @@ import re
 import tarfile
 import uuid
 import zipfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -2692,9 +2692,9 @@ def create_app(
             """Get cost breakdown by category.
 
             Returns compute, storage, and transfer costs.
-            - Compute: From benchmark data (actual) or estimates
-            - Storage: $0.023/GB/month for S3 Standard
-            - Transfer: $0.10/GB placeholder rate
+            - Compute: From dedicated cost_report fields (Phase 5B) or estimates
+            - Storage: From dedicated storage_metrics fields (Phase 5C) at $0.023/GB/month
+            - Transfer: Per-GB rate for data egress
             """
             if not customer_manager:
                 raise HTTPException(
@@ -2711,23 +2711,43 @@ def create_app(
 
             # Cost calculation constants
             S3_STORAGE_COST_PER_GB_MONTH = 0.023  # S3 Standard storage
-            TRANSFER_COST_PER_GB = 0.10  # Placeholder transfer cost
+            TRANSFER_COST_PER_GB = 0.09  # AWS data transfer out
 
-            # Get all completed worksets
-            completed_worksets = state_db.list_worksets_by_state(WorksetState.COMPLETE, limit=500)
-            customer_worksets = [ws for ws in completed_worksets if verify_workset_ownership(ws, customer_id)]
+            # Get customer worksets using efficient GSI query
+            customer_worksets = state_db.list_worksets_by_customer(
+                customer_id, state=WorksetState.COMPLETE, limit=500
+            )
 
             total_compute_cost = 0.0
             total_storage_bytes = 0
+            has_actual_costs = False
 
             for ws in customer_worksets:
-                pm = ws.get("performance_metrics", {})
-                if pm and isinstance(pm, dict):
-                    cost_summary = pm.get("cost_summary", {})
-                    if cost_summary and isinstance(cost_summary, dict):
-                        total_compute_cost += float(cost_summary.get("total_cost", 0))
+                workset_id = ws.get("workset_id", "")
+
+                # Try dedicated cost_report fields first (Phase 5B)
+                cost_report = state_db.get_cost_report(workset_id)
+                if cost_report and cost_report.get("total_compute_cost_usd"):
+                    total_compute_cost += cost_report["total_compute_cost_usd"]
+                    has_actual_costs = True
+                else:
+                    # Fall back to performance_metrics or estimates
+                    pm = ws.get("performance_metrics", {})
+                    if pm and isinstance(pm, dict):
+                        cost_summary = pm.get("cost_summary", {})
+                        if cost_summary and isinstance(cost_summary, dict):
+                            total_compute_cost += float(cost_summary.get("total_cost", 0))
+                            has_actual_costs = True
+                        else:
+                            # Fall back to estimated
+                            cost = float(ws.get("cost_usd", 0) or 0)
+                            if cost == 0:
+                                metadata = ws.get("metadata", {})
+                                if isinstance(metadata, dict):
+                                    cost = float(metadata.get("cost_usd", 0) or metadata.get("estimated_cost_usd", 0) or 0)
+                            total_compute_cost += cost
                     else:
-                        # Fall back to estimated
+                        # Fall back to estimated cost
                         cost = float(ws.get("cost_usd", 0) or 0)
                         if cost == 0:
                             metadata = ws.get("metadata", {})
@@ -2735,18 +2755,17 @@ def create_app(
                                 cost = float(metadata.get("cost_usd", 0) or metadata.get("estimated_cost_usd", 0) or 0)
                         total_compute_cost += cost
 
-                    # Collect storage from export metrics
-                    export_metrics = pm.get("post_export_metrics", {}) or pm.get("pre_export_metrics", {})
-                    if export_metrics and isinstance(export_metrics, dict):
-                        total_storage_bytes += int(export_metrics.get("analysis_directory_size_bytes", 0) or 0)
+                # Try dedicated storage_metrics fields first (Phase 5C)
+                storage_metrics = state_db.get_storage_metrics(workset_id)
+                if storage_metrics and storage_metrics.get("results_storage_bytes"):
+                    total_storage_bytes += storage_metrics["results_storage_bytes"]
                 else:
-                    # Fall back to estimated cost
-                    cost = float(ws.get("cost_usd", 0) or 0)
-                    if cost == 0:
-                        metadata = ws.get("metadata", {})
-                        if isinstance(metadata, dict):
-                            cost = float(metadata.get("cost_usd", 0) or metadata.get("estimated_cost_usd", 0) or 0)
-                    total_compute_cost += cost
+                    # Fall back to performance_metrics
+                    pm = ws.get("performance_metrics", {})
+                    if pm and isinstance(pm, dict):
+                        export_metrics = pm.get("post_export_metrics", {}) or pm.get("pre_export_metrics", {})
+                        if export_metrics and isinstance(export_metrics, dict):
+                            total_storage_bytes += int(export_metrics.get("analysis_directory_size_bytes", 0) or 0)
 
             # Calculate storage and transfer costs
             storage_gb = total_storage_bytes / (1024**3)
@@ -2779,10 +2798,154 @@ def create_app(
                 "categories": categories,
                 "values": values,
                 "total": round(total, 2),
-                "has_actual_costs": total_compute_cost > 0,
+                "has_actual_costs": has_actual_costs,
                 "compute_cost_usd": round(total_compute_cost, 2),
                 "storage_cost_usd": round(storage_cost, 4),
                 "transfer_cost_usd": round(transfer_cost, 4),
+                "storage_gb": round(storage_gb, 2),
+            }
+
+    # ========== Billing Endpoints (Phase 5D) ==========
+
+    if state_db and customer_manager:
+        from daylib.billing import BillingCalculator, BillingRates
+
+        # Initialize billing calculator with default rates
+        billing_calculator = BillingCalculator(state_db=state_db)
+
+        @app.get("/api/customers/{customer_id}/billing/summary", tags=["billing"])
+        async def get_customer_billing_summary(
+            customer_id: str,
+            days: int = Query(30, ge=1, le=365, description="Number of days to include"),
+        ):
+            """Get billing summary for a customer.
+
+            Returns aggregated costs from completed worksets including:
+            - Compute costs (from Snakemake benchmark data)
+            - Storage costs (per-GB S3 storage)
+            - Transfer costs (data egress)
+            - Platform fees (if configured)
+            """
+            config = customer_manager.get_customer_config(customer_id)
+            if not config:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Customer {customer_id} not found",
+                )
+
+            period_end = datetime.now(timezone.utc)
+            period_start = period_end - timedelta(days=days)
+
+            summary = billing_calculator.calculate_customer_billing(
+                customer_id=customer_id,
+                period_start=period_start,
+                period_end=period_end,
+            )
+
+            return {
+                "customer_id": customer_id,
+                "period_start": summary.period_start,
+                "period_end": summary.period_end,
+                "total_worksets": summary.total_worksets,
+                "billable_worksets": summary.billable_worksets,
+                "total_samples": summary.total_samples,
+                "total_storage_gb": summary.total_storage_gb,
+                "costs": {
+                    "compute_usd": summary.total_compute_cost_usd,
+                    "storage_usd": summary.total_storage_cost_usd,
+                    "transfer_usd": summary.total_transfer_cost_usd,
+                    "platform_fee_usd": summary.total_platform_fee_usd,
+                    "grand_total_usd": summary.grand_total_usd,
+                },
+                "accuracy": {
+                    "has_actual_costs": summary.has_actual_costs,
+                    "estimated_worksets": summary.estimated_worksets,
+                },
+            }
+
+        @app.get("/api/customers/{customer_id}/billing/invoice", tags=["billing"])
+        async def get_customer_invoice(
+            customer_id: str,
+            days: int = Query(30, ge=1, le=365, description="Number of days to include"),
+        ):
+            """Generate invoice data for a customer.
+
+            Returns detailed invoice with line items for each workset.
+            Suitable for rendering invoices or exporting to billing systems.
+            """
+            config = customer_manager.get_customer_config(customer_id)
+            if not config:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Customer {customer_id} not found",
+                )
+
+            period_end = datetime.now(timezone.utc)
+            period_start = period_end - timedelta(days=days)
+
+            invoice_data = billing_calculator.generate_invoice_data(
+                customer_id=customer_id,
+                period_start=period_start,
+                period_end=period_end,
+            )
+
+            # Add customer info
+            invoice_data["customer_name"] = config.customer_name
+            invoice_data["customer_email"] = config.email
+            invoice_data["billing_account_id"] = config.billing_account_id
+            invoice_data["cost_center"] = config.cost_center
+
+            return invoice_data
+
+        @app.get("/api/customers/{customer_id}/billing/workset/{workset_id}", tags=["billing"])
+        async def get_workset_billing(
+            customer_id: str,
+            workset_id: str,
+        ):
+            """Get billing details for a specific workset.
+
+            Returns detailed cost breakdown including actual vs estimated costs.
+            """
+            config = customer_manager.get_customer_config(customer_id)
+            if not config:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Customer {customer_id} not found",
+                )
+
+            workset = state_db.get_workset(workset_id)
+            if not workset:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Workset {workset_id} not found",
+                )
+
+            if not verify_workset_ownership(workset, customer_id):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Workset does not belong to this customer",
+                )
+
+            item = billing_calculator.calculate_workset_billing(workset)
+
+            return {
+                "workset_id": item.workset_id,
+                "customer_id": item.customer_id,
+                "completed_at": item.completed_at,
+                "samples": item.sample_count,
+                "rules_executed": item.rule_count,
+                "costs": {
+                    "compute_usd": billing_calculator._round_currency(item.compute_cost_usd, 2),
+                    "storage_gb": billing_calculator._round_currency(item.storage_gb, 2),
+                    "storage_usd": billing_calculator._round_currency(item.storage_cost_usd, 2),
+                    "transfer_usd": billing_calculator._round_currency(item.transfer_cost_usd, 2),
+                    "platform_fee_usd": billing_calculator._round_currency(item.platform_fee_usd, 2),
+                    "total_usd": billing_calculator._round_currency(item.total_cost_usd, 2),
+                },
+                "accuracy": {
+                    "has_actual_compute_cost": item.has_actual_compute_cost,
+                    "has_actual_storage": item.has_actual_storage,
+                },
             }
 
     # ========== Workset Validation Endpoints ==========

@@ -816,3 +816,201 @@ class TestBucketNormalizationInStateDB:
         item = call_args.kwargs["Item"]
         assert item["bucket"] == "plain-bucket-name"
 
+
+class TestCostReportStorage:
+    """Tests for Phase 5B: Snakemake cost report storage."""
+
+    def test_update_cost_report_success(self, state_db, mock_dynamodb):
+        """Test storing cost report data in DynamoDB."""
+        mock_table = mock_dynamodb["table"]
+        mock_table.update_item.return_value = {}
+
+        result = state_db.update_cost_report(
+            workset_id="test-ws-001",
+            total_compute_cost_usd=12.3456,
+            per_sample_costs={"HG002": 5.1234, "HG003": 7.2222},
+            rule_count=42,
+            sample_count=2,
+        )
+
+        assert result is True
+        call_args = mock_table.update_item.call_args
+        expr_values = call_args.kwargs["ExpressionAttributeValues"]
+        assert expr_values[":cost"] == "12.3456"
+        assert expr_values[":psc"] == {"HG002": "5.1234", "HG003": "7.2222"}
+        assert expr_values[":rc"] == 42
+        assert expr_values[":sc"] == 2
+
+    def test_update_cost_report_minimal(self, state_db, mock_dynamodb):
+        """Test storing cost report with only total cost."""
+        mock_table = mock_dynamodb["table"]
+        mock_table.update_item.return_value = {}
+
+        result = state_db.update_cost_report(
+            workset_id="test-ws-002",
+            total_compute_cost_usd=0.5,
+        )
+
+        assert result is True
+        call_args = mock_table.update_item.call_args
+        expr_values = call_args.kwargs["ExpressionAttributeValues"]
+        assert expr_values[":cost"] == "0.5"
+        assert ":psc" not in expr_values
+        assert ":rc" not in expr_values
+        assert ":sc" not in expr_values
+
+    def test_update_cost_report_handles_error(self, state_db, mock_dynamodb):
+        """Test update_cost_report returns False on DynamoDB error."""
+        mock_table = mock_dynamodb["table"]
+        mock_table.update_item.side_effect = ClientError(
+            {"Error": {"Code": "ValidationException", "Message": "Test error"}},
+            "UpdateItem",
+        )
+
+        result = state_db.update_cost_report(
+            workset_id="test-ws-003",
+            total_compute_cost_usd=1.0,
+        )
+
+        assert result is False
+
+    def test_get_cost_report_success(self, state_db, mock_dynamodb):
+        """Test retrieving cost report data from DynamoDB."""
+        mock_table = mock_dynamodb["table"]
+        mock_table.get_item.return_value = {
+            "Item": {
+                "total_compute_cost_usd": "12.3456",
+                "per_sample_costs": {"HG002": "5.1234", "HG003": "7.2222"},
+                "cost_report_parsed_at": "2026-01-24T10:00:00Z",
+                "cost_report_rule_count": 42,
+                "cost_report_sample_count": 2,
+            }
+        }
+
+        result = state_db.get_cost_report("test-ws-001")
+
+        assert result is not None
+        assert result["total_compute_cost_usd"] == 12.3456
+        assert result["per_sample_costs"] == {"HG002": 5.1234, "HG003": 7.2222}
+        assert result["cost_report_parsed_at"] == "2026-01-24T10:00:00Z"
+        assert result["cost_report_rule_count"] == 42
+        assert result["cost_report_sample_count"] == 2
+
+    def test_get_cost_report_not_found(self, state_db, mock_dynamodb):
+        """Test get_cost_report returns None when workset not found."""
+        mock_table = mock_dynamodb["table"]
+        mock_table.get_item.return_value = {}
+
+        result = state_db.get_cost_report("nonexistent-ws")
+
+        assert result is None
+
+    def test_get_cost_report_partial_data(self, state_db, mock_dynamodb):
+        """Test get_cost_report handles partial data."""
+        mock_table = mock_dynamodb["table"]
+        mock_table.get_item.return_value = {
+            "Item": {
+                "total_compute_cost_usd": "5.0",
+            }
+        }
+
+        result = state_db.get_cost_report("test-ws-partial")
+
+        assert result is not None
+        assert result["total_compute_cost_usd"] == 5.0
+        assert "per_sample_costs" not in result
+
+
+class TestStorageMetrics:
+    """Tests for Phase 5C: FSx + S3 storage tracking."""
+
+    def test_update_storage_metrics_success(self, state_db, mock_dynamodb):
+        """Test storing storage metrics in DynamoDB."""
+        mock_table = mock_dynamodb["table"]
+        mock_table.update_item.return_value = {}
+
+        result = state_db.update_storage_metrics(
+            workset_id="test-ws-001",
+            results_storage_bytes=1073741824,  # 1 GB
+            fsx_storage_bytes=2147483648,  # 2 GB
+        )
+
+        assert result is True
+        call_args = mock_table.update_item.call_args
+        expr_values = call_args.kwargs["ExpressionAttributeValues"]
+        assert expr_values[":rsb"] == 1073741824
+        assert expr_values[":fsb"] == 2147483648
+
+    def test_update_storage_metrics_without_fsx(self, state_db, mock_dynamodb):
+        """Test storing storage metrics without FSx size."""
+        mock_table = mock_dynamodb["table"]
+        mock_table.update_item.return_value = {}
+
+        result = state_db.update_storage_metrics(
+            workset_id="test-ws-002",
+            results_storage_bytes=536870912,  # 512 MB
+        )
+
+        assert result is True
+        call_args = mock_table.update_item.call_args
+        expr_values = call_args.kwargs["ExpressionAttributeValues"]
+        assert expr_values[":rsb"] == 536870912
+        assert ":fsb" not in expr_values
+
+    def test_update_storage_metrics_handles_error(self, state_db, mock_dynamodb):
+        """Test update_storage_metrics returns False on DynamoDB error."""
+        mock_table = mock_dynamodb["table"]
+        mock_table.update_item.side_effect = ClientError(
+            {"Error": {"Code": "ValidationException", "Message": "Test error"}},
+            "UpdateItem",
+        )
+
+        result = state_db.update_storage_metrics(
+            workset_id="test-ws-003",
+            results_storage_bytes=1000,
+        )
+
+        assert result is False
+
+    def test_get_storage_metrics_success(self, state_db, mock_dynamodb):
+        """Test retrieving storage metrics from DynamoDB."""
+        mock_table = mock_dynamodb["table"]
+        mock_table.get_item.return_value = {
+            "Item": {
+                "results_storage_bytes": 1073741824,
+                "fsx_storage_bytes": 2147483648,
+                "storage_calculated_at": "2026-01-24T10:00:00Z",
+            }
+        }
+
+        result = state_db.get_storage_metrics("test-ws-001")
+
+        assert result is not None
+        assert result["results_storage_bytes"] == 1073741824
+        assert result["fsx_storage_bytes"] == 2147483648
+        assert result["storage_calculated_at"] == "2026-01-24T10:00:00Z"
+
+    def test_get_storage_metrics_not_found(self, state_db, mock_dynamodb):
+        """Test get_storage_metrics returns None when workset not found."""
+        mock_table = mock_dynamodb["table"]
+        mock_table.get_item.return_value = {}
+
+        result = state_db.get_storage_metrics("nonexistent-ws")
+
+        assert result is None
+
+    def test_get_storage_metrics_partial_data(self, state_db, mock_dynamodb):
+        """Test get_storage_metrics handles partial data."""
+        mock_table = mock_dynamodb["table"]
+        mock_table.get_item.return_value = {
+            "Item": {
+                "results_storage_bytes": 500000,
+            }
+        }
+
+        result = state_db.get_storage_metrics("test-ws-partial")
+
+        assert result is not None
+        assert result["results_storage_bytes"] == 500000
+        assert "fsx_storage_bytes" not in result
+

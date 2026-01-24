@@ -104,6 +104,16 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         metavar="N",
         help="Maximum number of worksets to run in parallel (overrides config file)",
     )
+    parser.add_argument(
+        "--concurrent",
+        action="store_true",
+        help="Use ConcurrentWorksetProcessor for advanced scheduling and retry handling",
+    )
+    parser.add_argument(
+        "--enable-scheduler",
+        action="store_true",
+        help="Enable WorksetScheduler for priority-based workset selection",
+    )
     return parser.parse_args(argv)
 
 
@@ -112,7 +122,7 @@ def setup_integration_components(
 ) -> dict[str, Any]:
     """Initialize optional integration components.
 
-    Returns dict with state_db, integration, and notification_manager keys.
+    Returns dict with state_db, integration, notification_manager, and scheduler keys.
     """
     from daylib.ursa_config import get_ursa_config
 
@@ -120,6 +130,7 @@ def setup_integration_components(
         "state_db": None,
         "integration": None,
         "notification_manager": None,
+        "scheduler": None,
     }
 
     # Setup DynamoDB state tracking
@@ -184,6 +195,24 @@ def setup_integration_components(
         except Exception as e:
             LOGGER.warning("Failed to initialize integration layer: %s", e)
 
+    # Setup scheduler if enabled and DynamoDB is available
+    if args.enable_scheduler and components["state_db"]:
+        try:
+            from daylib.workset_scheduler import WorksetScheduler
+
+            scheduler = WorksetScheduler(
+                state_db=components["state_db"],
+                max_concurrent_worksets_per_cluster=config.monitor.max_concurrent_worksets,
+                cost_optimization_enabled=True,
+            )
+            components["scheduler"] = scheduler
+            LOGGER.info("Scheduler enabled (max_concurrent_per_cluster: %d)",
+                        config.monitor.max_concurrent_worksets)
+        except ImportError:
+            LOGGER.warning("Scheduler requested but workset_scheduler module not available")
+        except Exception as e:
+            LOGGER.warning("Failed to initialize scheduler: %s", e)
+
     return components
 
 
@@ -219,6 +248,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         state_db=components["state_db"],
         integration=components["integration"],
         notification_manager=components["notification_manager"],
+        scheduler=components["scheduler"],
     )
 
     if args.actions:
@@ -232,7 +262,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             return 1
         return 0
 
-    monitor.run()
+    # Run monitor in appropriate mode
+    if args.concurrent:
+        if not components["scheduler"]:
+            LOGGER.error("Concurrent mode requires --enable-scheduler and --enable-dynamodb")
+            return 1
+        try:
+            monitor.run_with_concurrent_processor()
+        except MonitorError as exc:
+            LOGGER.error("Concurrent processor failed: %s", exc)
+            return 1
+    else:
+        monitor.run()
     return 0
 
 

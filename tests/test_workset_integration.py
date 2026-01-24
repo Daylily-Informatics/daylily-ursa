@@ -2628,3 +2628,685 @@ class TestCommandInjectionPrevention:
         with pytest.raises(MonitorError) as exc_info:
             monitor._sanitize_shell_args("bad; command", "my custom context")
         assert "my custom context" in str(exc_info.value)
+
+
+class TestCostReportIntegration:
+    """Tests for Phase 5B: Cost report integration in workset monitor."""
+
+    @pytest.fixture
+    def monitor_with_state_db(self, tmp_path):
+        """Create a WorksetMonitor with mocked state_db."""
+        from unittest.mock import MagicMock, patch
+        from daylib.workset_monitor import WorksetMonitor
+
+        mock_config = MagicMock()
+        mock_config.aws.region = "us-west-2"
+        mock_config.aws.profile = None
+        mock_config.monitor.sentinel_index_bucket = "test-bucket"
+        mock_config.monitor.sentinel_prefix = "worksets/"
+        mock_config.monitor.local_state_root = str(tmp_path)
+        mock_config.pipeline.ssh_identity_file = "/path/to/key.pem"
+        mock_config.pipeline.ssh_user = "ubuntu"
+        mock_config.pipeline.ssh_extra_args = []
+
+        mock_state_db = MagicMock()
+        mock_state_db.update_cost_report.return_value = True
+        mock_state_db.update_storage_metrics.return_value = True
+        mock_state_db.update_performance_metrics.return_value = True
+
+        with patch("daylib.workset_monitor.boto3.client"):
+            monitor = WorksetMonitor(config=mock_config)
+            monitor.state_db = mock_state_db
+            yield monitor, mock_state_db
+
+    def test_collect_post_export_metrics_stores_cost_report(self, monitor_with_state_db):
+        """Test that _collect_post_export_metrics stores cost report in DynamoDB."""
+        from unittest.mock import MagicMock, patch
+
+        monitor, mock_state_db = monitor_with_state_db
+
+        # Create mock workset
+        mock_workset = MagicMock()
+        mock_workset.name = "test-ws-cost"
+
+        # Mock the PipelineStatusFetcher to return cost data
+        mock_perf_metrics = {
+            "alignment_stats": [{"sample": "HG002", "mapped_reads": 1000000}],
+            "benchmark_data": [{"rule": "bwa_mem2", "task_cost": "5.0"}],
+            "cost_summary": {
+                "total_cost": 12.5,
+                "per_sample_costs": {"HG002": 12.5},
+                "rule_count": 10,
+                "sample_count": 1,
+            },
+        }
+
+        with patch.object(monitor, "_get_s3_directory_size", return_value=1073741824):
+            with patch.object(monitor, "_collect_s3_file_metrics"):
+                with patch("daylib.pipeline_status.PipelineStatusFetcher") as mock_fetcher_class:
+                    mock_fetcher = MagicMock()
+                    mock_fetcher.fetch_performance_metrics_from_s3.return_value = mock_perf_metrics
+                    mock_fetcher_class.return_value = mock_fetcher
+
+                    monitor._collect_post_export_metrics(
+                        mock_workset,
+                        "s3://test-bucket/worksets/test-ws-cost/",
+                    )
+
+        # Verify update_cost_report was called with correct arguments
+        mock_state_db.update_cost_report.assert_called_once()
+        call_kwargs = mock_state_db.update_cost_report.call_args.kwargs
+        assert call_kwargs["workset_id"] == "test-ws-cost"
+        assert call_kwargs["total_compute_cost_usd"] == 12.5
+        assert call_kwargs["per_sample_costs"] == {"HG002": 12.5}
+        assert call_kwargs["rule_count"] == 10
+        assert call_kwargs["sample_count"] == 1
+
+    def test_collect_post_export_metrics_handles_missing_cost_data(self, monitor_with_state_db):
+        """Test that _collect_post_export_metrics handles missing cost data gracefully."""
+        from unittest.mock import MagicMock, patch
+
+        monitor, mock_state_db = monitor_with_state_db
+
+        mock_workset = MagicMock()
+        mock_workset.name = "test-ws-no-cost"
+
+        # Mock fetcher to return no cost data
+        mock_perf_metrics = {
+            "alignment_stats": None,
+            "benchmark_data": None,
+            "cost_summary": None,
+        }
+
+        with patch.object(monitor, "_get_s3_directory_size", return_value=1000):
+            with patch.object(monitor, "_collect_s3_file_metrics"):
+                with patch("daylib.pipeline_status.PipelineStatusFetcher") as mock_fetcher_class:
+                    mock_fetcher = MagicMock()
+                    mock_fetcher.fetch_performance_metrics_from_s3.return_value = mock_perf_metrics
+                    mock_fetcher_class.return_value = mock_fetcher
+
+                    monitor._collect_post_export_metrics(
+                        mock_workset,
+                        "s3://test-bucket/worksets/test-ws-no-cost/",
+                    )
+
+        # update_cost_report should NOT be called when no cost data
+        mock_state_db.update_cost_report.assert_not_called()
+
+
+class TestStorageMetricsIntegration:
+    """Tests for Phase 5C: Storage metrics integration in workset monitor."""
+
+    @pytest.fixture
+    def monitor_with_state_db(self, tmp_path):
+        """Create a WorksetMonitor with mocked state_db."""
+        from unittest.mock import MagicMock, patch
+        from daylib.workset_monitor import WorksetMonitor
+
+        mock_config = MagicMock()
+        mock_config.aws.region = "us-west-2"
+        mock_config.aws.profile = None
+        mock_config.monitor.sentinel_index_bucket = "test-bucket"
+        mock_config.monitor.sentinel_prefix = "worksets/"
+        mock_config.monitor.local_state_root = str(tmp_path)
+        mock_config.pipeline.ssh_identity_file = "/path/to/key.pem"
+        mock_config.pipeline.ssh_user = "ubuntu"
+        mock_config.pipeline.ssh_extra_args = []
+
+        mock_state_db = MagicMock()
+        mock_state_db.update_cost_report.return_value = True
+        mock_state_db.update_storage_metrics.return_value = True
+        mock_state_db.update_performance_metrics.return_value = True
+
+        with patch("daylib.workset_monitor.boto3.client"):
+            monitor = WorksetMonitor(config=mock_config)
+            monitor.state_db = mock_state_db
+            yield monitor, mock_state_db
+
+    def test_collect_post_export_metrics_stores_storage_metrics(self, monitor_with_state_db):
+        """Test that _collect_post_export_metrics stores storage metrics in DynamoDB."""
+        from unittest.mock import MagicMock, patch
+
+        monitor, mock_state_db = monitor_with_state_db
+
+        mock_workset = MagicMock()
+        mock_workset.name = "test-ws-storage"
+
+        # Mock S3 directory size
+        storage_bytes = 2147483648  # 2 GB
+
+        with patch.object(monitor, "_get_s3_directory_size", return_value=storage_bytes):
+            with patch.object(monitor, "_collect_s3_file_metrics"):
+                with patch("daylib.pipeline_status.PipelineStatusFetcher") as mock_fetcher_class:
+                    mock_fetcher = MagicMock()
+                    mock_fetcher.fetch_performance_metrics_from_s3.return_value = {}
+                    mock_fetcher_class.return_value = mock_fetcher
+
+                    monitor._collect_post_export_metrics(
+                        mock_workset,
+                        "s3://test-bucket/worksets/test-ws-storage/",
+                    )
+
+        # Verify update_storage_metrics was called with correct arguments
+        mock_state_db.update_storage_metrics.assert_called_once()
+        call_kwargs = mock_state_db.update_storage_metrics.call_args.kwargs
+        assert call_kwargs["workset_id"] == "test-ws-storage"
+        assert call_kwargs["results_storage_bytes"] == storage_bytes
+        assert call_kwargs["fsx_storage_bytes"] is None
+
+    def test_collect_post_export_metrics_skips_storage_when_zero(self, monitor_with_state_db):
+        """Test that _collect_post_export_metrics skips storage metrics when size is 0."""
+        from unittest.mock import MagicMock, patch
+
+        monitor, mock_state_db = monitor_with_state_db
+
+        mock_workset = MagicMock()
+        mock_workset.name = "test-ws-zero-storage"
+
+        with patch.object(monitor, "_get_s3_directory_size", return_value=0):
+            with patch.object(monitor, "_collect_s3_file_metrics"):
+                with patch("daylib.pipeline_status.PipelineStatusFetcher") as mock_fetcher_class:
+                    mock_fetcher = MagicMock()
+                    mock_fetcher.fetch_performance_metrics_from_s3.return_value = {}
+                    mock_fetcher_class.return_value = mock_fetcher
+
+                    monitor._collect_post_export_metrics(
+                        mock_workset,
+                        "s3://test-bucket/worksets/test-ws-zero-storage/",
+                    )
+
+        # update_storage_metrics should NOT be called when size is 0
+        mock_state_db.update_storage_metrics.assert_not_called()
+
+    def test_collect_post_export_metrics_handles_storage_error(self, monitor_with_state_db):
+        """Test that _collect_post_export_metrics handles storage update errors gracefully."""
+        from unittest.mock import MagicMock, patch
+
+        monitor, mock_state_db = monitor_with_state_db
+        mock_state_db.update_storage_metrics.side_effect = Exception("DynamoDB error")
+
+        mock_workset = MagicMock()
+        mock_workset.name = "test-ws-storage-error"
+
+        with patch.object(monitor, "_get_s3_directory_size", return_value=1000):
+            with patch.object(monitor, "_collect_s3_file_metrics"):
+                with patch("daylib.pipeline_status.PipelineStatusFetcher") as mock_fetcher_class:
+                    mock_fetcher = MagicMock()
+                    mock_fetcher.fetch_performance_metrics_from_s3.return_value = {}
+                    mock_fetcher_class.return_value = mock_fetcher
+
+                    # Should not raise - errors are logged but not propagated
+                    result = monitor._collect_post_export_metrics(
+                        mock_workset,
+                        "s3://test-bucket/worksets/test-ws-storage-error/",
+                    )
+
+        # Method should complete despite error
+        assert result is not None or result is None  # Just verify no exception
+
+    def test_collect_post_export_metrics_stores_both_cost_and_storage(self, monitor_with_state_db):
+        """Test that _collect_post_export_metrics stores both cost and storage metrics."""
+        from unittest.mock import MagicMock, patch
+
+        monitor, mock_state_db = monitor_with_state_db
+
+        mock_workset = MagicMock()
+        mock_workset.name = "test-ws-both"
+
+        storage_bytes = 5368709120  # 5 GB
+        mock_perf_metrics = {
+            "cost_summary": {
+                "total_cost": 25.0,
+                "per_sample_costs": {"HG002": 15.0, "HG003": 10.0},
+                "rule_count": 20,
+                "sample_count": 2,
+            },
+        }
+
+        with patch.object(monitor, "_get_s3_directory_size", return_value=storage_bytes):
+            with patch.object(monitor, "_collect_s3_file_metrics"):
+                with patch("daylib.pipeline_status.PipelineStatusFetcher") as mock_fetcher_class:
+                    mock_fetcher = MagicMock()
+                    mock_fetcher.fetch_performance_metrics_from_s3.return_value = mock_perf_metrics
+                    mock_fetcher_class.return_value = mock_fetcher
+
+                    monitor._collect_post_export_metrics(
+                        mock_workset,
+                        "s3://test-bucket/worksets/test-ws-both/",
+                    )
+
+        # Both should be called
+        mock_state_db.update_cost_report.assert_called_once()
+        mock_state_db.update_storage_metrics.assert_called_once()
+
+        # Verify cost report
+        cost_kwargs = mock_state_db.update_cost_report.call_args.kwargs
+        assert cost_kwargs["total_compute_cost_usd"] == 25.0
+        assert cost_kwargs["sample_count"] == 2
+
+        # Verify storage metrics
+        storage_kwargs = mock_state_db.update_storage_metrics.call_args.kwargs
+        assert storage_kwargs["results_storage_bytes"] == storage_bytes
+
+
+# ==============================================================================
+# Phase 6A: Scheduler Integration Tests
+# ==============================================================================
+
+
+class TestSchedulerIntegration:
+    """Tests for WorksetMonitor scheduler integration."""
+
+    @pytest.fixture
+    def mock_config(self, tmp_path):
+        """Create mock MonitorConfig for scheduler tests."""
+        config = MagicMock()
+        config.aws.region = "us-west-2"
+        config.aws.profile = None
+        config.aws.session_duration_seconds = None
+        config.monitor.prefix = "worksets/"
+        config.monitor.normalised_prefix.return_value = "worksets/"
+        config.monitor.sentinel_index_bucket = "test-bucket"
+        config.monitor.sentinel_index_prefix = "worksets/"
+        config.monitor.local_state_root = str(tmp_path)
+        config.monitor.poll_interval_seconds = 60
+        config.monitor.max_concurrent_worksets = 3
+        config.monitor.continuous = True
+        config.monitor.ready_lock_backoff_seconds = 30
+        config.pipeline.ssh_identity_file = "/path/to/key.pem"
+        config.pipeline.ssh_user = "ubuntu"
+        config.pipeline.ssh_extra_args = []
+        config.pipeline.local_state_root = str(tmp_path)
+        config.cluster.reuse_cluster_name = None
+        config.cluster.auto_teardown = False
+        return config
+
+    @pytest.fixture
+    def mock_scheduler(self):
+        """Create mock WorksetScheduler."""
+        scheduler = MagicMock()
+        scheduler.register_cluster.return_value = None
+        scheduler.update_cluster_utilization.return_value = None
+        scheduler.get_next_workset.return_value = None
+        scheduler.schedule_workset.return_value = MagicMock(cluster_name="test-cluster")
+        return scheduler
+
+    @pytest.fixture
+    def monitor_with_scheduler(self, mock_config, mock_scheduler):
+        """Create monitor with scheduler."""
+        from daylib.workset_monitor import WorksetMonitor
+
+        with patch("daylib.workset_monitor.boto3"):
+            with patch("daylib.workset_monitor.RegionAwareS3Client"):
+                monitor = WorksetMonitor(
+                    mock_config,
+                    scheduler=mock_scheduler,
+                )
+                return monitor, mock_scheduler
+
+    def test_monitor_accepts_scheduler_parameter(self, mock_config):
+        """Test that WorksetMonitor accepts optional scheduler parameter."""
+        from daylib.workset_monitor import WorksetMonitor
+
+        mock_scheduler = MagicMock()
+
+        with patch("daylib.workset_monitor.boto3"):
+            with patch("daylib.workset_monitor.RegionAwareS3Client"):
+                monitor = WorksetMonitor(
+                    mock_config,
+                    scheduler=mock_scheduler,
+                )
+
+        assert monitor.scheduler == mock_scheduler
+
+    def test_monitor_without_scheduler(self, mock_config):
+        """Test that WorksetMonitor works without scheduler."""
+        from daylib.workset_monitor import WorksetMonitor
+
+        with patch("daylib.workset_monitor.boto3"):
+            with patch("daylib.workset_monitor.RegionAwareS3Client"):
+                monitor = WorksetMonitor(mock_config)
+
+        assert monitor.scheduler is None
+
+    def test_register_cluster_capacity_with_scheduler(self, monitor_with_scheduler):
+        """Test register_cluster_capacity calls scheduler.register_cluster."""
+        monitor, mock_scheduler = monitor_with_scheduler
+
+        monitor.register_cluster_capacity(
+            cluster_name="test-cluster-1",
+            availability_zone="us-west-2a",
+            max_vcpus=500,
+            max_memory_gb=2000.0,
+        )
+
+        mock_scheduler.register_cluster.assert_called_once()
+        call_args = mock_scheduler.register_cluster.call_args
+        capacity = call_args[0][0]
+        assert capacity.cluster_name == "test-cluster-1"
+        assert capacity.availability_zone == "us-west-2a"
+        assert capacity.max_vcpus == 500
+
+    def test_register_cluster_capacity_without_scheduler(self, mock_config):
+        """Test register_cluster_capacity is no-op without scheduler."""
+        from daylib.workset_monitor import WorksetMonitor
+
+        with patch("daylib.workset_monitor.boto3"):
+            with patch("daylib.workset_monitor.RegionAwareS3Client"):
+                monitor = WorksetMonitor(mock_config)
+
+        # Should not raise
+        monitor.register_cluster_capacity(
+            cluster_name="test-cluster",
+            availability_zone="us-west-2a",
+        )
+
+    def test_update_cluster_utilization_with_scheduler(self, monitor_with_scheduler):
+        """Test update_cluster_utilization calls scheduler."""
+        monitor, mock_scheduler = monitor_with_scheduler
+
+        monitor.update_cluster_utilization(
+            cluster_name="test-cluster-1",
+            vcpus_used=100,
+            memory_gb_used=500.0,
+            active_worksets=2,
+        )
+
+        mock_scheduler.update_cluster_utilization.assert_called_once_with(
+            cluster_name="test-cluster-1",
+            vcpus_used=100,
+            memory_gb_used=500.0,
+            active_worksets=2,
+        )
+
+    def test_update_cluster_utilization_auto_calculates_active(self, monitor_with_scheduler):
+        """Test update_cluster_utilization auto-calculates active worksets."""
+        monitor, mock_scheduler = monitor_with_scheduler
+
+        # Mark a workset as active
+        monitor._active_worksets.add("ws-1")
+
+        monitor.update_cluster_utilization(
+            cluster_name="test-cluster-1",
+            vcpus_used=50,
+        )
+
+        call_kwargs = mock_scheduler.update_cluster_utilization.call_args.kwargs
+        assert call_kwargs["active_worksets"] == 1
+
+    def test_get_prioritized_worksets_with_scheduler(self, monitor_with_scheduler):
+        """Test _get_prioritized_worksets uses scheduler ordering."""
+        from daylib.workset_monitor import Workset
+
+        monitor, mock_scheduler = monitor_with_scheduler
+
+        # Create worksets
+        worksets = [
+            Workset(name="ws-low", prefix="p1/", sentinels={}, bucket="b"),
+            Workset(name="ws-high", prefix="p2/", sentinels={}, bucket="b"),
+            Workset(name="ws-normal", prefix="p3/", sentinels={}, bucket="b"),
+        ]
+
+        # Scheduler returns in priority order
+        mock_scheduler.get_next_workset.side_effect = [
+            {"workset_id": "ws-high"},
+            {"workset_id": "ws-normal"},
+            {"workset_id": "ws-low"},
+            None,
+        ]
+
+        result = monitor._get_prioritized_worksets(worksets)
+
+        assert len(result) == 3
+        assert result[0].name == "ws-high"
+        assert result[1].name == "ws-normal"
+        assert result[2].name == "ws-low"
+
+    def test_get_prioritized_worksets_without_scheduler(self, mock_config):
+        """Test _get_prioritized_worksets preserves order without scheduler."""
+        from daylib.workset_monitor import WorksetMonitor, Workset
+
+        with patch("daylib.workset_monitor.boto3"):
+            with patch("daylib.workset_monitor.RegionAwareS3Client"):
+                monitor = WorksetMonitor(mock_config)
+
+        worksets = [
+            Workset(name="ws-1", prefix="p1/", sentinels={}, bucket="b"),
+            Workset(name="ws-2", prefix="p2/", sentinels={}, bucket="b"),
+        ]
+
+        result = monitor._get_prioritized_worksets(worksets)
+
+        assert result == worksets
+
+    def test_handle_workset_async_updates_scheduler_on_completion(self, mock_config):
+        """Test _handle_workset_async updates scheduler after workset completes."""
+        from daylib.workset_monitor import WorksetMonitor, Workset
+
+        mock_scheduler = MagicMock()
+
+        with patch("daylib.workset_monitor.boto3"):
+            with patch("daylib.workset_monitor.RegionAwareS3Client"):
+                monitor = WorksetMonitor(
+                    mock_config,
+                    scheduler=mock_scheduler,
+                )
+
+        workset = Workset(name="test-ws", prefix="p/", sentinels={}, bucket="b")
+
+        # Pre-populate metrics with cluster name
+        monitor._workset_metrics["test-ws"] = {"cluster_name": "cluster-1"}
+
+        # Mock _handle_workset to avoid actual processing
+        with patch.object(monitor, "_handle_workset"):
+            monitor._handle_workset_async(workset)
+
+        # Scheduler should be updated
+        mock_scheduler.update_cluster_utilization.assert_called_once()
+        call_kwargs = mock_scheduler.update_cluster_utilization.call_args.kwargs
+        assert call_kwargs["cluster_name"] == "cluster-1"
+
+
+# ==============================================================================
+# Phase 6B: Concurrent Processor Integration Tests
+# ==============================================================================
+
+
+class TestConcurrentProcessorIntegration:
+    """Tests for ConcurrentWorksetProcessor integration with WorksetMonitor."""
+
+    @pytest.fixture
+    def mock_config(self, tmp_path):
+        """Create mock MonitorConfig for concurrent processor tests."""
+        config = MagicMock()
+        config.aws.region = "us-west-2"
+        config.aws.profile = None
+        config.aws.session_duration_seconds = None
+        config.monitor.prefix = "worksets/"
+        config.monitor.normalised_prefix.return_value = "worksets/"
+        config.monitor.sentinel_index_bucket = "test-bucket"
+        config.monitor.sentinel_index_prefix = "worksets/"
+        config.monitor.local_state_root = str(tmp_path)
+        config.monitor.poll_interval_seconds = 60
+        config.monitor.max_concurrent_worksets = 3
+        config.monitor.continuous = True
+        config.monitor.ready_lock_backoff_seconds = 30
+        config.pipeline.ssh_identity_file = "/path/to/key.pem"
+        config.pipeline.ssh_user = "ubuntu"
+        config.pipeline.ssh_extra_args = []
+        config.pipeline.local_state_root = str(tmp_path)
+        config.cluster.reuse_cluster_name = None
+        config.cluster.auto_teardown = False
+        return config
+
+    @pytest.fixture
+    def monitor_with_all_components(self, mock_config):
+        """Create monitor with state_db and scheduler."""
+        from daylib.workset_monitor import WorksetMonitor
+
+        mock_state_db = MagicMock()
+        mock_scheduler = MagicMock()
+
+        with patch("daylib.workset_monitor.boto3"):
+            with patch("daylib.workset_monitor.RegionAwareS3Client"):
+                monitor = WorksetMonitor(
+                    mock_config,
+                    state_db=mock_state_db,
+                    scheduler=mock_scheduler,
+                )
+                return monitor, mock_state_db, mock_scheduler
+
+    def test_use_concurrent_processor_config_option(self):
+        """Test MonitorOptions has use_concurrent_processor flag."""
+        from daylib.workset_monitor import MonitorOptions
+
+        options = MonitorOptions(prefix="worksets/")
+        assert hasattr(options, "use_concurrent_processor")
+        assert options.use_concurrent_processor is False
+
+    def test_create_workset_executor_returns_callable(self, monitor_with_all_components):
+        """Test create_workset_executor returns a callable."""
+        monitor, _, _ = monitor_with_all_components
+
+        executor = monitor.create_workset_executor()
+
+        assert callable(executor)
+
+    def test_workset_executor_processes_workset_dict(self, monitor_with_all_components):
+        """Test executor processes workset dict and calls _handle_workset."""
+        monitor, _, _ = monitor_with_all_components
+
+        executor = monitor.create_workset_executor()
+
+        workset_data = {
+            "workset_id": "test-ws-exec",
+            "bucket": "test-bucket",
+            "prefix": "worksets/test-ws-exec/",
+            "state": "ready",
+        }
+        decision = MagicMock(cluster_name="test-cluster")
+
+        # Mock _handle_workset
+        with patch.object(monitor, "_handle_workset") as mock_handle:
+            with patch.object(monitor, "_verify_core_files", return_value=True):
+                result = executor(workset_data, decision)
+
+        assert result is True
+        mock_handle.assert_called_once()
+        # Verify the Workset object was constructed correctly
+        ws_arg = mock_handle.call_args[0][0]
+        assert ws_arg.name == "test-ws-exec"
+        assert ws_arg.bucket == "test-bucket"
+
+    def test_workset_executor_handles_missing_workset_id(self, monitor_with_all_components):
+        """Test executor returns False for missing workset_id."""
+        monitor, _, _ = monitor_with_all_components
+
+        executor = monitor.create_workset_executor()
+
+        workset_data = {
+            "bucket": "test-bucket",
+            # Missing workset_id
+        }
+        decision = MagicMock()
+
+        result = executor(workset_data, decision)
+
+        assert result is False
+
+    def test_workset_executor_handles_processing_error(self, monitor_with_all_components):
+        """Test executor returns False when processing raises exception."""
+        monitor, _, _ = monitor_with_all_components
+
+        executor = monitor.create_workset_executor()
+
+        workset_data = {
+            "workset_id": "test-ws-error",
+            "bucket": "test-bucket",
+            "prefix": "worksets/test-ws-error/",
+        }
+        decision = MagicMock()
+
+        # Mock _handle_workset to raise
+        with patch.object(monitor, "_handle_workset", side_effect=Exception("Test error")):
+            with patch.object(monitor, "_verify_core_files", return_value=True):
+                result = executor(workset_data, decision)
+
+        assert result is False
+
+    def test_run_with_concurrent_processor_requires_scheduler(self, mock_config):
+        """Test run_with_concurrent_processor raises without scheduler."""
+        from daylib.workset_monitor import WorksetMonitor, MonitorError
+
+        mock_state_db = MagicMock()
+
+        with patch("daylib.workset_monitor.boto3"):
+            with patch("daylib.workset_monitor.RegionAwareS3Client"):
+                monitor = WorksetMonitor(
+                    mock_config,
+                    state_db=mock_state_db,
+                    scheduler=None,
+                )
+
+        with pytest.raises(MonitorError, match="Scheduler is required"):
+            monitor.run_with_concurrent_processor()
+
+    def test_run_with_concurrent_processor_requires_state_db(self, mock_config):
+        """Test run_with_concurrent_processor raises without state_db."""
+        from daylib.workset_monitor import WorksetMonitor, MonitorError
+
+        mock_scheduler = MagicMock()
+
+        with patch("daylib.workset_monitor.boto3"):
+            with patch("daylib.workset_monitor.RegionAwareS3Client"):
+                monitor = WorksetMonitor(
+                    mock_config,
+                    state_db=None,
+                    scheduler=mock_scheduler,
+                )
+
+        with pytest.raises(MonitorError, match="DynamoDB state_db is required"):
+            monitor.run_with_concurrent_processor()
+
+    def test_run_with_concurrent_processor_creates_processor(self, monitor_with_all_components):
+        """Test run_with_concurrent_processor creates and starts processor."""
+        monitor, mock_state_db, mock_scheduler = monitor_with_all_components
+
+        with patch("daylib.workset_concurrent_processor.ConcurrentWorksetProcessor") as mock_processor_class:
+            mock_processor = MagicMock()
+            # Make start() raise to exit immediately
+            mock_processor.start.side_effect = KeyboardInterrupt()
+            mock_processor_class.return_value = mock_processor
+
+            with patch.object(monitor, "_register_discovered_clusters"):
+                monitor.run_with_concurrent_processor()
+
+            # Verify processor was created with correct args
+            mock_processor_class.assert_called_once()
+            call_kwargs = mock_processor_class.call_args.kwargs
+            assert call_kwargs["state_db"] == mock_state_db
+            assert call_kwargs["scheduler"] == mock_scheduler
+            assert callable(call_kwargs["workset_executor"])
+
+            # Verify processor was started and stopped
+            mock_processor.start.assert_called_once()
+            mock_processor.stop.assert_called_once()
+
+    def test_concurrent_processor_config_from_monitor_config(self, monitor_with_all_components):
+        """Test ConcurrentWorksetProcessor config matches monitor config."""
+        monitor, _, _ = monitor_with_all_components
+
+        with patch("daylib.workset_concurrent_processor.ConcurrentWorksetProcessor") as mock_processor_class:
+            mock_processor = MagicMock()
+            mock_processor.start.side_effect = KeyboardInterrupt()
+            mock_processor_class.return_value = mock_processor
+
+            with patch.object(monitor, "_register_discovered_clusters"):
+                monitor.run_with_concurrent_processor()
+
+            call_kwargs = mock_processor_class.call_args.kwargs
+            config = call_kwargs["config"]
+
+            # Verify config values match monitor config
+            assert config.max_concurrent_worksets == monitor.config.monitor.max_concurrent_worksets
+            assert config.poll_interval_seconds == monitor.config.monitor.poll_interval_seconds
