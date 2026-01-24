@@ -63,9 +63,9 @@ prefer clusters in us-west-2
 ## Phase 2 — UI/UX fixes (pre-prod)
 
 ### 2.1 Usage page
-- [ ] Add "Edit" button to Billing Info card.
-- [ ] Fix mismatch between cost numbers in the card vs the pie chart (must derive from the same source).
-- [ ] Fix "Export report" button not working.
+- [x] Add "Edit" button to Billing Info card.
+- [x] Fix mismatch between cost numbers in the card vs the pie chart (must derive from the same source).
+- [x] Fix "Export report" button not working.
 - [ ] Present transfer cost as 3 explicit options: within-region, cross-region, internet egress.
 
 ### 2.2 Register page
