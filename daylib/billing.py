@@ -342,6 +342,64 @@ class BillingCalculator:
 
         return summary
 
+    def generate_invoice_data(
+        self,
+        customer_id: str,
+        period_start: Optional[dt.datetime] = None,
+        period_end: Optional[dt.datetime] = None,
+    ) -> Dict[str, Any]:
+        """Generate invoice-ready data for a customer."""
+        summary = self.calculate_customer_billing(customer_id, period_start, period_end)
+
+        line_items: List[Dict[str, Any]] = []
+        for item in summary.workset_items:
+            line_items.append(
+                {
+                    "workset_id": item.workset_id,
+                    "completed_at": item.completed_at,
+                    "samples": item.sample_count,
+                    "compute_usd": self._round_currency(item.compute_cost_usd, 2),
+                    "storage_gb": self._round_currency(item.storage_gb, 2),
+                    "storage_usd": self._round_currency(item.storage_cost_usd, 2),
+                    "transfer_usd": self._round_currency(item.transfer_cost_usd, 2),
+                    "platform_fee_usd": self._round_currency(item.platform_fee_usd, 2),
+                    "total_usd": self._round_currency(item.total_cost_usd, 2),
+                    "has_actual_cost": item.has_actual_compute_cost,
+                }
+            )
+
+        return {
+            "customer_id": customer_id,
+            "invoice_date": dt.datetime.now(dt.timezone.utc)
+            .isoformat()
+            .replace("+00:00", "Z"),
+            "period_start": summary.period_start,
+            "period_end": summary.period_end,
+            "summary": {
+                "total_worksets": summary.total_worksets,
+                "billable_worksets": summary.billable_worksets,
+                "total_samples": summary.total_samples,
+                "total_storage_gb": summary.total_storage_gb,
+                "compute_cost_usd": self._round_currency(summary.total_compute_cost_usd, 2),
+                "storage_cost_usd": self._round_currency(summary.total_storage_cost_usd, 2),
+                "transfer_cost_usd": self._round_currency(summary.total_transfer_cost_usd, 2),
+                "platform_fee_usd": self._round_currency(summary.total_platform_fee_usd, 2),
+                "grand_total_usd": self._round_currency(summary.grand_total_usd, 2),
+            },
+            "line_items": line_items,
+            "rates": {
+                "s3_storage_per_gb_month": self.rates.s3_storage_per_gb_month,
+                "data_egress_per_gb": self.rates.data_egress_per_gb,
+                "platform_fee_per_sample": self.rates.platform_fee_per_sample,
+                "platform_fee_percentage": self.rates.platform_fee_percentage,
+            },
+            "accuracy": {
+                "has_actual_costs": summary.has_actual_costs,
+                "estimated_worksets": summary.estimated_worksets,
+                "actual_worksets": summary.billable_worksets - summary.estimated_worksets,
+            },
+        }
+
 
 def calculate_customer_cost_breakdown(
     state_db: "WorksetStateDB",
@@ -398,70 +456,4 @@ def calculate_customer_cost_breakdown(
             "data_egress_per_gb": calculator.rates.data_egress_per_gb,
         },
     }
-
-    def generate_invoice_data(
-        self,
-        customer_id: str,
-        period_start: Optional[dt.datetime] = None,
-        period_end: Optional[dt.datetime] = None,
-    ) -> Dict[str, Any]:
-        """Generate invoice-ready data for a customer.
-
-        Args:
-            customer_id: Customer identifier
-            period_start: Start of billing period
-            period_end: End of billing period
-
-        Returns:
-            Dict with invoice data suitable for rendering/export
-        """
-        summary = self.calculate_customer_billing(
-            customer_id, period_start, period_end
-        )
-
-        # Build line items
-        line_items = []
-        for item in summary.workset_items:
-            line_items.append({
-                "workset_id": item.workset_id,
-                "completed_at": item.completed_at,
-                "samples": item.sample_count,
-                "compute_usd": self._round_currency(item.compute_cost_usd, 2),
-                "storage_gb": self._round_currency(item.storage_gb, 2),
-                "storage_usd": self._round_currency(item.storage_cost_usd, 2),
-                "transfer_usd": self._round_currency(item.transfer_cost_usd, 2),
-                "platform_fee_usd": self._round_currency(item.platform_fee_usd, 2),
-                "total_usd": self._round_currency(item.total_cost_usd, 2),
-                "has_actual_cost": item.has_actual_compute_cost,
-            })
-
-        return {
-            "customer_id": customer_id,
-            "invoice_date": dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z"),
-            "period_start": summary.period_start,
-            "period_end": summary.period_end,
-            "summary": {
-                "total_worksets": summary.total_worksets,
-                "billable_worksets": summary.billable_worksets,
-                "total_samples": summary.total_samples,
-                "total_storage_gb": summary.total_storage_gb,
-                "compute_cost_usd": self._round_currency(summary.total_compute_cost_usd, 2),
-                "storage_cost_usd": self._round_currency(summary.total_storage_cost_usd, 2),
-                "transfer_cost_usd": self._round_currency(summary.total_transfer_cost_usd, 2),
-                "platform_fee_usd": self._round_currency(summary.total_platform_fee_usd, 2),
-                "grand_total_usd": self._round_currency(summary.grand_total_usd, 2),
-            },
-            "line_items": line_items,
-            "rates": {
-                "s3_storage_per_gb_month": self.rates.s3_storage_per_gb_month,
-                "data_egress_per_gb": self.rates.data_egress_per_gb,
-                "platform_fee_per_sample": self.rates.platform_fee_per_sample,
-                "platform_fee_percentage": self.rates.platform_fee_percentage,
-            },
-            "accuracy": {
-                "has_actual_costs": summary.has_actual_costs,
-                "estimated_worksets": summary.estimated_worksets,
-                "actual_worksets": summary.billable_worksets - summary.estimated_worksets,
-            },
-        }
 
