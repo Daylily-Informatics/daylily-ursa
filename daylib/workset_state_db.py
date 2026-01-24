@@ -6,10 +6,9 @@ Replaces S3 sentinel files with a more robust, queryable state tracking system.
 from __future__ import annotations
 
 import datetime as dt
-import json
 import logging
 from decimal import Decimal
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 from enum import Enum
 
 import boto3
@@ -257,7 +256,7 @@ class WorksetStateDB:
 
         # Check for samples in metadata
         samples = metadata.get("samples", [])
-        sample_count = metadata.get("sample_count", 0)
+        raw_sample_count = metadata.get("sample_count")
 
         # Also check stage_samples_tsv for TSV-based sample input
         tsv_content = metadata.get("stage_samples_tsv", "")
@@ -265,13 +264,18 @@ class WorksetStateDB:
         # Count samples from various sources
         if samples and len(samples) > 0:
             return len(samples)
-        if sample_count and sample_count > 0:
-            return sample_count
+        if raw_sample_count is not None:
+            try:
+                sample_count = int(raw_sample_count)
+            except (TypeError, ValueError):
+                sample_count = 0
+            if sample_count > 0:
+                return sample_count
         if tsv_content:
             # Count non-header, non-empty lines in TSV
-            lines = [l for l in tsv_content.strip().split('\n') if l.strip() and not l.startswith('#')]
+            lines = [line for line in tsv_content.strip().split("\n") if line.strip() and not line.startswith("#")]
             # Subtract 1 for header if present
-            if lines and '\t' in lines[0]:
+            if lines and "\t" in lines[0]:
                 return max(0, len(lines) - 1)
 
         raise ValueError("Workset must have at least one sample")

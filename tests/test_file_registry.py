@@ -3,7 +3,6 @@ Tests for file_registry.py - File registration and metadata storage.
 """
 
 import pytest
-from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 from daylib.file_registry import (
@@ -252,14 +251,6 @@ class TestFileRegistryGetFile:
     def test_get_file_success(self, file_registry):
         """Test retrieving a registered file."""
         import json
-        
-        file_meta = FileMetadata(
-            file_id="file-001",
-            s3_uri="s3://bucket/sample_R1.fastq.gz",
-            file_size_bytes=1024000,
-        )
-        seq_meta = SequencingMetadata(run_id="run-001")
-        bio_meta = BiosampleMetadata(biosample_id="bio-001", subject_id="HG002")
         
         item = {
             "file_id": "file-001",

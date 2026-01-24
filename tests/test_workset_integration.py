@@ -4,17 +4,12 @@ Tests the integration layer that synchronizes DynamoDB state management
 with S3 sentinel-based processing system.
 """
 
-import datetime as dt
-import json
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from daylib.workset_integration import (
     WorksetIntegration,
-    SENTINEL_FILES,
-    WORK_YAML_NAME,
-    INFO_YAML_NAME,
 )
 
 
@@ -1645,7 +1640,7 @@ class TestRegionAwareS3Client:
             mock_client.get_bucket_location.return_value = {"LocationConstraint": "us-west-2"}
 
             client = RegionAwareS3Client(default_region="us-west-2")
-            region = client.get_bucket_region("s3://my-bucket-with-prefix")
+            client.get_bucket_region("s3://my-bucket-with-prefix")
 
             mock_client.get_bucket_location.assert_called_once_with(Bucket="my-bucket-with-prefix")
 

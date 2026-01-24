@@ -10,7 +10,6 @@ These tests verify that:
 import os
 from unittest.mock import MagicMock, patch
 
-import pytest
 
 
 class TestSettingsGetEffectiveRegion:
@@ -102,7 +101,7 @@ class TestClusterServiceRegionFallback:
             with patch("daylib.ursa_config.get_ursa_config", return_value=mock_config):
                 with patch("daylib.cluster_service.ClusterService") as MockClusterService:
                     MockClusterService.return_value = MagicMock()
-                    service = get_cluster_service()
+                    get_cluster_service()
 
                     # Verify ClusterService was created with us-west-2 fallback
                     MockClusterService.assert_called_once()
@@ -128,7 +127,7 @@ class TestClusterServiceRegionFallback:
             with patch("daylib.ursa_config.get_ursa_config", return_value=mock_config):
                 with patch("daylib.cluster_service.ClusterService") as MockClusterService:
                     MockClusterService.return_value = MagicMock()
-                    service = get_cluster_service()
+                    get_cluster_service()
 
                     MockClusterService.assert_called_once()
                     call_kwargs = MockClusterService.call_args.kwargs

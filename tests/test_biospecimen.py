@@ -3,7 +3,6 @@ Tests for Biospecimen module - Subject, Biosample, and Library CRUD operations.
 """
 
 from dataclasses import asdict
-from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
 import pytest

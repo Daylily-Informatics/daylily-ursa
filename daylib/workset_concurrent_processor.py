@@ -12,8 +12,8 @@ from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional
 
 from daylib.workset_notifications import NotificationEvent, NotificationManager
-from daylib.workset_scheduler import ClusterCapacity, WorksetScheduler
-from daylib.workset_state_db import ErrorCategory, WorksetPriority, WorksetState, WorksetStateDB
+from daylib.workset_scheduler import WorksetScheduler
+from daylib.workset_state_db import ErrorCategory, WorksetState, WorksetStateDB
 from daylib.workset_validation import WorksetValidator
 
 LOGGER = logging.getLogger("daylily.workset_concurrent_processor")

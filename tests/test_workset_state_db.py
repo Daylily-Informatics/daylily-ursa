@@ -2,7 +2,7 @@
 
 import datetime as dt
 from decimal import Decimal
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from botocore.exceptions import ClientError

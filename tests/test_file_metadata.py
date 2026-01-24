@@ -2,7 +2,6 @@
 Tests for file_metadata.py - FASTQ parsing, pairing, and TSV generation.
 """
 
-import pytest
 from daylib.file_metadata import (
     AnalysisInput,
     LibraryPrep,

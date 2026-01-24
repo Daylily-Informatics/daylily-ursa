@@ -20,7 +20,7 @@ import sys
 
 from botocore.exceptions import ClientError
 
-from daylib.workset_state_db import WorksetStateDB, WorksetState
+from daylib.workset_state_db import WorksetStateDB
 
 logging.basicConfig(
     level=logging.INFO,
@@ -99,8 +99,8 @@ def confirm_deletion(count: int, target_description: str) -> bool:
     """Request explicit confirmation before deletion."""
     print(f"\n⚠️  WARNING: You are about to permanently delete {count} workset record(s)")
     print(f"   Target: {target_description}")
-    print(f"\n   This action CANNOT be undone!")
-    print(f"\n   Type 'DELETE' (all caps) to confirm: ", end="")
+    print("\n   This action CANNOT be undone!")
+    print("\n   Type 'DELETE' (all caps) to confirm: ", end="")
     
     try:
         confirmation = input().strip()
@@ -251,7 +251,7 @@ Examples:
             LOGGER.error("Error deleting workset %s: %s", workset_id, e)
 
     # Summary
-    print(f"\n✓ Deletion complete!")
+    print("\n✓ Deletion complete!")
     print(f"  Successfully deleted: {deleted_count}")
     if failed_count > 0:
         print(f"  Failed: {failed_count}")

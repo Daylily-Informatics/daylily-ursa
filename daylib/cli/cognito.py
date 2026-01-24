@@ -1,6 +1,7 @@
 """Cognito authentication management commands for Ursa CLI."""
 
 import os
+from typing import Any, Dict, List
 
 import typer
 from rich.console import Console
@@ -224,7 +225,7 @@ def fix_auth_flows():
             SupportedIdentityProviders=client_config.get("SupportedIdentityProviders", ["COGNITO"]),
         )
 
-        console.print(f"[green]✓[/green]  Enabled auth flows:")
+        console.print("[green]✓[/green]  Enabled auth flows:")
         console.print("     - ALLOW_USER_PASSWORD_AUTH")
         console.print("     - ALLOW_ADMIN_USER_PASSWORD_AUTH")
         console.print("     - ALLOW_REFRESH_TOKEN_AUTH")
@@ -258,7 +259,7 @@ def set_admin(
             # List available emails for debugging
             customers = manager.list_customers()
             if customers:
-                console.print(f"[yellow]Available emails:[/yellow]")
+                console.print("[yellow]Available emails:[/yellow]")
                 for c in customers:
                     console.print(f"  - {c.email}")
             console.print(f"[red]✗[/red]  No user found with email: {email}")
@@ -411,18 +412,19 @@ def add_user(
         is_temp = password is None
 
         # Create user
-        create_params = {
+        user_attributes: List[Dict[str, str]] = [
+            {"Name": "email", "Value": email},
+        ]
+        create_params: Dict[str, Any] = {
             "UserPoolId": pool_id,
             "Username": email,
             "TemporaryPassword": temp_password,
-            "UserAttributes": [
-                {"Name": "email", "Value": email},
-            ],
+            "UserAttributes": user_attributes,
             "MessageAction": "SUPPRESS",  # Don't send welcome email (we'll show password)
         }
 
         if no_verify:
-            create_params["UserAttributes"].append({"Name": "email_verified", "Value": "true"})
+            user_attributes.append({"Name": "email_verified", "Value": "true"})
 
         cognito.admin_create_user(**create_params)
         console.print(f"[green]✓[/green]  Created user: {email}")
@@ -435,12 +437,12 @@ def add_user(
                 Password=password,
                 Permanent=True,
             )
-            console.print(f"[green]✓[/green]  Password set (permanent)")
+            console.print("[green]✓[/green]  Password set (permanent)")
         elif is_temp:
             console.print(f"\n[yellow]Temporary password:[/yellow] {temp_password}")
             console.print("[dim]User must change password on first login[/dim]")
         else:
-            console.print(f"[green]✓[/green]  Password set (temporary - must change on first login)")
+            console.print("[green]✓[/green]  Password set (temporary - must change on first login)")
 
     except cognito.exceptions.UsernameExistsException:
         console.print(f"[red]✗[/red]  User already exists: {email}")
@@ -673,10 +675,10 @@ def teardown(
         pool_name_actual = pool_info["UserPool"]["Name"]
 
         if not force:
-            console.print(f"[red]⚠  WARNING: This will delete the Cognito pool:[/red]")
+            console.print("[red]⚠  WARNING: This will delete the Cognito pool:[/red]")
             console.print(f"   Pool ID: {pool_id}")
             console.print(f"   Pool Name: {pool_name_actual}")
-            console.print(f"   [red]All users will be permanently deleted![/red]")
+            console.print("   [red]All users will be permanently deleted![/red]")
             confirm = typer.confirm("Are you absolutely sure?")
             if not confirm:
                 console.print("[dim]Cancelled[/dim]")

@@ -18,6 +18,8 @@ from dataclasses import dataclass, field
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
+from daylib.workset_state_db import WorksetState
+
 if TYPE_CHECKING:
     from daylib.workset_state_db import WorksetStateDB
 
@@ -257,7 +259,6 @@ class BillingCalculator:
         Returns:
             CustomerBillingSummary with aggregated costs
         """
-        from daylib.workset_state_db import WorksetState
 
         # Default period: last 30 days
         if period_end is None:
@@ -340,6 +341,63 @@ class BillingCalculator:
         summary.total_storage_gb = self._round_currency(summary.total_storage_gb, 2)
 
         return summary
+
+
+def calculate_customer_cost_breakdown(
+    state_db: "WorksetStateDB",
+    customer_id: str,
+    *,
+    rates: Optional[BillingRates] = None,
+    limit: int = 500,
+) -> Dict[str, Any]:
+    """Calculate compute/storage/transfer cost breakdown for a customer.
+
+    This is shared between the portal Usage page (cards) and the dashboard
+    cost-breakdown API so they cannot drift.
+
+    Notes:
+    - Uses *completed* worksets only.
+    - Uses Phase 5B/5C actual metrics when available, otherwise estimates.
+    """
+    calculator = BillingCalculator(state_db=state_db, rates=rates)
+
+    worksets = state_db.list_worksets_by_customer(
+        customer_id,
+        state=WorksetState.COMPLETE,
+        limit=limit,
+    )
+
+    total_compute_cost = 0.0
+    total_storage_cost = 0.0
+    total_transfer_cost = 0.0
+    total_storage_bytes = 0
+    has_actual_costs = False
+
+    for ws in worksets:
+        item = calculator.calculate_workset_billing(ws)
+        total_compute_cost += item.compute_cost_usd
+        total_storage_cost += item.storage_cost_usd
+        total_transfer_cost += item.transfer_cost_usd
+        total_storage_bytes += item.storage_bytes
+        if item.has_actual_compute_cost:
+            has_actual_costs = True
+
+    storage_gb = calculator._bytes_to_gb(total_storage_bytes)
+    total = total_compute_cost + total_storage_cost + total_transfer_cost
+
+    return {
+        "total": round(total, 2),
+        "has_actual_costs": has_actual_costs,
+        "compute_cost_usd": round(total_compute_cost, 2),
+        "storage_cost_usd": round(total_storage_cost, 4),
+        "transfer_cost_usd": round(total_transfer_cost, 4),
+        "storage_gb": round(storage_gb, 2),
+        "total_storage_bytes": total_storage_bytes,
+        "rates": {
+            "s3_storage_per_gb_month": calculator.rates.s3_storage_per_gb_month,
+            "data_egress_per_gb": calculator.rates.data_egress_per_gb,
+        },
+    }
 
     def generate_invoice_data(
         self,

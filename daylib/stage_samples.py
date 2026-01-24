@@ -22,7 +22,7 @@ import uuid
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 
 RUN_ID = "RUN_ID"
@@ -456,7 +456,7 @@ def multipart_concatenate(
             f"Failed to initiate multipart upload for destination {destination}"
         )
 
-    parts: List[Dict[str, str]] = []
+    parts: List[Dict[str, Any]] = []
     try:
         for idx, source in enumerate(sources, start=1):
             src_bucket, src_key = parse_s3_uri(source)

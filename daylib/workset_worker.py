@@ -10,12 +10,11 @@ import socket
 import sys
 import time
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional, Sequence
+from typing import Any, Dict, Optional, Sequence
 
 from daylib.workset_monitor import (
     MonitorConfig,
     WorksetMonitor,
-    Workset,
     configure_logging,
     SENTINEL_FILES,
 )

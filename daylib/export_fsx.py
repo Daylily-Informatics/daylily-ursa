@@ -9,11 +9,11 @@ import logging
 import sys
 import time
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Any, Dict, Optional, cast
 
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
-import yaml
+import yaml  # type: ignore[import-untyped]
 
 LOGGER = logging.getLogger("daylily.export_fsx")
 
@@ -35,14 +35,14 @@ def _configure_logging(verbose: bool) -> None:
     logging.basicConfig(level=level, format="%(asctime)s %(levelname)s %(message)s")
 
 
-def _create_session(options: ExportOptions):
+def _create_session(options: ExportOptions) -> Any:
     session_kwargs: Dict[str, str] = {"region_name": options.region}
     if options.profile:
         session_kwargs["profile_name"] = options.profile
     return boto3.Session(**session_kwargs)
 
 
-def _find_filesystem(client, cluster_name: str) -> Dict[str, object]:
+def _find_filesystem(client: Any, cluster_name: str) -> Dict[str, Any]:
     paginator = client.get_paginator("describe_file_systems")
     for page in paginator.paginate():
         for filesystem in page.get("FileSystems", []):
@@ -52,20 +52,20 @@ def _find_filesystem(client, cluster_name: str) -> Dict[str, object]:
                 if tag.get("Key")
             }
             if tags.get("parallelcluster:cluster-name") == cluster_name:
-                return filesystem
+                return cast(Dict[str, Any], filesystem)
     raise RuntimeError(f"No FSx filesystem found for cluster {cluster_name}")
 
 
 def _normalise_target(
-    filesystem: Dict[str, object], target_uri: str
+    filesystem: Dict[str, Any], target_uri: str
 ) -> tuple[str, Optional[str]]:
     target = target_uri.strip()
     if not target:
         raise RuntimeError("Target URI must be provided")
 
     lustre_config = filesystem.get("LustreConfiguration", {}) or {}
-    repo_config = lustre_config.get("DataRepositoryConfiguration", {}) or {}
-    export_path = repo_config.get("ExportPath")
+    repo_config = (lustre_config.get("DataRepositoryConfiguration", {}) or {})
+    export_path = cast(Optional[str], repo_config.get("ExportPath"))
 
     if target.startswith("s3://"):
         if not export_path:
@@ -93,22 +93,22 @@ def _normalise_target(
 
 
 def _start_export(
-    client,
-    filesystem: Dict[str, object],
+    client: Any,
+    filesystem: Dict[str, Any],
     relative_path: str,
 ) -> str:
-    filesystem_id = filesystem.get("FileSystemId")
+    filesystem_id = cast(Optional[str], filesystem.get("FileSystemId"))
     if not filesystem_id:
         raise RuntimeError("FSx filesystem is missing an identifier")
     lustre_config = filesystem.get("LustreConfiguration", {}) or {}
-    repo_config = lustre_config.get("DataRepositoryConfiguration", {}) or {}
-    export_path = repo_config.get("ExportPath")
+    repo_config = (lustre_config.get("DataRepositoryConfiguration", {}) or {})
+    export_path = cast(Optional[str], repo_config.get("ExportPath"))
     report_path = None
     if export_path:
         report_path = (
             f"{export_path.rstrip('/')}/daylily-monitor/{int(time.time())}/export-report"
         )
-    kwargs: Dict[str, object] = {
+    kwargs: Dict[str, Any] = {
         "FileSystemId": filesystem_id,
         "Type": "EXPORT_TO_REPOSITORY",
         "Paths": [relative_path],
@@ -120,37 +120,32 @@ def _start_export(
             "Format": "REPORT_CSV_20191124",
             "Scope": "FAILED_FILES_ONLY",
         }
-    response = client.create_data_repository_task(**kwargs)
-    task = response.get("DataRepositoryTask") or {}
-    task_id = task.get("TaskId")
+    response = cast(Dict[str, Any], client.create_data_repository_task(**kwargs))
+    task = cast(Dict[str, Any], response.get("DataRepositoryTask") or {})
+    task_id = cast(Optional[str], task.get("TaskId"))
     if not task_id:
         raise RuntimeError("FSx create_data_repository_task did not return a task id")
     return task_id
 
 
-def _await_export(client, task_id: str) -> Dict[str, object]:
+def _await_export(client: Any, task_id: str) -> Dict[str, Any]:
     while True:
-        response = client.describe_data_repository_tasks(TaskIds=[task_id])
-        tasks = response.get("DataRepositoryTasks", [])
+        response = cast(Dict[str, Any], client.describe_data_repository_tasks(TaskIds=[task_id]))
+        tasks = cast(list[Dict[str, Any]], response.get("DataRepositoryTasks", []) or [])
         if not tasks:
             raise RuntimeError("Unable to locate export task status")
         task = tasks[0]
         lifecycle = task.get("Lifecycle", "")
         LOGGER.info("Task %s status: %s", task_id, lifecycle)
         if lifecycle in {"SUCCEEDED", "FAILED", "CANCELED"}:
-            return task
+            return cast(Dict[str, Any], task)
         time.sleep(POLL_INTERVAL_SECONDS)
 
 
 def _write_status(
     options: ExportOptions, status: str, s3_uri: Optional[str], message: Optional[str]
 ) -> None:
-    payload: Dict[str, object] = {
-        "fsx_export": {
-            "status": status,
-            "s3_uri": s3_uri,
-        }
-    }
+    payload: Dict[str, Any] = {"fsx_export": {"status": status, "s3_uri": s3_uri}}
     if message:
         payload["fsx_export"]["message"] = message
     options.output_dir.mkdir(parents=True, exist_ok=True)
@@ -178,23 +173,28 @@ def _run(options: ExportOptions) -> int:
         _write_status(options, "error", None, str(exc))
         return 1
 
-    lifecycle = task.get("Lifecycle")
+    lifecycle = str(task.get("Lifecycle") or "")
     if lifecycle == "SUCCEEDED":
         message = None
         if not s3_uri:
-            repo_config = (
-                (filesystem.get("LustreConfiguration", {}) or {})
-                .get("DataRepositoryConfiguration", {})
-                or {}
+            repo_config = cast(
+                Dict[str, Any],
+                (
+                    (filesystem.get("LustreConfiguration", {}) or {}).get(
+                        "DataRepositoryConfiguration", {}
+                    )
+                    or {}
+                ),
             )
-            export_path = repo_config.get("ExportPath")
+            export_path = cast(Optional[str], repo_config.get("ExportPath"))
             if export_path:
                 s3_uri = f"{export_path.rstrip('/')}/{relative_path}"
         _write_status(options, "success", s3_uri, message)
         return 0
 
-    failure_details = task.get("FailureDetails") or {}
-    message = failure_details.get("Message") or f"Task ended with status {lifecycle}"
+    failure_details = cast(Dict[str, Any], task.get("FailureDetails") or {})
+    message_raw = failure_details.get("Message")
+    message = str(message_raw) if message_raw else f"Task ended with status {lifecycle}"
     _write_status(options, "error", s3_uri, message)
     return 1
 

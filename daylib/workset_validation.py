@@ -5,14 +5,10 @@ Validates workset configuration, estimates resources, and checks dependencies.
 
 from __future__ import annotations
 
-import json
 import logging
-import os
 import re
-import subprocess
 from dataclasses import dataclass, field
 from enum import Enum
-from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import boto3
@@ -290,7 +286,7 @@ class WorksetValidator:
             except Exception as e:
                 detailed_errors.append(ValidationError(
                     field="daylily_work.yaml",
-                    message=f"Failed to load configuration file",
+                    message="Failed to load configuration file",
                     code="CONFIG_LOAD_FAILED",
                     remediation="Ensure daylily_work.yaml exists at the specified prefix",
                     context={"path": f"s3://{bucket}/{work_yaml_path}", "error": str(e)},

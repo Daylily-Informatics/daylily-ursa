@@ -11,12 +11,10 @@ from __future__ import annotations
 
 import logging
 import time
-from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Callable, Dict, Optional, Tuple
 
-from fastapi import HTTPException, Request, Response, status
-from fastapi.responses import JSONResponse
+from fastapi import HTTPException, Request, status
 
 from daylib.config import Settings, get_settings
 

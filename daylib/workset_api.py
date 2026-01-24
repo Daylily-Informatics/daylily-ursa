@@ -8,31 +8,28 @@ This module uses shared Pydantic models from daylib.routes.dependencies.
 from __future__ import annotations
 
 import gzip
-import hashlib
 import io
 import logging
-import os
 import re
 import tarfile
 import uuid
 import zipfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, DefaultDict, Dict, List, Optional, Tuple
 
 import boto3
 import yaml  # type: ignore[import-untyped]
 
 from fastapi import Body, Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel, Field, EmailStr
 from starlette.middleware.sessions import SessionMiddleware
 
 from daylib.config import Settings, get_settings
-from daylib.workset_state_db import ErrorCategory, WorksetPriority, WorksetState, WorksetStateDB
+from daylib.workset_state_db import WorksetPriority, WorksetState, WorksetStateDB
 from daylib.workset_scheduler import WorksetScheduler
 
 # Import shared Pydantic models from routes module
@@ -46,11 +43,6 @@ from daylib.routes.dependencies import (
     CustomerResponse,
     WorksetValidationResponse,
     WorkYamlGenerateRequest,
-    ChangePasswordRequest,
-    APITokenCreateRequest,
-    PortalFileAutoRegisterRequest,
-    PortalFileAutoRegisterResponse,
-    # Utility functions
     format_file_size as _format_file_size,
     get_file_icon as _get_file_icon,
     calculate_cost_with_efficiency as _calculate_cost_with_efficiency,
@@ -1698,7 +1690,7 @@ def create_app(
                 effective_integration = WorksetIntegration(
                     state_db=state_db,
                     bucket=bucket,
-                    region=cluster_region or settings.aws_region,
+                        region=cluster_region or settings.get_effective_region(),
                     profile=ursa_config.aws_profile or settings.aws_profile,
                 )
 
@@ -2318,11 +2310,12 @@ def create_app(
                         if total_size > 0:
                             # Format human-readable size
                             def format_bytes(size_bytes: int) -> str:
+                                size = float(size_bytes)
                                 for unit in ["B", "KB", "MB", "GB", "TB"]:
-                                    if abs(size_bytes) < 1024.0:
-                                        return f"{size_bytes:.1f}{unit}"
-                                    size_bytes /= 1024.0
-                                return f"{size_bytes:.1f}PB"
+                                    if abs(size) < 1024.0:
+                                        return f"{size:.1f}{unit}"
+                                    size /= 1024.0
+                                return f"{size:.1f}PB"
 
                             post_export_metrics = {
                                 "analysis_directory_size_bytes": total_size,
@@ -2525,9 +2518,9 @@ def create_app(
             start_date = end_date - timedelta(days=days - 1)
 
             # Initialize counters for each day
-            daily_submitted = defaultdict(int)
-            daily_completed = defaultdict(int)
-            daily_failed = defaultdict(int)
+            daily_submitted: DefaultDict[str, int] = defaultdict(int)
+            daily_completed: DefaultDict[str, int] = defaultdict(int)
+            daily_failed: DefaultDict[str, int] = defaultdict(int)
 
             for ws in all_worksets:
                 state_history = ws.get("state_history", [])
@@ -2619,7 +2612,7 @@ def create_app(
             start_date = end_date - timedelta(days=days - 1)
 
             # Track daily costs
-            daily_costs = defaultdict(float)
+            daily_costs: DefaultDict[str, float] = defaultdict(float)
 
             for ws in all_worksets:
                 # Get cost from performance metrics or estimate
@@ -2696,6 +2689,12 @@ def create_app(
             - Storage: From dedicated storage_metrics fields (Phase 5C) at $0.023/GB/month
             - Transfer: Per-GB rate for data egress
             """
+            if not state_db:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="State DB not configured",
+                )
+
             if not customer_manager:
                 raise HTTPException(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -2709,106 +2708,42 @@ def create_app(
                     detail=f"Customer {customer_id} not found",
                 )
 
-            # Cost calculation constants
-            S3_STORAGE_COST_PER_GB_MONTH = 0.023  # S3 Standard storage
-            TRANSFER_COST_PER_GB = 0.09  # AWS data transfer out
+            # Shared billing logic (used by both portal Usage page + dashboard chart)
+            from daylib.billing import calculate_customer_cost_breakdown
 
-            # Get customer worksets using efficient GSI query
-            customer_worksets = state_db.list_worksets_by_customer(
-                customer_id, state=WorksetState.COMPLETE, limit=500
-            )
+            breakdown = calculate_customer_cost_breakdown(state_db, customer_id, limit=500)
 
-            total_compute_cost = 0.0
-            total_storage_bytes = 0
-            has_actual_costs = False
-
-            for ws in customer_worksets:
-                workset_id = ws.get("workset_id", "")
-
-                # Try dedicated cost_report fields first (Phase 5B)
-                cost_report = state_db.get_cost_report(workset_id)
-                if cost_report and cost_report.get("total_compute_cost_usd"):
-                    total_compute_cost += cost_report["total_compute_cost_usd"]
-                    has_actual_costs = True
-                else:
-                    # Fall back to performance_metrics or estimates
-                    pm = ws.get("performance_metrics", {})
-                    if pm and isinstance(pm, dict):
-                        cost_summary = pm.get("cost_summary", {})
-                        if cost_summary and isinstance(cost_summary, dict):
-                            total_compute_cost += float(cost_summary.get("total_cost", 0))
-                            has_actual_costs = True
-                        else:
-                            # Fall back to estimated
-                            cost = float(ws.get("cost_usd", 0) or 0)
-                            if cost == 0:
-                                metadata = ws.get("metadata", {})
-                                if isinstance(metadata, dict):
-                                    cost = float(metadata.get("cost_usd", 0) or metadata.get("estimated_cost_usd", 0) or 0)
-                            total_compute_cost += cost
-                    else:
-                        # Fall back to estimated cost
-                        cost = float(ws.get("cost_usd", 0) or 0)
-                        if cost == 0:
-                            metadata = ws.get("metadata", {})
-                            if isinstance(metadata, dict):
-                                cost = float(metadata.get("cost_usd", 0) or metadata.get("estimated_cost_usd", 0) or 0)
-                        total_compute_cost += cost
-
-                # Try dedicated storage_metrics fields first (Phase 5C)
-                storage_metrics = state_db.get_storage_metrics(workset_id)
-                if storage_metrics and storage_metrics.get("results_storage_bytes"):
-                    total_storage_bytes += storage_metrics["results_storage_bytes"]
-                else:
-                    # Fall back to performance_metrics
-                    pm = ws.get("performance_metrics", {})
-                    if pm and isinstance(pm, dict):
-                        export_metrics = pm.get("post_export_metrics", {}) or pm.get("pre_export_metrics", {})
-                        if export_metrics and isinstance(export_metrics, dict):
-                            total_storage_bytes += int(export_metrics.get("analysis_directory_size_bytes", 0) or 0)
-
-            # Calculate storage and transfer costs
-            storage_gb = total_storage_bytes / (1024**3)
-            storage_cost = storage_gb * S3_STORAGE_COST_PER_GB_MONTH
-            transfer_cost = storage_gb * TRANSFER_COST_PER_GB
-
-            # Build response with all three categories
-            categories = []
-            values = []
-
-            if total_compute_cost > 0:
+            categories: list[str] = []
+            values: list[float] = []
+            if breakdown["compute_cost_usd"] > 0:
                 categories.append("Compute")
-                values.append(round(total_compute_cost, 2))
-
-            if storage_cost > 0:
+                values.append(breakdown["compute_cost_usd"])
+            if breakdown["storage_cost_usd"] > 0:
                 categories.append("Storage")
-                values.append(round(storage_cost, 4))
-
-            if transfer_cost > 0:
+                values.append(breakdown["storage_cost_usd"])
+            if breakdown["transfer_cost_usd"] > 0:
                 categories.append("Transfer")
-                values.append(round(transfer_cost, 4))
+                values.append(breakdown["transfer_cost_usd"])
 
-            # Default if no costs
             if not categories:
                 categories = ["Compute"]
-                values = [0]
+                values = [0.0]
 
-            total = total_compute_cost + storage_cost + transfer_cost
             return {
                 "categories": categories,
                 "values": values,
-                "total": round(total, 2),
-                "has_actual_costs": has_actual_costs,
-                "compute_cost_usd": round(total_compute_cost, 2),
-                "storage_cost_usd": round(storage_cost, 4),
-                "transfer_cost_usd": round(transfer_cost, 4),
-                "storage_gb": round(storage_gb, 2),
+                "total": breakdown["total"],
+                "has_actual_costs": breakdown["has_actual_costs"],
+                "compute_cost_usd": breakdown["compute_cost_usd"],
+                "storage_cost_usd": breakdown["storage_cost_usd"],
+                "transfer_cost_usd": breakdown["transfer_cost_usd"],
+                "storage_gb": breakdown["storage_gb"],
             }
 
     # ========== Billing Endpoints (Phase 5D) ==========
 
     if state_db and customer_manager:
-        from daylib.billing import BillingCalculator, BillingRates
+        from daylib.billing import BillingCalculator
 
         # Initialize billing calculator with default rates
         billing_calculator = BillingCalculator(state_db=state_db)

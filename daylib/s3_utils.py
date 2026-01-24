@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, cast
 
 import boto3
 from botocore.exceptions import ClientError
@@ -43,6 +43,14 @@ def normalize_bucket_name(bucket: Optional[str]) -> Optional[str]:
     if "/" in bucket:
         bucket = bucket.split("/")[0]
     return bucket if bucket else None
+
+
+def _normalize_bucket_name_required(bucket: str) -> str:
+    """Normalize a bucket name and require the result to be non-empty."""
+    normalized = normalize_bucket_name(bucket)
+    if not normalized:
+        raise ValueError("Bucket name must be non-empty")
+    return normalized
 
 
 class _S3ExceptionsProxy:
@@ -134,26 +142,26 @@ class RegionAwareS3Client:
         Returns:
             AWS region string (e.g., "us-west-2", "eu-central-1")
         """
-        bucket = normalize_bucket_name(bucket)
-        if not bucket:
+        bucket_normalized = normalize_bucket_name(bucket)
+        if not bucket_normalized:
             return self.default_region
         
         with self._bucket_regions_lock:
-            if bucket in self._bucket_regions:
-                return self._bucket_regions[bucket]
+            if bucket_normalized in self._bucket_regions:
+                return self._bucket_regions[bucket_normalized]
         
         # Look up bucket region
         try:
-            response = self._default_client.get_bucket_location(Bucket=bucket)
+            response = self._default_client.get_bucket_location(Bucket=bucket_normalized)
             # AWS returns None for us-east-1 (legacy behavior)
             region = response.get("LocationConstraint") or "us-east-1"
-            LOGGER.debug("Bucket %s is in region %s", bucket, region)
+            LOGGER.debug("Bucket %s is in region %s", bucket_normalized, region)
         except ClientError as e:
-            LOGGER.warning("Could not determine region for bucket %s: %s", bucket, e)
+            LOGGER.warning("Could not determine region for bucket %s: %s", bucket_normalized, e)
             region = self.default_region
         
         with self._bucket_regions_lock:
-            self._bucket_regions[bucket] = region
+            self._bucket_regions[bucket_normalized] = region
         
         return region
     
@@ -175,10 +183,10 @@ class RegionAwareS3Client:
         Use this if a bucket's region might have changed (rare) or
         to force a fresh lookup.
         """
-        bucket = normalize_bucket_name(bucket)
-        if bucket:
+        bucket_normalized = normalize_bucket_name(bucket)
+        if bucket_normalized:
             with self._bucket_regions_lock:
-                self._bucket_regions.pop(bucket, None)
+                self._bucket_regions.pop(bucket_normalized, None)
 
     def get_paginator(self, operation_name: str) -> "_RegionAwarePaginator":
         """Get a paginator for the given operation.
@@ -201,43 +209,80 @@ class RegionAwareS3Client:
 
     def list_objects_v2(self, Bucket: str, **kwargs) -> Dict[str, Any]:
         """List objects in a bucket using the correct regional client."""
-        client = self.get_client_for_bucket(Bucket)
-        return client.list_objects_v2(Bucket=normalize_bucket_name(Bucket), **kwargs)
+        normalized_bucket = _normalize_bucket_name_required(Bucket)
+        client = self.get_client_for_bucket(normalized_bucket)
+        return cast(Dict[str, Any], client.list_objects_v2(Bucket=normalized_bucket, **kwargs))
 
     def head_object(self, Bucket: str, Key: str, **kwargs) -> Dict[str, Any]:
         """Get object metadata using the correct regional client."""
-        client = self.get_client_for_bucket(Bucket)
-        return client.head_object(Bucket=normalize_bucket_name(Bucket), Key=Key, **kwargs)
+        normalized_bucket = _normalize_bucket_name_required(Bucket)
+        client = self.get_client_for_bucket(normalized_bucket)
+        return cast(
+            Dict[str, Any],
+            client.head_object(Bucket=normalized_bucket, Key=Key, **kwargs),
+        )
 
     def get_object(self, Bucket: str, Key: str, **kwargs) -> Dict[str, Any]:
         """Get object from S3 using the correct regional client."""
-        client = self.get_client_for_bucket(Bucket)
-        return client.get_object(Bucket=normalize_bucket_name(Bucket), Key=Key, **kwargs)
+        normalized_bucket = _normalize_bucket_name_required(Bucket)
+        client = self.get_client_for_bucket(normalized_bucket)
+        return cast(
+            Dict[str, Any],
+            client.get_object(Bucket=normalized_bucket, Key=Key, **kwargs),
+        )
 
     def put_object(self, Bucket: str, Key: str, **kwargs) -> Dict[str, Any]:
         """Put object to S3 using the correct regional client."""
-        client = self.get_client_for_bucket(Bucket)
-        return client.put_object(Bucket=normalize_bucket_name(Bucket), Key=Key, **kwargs)
+        normalized_bucket = _normalize_bucket_name_required(Bucket)
+        client = self.get_client_for_bucket(normalized_bucket)
+        return cast(
+            Dict[str, Any],
+            client.put_object(Bucket=normalized_bucket, Key=Key, **kwargs),
+        )
 
     def delete_object(self, Bucket: str, Key: str, **kwargs) -> Dict[str, Any]:
         """Delete object from S3 using the correct regional client."""
-        client = self.get_client_for_bucket(Bucket)
-        return client.delete_object(Bucket=normalize_bucket_name(Bucket), Key=Key, **kwargs)
+        normalized_bucket = _normalize_bucket_name_required(Bucket)
+        client = self.get_client_for_bucket(normalized_bucket)
+        return cast(
+            Dict[str, Any],
+            client.delete_object(Bucket=normalized_bucket, Key=Key, **kwargs),
+        )
 
     def copy_object(self, CopySource: Dict[str, str], Bucket: str, Key: str, **kwargs) -> Dict[str, Any]:
         """Copy object using the correct regional client for destination bucket."""
-        client = self.get_client_for_bucket(Bucket)
-        return client.copy_object(
-            CopySource=CopySource,
-            Bucket=normalize_bucket_name(Bucket),
-            Key=Key,
-            **kwargs
+        normalized_bucket = _normalize_bucket_name_required(Bucket)
+        client = self.get_client_for_bucket(normalized_bucket)
+        return cast(
+            Dict[str, Any],
+            client.copy_object(
+                CopySource=CopySource,
+                Bucket=normalized_bucket,
+                Key=Key,
+                **kwargs,
+            ),
         )
 
     def head_bucket(self, Bucket: str, **kwargs) -> Dict[str, Any]:
         """Check if bucket exists and is accessible."""
-        client = self.get_client_for_bucket(Bucket)
-        return client.head_bucket(Bucket=normalize_bucket_name(Bucket), **kwargs)
+        normalized_bucket = _normalize_bucket_name_required(Bucket)
+        client = self.get_client_for_bucket(normalized_bucket)
+        return cast(
+            Dict[str, Any],
+            client.head_bucket(Bucket=normalized_bucket, **kwargs),
+        )
+
+    def upload_file(self, Filename: str, Bucket: str, Key: str, **kwargs) -> None:
+        """Upload a local file to S3 using the correct regional client."""
+        normalized_bucket = _normalize_bucket_name_required(Bucket)
+        client = self.get_client_for_bucket(normalized_bucket)
+        client.upload_file(Filename, normalized_bucket, Key, **kwargs)
+
+    def upload_fileobj(self, Fileobj: Any, Bucket: str, Key: str, **kwargs) -> None:
+        """Upload a file-like object to S3 using the correct regional client."""
+        normalized_bucket = _normalize_bucket_name_required(Bucket)
+        client = self.get_client_for_bucket(normalized_bucket)
+        client.upload_fileobj(Fileobj, normalized_bucket, Key, **kwargs)
 
     def generate_presigned_url(
         self,
@@ -256,19 +301,23 @@ class RegionAwareS3Client:
         Returns:
             Presigned URL string
         """
-        bucket = Params.get("Bucket")
-        if not bucket:
+        bucket_value = Params.get("Bucket")
+        if not bucket_value or not isinstance(bucket_value, str):
             raise ValueError("Params must include 'Bucket' key")
 
-        client = self.get_client_for_bucket(bucket)
+        normalized_bucket = _normalize_bucket_name_required(bucket_value)
+        client = self.get_client_for_bucket(normalized_bucket)
         # Normalize bucket in params
         params = dict(Params)
-        params["Bucket"] = normalize_bucket_name(bucket)
-        return client.generate_presigned_url(
+        params["Bucket"] = normalized_bucket
+        return cast(
+            str,
+            client.generate_presigned_url(
             ClientMethod=ClientMethod,
             Params=params,
             ExpiresIn=ExpiresIn,
             **kwargs
+            ),
         )
 
 
@@ -298,7 +347,7 @@ class _RegionAwarePaginator:
         Returns:
             Pagination iterator from the correct regional client
         """
-        bucket = normalize_bucket_name(Bucket)
-        client = self._client.get_client_for_bucket(bucket)
+        normalized_bucket = _normalize_bucket_name_required(Bucket)
+        client = self._client.get_client_for_bucket(normalized_bucket)
         paginator = client.get_paginator(self._operation_name)
-        return paginator.paginate(Bucket=bucket, **kwargs)
+        return paginator.paginate(Bucket=normalized_bucket, **kwargs)

@@ -77,7 +77,7 @@ def _gather_fastq_stats(
     count = 0
     total_size = 0
     with units_path.open("r", encoding="utf-8", errors="ignore") as handle:
-        header = handle.readline()
+        handle.readline()
         for line in handle:
             line = line.strip()
             if not line:

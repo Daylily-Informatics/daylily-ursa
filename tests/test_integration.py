@@ -5,7 +5,6 @@ and error handling.
 """
 
 from unittest.mock import MagicMock, patch
-import datetime as dt
 
 import pytest
 
@@ -15,10 +14,8 @@ from daylib.workset_state_db import (
     WorksetPriority,
     ErrorCategory,
 )
-from daylib.workset_concurrent_processor import ConcurrentWorksetProcessor
-from daylib.workset_notifications import NotificationManager, SNSNotificationChannel
 from daylib.workset_validation import WorksetValidator
-from daylib.workset_diagnostics import ErrorAnalyzer, classify_error
+from daylib.workset_diagnostics import classify_error
 
 
 @pytest.fixture
@@ -160,7 +157,7 @@ class TestValidationToProcessing:
     def test_validation_before_registration(self, state_db, mock_aws):
         """Test validating workset before registration."""
         with patch("daylib.workset_validation.boto3.Session"):
-            validator = WorksetValidator(region="us-west-2")
+            WorksetValidator(region="us-west-2")
 
             # Valid workset config - use the schema directly
             config = {

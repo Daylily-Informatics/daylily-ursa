@@ -18,13 +18,13 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
+import boto3
+from botocore.exceptions import ClientError
+
 
 def _utc_now_iso() -> str:
     """Return current UTC time in ISO format with Z suffix."""
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-
-import boto3
-from botocore.exceptions import ClientError
 
 LOGGER = logging.getLogger("daylily.s3_bucket_validator")
 
@@ -409,7 +409,7 @@ aws s3api put-bucket-policy --bucket {bucket_name} --policy file://bucket-policy
 """)
 
         if validation_result.accessible and not validation_result.can_write:
-            instructions.append(f"""
+            instructions.append("""
 ## Enable Write Access
 
 Your bucket is accessible but Daylily cannot write results.

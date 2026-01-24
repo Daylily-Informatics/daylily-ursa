@@ -2,21 +2,15 @@
 Tests for file_api.py - File registration API endpoints.
 """
 
-import json
 import pytest
 from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
 from fastapi import FastAPI
 
 from daylib.file_api import (
-    BiosampleMetadataRequest,
-    FileMetadataRequest,
-    FileRegistrationRequest,
-    FileSetRequest,
-    SequencingMetadataRequest,
     create_file_api_router,
 )
-from daylib.file_registry import FileRegistry, BucketFileDiscovery
+from daylib.file_registry import FileRegistry
 from daylib.s3_bucket_validator import (
     S3BucketValidator,
     LinkedBucketManager,

@@ -56,8 +56,8 @@ cluster = [
 
 [project.scripts]
 ursa = "daylib.cli:main"
-daylily-workset-api = "daylib.workset_api:main"
-daylily-workset-monitor = "daylib.workset_monitor:main"
+daylily-workset-api = "daylib.workset_api_cli:main"
+daylily-workset-monitor = "daylib.workset_monitor_cli:main"
 daylily-stage-samples-from-local-to-headnode = "daylib.stage_samples:main"
 daylily-export-fsx-to-s3-from-local = "daylib.export_fsx:main"
 daylily-purge-customer-data = "daylib.purge_customer:main"

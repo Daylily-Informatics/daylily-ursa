@@ -6,7 +6,6 @@ Provides JWT token validation and user management for multi-tenant access.
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 import boto3
@@ -399,7 +398,7 @@ class CognitoAuth:
         """
         try:
             # Decode without verification first to get header
-            unverified_header = jwt.get_unverified_header(token)
+            jwt.get_unverified_header(token)
 
             # In production, fetch and cache JWKS keys
             # For now, decode with basic validation

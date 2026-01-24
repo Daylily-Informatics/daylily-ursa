@@ -7,7 +7,6 @@ linked bucket management, and file discovery.
 
 from __future__ import annotations
 
-import json
 import logging
 import uuid
 from typing import Any, Callable, Dict, List, Optional
@@ -19,26 +18,20 @@ from pydantic import BaseModel, Field
 from daylib.file_registry import (
     BiosampleMetadata,
     BucketFileDiscovery,
-    DiscoveredFile,
     FileMetadata,
     FileRegistration,
     FileRegistry,
     FileSet,
-    FileWorksetUsage,
     SequencingMetadata,
     detect_file_format,
     generate_file_id,
 )
 from daylib.s3_bucket_validator import (
-    BucketValidationResult,
-    LinkedBucket,
     LinkedBucketManager,
     S3BucketValidator,
 )
 from daylib.file_upload import (
     FileUploadManager,
-    PresignedUrlResponse,
-    UploadSession,
     generate_upload_path,
 )
 from daylib.file_metadata import (
@@ -2756,7 +2749,7 @@ def create_file_api_router(
             if char in folder_name:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Folder name contains invalid character",
+                    detail="Folder name contains invalid character",
                 )
 
         # Apply prefix restriction
@@ -2912,7 +2905,7 @@ def create_file_api_router(
             return DeleteFileResponse(
                 success=True,
                 deleted_key=file_key,
-                message=f"File deleted successfully",
+                message="File deleted successfully",
             )
 
         except HTTPException:

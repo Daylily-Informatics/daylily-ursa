@@ -17,7 +17,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, cast
 
 LOGGER = logging.getLogger("daylily.cluster_service")
 
@@ -198,9 +198,13 @@ class ClusterInfo:
         # Remove any path component
         return bucket.split("/")[0]
 
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for JSON serialization."""
-        return {
+    def to_dict(self, include_sensitive: bool = True) -> Dict[str, Any]:
+        """Convert to dictionary for JSON serialization.
+
+        Args:
+            include_sensitive: If False, omit/blank fields that expose cost/budget/queue details.
+        """
+        result: Dict[str, Any] = {
             "cluster_name": self.cluster_name,
             "region": self.region,
             "cluster_status": self.cluster_status,
@@ -217,10 +221,17 @@ class ClusterInfo:
             "tags": self.tags,
             "version": self.version,
             "error_message": self.error_message,
-            "budget_info": self.budget_info.to_dict() if self.budget_info else None,
-            "job_queue": self.job_queue.to_dict() if self.job_queue else None,
+            # Always provide keys so templates/callers don't KeyError.
+            "budget_info": None,
+            "job_queue": None,
             "monitor_bucket": self.get_monitor_bucket(),
         }
+
+        if include_sensitive:
+            result["budget_info"] = self.budget_info.to_dict() if self.budget_info else None
+            result["job_queue"] = self.job_queue.to_dict() if self.job_queue else None
+
+        return result
 
 
 class ClusterService:
@@ -271,7 +282,8 @@ class ClusterService:
 
         # Check full cluster cache (might be more recent)
         if self._cache and (now - self._cache_time) < self.cache_ttl_seconds:
-            for cluster in self._cache.get("clusters", []):
+            cached_clusters = cast(List[ClusterInfo], self._cache.get("clusters", []))
+            for cluster in cached_clusters:
                 if cluster.cluster_name == cluster_name:
                     # Update region map
                     self._cluster_region_map[cluster_name] = cluster.region
@@ -327,7 +339,7 @@ class ClusterService:
             # even on success (e.g., pkg_resources deprecation warnings)
             if result.stdout.strip():
                 try:
-                    parsed = json.loads(result.stdout)
+                    parsed = cast(Dict[str, Any], json.loads(result.stdout))
                     return parsed
                 except json.JSONDecodeError:
                     LOGGER.warning(f"Failed to parse stdout as JSON: {result.stdout[:200]}")
@@ -433,7 +445,7 @@ class ClusterService:
         now = time.time()
         if not force_refresh and self._cache and (now - self._cache_time) < self.cache_ttl_seconds:
             LOGGER.debug("Returning cached cluster data (age: %.1fs)", now - self._cache_time)
-            return self._cache.get("clusters", [])
+            return cast(List[ClusterInfo], self._cache.get("clusters", []))
 
         LOGGER.info(f"Fetching clusters from {len(self.regions)} regions in parallel: {self.regions}")
         start_time = time.time()

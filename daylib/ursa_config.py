@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-import yaml
+import yaml  # type: ignore[import-untyped]
 
 LOGGER = logging.getLogger(__name__)
 

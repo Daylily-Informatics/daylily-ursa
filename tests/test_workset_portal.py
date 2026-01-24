@@ -1,13 +1,31 @@
 """Tests for customer portal routes."""
 
 from unittest.mock import MagicMock, patch
-from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
+from daylib.billing import calculate_customer_cost_breakdown
 from daylib.workset_state_db import WorksetStateDB, WorksetState
 from daylib.workset_api import create_app
+
+
+def _make_authenticated_client(mock_state_db: MagicMock, *, customer_id: str, is_admin: bool) -> TestClient:
+    """Create an authenticated portal client with a controlled admin flag."""
+    mock_customer_manager = MagicMock()
+    mock_customer = MagicMock()
+    mock_customer.customer_id = customer_id
+    mock_customer.is_admin = is_admin
+    mock_customer_manager.get_customer_by_email.return_value = mock_customer
+
+    app = create_app(
+        state_db=mock_state_db,
+        enable_auth=False,
+        customer_manager=mock_customer_manager,
+    )
+    client = TestClient(app)
+    client.post("/portal/login", data={"email": "user@example.com", "password": "testpass"})
+    return client
 
 
 @pytest.fixture
@@ -21,6 +39,7 @@ def mock_state_db():
             "priority": "normal",
             "bucket": "test-bucket",
             "prefix": "worksets/test/",
+            "customer_id": "demo-customer",
             "created_at": "2024-01-15T10:00:00Z",
             "updated_at": "2024-01-15T10:00:00Z",
         },
@@ -30,6 +49,7 @@ def mock_state_db():
             "priority": "high",
             "bucket": "test-bucket",
             "prefix": "worksets/test2/",
+            "customer_id": "demo-customer",
             "created_at": "2024-01-15T11:00:00Z",
             "updated_at": "2024-01-15T11:30:00Z",
         },
@@ -40,6 +60,7 @@ def mock_state_db():
         "priority": "normal",
         "bucket": "test-bucket",
         "prefix": "worksets/test/",
+        "customer_id": "demo-customer",
         "created_at": "2024-01-15T10:00:00Z",
         "updated_at": "2024-01-15T10:00:00Z",
     }
@@ -142,6 +163,84 @@ class TestPortalRoutes:
         assert response.status_code == 200
         assert "text/html" in response.headers["content-type"]
         assert b"Usage" in response.content or b"Billing" in response.content
+
+    def test_portal_usage_has_billing_edit_link(self, authenticated_client):
+        """Usage page should include an Edit link for billing information."""
+        response = authenticated_client.get("/portal/usage")
+        assert response.status_code == 200
+        assert b'href="/portal/account"' in response.content
+
+    def test_portal_usage_export_csv(self, mock_state_db):
+        """Export route returns a CSV attachment for the logged-in customer."""
+        client = _make_authenticated_client(mock_state_db, customer_id="customer-A", is_admin=False)
+
+        mock_state_db.list_worksets_by_customer.return_value = [
+            {
+                "workset_id": "ws-001",
+                "state": "completed",
+                "customer_id": "customer-A",
+                "completed_at": "2024-01-15T10:00:00Z",
+            },
+            {
+                "workset_id": "ws-002",
+                "state": "completed",
+                "customer_id": "customer-A",
+                "completed_at": "2024-01-16T10:00:00Z",
+            },
+        ]
+
+        def _cost_report(workset_id: str):
+            return {
+                "total_compute_cost_usd": 10.0 if workset_id == "ws-001" else 5.0,
+                "cost_report_sample_count": 3,
+                "cost_report_rule_count": 1,
+            }
+
+        def _storage_metrics(workset_id: str):
+            storage_bytes = int(100 * 1024**3) if workset_id == "ws-001" else int(50 * 1024**3)
+            return {"results_storage_bytes": storage_bytes}
+
+        mock_state_db.get_cost_report.side_effect = _cost_report
+        mock_state_db.get_storage_metrics.side_effect = _storage_metrics
+
+        response = client.get("/portal/usage/export")
+        assert response.status_code == 200
+        assert "text/csv" in response.headers["content-type"]
+        assert "attachment;" in response.headers["content-disposition"]
+        assert "ursa-usage-report-customer-A-" in response.headers["content-disposition"]
+        assert b"date,workset_id,sample_count" in response.content
+        assert b"TOTAL" in response.content
+
+    def test_portal_usage_and_cost_breakdown_api_share_totals(self, mock_state_db):
+        """Portal cards and dashboard chart must be derived from the same source."""
+        client = _make_authenticated_client(mock_state_db, customer_id="customer-A", is_admin=False)
+
+        mock_state_db.list_worksets_by_customer.return_value = [
+            {
+                "workset_id": "ws-001",
+                "state": "completed",
+                "customer_id": "customer-A",
+                "completed_at": "2024-01-15T10:00:00Z",
+            }
+        ]
+        mock_state_db.get_cost_report.return_value = {
+            "total_compute_cost_usd": 12.34,
+            "cost_report_sample_count": 2,
+            "cost_report_rule_count": 1,
+        }
+        mock_state_db.get_storage_metrics.return_value = {"results_storage_bytes": int(20 * 1024**3)}
+
+        expected = calculate_customer_cost_breakdown(mock_state_db, "customer-A", limit=500)
+
+        html = client.get("/portal/usage")
+        assert html.status_code == 200
+        assert f"${expected['total']:.2f}".encode() in html.content
+
+        api = client.get("/api/customers/customer-A/dashboard/cost-breakdown")
+        assert api.status_code == 200
+        payload = api.json()
+        assert payload["total"] == expected["total"]
+        assert round(sum(payload["values"]), 2) == expected["total"]
 
     def test_portal_docs(self, authenticated_client):
         """Test documentation page loads (requires auth)."""
@@ -1337,7 +1436,7 @@ class TestFileSearchAPI:
         from daylib.file_api import FileSearchRequest
 
         # Simulate the search logic
-        request = FileSearchRequest()
+        FileSearchRequest()
         results = mock_file_registry_for_search.list_customer_files("cust-001", limit=1000)
 
         assert len(results) == 3
@@ -1752,3 +1851,105 @@ class TestVerifyWorksetOwnership:
         # Should use customer_id field
         assert verify_workset_ownership(workset, "cust-A") is True
         assert verify_workset_ownership(workset, "cust-B") is False
+
+
+class TestPortalAuthzSurfaces:
+    """HTTP-level regression tests for portal authorization surfaces."""
+
+    def test_portal_dashboard_filters_worksets_by_customer_id(self, mock_state_db):
+        """Dashboard must only show worksets owned by the logged-in customer."""
+        client = _make_authenticated_client(mock_state_db, customer_id="customer-A", is_admin=False)
+
+        def list_by_state(state, limit=100):
+            if state == WorksetState.READY:
+                return [
+                    {
+                        "workset_id": "ws-owned",
+                        "state": "ready",
+                        "customer_id": "customer-A",
+                        "created_at": "2026-01-24T00:00:00Z",
+                    },
+                    {
+                        "workset_id": "ws-not-owned",
+                        "state": "ready",
+                        "customer_id": "customer-B",
+                        "created_at": "2026-01-24T00:00:00Z",
+                    },
+                ]
+            return []
+
+        mock_state_db.list_worksets_by_state.side_effect = list_by_state
+
+        response = client.get("/portal")
+        assert response.status_code == 200
+        assert b"ws-owned" in response.content
+        assert b"ws-not-owned" not in response.content
+
+    def test_clusters_sensitive_sections_are_admin_only(self, mock_state_db, monkeypatch):
+        """Clusters page must hide budget/queue and IP details from non-admins."""
+
+        class _FakeUrsaConfig:
+            is_configured = True
+            aws_profile = None
+
+            def get_allowed_regions(self):
+                return ["us-west-2"]
+
+        # Patch config/cluster services used by the route.
+        monkeypatch.setattr("daylib.ursa_config.get_ursa_config", lambda: _FakeUrsaConfig())
+
+        mock_cluster = MagicMock()
+
+        def cluster_to_dict(*, include_sensitive=True):
+            base = {
+                "cluster_name": "test-cluster",
+                "region": "us-west-2",
+                "cluster_status": "CREATE_COMPLETE",
+                "compute_fleet_status": "RUNNING",
+                "head_node": {
+                    "instance_type": "t3.medium",
+                    "public_ip": "1.2.3.4",
+                    "private_ip": "10.0.0.1",
+                    "state": "running",
+                },
+                "budget_info": None,
+                "job_queue": None,
+            }
+            if include_sensitive:
+                base["budget_info"] = {
+                    "project_name": "proj",
+                    "region": "us-west-2",
+                    "reference_bucket": None,
+                    "total_budget": 100.0,
+                    "used_budget": 1.0,
+                    "percent_used": 1.0,
+                }
+                base["job_queue"] = {
+                    "total_jobs": 1,
+                    "running_jobs": 1,
+                    "pending_jobs": 0,
+                    "configuring_jobs": 0,
+                    "total_cpus": 4,
+                    "jobs": [],
+                }
+            return base
+
+        mock_cluster.to_dict.side_effect = cluster_to_dict
+
+        mock_service = MagicMock()
+        mock_service.get_all_clusters_with_status.return_value = [mock_cluster]
+        monkeypatch.setattr("daylib.cluster_service.get_cluster_service", lambda **kwargs: mock_service)
+
+        admin_client = _make_authenticated_client(mock_state_db, customer_id="cust-admin", is_admin=True)
+        admin_response = admin_client.get("/portal/clusters")
+        assert admin_response.status_code == 200
+        assert b"AWS Budget" in admin_response.content
+        assert b"Slurm Job Queue" in admin_response.content
+        assert b"Public IP" in admin_response.content
+
+        non_admin_client = _make_authenticated_client(mock_state_db, customer_id="cust-user", is_admin=False)
+        non_admin_response = non_admin_client.get("/portal/clusters")
+        assert non_admin_response.status_code == 200
+        assert b"AWS Budget" not in non_admin_response.content
+        assert b"Slurm Job Queue" not in non_admin_response.content
+        assert b"Public IP" not in non_admin_response.content

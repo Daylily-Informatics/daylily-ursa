@@ -1,10 +1,10 @@
 """Tests for multi-region workset state management."""
 
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, patch
 import datetime as dt
 
 import pytest
-from botocore.exceptions import ClientError, EndpointConnectionError
+from botocore.exceptions import ClientError
 
 from daylib.workset_multi_region import (
     WorksetMultiRegionDB,
@@ -12,7 +12,7 @@ from daylib.workset_multi_region import (
     RegionStatus,
     RegionHealth,
 )
-from daylib.workset_state_db import WorksetState, WorksetPriority
+from daylib.workset_state_db import WorksetPriority
 
 
 @pytest.fixture
@@ -296,7 +296,7 @@ class TestPreferredClusterInWorksetRegistration:
         mock_state_db.table.put_item.return_value = {}
 
         # Simulate the register_workset call with preferred_cluster
-        from daylib.workset_state_db import WorksetStateDB, WorksetPriority
+        from daylib.workset_state_db import WorksetStateDB
 
         with patch("daylib.workset_state_db.boto3.Session") as mock_session:
             mock_resource = MagicMock()
@@ -333,7 +333,7 @@ class TestPreferredClusterInWorksetRegistration:
 
     def test_register_workset_without_preferred_cluster(self, mock_state_db):
         """Test registering workset without preferred_cluster doesn't add field."""
-        from daylib.workset_state_db import WorksetStateDB, WorksetPriority
+        from daylib.workset_state_db import WorksetStateDB
 
         with patch("daylib.workset_state_db.boto3.Session") as mock_session:
             mock_resource = MagicMock()
@@ -476,7 +476,7 @@ class TestClusterRegionPersistence:
 
     def test_register_workset_with_cluster_region(self, mock_state_db):
         """Test registering workset with cluster_region stores it."""
-        from daylib.workset_state_db import WorksetStateDB, WorksetPriority
+        from daylib.workset_state_db import WorksetStateDB
 
         with patch("daylib.workset_state_db.boto3.Session") as mock_session:
             mock_resource = MagicMock()
@@ -515,7 +515,7 @@ class TestClusterRegionPersistence:
 
     def test_register_workset_with_preferred_cluster_no_region(self, mock_state_db):
         """Test registering workset with preferred_cluster but no region."""
-        from daylib.workset_state_db import WorksetStateDB, WorksetPriority
+        from daylib.workset_state_db import WorksetStateDB
 
         with patch("daylib.workset_state_db.boto3.Session") as mock_session:
             mock_resource = MagicMock()
@@ -550,7 +550,7 @@ class TestClusterRegionPersistence:
 
     def test_register_workset_without_cluster_fields(self, mock_state_db):
         """Test registering workset without preferred_cluster or cluster_region."""
-        from daylib.workset_state_db import WorksetStateDB, WorksetPriority
+        from daylib.workset_state_db import WorksetStateDB
 
         with patch("daylib.workset_state_db.boto3.Session") as mock_session:
             mock_resource = MagicMock()

@@ -121,7 +121,7 @@ ENABLE_AUTH=false
 """
 
     env_file.write_text(template)
-    console.print(f"[green]✓[/green]  Created .env file")
+    console.print("[green]✓[/green]  Created .env file")
     console.print("   Edit it to configure your settings")
 
 

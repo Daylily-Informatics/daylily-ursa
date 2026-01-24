@@ -69,7 +69,7 @@
             <div>
                 <div class="stat-value">${{ "%.4f"|format(usage.transfer_cost_usd | default(0)) }}</div>
                 <div class="stat-label">Transfer Cost</div>
-                <div class="text-muted text-xs">Placeholder @ $0.10/GB</div>
+                    <div class="text-muted text-xs">@ ${{ "%.2f"|format(usage.transfer_rate_per_gb | default(0.09)) }}/GB</div>
             </div>
         </div>
     </div>
@@ -198,7 +198,12 @@
     <!-- Billing Info -->
     <div class="grid grid-2 mt-xl">
         <div class="card">
-            <h3 class="card-title"><i class="fas fa-credit-card"></i> Billing Information</h3>
+                <div class="d-flex justify-between align-center mb-md">
+                    <h3 class="card-title" style="margin: 0;"><i class="fas fa-credit-card"></i> Billing Information</h3>
+                    <a class="btn btn-sm btn-outline" href="/portal/account">
+                        <i class="fas fa-edit"></i> Edit
+                    </a>
+                </div>
             <dl style="margin: 0;">
                 <div class="d-flex justify-between mb-md">
                     <dt class="text-muted">Billing Account</dt>
@@ -262,8 +267,7 @@ function changePeriod() {
 }
 
 function exportUsageReport() {
-    // TODO: Implement export functionality
-    showToast('info', 'Export', 'Export functionality coming soon');
+        window.location.href = '/portal/usage/export';
 }
 </script>
 {% endblock %}

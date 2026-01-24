@@ -1,9 +1,8 @@
 """Tests for Monitor Dashboard routes and API endpoints."""
 
 import os
-import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -51,6 +50,25 @@ def authenticated_client(mock_state_db, mock_ursa_dir):
     client = TestClient(app)
     # Perform login to set session
     client.post("/portal/login", data={"email": "test@example.com", "password": "testpass"})
+    return client
+
+
+@pytest.fixture
+def authenticated_non_admin_client(mock_state_db):
+    """Create test client with an authenticated *non-admin* session."""
+    mock_customer_manager = MagicMock()
+    mock_customer = MagicMock()
+    mock_customer.customer_id = "cust-non-admin"
+    mock_customer.is_admin = False
+    mock_customer_manager.get_customer_by_email.return_value = mock_customer
+
+    app = create_app(
+        state_db=mock_state_db,
+        enable_auth=False,
+        customer_manager=mock_customer_manager,
+    )
+    client = TestClient(app)
+    client.post("/portal/login", data={"email": "user@example.com", "password": "testpass"})
     return client
 
 
@@ -122,6 +140,14 @@ class TestMonitorDashboardRoute:
         response = client.get("/portal/monitor", follow_redirects=False)
         assert response.status_code == 302
         assert "/portal/login" in response.headers["location"]
+
+    def test_monitor_page_non_admin_403(self, authenticated_non_admin_client, mock_ursa_dir, monkeypatch):
+        """Non-admin users must not be able to access the monitor dashboard."""
+        monkeypatch.setattr(Path, "home", lambda: mock_ursa_dir.parent)
+
+        response = authenticated_non_admin_client.get("/portal/monitor")
+        assert response.status_code == 403
+        assert response.json()["detail"] == "Admin access required"
 
     def test_monitor_page_shows_stopped_status(
         self, authenticated_client, mock_ursa_dir, monkeypatch
@@ -272,6 +298,14 @@ class TestMonitorAPIStatus:
         data = response.json()
         assert data["stats"]["ready"] == 2
 
+    def test_api_status_non_admin_403(self, authenticated_non_admin_client, mock_ursa_dir, monkeypatch):
+        """Non-admin users must not be able to access monitor status API."""
+        monkeypatch.setattr(Path, "home", lambda: mock_ursa_dir.parent)
+
+        response = authenticated_non_admin_client.get("/api/monitor/status")
+        assert response.status_code == 403
+        assert response.json()["detail"] == "Admin access required"
+
 
 class TestMonitorAPILogs:
     """Test /api/monitor/logs endpoint."""
@@ -361,6 +395,14 @@ class TestMonitorAPILogs:
         assert response.status_code == 200
         data = response.json()
         assert data["log_file"] == "monitor_20260123_120000.log"
+
+    def test_api_logs_non_admin_403(self, authenticated_non_admin_client, mock_ursa_dir, monkeypatch):
+        """Non-admin users must not be able to access monitor logs API."""
+        monkeypatch.setattr(Path, "home", lambda: mock_ursa_dir.parent)
+
+        response = authenticated_non_admin_client.get("/api/monitor/logs")
+        assert response.status_code == 403
+        assert response.json()["detail"] == "Admin access required"
 
 
 class TestMonitorConfigDisplay:

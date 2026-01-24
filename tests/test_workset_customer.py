@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from daylib.workset_customer import CustomerManager, CustomerConfig
+from daylib.routes.dependencies import verify_workset_ownership
 
 
 @pytest.fixture
@@ -166,8 +167,6 @@ def test_list_customers(customer_manager, mock_aws):
 # =============================================================================
 # API Customer Isolation Tests
 # =============================================================================
-
-from daylib.routes.dependencies import verify_workset_ownership
 
 
 class TestAPICustomerIsolation:

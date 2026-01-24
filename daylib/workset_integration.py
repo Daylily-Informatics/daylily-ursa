@@ -7,14 +7,11 @@ This module provides unified state synchronization between the new UI/API layer
 from __future__ import annotations
 
 import datetime as dt
-import json
 import logging
 import os
 import re
-from pathlib import PurePosixPath
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
-import boto3
 from botocore.exceptions import ClientError
 import yaml  # type: ignore[import-untyped]
 
@@ -22,8 +19,8 @@ from daylib.config import normalize_bucket_name
 from daylib.s3_utils import RegionAwareS3Client
 
 if TYPE_CHECKING:
-    from daylib.workset_state_db import WorksetStateDB, WorksetState, WorksetPriority
-    from daylib.workset_notifications import NotificationManager, NotificationEvent
+    from daylib.workset_state_db import WorksetStateDB
+    from daylib.workset_notifications import NotificationManager
     from daylib.workset_scheduler import WorksetScheduler
 
 LOGGER = logging.getLogger("daylily.workset_integration")

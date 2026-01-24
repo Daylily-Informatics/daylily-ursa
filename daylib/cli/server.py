@@ -121,21 +121,17 @@ def start(
         regions = ursa_config.get_allowed_regions()
         console.print(f"[green]✓[/green]  Ursa config loaded: [cyan]{len(regions)} regions[/cyan]")
 
-    # Get project root (where bin/ directory is)
-    project_root = Path(__file__).parent.parent.parent
-    api_script = project_root / "bin" / "daylily-workset-api"
-
-    if not api_script.exists():
-        console.print(f"[red]✗[/red]  API script not found: {api_script}")
-        raise typer.Exit(1)
-
-    # Build command
+    # Build command (package-safe: uses module execution, not repo-relative bin/)
     cmd = [
         sys.executable,
-        str(api_script),
-        "--host", host,
-        "--port", str(port),
-        "--profile", os.environ.get("AWS_PROFILE", ""),
+        "-m",
+        "daylib.workset_api_cli",
+        "--host",
+        host,
+        "--port",
+        str(port),
+        "--profile",
+        aws_profile,
         "--create-table",
     ]
 
@@ -159,6 +155,7 @@ def start(
         console.print("[yellow]⚠[/yellow]  Authentication DISABLED")
 
     if reload:
+        cmd.append("--reload")
         background = False  # Reload requires foreground
         console.print("[dim]Auto-reload enabled (foreground mode)[/dim]")
 

@@ -256,7 +256,9 @@ class ChangePasswordRequest(BaseModel):
     """Request model for changing the current user's password."""
 
     current_password: str = Field(..., min_length=1)
-    new_password: str = Field(..., min_length=8)
+    # NOTE: Do not enforce password policy solely via pydantic validation.
+    # The portal endpoints convert validation failures into user-facing messages.
+    new_password: str = Field(..., min_length=1)
 
 
 class APITokenCreateRequest(BaseModel):

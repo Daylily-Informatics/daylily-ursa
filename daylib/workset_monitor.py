@@ -21,7 +21,7 @@ import threading
 import time
 from collections import defaultdict
 from pathlib import Path, PurePosixPath
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple, cast
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple, cast
 
 import boto3
 from botocore.exceptions import ClientError
@@ -1378,7 +1378,12 @@ class WorksetMonitor:
                 Prefix=prefix,
                 MaxKeys=1,
             )
-            return response.get("KeyCount", 0) > 0
+            key_count_raw = response.get("KeyCount", 0)
+            try:
+                key_count = int(key_count_raw or 0)
+            except (TypeError, ValueError):
+                key_count = 0
+            return key_count > 0
         except Exception as e:
             LOGGER.warning("Error checking S3 folder existence for %s/%s: %s", bucket, prefix, e)
             return False
@@ -2129,7 +2134,11 @@ class WorksetMonitor:
         workset.sentinels[SENTINEL_FILES["lock"]] = timestamp
         LOGGER.debug("Wrote lock sentinel for %s", workset.name)
         time.sleep(self.config.monitor.ready_lock_backoff_seconds)
-        refreshed = self._list_sentinels(workset.prefix, bucket=workset.bucket)
+        bucket = workset.bucket
+        if bucket is None:
+            LOGGER.warning("Workset %s missing bucket; cannot list sentinels", workset.name)
+            return False
+        refreshed = self._list_sentinels(workset.prefix, bucket=bucket)
         unexpected = set(refreshed) - set(initial_snapshot)
         # If anything else changed besides our lock, treat as contention and back off (no error).
         if unexpected - {SENTINEL_FILES["lock"]}:
@@ -2486,6 +2495,11 @@ class WorksetMonitor:
             execution_s3_bucket = workset.bucket
             execution_s3_prefix = workset.prefix
 
+        if execution_s3_bucket is None:
+            raise MonitorError(
+                f"Workset {workset.name} has no execution bucket (missing export URI and workset.bucket)"
+            )
+
         # Get SSH key for this region
         ssh_key_path = self._ssh_identity(region=effective_region)
 
@@ -2507,7 +2521,7 @@ class WorksetMonitor:
         exec_context = ExecutionContext(
             cluster_name=cluster_name,
             cluster_region=effective_region,
-            execution_bucket=execution_s3_bucket or workset.bucket,
+            execution_bucket=execution_s3_bucket,
             workset_prefix=execution_s3_prefix or workset.prefix,
             ssh_key_path=ssh_key_path,
             reference_bucket=reference_bucket,
@@ -3634,10 +3648,7 @@ class WorksetMonitor:
         # Use the existing PipelineStatusFetcher for consistent parsing
         from daylib.pipeline_status import PipelineStatusFetcher
         try:
-            fetcher = PipelineStatusFetcher(
-                region=self.config.aws.region,
-                profile=self.config.aws.profile,
-            )
+            fetcher = PipelineStatusFetcher()
             perf_metrics = fetcher.fetch_performance_metrics_from_s3(
                 results_s3_uri,
                 region=self.config.aws.region,
@@ -4585,16 +4596,19 @@ class WorksetMonitor:
         self, workset: Workset, status_path: Path, target_uri: str
     ) -> None:
         """Backup fsx_export.yaml to the workset's S3 location for resilience."""
+        bucket = workset.bucket
+        if bucket is None:
+            raise MonitorError(f"Workset {workset.name} is missing bucket; cannot backup export status")
         # Derive S3 destination from workset bucket/prefix
         s3_key = f"{workset.prefix.rstrip('/')}/{FSX_EXPORT_STATUS_FILENAME}"
         try:
             self._s3.upload_file(
                 str(status_path),
-                workset.bucket,
+                bucket,
                 s3_key,
             )
             LOGGER.info(
-                "Backed up export status to s3://%s/%s", workset.bucket, s3_key
+                "Backed up export status to s3://%s/%s", bucket, s3_key
             )
         except Exception as exc:
             LOGGER.debug("S3 backup failed: %s", exc)
@@ -4796,7 +4810,8 @@ class WorksetMonitor:
                             effective_region = cluster_region or self.config.aws.region
                             cluster_status = "not found"
                             if details:
-                                cluster_status = details.get("clusterStatus", "unknown")
+                                raw_status = details.get("clusterStatus")
+                                cluster_status = str(raw_status) if raw_status is not None else "unknown"
                             raise MonitorError(
                                 f"Preferred cluster {preferred_cluster} (region={effective_region}) is not available "
                                 f"for workset {workset.name}. Cluster status: {cluster_status}. "
@@ -4844,7 +4859,7 @@ class WorksetMonitor:
         """
         env = os.environ.copy()
         # Determine profile with fallback chain (no 'default' fallback)
-        profile = self.config.aws.profile
+        profile: Optional[str] = self.config.aws.profile
         if not profile:
             # Fall back to UrsaConfig
             try:
@@ -5824,7 +5839,7 @@ class WorksetMonitor:
             region_key = self.ursa_config.get_ssh_key_for_region(region)
             if region_key:
                 LOGGER.debug("Using region-specific SSH key for %s: %s", region, region_key)
-                return region_key
+                return str(region_key)
 
         # Fall back to global ssh_identity_file
         identity = self.config.pipeline.ssh_identity_file

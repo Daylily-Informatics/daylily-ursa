@@ -12,8 +12,8 @@ import re
 import shlex
 import subprocess
 from dataclasses import dataclass, field
-from pathlib import Path, PurePosixPath
-from typing import Any, Dict, List, Optional, Sequence
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
 import boto3

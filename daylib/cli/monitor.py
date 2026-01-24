@@ -175,7 +175,7 @@ def start(
         console.print(f"   Config: [dim]{config}[/dim]")
         console.print(f"   Logs: [dim]{log_file}[/dim]")
     else:
-        console.print(f"[green]✓[/green]  Starting monitor")
+        console.print("[green]✓[/green]  Starting monitor")
         console.print(f"   Config: [dim]{config}[/dim]")
         console.print("   Press Ctrl+C to stop\n")
         try:
