@@ -2,13 +2,13 @@
 {% set hide_header = true %}
 {% set hide_footer = true %}
 
-{% block title %}Create Account - Daylily Customer Portal{% endblock %}
+{% block title %}Create Account - Ursa Customer Portal{% endblock %}
 
 {% block content %}
 <div class="auth-container">
     <div class="auth-card" style="max-width: 550px;">
         <div class="auth-header">
-            <div class="auth-logo">🌸 Daylily</div>
+            <div class="auth-logo">Ursa</div>
             <h1 class="auth-title">Create your account</h1>
             <p class="auth-subtitle">Get started with genomics processing in minutes</p>
         </div>
@@ -98,9 +98,13 @@
                 </div>
                 
                 <div class="form-group">
-                    <label for="cost_center" class="form-label">Cost Center</label>
+                    <label for="cost_center" class="form-label">Cost Center (chargeback tag)</label>
                     <input type="text" id="cost_center" name="cost_center" class="form-control" 
                            placeholder="e.g., GENOMICS-001">
+                    <p class="form-text">
+                        Optional. Used for internal chargeback reporting and applied as the AWS tag <code>CostCenter</code>.
+                        This is not an AWS Budget / spending limit.
+                    </p>
                 </div>
             </div>
             

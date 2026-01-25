@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from daylib.file_api import (
     create_file_api_router,
 )
-from daylib.file_registry import FileRegistry
+from daylib.file_registry import FileRegistry, DiscoveredFile
 from daylib.s3_bucket_validator import (
     S3BucketValidator,
     LinkedBucketManager,
@@ -672,6 +672,252 @@ class TestLinkBucketEndpoint:
         assert response.status_code == 500
         data = response.json()
         assert "Invalid bucket name" in data["detail"]
+
+
+class TestBucketAuthorizationEndpoints:
+    """Regression tests: bucket management endpoints must enforce customer ownership."""
+
+    @pytest.fixture
+    def linked_bucket(self):
+        return LinkedBucket(
+            bucket_id="bucket-abc123",
+            customer_id="cust-001",
+            bucket_name="my-bucket",
+            bucket_type="secondary",
+            display_name="My Bucket",
+            description="Test bucket",
+            is_validated=True,
+            can_read=True,
+            can_write=True,
+            can_list=True,
+            region="us-west-2",
+            linked_at="2024-01-15T00:00:00Z",
+            read_only=False,
+            prefix_restriction=None,
+        )
+
+    def _make_client(
+        self,
+        mock_file_registry: MagicMock,
+        *,
+        linked_bucket_manager: MagicMock,
+        current_user: dict,
+        bucket_file_discovery: MagicMock | None = None,
+        s3_bucket_validator: MagicMock | None = None,
+    ) -> TestClient:
+        app = FastAPI()
+
+        async def fake_auth():
+            return current_user
+
+        router = create_file_api_router(
+            mock_file_registry,
+            auth_dependency=fake_auth,
+            linked_bucket_manager=linked_bucket_manager,
+            bucket_file_discovery=bucket_file_discovery,
+            s3_bucket_validator=s3_bucket_validator,
+        )
+        app.include_router(router)
+        return TestClient(app)
+
+    def test_link_bucket_enforces_customer_scope_mismatch(self, mock_file_registry, linked_bucket):
+        manager = MagicMock(spec=LinkedBucketManager)
+        manager.link_bucket.return_value = (linked_bucket, BucketValidationResult(bucket_name=linked_bucket.bucket_name))
+
+        client = self._make_client(
+            mock_file_registry,
+            linked_bucket_manager=manager,
+            current_user={"customer_id": "cust-OTHER", "is_admin": False},
+        )
+
+        response = client.post(
+            "/api/files/buckets/link?customer_id=cust-001",
+            json={"bucket_name": "my-bucket"},
+        )
+
+        assert response.status_code == 403
+        manager.link_bucket.assert_not_called()
+
+    def test_list_linked_buckets_enforces_customer_scope_mismatch(self, mock_file_registry):
+        manager = MagicMock(spec=LinkedBucketManager)
+        manager.list_customer_buckets.return_value = []
+
+        client = self._make_client(
+            mock_file_registry,
+            linked_bucket_manager=manager,
+            current_user={"customer_id": "cust-OTHER", "is_admin": False},
+        )
+
+        response = client.get("/api/files/buckets/list?customer_id=cust-001")
+        assert response.status_code == 403
+        manager.list_customer_buckets.assert_not_called()
+
+    def test_get_bucket_enforces_bucket_ownership_mismatch(self, mock_file_registry, linked_bucket):
+        manager = MagicMock(spec=LinkedBucketManager)
+        manager.get_bucket.return_value = linked_bucket
+
+        client = self._make_client(
+            mock_file_registry,
+            linked_bucket_manager=manager,
+            current_user={"customer_id": "cust-OTHER", "is_admin": False},
+        )
+
+        response = client.get(f"/api/files/buckets/{linked_bucket.bucket_id}")
+        assert response.status_code == 403
+
+    def test_update_bucket_enforces_bucket_ownership_mismatch(self, mock_file_registry, linked_bucket):
+        manager = MagicMock(spec=LinkedBucketManager)
+        manager.get_bucket.return_value = linked_bucket
+        manager.update_bucket.return_value = linked_bucket
+
+        client = self._make_client(
+            mock_file_registry,
+            linked_bucket_manager=manager,
+            current_user={"customer_id": "cust-OTHER", "is_admin": False},
+        )
+
+        response = client.patch(
+            f"/api/files/buckets/{linked_bucket.bucket_id}",
+            json={"display_name": "New Name", "bucket_type": "primary"},
+        )
+        assert response.status_code == 403
+        manager.update_bucket.assert_not_called()
+
+    def test_admin_can_get_and_update_bucket(self, mock_file_registry, linked_bucket):
+        manager = MagicMock(spec=LinkedBucketManager)
+        manager.get_bucket.return_value = linked_bucket
+        updated = LinkedBucket(
+            bucket_id=linked_bucket.bucket_id,
+            customer_id=linked_bucket.customer_id,
+            bucket_name=linked_bucket.bucket_name,
+            bucket_type="primary",
+            display_name="Admin Name",
+            description=linked_bucket.description,
+            is_validated=linked_bucket.is_validated,
+            can_read=linked_bucket.can_read,
+            can_write=linked_bucket.can_write,
+            can_list=linked_bucket.can_list,
+            region=linked_bucket.region,
+            linked_at=linked_bucket.linked_at,
+            read_only=linked_bucket.read_only,
+            prefix_restriction=linked_bucket.prefix_restriction,
+        )
+        manager.update_bucket.return_value = updated
+
+        client = self._make_client(
+            mock_file_registry,
+            linked_bucket_manager=manager,
+            current_user={"customer_id": "cust-admin", "is_admin": True},
+        )
+
+        get_resp = client.get(f"/api/files/buckets/{linked_bucket.bucket_id}")
+        assert get_resp.status_code == 200
+        assert get_resp.json()["bucket_id"] == linked_bucket.bucket_id
+
+        patch_resp = client.patch(
+            f"/api/files/buckets/{linked_bucket.bucket_id}",
+            json={"display_name": "Admin Name", "bucket_type": "primary"},
+        )
+        assert patch_resp.status_code == 200
+        assert patch_resp.json()["status"] == "success"
+        assert patch_resp.json()["bucket"]["display_name"] == "Admin Name"
+        manager.update_bucket.assert_called_once()
+
+    def test_revalidate_bucket_enforces_bucket_ownership_mismatch(self, mock_file_registry, linked_bucket):
+        manager = MagicMock(spec=LinkedBucketManager)
+        manager.get_bucket.return_value = linked_bucket
+        manager.revalidate_bucket.return_value = (
+            linked_bucket,
+            BucketValidationResult(
+                bucket_name=linked_bucket.bucket_name,
+                exists=True,
+                accessible=True,
+                can_read=True,
+                can_write=True,
+                can_list=True,
+                region="us-west-2",
+            ),
+        )
+
+        client = self._make_client(
+            mock_file_registry,
+            linked_bucket_manager=manager,
+            current_user={"customer_id": "cust-OTHER", "is_admin": False},
+        )
+
+        response = client.post(f"/api/files/buckets/{linked_bucket.bucket_id}/revalidate")
+        assert response.status_code == 403
+        manager.revalidate_bucket.assert_not_called()
+
+    def test_unlink_bucket_enforces_bucket_ownership_mismatch(self, mock_file_registry, linked_bucket):
+        manager = MagicMock(spec=LinkedBucketManager)
+        manager.get_bucket.return_value = linked_bucket
+        manager.unlink_bucket.return_value = True
+
+        client = self._make_client(
+            mock_file_registry,
+            linked_bucket_manager=manager,
+            current_user={"customer_id": "cust-OTHER", "is_admin": False},
+        )
+
+        response = client.post(f"/api/files/buckets/{linked_bucket.bucket_id}/unlink")
+        assert response.status_code == 403
+        manager.unlink_bucket.assert_not_called()
+
+    def test_discover_bucket_files_enforces_customer_scope_mismatch(self, mock_file_registry, linked_bucket):
+        manager = MagicMock(spec=LinkedBucketManager)
+
+        discovery = MagicMock()
+        discovery.discover_files.return_value = []
+        discovery.check_registration_status.return_value = []
+
+        client = self._make_client(
+            mock_file_registry,
+            linked_bucket_manager=manager,
+            bucket_file_discovery=discovery,
+            current_user={"customer_id": "cust-OTHER", "is_admin": False},
+        )
+
+        response = client.post(
+            f"/api/files/buckets/{linked_bucket.bucket_id}/discover?customer_id=cust-001&prefix=&max_files=10"
+        )
+        assert response.status_code == 403
+        manager.get_bucket.assert_not_called()
+        discovery.discover_files.assert_not_called()
+
+    def test_discover_bucket_files_rejects_bucket_customer_id_mismatch(self, mock_file_registry, linked_bucket):
+        manager = MagicMock(spec=LinkedBucketManager)
+        manager.get_bucket.return_value = linked_bucket
+
+        discovered = [
+            DiscoveredFile(
+                s3_uri=f"s3://{linked_bucket.bucket_name}/a.fastq.gz",
+                bucket_name=linked_bucket.bucket_name,
+                key="a.fastq.gz",
+                file_size_bytes=1,
+                last_modified="2024-01-01T00:00:00Z",
+                etag="etag",
+                detected_format="fastq",
+                is_registered=False,
+                file_id=None,
+            )
+        ]
+        discovery = MagicMock()
+        discovery.discover_files.return_value = discovered
+        discovery.check_registration_status.return_value = discovered
+
+        client = self._make_client(
+            mock_file_registry,
+            linked_bucket_manager=manager,
+            bucket_file_discovery=discovery,
+            current_user={"customer_id": "cust-OTHER", "is_admin": False},
+        )
+
+        response = client.post(
+            f"/api/files/buckets/{linked_bucket.bucket_id}/discover?customer_id=cust-OTHER&prefix=&max_files=10"
+        )
+        assert response.status_code == 403
+        discovery.discover_files.assert_not_called()
 
 
 class TestBucketBrowseEndpoint:

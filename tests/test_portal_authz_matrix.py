@@ -23,97 +23,136 @@ from daylib.workset_api import create_app
 from daylib.workset_state_db import WorksetStateDB
 
 
-def _make_authenticated_client(mock_state_db: MagicMock, *, customer_id: str, is_admin: bool) -> TestClient:
-  mock_customer_manager = MagicMock()
-  mock_customer = MagicMock()
-  mock_customer.customer_id = customer_id
-  mock_customer.is_admin = is_admin
-  mock_customer_manager.get_customer_by_email.return_value = mock_customer
+_LAST_CLUSTER_SERVICE: Optional[MagicMock] = None
 
-  app = create_app(
-    state_db=mock_state_db,
-    enable_auth=False,
-    customer_manager=mock_customer_manager,
-  )
-  client = TestClient(app)
-  client.post("/portal/login", data={"email": "user@example.com", "password": "testpass"})
-  return client
+
+def _make_authenticated_client(mock_state_db: MagicMock, *, customer_id: str, is_admin: bool) -> TestClient:
+    mock_customer_manager = MagicMock()
+    mock_customer = MagicMock()
+    mock_customer.customer_id = customer_id
+    mock_customer.is_admin = is_admin
+    mock_customer_manager.get_customer_by_email.return_value = mock_customer
+
+    app = create_app(
+        state_db=mock_state_db,
+        enable_auth=False,
+        customer_manager=mock_customer_manager,
+    )
+    client = TestClient(app)
+    client.post("/portal/login", data={"email": "user@example.com", "password": "testpass"})
+    return client
 
 
 @dataclass(frozen=True)
 class _AuthzCase:
-  name: str
-  path: str
-  unauth_status: int
-  non_admin_status: int
-  admin_status: int
-  assert_non_admin: Optional[Callable[[object], None]] = None
-  assert_admin: Optional[Callable[[object], None]] = None
+    name: str
+    path: str
+    unauth_status: int
+    non_admin_status: int
+    admin_status: int
+    assert_non_admin: Optional[Callable[[object], None]] = None
+    assert_admin: Optional[Callable[[object], None]] = None
 
 
 def _assert_redirect_to_login(response) -> None:
-  assert response.status_code == 302
-  assert "/portal/login" in response.headers.get("location", "")
+    assert response.status_code == 302
+    assert "/portal/login" in response.headers.get("location", "")
 
 
 def _assert_admin_required_403(response) -> None:
-  assert response.status_code == 403
-  assert response.json()["detail"] == "Admin access required"
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Admin access required"
 
 
 def _assert_clusters_non_admin(response) -> None:
-  assert b"AWS Budget" not in response.content
-  assert b"Slurm Job Queue" not in response.content
-  assert b"Public IP" not in response.content
+    # Non-admins must not see cluster budgets or other sensitive headnode details.
+    assert b"AWS Budget" not in response.content
+    assert b"Total Budget" not in response.content
+    assert b"Slurm Job Queue" not in response.content
+    assert b"Public IP" not in response.content
+    assert b"SSH Command" not in response.content
+
+    # And we should not even attempt to fetch SSH-based status.
+    assert _LAST_CLUSTER_SERVICE is not None
+    assert _LAST_CLUSTER_SERVICE.get_all_clusters_with_status.call_count == 1
+    _args, kwargs = _LAST_CLUSTER_SERVICE.get_all_clusters_with_status.call_args_list[0]
+    assert kwargs.get("fetch_ssh_status") is False
 
 
 def _assert_clusters_admin(response) -> None:
-  assert b"AWS Budget" in response.content
-  assert b"Slurm Job Queue" in response.content
-  assert b"Public IP" in response.content
+    # Admins can see budget + queue + headnode details.
+    assert b"AWS Budget" in response.content
+    assert b"Total Budget" in response.content
+    assert b"Slurm Job Queue" in response.content
+    assert b"Public IP" in response.content
+    assert b"SSH Command" in response.content
+
+    assert _LAST_CLUSTER_SERVICE is not None
+    assert _LAST_CLUSTER_SERVICE.get_all_clusters_with_status.call_count == 2
+
+    _args0, kwargs0 = _LAST_CLUSTER_SERVICE.get_all_clusters_with_status.call_args_list[0]
+    assert kwargs0.get("fetch_ssh_status") is False
+
+    _args1, kwargs1 = _LAST_CLUSTER_SERVICE.get_all_clusters_with_status.call_args_list[1]
+    assert kwargs1.get("fetch_ssh_status") is True
 
 
 @pytest.fixture(autouse=True)
 def _stable_home_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-  # Portal monitor endpoints consult ~/.ursa for pid/logs.
-  monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    # Portal monitor endpoints consult ~/.ursa for pid/logs.
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
 
 @pytest.fixture(autouse=True)
 def _stub_cluster_services(monkeypatch: pytest.MonkeyPatch) -> None:
-  class _FakeUrsaConfig:
-    is_configured = True
-    aws_profile = None
+    global _LAST_CLUSTER_SERVICE
 
-    def get_allowed_regions(self):
-      return ["us-west-2"]
+    class _FakeUrsaConfig:
+        is_configured = True
+        aws_profile = None
 
-  monkeypatch.setattr("daylib.ursa_config.get_ursa_config", lambda: _FakeUrsaConfig())
+        def get_allowed_regions(self):
+            return ["us-west-2"]
 
-  class _FakeCluster:
-    def to_dict(self, *, include_sensitive: bool = True):
-      base = {
-        "cluster_name": "test-cluster",
-        "region": "us-west-2",
-        "cluster_status": "CREATE_COMPLETE",
-        "compute_fleet_status": "RUNNING",
-        "head_node": {
-          "instance_type": "t3.medium",
-          "public_ip": "1.2.3.4",
-          "private_ip": "10.0.0.1",
-          "state": "running",
-        },
-        "budget_info": None,
-        "job_queue": None,
-      }
-      if include_sensitive:
-        base["budget_info"] = {"total_budget": 100.0, "used_budget": 1.0, "percent_used": 1.0}
-        base["job_queue"] = {"total_jobs": 1, "running_jobs": 1, "pending_jobs": 0, "configuring_jobs": 0, "total_cpus": 4, "jobs": []}
-      return base
+    monkeypatch.setattr("daylib.ursa_config.get_ursa_config", lambda: _FakeUrsaConfig())
 
-  service = MagicMock()
-  service.get_all_clusters_with_status.return_value = [_FakeCluster()]
-  monkeypatch.setattr("daylib.cluster_service.get_cluster_service", lambda **kwargs: service)
+    class _FakeCluster:
+        def to_dict(self, *, include_sensitive: bool = True):
+            base = {
+                "cluster_name": "test-cluster",
+                "region": "us-west-2",
+                "cluster_status": "CREATE_COMPLETE",
+                "compute_fleet_status": "RUNNING",
+                "head_node": {
+                    "instance_type": "t3.medium",
+                    "public_ip": "1.2.3.4",
+                    "private_ip": "10.0.0.1",
+                    "state": "running",
+                },
+                # Always provide keys; portal code/template expects them.
+                "budget_info": None,
+                "job_queue": None,
+            }
+            if include_sensitive:
+                base["budget_info"] = {
+                    "total_budget": 100.0,
+                    "used_budget": 1.0,
+                    "percent_used": 1.0,
+                }
+                base["job_queue"] = {
+                    "total_jobs": 1,
+                    "running_jobs": 1,
+                    "pending_jobs": 0,
+                    "configuring_jobs": 0,
+                    "total_cpus": 4,
+                    "jobs": [],
+                }
+            return base
+
+    service = MagicMock()
+    service.get_all_clusters_with_status.return_value = [_FakeCluster()]
+    _LAST_CLUSTER_SERVICE = service
+    monkeypatch.setattr("daylib.cluster_service.get_cluster_service", lambda **kwargs: service)
 
 
 @pytest.fixture

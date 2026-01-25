@@ -20,7 +20,9 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from urllib.parse import quote_plus
 
+from botocore.exceptions import ClientError
 from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
@@ -35,7 +37,7 @@ from daylib.routes.dependencies import (
     ChangePasswordRequest,
     PortalFileAutoRegisterRequest,
     PortalFileAutoRegisterResponse,
-    verify_workset_ownership,
+    verify_workset_access,
 )
 from daylib.workset_state_db import WorksetStateDB, WorksetState
 
@@ -338,6 +340,26 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
     """
     router = APIRouter(tags=["portal"])
 
+    # ========== Public Legal Pages ==========
+
+    @router.get("/terms", response_class=HTMLResponse)
+    async def terms_of_service(request: Request):
+        """Public Terms of Service page."""
+        return deps.templates.TemplateResponse(
+            request,
+            "legal/terms.html",
+            _get_template_context(request, deps),
+        )
+
+    @router.get("/privacy", response_class=HTMLResponse)
+    async def privacy_policy(request: Request):
+        """Public Privacy Policy page."""
+        return deps.templates.TemplateResponse(
+            request,
+            "legal/privacy.html",
+            _get_template_context(request, deps),
+        )
+
     # ========== Dashboard ==========
 
     @router.get("/portal", response_class=HTMLResponse)
@@ -380,8 +402,20 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                 all_worksets = []
                 for ws_state in WorksetState:
                     batch = deps.state_db.list_worksets_by_state(ws_state, limit=100)
-                    # SECURITY: portal dashboard must only show this customer's worksets.
-                    batch = [ws for ws in batch if verify_workset_ownership(ws, customer_id)]
+
+                    # SECURITY: portal dashboard must only show worksets the user can access.
+                    session_user_email = request.session.get("user_email") if hasattr(request, "session") else None
+                    session_is_admin = bool(request.session.get("is_admin", False)) if hasattr(request, "session") else False
+                    batch = [
+                        ws
+                        for ws in batch
+                        if verify_workset_access(
+                            ws,
+                            customer_id=customer_id,
+                            user_email=session_user_email,
+                            is_admin=session_is_admin,
+                        )
+                    ]
                     all_worksets.extend(batch)
                 worksets = all_worksets[:10]
 
@@ -935,10 +969,18 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                 batch = deps.state_db.list_worksets_by_state(ws_state, limit=100)
                 worksets.extend(batch)
 
-        # SECURITY: Filter to only this customer's worksets
+        # SECURITY: Filter to only worksets the user can access
+        session_user_email = request.session.get("user_email") if hasattr(request, "session") else None
+        session_is_admin = bool(request.session.get("is_admin", False)) if hasattr(request, "session") else False
         worksets = [
-            w for w in worksets
-            if verify_workset_ownership(w, session_customer_id)
+            w
+            for w in worksets
+            if verify_workset_access(
+                w,
+                customer_id=session_customer_id,
+                user_email=session_user_email,
+                is_admin=session_is_admin,
+            )
         ]
 
         # Process worksets and apply additional filters
@@ -1075,10 +1117,19 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         if session_customer_id:
             all_archived = deps.state_db.list_archived_worksets(limit=500)
             LOGGER.info("Found %d total archived worksets in DynamoDB", len(all_archived))
-            # SECURITY: Filter by customer_id ownership
+
+            # SECURITY: Filter to only worksets the user can access
+            session_user_email = request.session.get("user_email") if hasattr(request, "session") else None
+            session_is_admin = bool(request.session.get("is_admin", False)) if hasattr(request, "session") else False
             archived_worksets = [
-                w for w in all_archived
-                if verify_workset_ownership(w, session_customer_id)
+                w
+                for w in all_archived
+                if verify_workset_access(
+                    w,
+                    customer_id=session_customer_id,
+                    user_email=session_user_email,
+                    is_admin=session_is_admin,
+                )
             ]
             LOGGER.info("After customer_id filter: %d archived worksets", len(archived_worksets))
         else:
@@ -1111,8 +1162,15 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
             raise HTTPException(status_code=404, detail="Workset not found")
         customer, _ = _get_customer_for_session(request, deps)
 
-        # SECURITY: Verify workset ownership before displaying
-        if customer and not verify_workset_ownership(workset, customer.customer_id):
+        # SECURITY: Verify workset access before displaying
+        session_user_email = request.session.get("user_email") if hasattr(request, "session") else None
+        session_is_admin = bool(request.session.get("is_admin", False)) if hasattr(request, "session") else False
+        if customer and not verify_workset_access(
+            workset,
+            customer_id=customer.customer_id,
+            user_email=session_user_email,
+            is_admin=session_is_admin,
+        ):
             LOGGER.warning(
                 "Access denied: customer %s attempted to view workset %s owned by %s",
                 customer.customer_id,
@@ -1147,9 +1205,16 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         if not workset:
             raise HTTPException(status_code=404, detail="Workset not found")
 
-        # SECURITY: Verify workset ownership before allowing download
+        # SECURITY: Verify workset access before allowing download
         customer, _ = _get_customer_for_session(request, deps)
-        if customer and not verify_workset_ownership(workset, customer.customer_id):
+        session_user_email = request.session.get("user_email") if hasattr(request, "session") else None
+        session_is_admin = bool(request.session.get("is_admin", False)) if hasattr(request, "session") else False
+        if customer and not verify_workset_access(
+            workset,
+            customer_id=customer.customer_id,
+            user_email=session_user_email,
+            is_admin=session_is_admin,
+        ):
             LOGGER.warning(
                 "Access denied: customer %s attempted to download workset %s",
                 customer.customer_id,
@@ -1218,8 +1283,15 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         if not workset:
             raise HTTPException(status_code=404, detail="Workset not found")
 
-        # SECURITY: Verify workset ownership before allowing browse
-        if customer and not verify_workset_ownership(workset, customer.customer_id):
+        # SECURITY: Verify workset access before allowing browse
+        session_user_email = request.session.get("user_email") if hasattr(request, "session") else None
+        session_is_admin = bool(request.session.get("is_admin", False)) if hasattr(request, "session") else False
+        if customer and not verify_workset_access(
+            workset,
+            customer_id=customer.customer_id,
+            user_email=session_user_email,
+            is_admin=session_is_admin,
+        ):
             LOGGER.warning(
                 "Access denied: customer %s attempted to browse workset %s results",
                 customer.customer_id,
@@ -1344,9 +1416,16 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         if not workset:
             raise HTTPException(status_code=404, detail="Workset not found")
 
-        # SECURITY: Verify workset ownership before allowing download
+        # SECURITY: Verify workset access before allowing download
         customer, _ = _get_customer_for_session(request, deps)
-        if customer and not verify_workset_ownership(workset, customer.customer_id):
+        session_user_email = request.session.get("user_email") if hasattr(request, "session") else None
+        session_is_admin = bool(request.session.get("is_admin", False)) if hasattr(request, "session") else False
+        if customer and not verify_workset_access(
+            workset,
+            customer_id=customer.customer_id,
+            user_email=session_user_email,
+            is_admin=session_is_admin,
+        ):
             LOGGER.warning(
                 "Access denied: customer %s attempted to download from workset %s",
                 customer.customer_id,
@@ -1743,9 +1822,40 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
             # Use region-aware S3 client to avoid 403s when bucket is in a different region.
             _portal_s3_client.upload_fileobj(file.file, bucket_obj.bucket_name, s3_key)
             LOGGER.info(f"Uploaded {file.filename} to s3://{bucket_obj.bucket_name}/{s3_key}")
-            return {"success": True, "bucket": bucket_obj.bucket_name, "key": s3_key, "filename": file.filename}
+            return {
+                "success": True,
+                "bucket": bucket_obj.bucket_name,
+                "key": s3_key,
+                "filename": file.filename,
+            }
         except HTTPException:
             raise
+        except ClientError as e:
+            error = e.response.get("Error", {}) if isinstance(e.response, dict) else {}
+            error_code = str(error.get("Code", ""))
+            # IAM / bucket-policy failure modes should be surfaced as 403 (not 500).
+            if error_code in {"AccessDenied", "AllAccessDisabled"}:
+                LOGGER.warning(
+                    "S3 access denied during portal upload: bucket=%s key=%s code=%s",
+                    bucket_obj.bucket_name,
+                    s3_key,
+                    error_code,
+                )
+                raise HTTPException(
+                    status_code=403,
+                    detail=(
+                        f"S3 access denied ({error_code}). "
+                        "Verify IAM permissions and bucket policy."
+                    ),
+                )
+            LOGGER.error(
+                "S3 ClientError during portal upload: bucket=%s key=%s code=%s error=%s",
+                bucket_obj.bucket_name,
+                s3_key,
+                error_code,
+                str(e),
+            )
+            raise HTTPException(status_code=500, detail="Upload failed due to an S3 error")
         except Exception as e:
             LOGGER.error(f"Upload failed: {e}")
             raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
@@ -2180,6 +2290,17 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
 
     # ========== Biospecimen Routes ==========
 
+    @router.get("/portal/subjects", response_class=RedirectResponse)
+    async def portal_subjects(request: Request):
+        """Dedicated subjects entrypoint.
+
+        For now this aliases the biospecimen subjects page.
+        """
+        auth_redirect = _require_portal_auth(request)
+        if auth_redirect:
+            return auth_redirect
+        return RedirectResponse(url="/portal/biospecimen/subjects", status_code=302)
+
     @router.get("/portal/biospecimen", response_class=HTMLResponse)
     @router.get("/portal/biospecimen/subjects", response_class=HTMLResponse)
     async def portal_biospecimen_subjects(request: Request):
@@ -2471,6 +2592,213 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                 log_files=[str(lf.name) for lf in log_files[:10]],
                 active_page="monitor",
             ),
+        )
+
+    # ========== Admin Tools ==========
+
+    @router.get("/portal/admin/users", response_class=HTMLResponse)
+    async def portal_admin_users(
+        request: Request,
+        error: Optional[str] = None,
+        success: Optional[str] = None,
+    ):
+        """Admin: manage portal users (customers)."""
+        auth_redirect = _require_portal_auth(request)
+        if auth_redirect:
+            return auth_redirect
+        _require_admin(request)
+
+        customer, _ = _get_customer_for_session(request, deps)
+        customers = []
+        if not deps.customer_manager:
+            error = error or "Customer manager not configured"
+        else:
+            try:
+                customers = deps.customer_manager.list_customers()
+            except Exception as e:
+                LOGGER.error("Failed to list customers: %s", e)
+                error = error or "Failed to list customers"
+
+        return deps.templates.TemplateResponse(
+            request,
+            "admin/users.html",
+            _get_template_context(
+                request,
+                deps,
+                customer=customer,
+                customers=customers,
+                error=error,
+                success=success,
+                active_page="admin_users",
+            ),
+        )
+
+    @router.post("/portal/admin/users/add")
+    async def portal_admin_users_add(
+        request: Request,
+        customer_name: str = Form(...),
+        email: str = Form(...),
+    ):
+        """Admin: add a new user (creates customer config and optionally Cognito user)."""
+        auth_redirect = _require_portal_auth(request)
+        if auth_redirect:
+            return auth_redirect
+        _require_admin(request)
+
+        if not deps.customer_manager:
+            return RedirectResponse(
+                url="/portal/admin/users?error=" + quote_plus("Customer manager not configured"),
+                status_code=302,
+            )
+
+        domain_valid, domain_error = deps.settings.validate_email_domain(email)
+        if not domain_valid:
+            return RedirectResponse(
+                url="/portal/admin/users?error=" + quote_plus(domain_error),
+                status_code=302,
+            )
+
+        existing = deps.customer_manager.get_customer_by_email(email)
+        if existing:
+            return RedirectResponse(
+                url="/portal/admin/users?error=" + quote_plus("User already exists"),
+                status_code=302,
+            )
+
+        try:
+            config = deps.customer_manager.onboard_customer(customer_name=customer_name, email=email)
+        except Exception as e:
+            LOGGER.error("Failed to onboard customer for %s: %s", email, e)
+            return RedirectResponse(
+                url="/portal/admin/users?error=" + quote_plus("Failed to create user"),
+                status_code=302,
+            )
+
+        cognito_note = None
+        if deps.enable_auth and deps.cognito_auth:
+            try:
+                deps.cognito_auth.create_customer_user(
+                    email=email,
+                    customer_id=config.customer_id,
+                    temporary_password=None,
+                )
+                cognito_note = "Cognito invite sent"
+            except ValueError as e:
+                LOGGER.warning("Cognito user creation skipped for %s: %s", email, e)
+                cognito_note = "Cognito user not created"
+            except Exception as e:
+                LOGGER.error("Failed to create Cognito user for %s: %s", email, e)
+                cognito_note = "Cognito user creation failed"
+
+        msg = f"User created: {email} (Customer ID: {config.customer_id})"
+        if cognito_note:
+            msg = f"{msg}. {cognito_note}."
+
+        return RedirectResponse(
+            url="/portal/admin/users?success=" + quote_plus(msg),
+            status_code=302,
+        )
+
+
+    @router.post("/portal/admin/users/set-admin")
+    async def portal_admin_users_set_admin(
+        request: Request,
+        email: str = Form(...),
+        is_admin: str = Form(...),
+    ):
+        """Admin: set or remove admin privileges for an email."""
+        auth_redirect = _require_portal_auth(request)
+        if auth_redirect:
+            return auth_redirect
+        _require_admin(request)
+
+        if not deps.customer_manager:
+            return RedirectResponse(
+                url="/portal/admin/users?error=" + quote_plus("Customer manager not configured"),
+                status_code=302,
+            )
+
+        is_admin_normalized = str(is_admin).strip().lower()
+        desired_is_admin = is_admin_normalized in {"1", "true", "yes", "on"}
+
+        try:
+            ok = deps.customer_manager.set_admin_status(email=email, is_admin=desired_is_admin)
+        except Exception as e:
+            LOGGER.error("Failed to set admin status for %s: %s", email, e)
+            ok = False
+
+        if not ok:
+            return RedirectResponse(
+                url="/portal/admin/users?error=" + quote_plus("Failed to update admin status"),
+                status_code=302,
+            )
+
+        # If the admin modifies themselves, update session so nav reflects change immediately.
+        if request.session.get("user_email") == email:
+            request.session["is_admin"] = desired_is_admin
+
+        msg = f"Updated admin status for {email}: {'admin' if desired_is_admin else 'non-admin'}"
+        return RedirectResponse(
+            url="/portal/admin/users?success=" + quote_plus(msg),
+            status_code=302,
+        )
+
+
+    @router.post("/portal/admin/users/set-password")
+    async def portal_admin_users_set_password(
+        request: Request,
+        email: str = Form(...),
+        password: str = Form(...),
+        confirm_password: str = Form(...),
+        force_change: Optional[str] = Form(None),
+    ):
+        """Admin: set/reset a user's password (Cognito)."""
+        auth_redirect = _require_portal_auth(request)
+        if auth_redirect:
+            return auth_redirect
+        _require_admin(request)
+
+        if password != confirm_password:
+            return RedirectResponse(
+                url="/portal/admin/users?error=" + quote_plus("Passwords do not match"),
+                status_code=302,
+            )
+
+        if not deps.cognito_auth:
+            return RedirectResponse(
+                url="/portal/admin/users?error=" + quote_plus("Cognito auth not configured"),
+                status_code=302,
+            )
+
+        # HTML checkbox sends e.g. 'on' when checked; absent when unchecked.
+        force_change_normalized = str(force_change).strip().lower() if force_change is not None else ""
+        desired_permanent = force_change_normalized not in {"1", "true", "yes", "on"}
+
+        try:
+            deps.cognito_auth.set_user_password(email=email, password=password, permanent=desired_permanent)
+        except HTTPException as e:
+            # CognitoAuth may raise HTTPException (e.g., domain whitelist violations).
+            return RedirectResponse(
+                url="/portal/admin/users?error=" + quote_plus(str(e.detail)),
+                status_code=302,
+            )
+        except ValueError as e:
+            return RedirectResponse(
+                url="/portal/admin/users?error=" + quote_plus(str(e)),
+                status_code=302,
+            )
+        except Exception as e:
+            LOGGER.error("Failed to set password for %s: %s", email, e)
+            return RedirectResponse(
+                url="/portal/admin/users?error=" + quote_plus("Failed to set password"),
+                status_code=302,
+            )
+
+        note = "Temporary password set; user must change on next login" if not desired_permanent else "Password set"
+        msg = f"{note}: {email}"
+        return RedirectResponse(
+            url="/portal/admin/users?success=" + quote_plus(msg),
+            status_code=302,
         )
 
     # ========== Clusters Routes ==========

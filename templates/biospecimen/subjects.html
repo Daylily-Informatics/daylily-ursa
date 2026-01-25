@@ -11,11 +11,6 @@
             <h1 class="page-title">Subjects</h1>
             <p class="page-subtitle">Manage individuals/patients and their biosamples</p>
         </div>
-        <div class="page-actions" style="margin-top: 0;">
-            <button class="btn btn-primary" onclick="showCreateSubjectModal()">
-                <i class="fas fa-plus"></i> Add Subject
-            </button>
-        </div>
     </div>
 
     <!-- Quick Stats -->
@@ -43,8 +38,24 @@
         </div>
     </div>
 
+
+    <!-- Add New (full-width card above list) -->
+    <div class="card mb-xl" id="add-new-subject-card">
+        <div class="d-flex justify-between align-center flex-wrap gap-lg">
+            <div>
+                <h3 class="card-title"><i class="fas fa-plus"></i> Add New</h3>
+                <p class="text-muted">Create a subject to start tracking biosamples</p>
+            </div>
+            <div>
+                <button class="btn btn-primary" onclick="showCreateSubjectModal()">
+                    <i class="fas fa-user-plus"></i> Add Subject
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- Subjects Table -->
-    <div class="card">
+    <div class="card" id="subjects-table-card">
         <h3 class="card-title"><i class="fas fa-users"></i> All Subjects</h3>
         <div class="table-container">
             <table class="table" id="subjects-table" data-sortable>
@@ -86,11 +97,11 @@
                                 <a href="/portal/biospecimen/subjects/{{ subject.subject_id }}" 
                                    class="btn btn-outline btn-sm" title="View">
                                     <i class="fas fa-eye"></i>
-                                </a>
-                                <button class="btn btn-outline btn-sm" 
-                                        onclick="addBiosample('{{ subject.subject_id }}')" title="Add Biosample">
-                                    <i class="fas fa-vial"></i>
-                                </button>
+                                    </a>
+                                    <button class="btn btn-outline btn-sm"
+                                            onclick="addBiosample('{{ subject.subject_id }}')" title="Add new biospecimen" aria-label="Add new biospecimen">
+                                        <i class="fas fa-vial"></i>
+                                    </button>
                             </div>
                         </td>
                     </tr>

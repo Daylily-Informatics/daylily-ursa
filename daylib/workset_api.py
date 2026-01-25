@@ -322,8 +322,12 @@ def create_app(
         if hasattr(request, "session"):
             user_email = request.session.get("user_email")
             if user_email:
+                customer_id = request.session.get("customer_id")
+                is_admin = bool(request.session.get("is_admin", False))
                 return {
                     "email": user_email,
+                    "customer_id": customer_id,
+                    "is_admin": is_admin,
                     "auth_type": "session",
                     "authenticated": True,
                 }
@@ -338,6 +342,18 @@ def create_app(
                     credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
                     user = cognito_auth.get_current_user(credentials)
                     if user:
+                        customer_id = user.get("custom:customer_id") or user.get("customer_id")
+                        if customer_id is not None and "customer_id" not in user:
+                            user["customer_id"] = str(customer_id)
+
+                        if customer_manager and customer_id:
+                            try:
+                                customer_config = customer_manager.get_customer_config(str(customer_id))
+                                if customer_config:
+                                    user["is_admin"] = bool(customer_config.is_admin)
+                            except Exception as e:  # pragma: no cover - defensive logging
+                                LOGGER.debug("Failed to attach is_admin for JWT user: %s", str(e))
+
                         user["auth_type"] = "jwt"
                         return user
                 except HTTPException:
@@ -360,6 +376,7 @@ def create_app(
                     return {
                         "email": customer.email,
                         "customer_id": customer.customer_id,
+                        "is_admin": bool(getattr(customer, "is_admin", False)),
                         "auth_type": "api_key",
                         "authenticated": True,
                     }
@@ -1659,6 +1676,11 @@ def create_app(
             except ValueError:
                 ws_type = WorksetType.RUO
 
+            current_user = get_current_user(request)
+            created_by_email = None
+            if current_user and isinstance(current_user, dict):
+                created_by_email = current_user.get("email")
+
             # Store additional metadata from the form
             metadata = {
                 "workset_name": workset_name,
@@ -1678,6 +1700,9 @@ def create_app(
                 "cluster_region": cluster_region,
             }
 
+            if created_by_email:
+                metadata["created_by_email"] = created_by_email
+
             # If we have raw TSV content (from manifest), pass it for direct S3 write
             if manifest_tsv_for_s3:
                 metadata["stage_samples_tsv"] = manifest_tsv_for_s3
@@ -1690,7 +1715,7 @@ def create_app(
                 effective_integration = WorksetIntegration(
                     state_db=state_db,
                     bucket=bucket,
-                        region=cluster_region or settings.get_effective_region(),
+                    region=cluster_region or settings.get_effective_region(),
                     profile=ursa_config.aws_profile or settings.aws_profile,
                 )
 
@@ -3402,6 +3427,72 @@ def create_app(
                 "regions": [],
                 "error": str(e),
             }
+
+    @app.delete("/api/clusters/{cluster_name}", tags=["clusters"])
+    async def delete_cluster(
+        cluster_name: str,
+        region: str = Query(..., description="AWS region where the cluster is located"),
+        current_user: Optional[Dict] = Depends(get_current_user),
+    ):
+        """Delete a ParallelCluster instance (admin-only).
+
+        This is a destructive operation.
+        """
+        from daylib.file_api import _enforce_admin_only
+
+        _enforce_admin_only(current_user, operation="delete clusters")
+
+        try:
+            from daylib.cluster_service import get_cluster_service
+            from daylib.ursa_config import get_ursa_config
+
+            ursa_config = get_ursa_config()
+            if ursa_config.is_configured:
+                allowed_regions = ursa_config.get_allowed_regions()
+            else:
+                allowed_regions = settings.get_allowed_regions()
+
+            if not allowed_regions:
+                raise HTTPException(
+                    status_code=400,
+                    detail="No regions configured. Create ~/.ursa/ursa-config.yaml with region definitions.",
+                )
+
+            if region not in allowed_regions:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Region '{region}' is not configured for this deployment",
+                )
+
+            service = get_cluster_service(
+                regions=allowed_regions,
+                aws_profile=ursa_config.aws_profile or settings.aws_profile,
+                cache_ttl_seconds=300,
+            )
+
+            result = service.delete_cluster(cluster_name, region)
+            if "error" in result:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Failed to delete cluster: {result['error']}",
+                )
+
+            cmd = f"pcluster delete-cluster --region {region} -n {cluster_name}"
+            profile = ursa_config.aws_profile or settings.aws_profile
+
+            return {
+                "success": True,
+                "cluster_name": cluster_name,
+                "region": region,
+                "pcluster_command": cmd,
+                "aws_profile": profile,
+                "message": f"Cluster '{cluster_name}' deletion initiated",
+            }
+        except HTTPException:
+            raise
+        except Exception as e:
+            LOGGER.error(f"Failed to delete cluster {cluster_name}: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
 
     # ========== Customer Portal Routes ==========
 

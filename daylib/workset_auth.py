@@ -519,6 +519,47 @@ class CognitoAuth:
             LOGGER.error("Failed to delete user %s: %s", email, str(e))
             return False
 
+    def set_user_password(self, email: str, password: str, *, permanent: bool) -> None:
+        """Admin-set a user's password.
+
+        Args:
+            email: User email
+            password: New password
+            permanent: If True, user can continue using this password. If False,
+                the user will be forced to change it at next sign-in.
+
+        Raises:
+            HTTPException: If email domain is not whitelisted
+            ValueError: For user-facing errors (e.g. invalid password)
+            ClientError: For unexpected AWS API errors
+        """
+        # Validate email domain against whitelist
+        self._validate_email_domain(email)
+
+        if not self.user_pool_id:
+            raise ValueError("Cognito is not configured (missing user_pool_id)")
+
+        try:
+            self.cognito.admin_set_user_password(
+                UserPoolId=self.user_pool_id,
+                Username=email,
+                Password=password,
+                Permanent=bool(permanent),
+            )
+            LOGGER.info("Set password for %s (permanent=%s)", email, permanent)
+
+        except ClientError as e:
+            error_code = e.response.get("Error", {}).get("Code")
+            error_message = e.response.get("Error", {}).get("Message", str(e))
+            LOGGER.error("Failed to set password for %s: %s - %s", email, error_code, error_message)
+
+            if error_code == "InvalidPasswordException":
+                raise ValueError("Password does not meet requirements")
+            if error_code == "UserNotFoundException":
+                raise ValueError("User not found")
+
+            raise
+
     def authenticate(self, email: str, password: str) -> Dict:
         """Authenticate a user with email and password.
 

@@ -390,6 +390,24 @@ class ClusterService:
             )
         return ClusterInfo.from_dict(result, region)
 
+    def delete_cluster(self, cluster_name: str, region: str) -> Dict[str, Any]:
+        """Initiate deletion of a ParallelCluster cluster.
+
+        Note: ParallelCluster deletion is asynchronous; this method returns once the
+        delete request is accepted by the CLI.
+        """
+        result = self._run_pcluster_command(
+            ["delete-cluster", "--region", region, "-n", cluster_name],
+            timeout=60,
+        )
+        if "error" not in result:
+            # Cluster set has changed; clear caches so subsequent list calls refresh.
+            self._cache = {}
+            self._cache_time = 0
+            self._cluster_region_map.pop(cluster_name, None)
+            self._cluster_region_map_time = time.time()
+        return result
+
     def _scan_region(self, region: str) -> List[ClusterInfo]:
         """Scan a single region for clusters (used by parallel executor).
 

@@ -2,23 +2,36 @@
 
 import csv
 import io
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+from botocore.exceptions import ClientError
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from daylib.billing import calculate_customer_cost_breakdown
+from daylib.config import get_settings_for_testing
+from daylib.routes.portal import PortalDependencies
 from daylib.workset_state_db import WorksetStateDB, WorksetState
 from daylib.workset_api import create_app
 
 
-def _make_authenticated_client(mock_state_db: MagicMock, *, customer_id: str, is_admin: bool) -> TestClient:
+def _make_authenticated_client(
+    mock_state_db: MagicMock,
+    *,
+    customer_id: str,
+    is_admin: bool,
+    email: str = "user@example.com",
+) -> TestClient:
     """Create an authenticated portal client with a controlled admin flag."""
     mock_customer_manager = MagicMock()
     mock_customer = MagicMock()
     mock_customer.customer_id = customer_id
     mock_customer.is_admin = is_admin
+    mock_customer.email = email
     mock_customer_manager.get_customer_by_email.return_value = mock_customer
+    mock_customer_manager.list_customers.return_value = [mock_customer]
 
     app = create_app(
         state_db=mock_state_db,
@@ -26,8 +39,433 @@ def _make_authenticated_client(mock_state_db: MagicMock, *, customer_id: str, is
         customer_manager=mock_customer_manager,
     )
     client = TestClient(app)
-    client.post("/portal/login", data={"email": "user@example.com", "password": "testpass"})
+    client.post("/portal/login", data={"email": email, "password": "testpass"})
     return client
+
+
+class TestPortalAdminUsers:
+    """Tests for the admin user management portal surfaces."""
+
+    def test_admin_users_unauthenticated_redirects_to_login(self, mock_state_db):
+        app = create_app(state_db=mock_state_db, enable_auth=False)
+        client = TestClient(app)
+        response = client.get("/portal/admin/users", follow_redirects=False)
+        assert response.status_code == 302
+        assert "/portal/login" in response.headers["location"]
+
+    def test_admin_users_non_admin_forbidden(self, mock_state_db):
+        mock_customer_manager = MagicMock()
+        non_admin = MagicMock()
+        non_admin.customer_id = "cust-001"
+        non_admin.is_admin = False
+        non_admin.email = "user@example.com"
+        mock_customer_manager.get_customer_by_email.return_value = non_admin
+        mock_customer_manager.list_customers.return_value = [non_admin]
+
+        app = create_app(
+            state_db=mock_state_db,
+            enable_auth=False,
+            customer_manager=mock_customer_manager,
+        )
+        client = TestClient(app)
+        client.post("/portal/login", data={"email": non_admin.email, "password": "testpass"})
+
+        response = client.get("/portal/admin/users")
+        assert response.status_code == 403
+        assert response.json()["detail"] == "Admin access required"
+
+    def test_admin_users_admin_can_view(self, mock_state_db):
+        mock_customer_manager = MagicMock()
+        admin = MagicMock()
+        admin.customer_id = "cust-admin"
+        admin.is_admin = True
+        admin.email = "admin@example.com"
+        admin.customer_name = "Admin"
+
+        other = MagicMock()
+        other.customer_id = "cust-002"
+        other.is_admin = False
+        other.email = "other@example.com"
+        other.customer_name = "Other"
+
+        mock_customer_manager.get_customer_by_email.side_effect = lambda e: admin if e == admin.email else None
+        mock_customer_manager.list_customers.return_value = [admin, other]
+
+        app = create_app(
+            state_db=mock_state_db,
+            enable_auth=False,
+            customer_manager=mock_customer_manager,
+        )
+        client = TestClient(app)
+        client.post("/portal/login", data={"email": admin.email, "password": "testpass"})
+
+        response = client.get("/portal/admin/users")
+        assert response.status_code == 200
+        assert b"User Management" in response.content
+
+    def test_admin_users_add_success_creates_customer(self, mock_state_db):
+        mock_customer_manager = MagicMock()
+        admin = MagicMock()
+        admin.customer_id = "cust-admin"
+        admin.is_admin = True
+        admin.email = "admin@example.com"
+        admin.customer_name = "Admin"
+
+        def get_customer_by_email(email: str):
+            if email == admin.email:
+                return admin
+            return None
+
+        mock_customer_manager.get_customer_by_email.side_effect = get_customer_by_email
+        created = MagicMock()
+        created.customer_id = "cust-new"
+        mock_customer_manager.onboard_customer.return_value = created
+        mock_customer_manager.list_customers.return_value = [admin]
+
+        app = create_app(
+            state_db=mock_state_db,
+            enable_auth=False,
+            customer_manager=mock_customer_manager,
+        )
+        client = TestClient(app)
+        client.post("/portal/login", data={"email": admin.email, "password": "testpass"})
+
+        response = client.post(
+            "/portal/admin/users/add",
+            data={"customer_name": "New User", "email": "new@example.com"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert response.headers["location"].startswith("/portal/admin/users?success=")
+        mock_customer_manager.onboard_customer.assert_called_once_with(customer_name="New User", email="new@example.com")
+
+    def test_admin_users_add_duplicate_email_error(self, mock_state_db):
+        mock_customer_manager = MagicMock()
+        admin = MagicMock()
+        admin.customer_id = "cust-admin"
+        admin.is_admin = True
+        admin.email = "admin@example.com"
+        admin.customer_name = "Admin"
+
+        existing = MagicMock()
+        existing.customer_id = "cust-existing"
+        existing.is_admin = False
+        existing.email = "dup@example.com"
+
+        def get_customer_by_email(email: str):
+            if email == admin.email:
+                return admin
+            if email == existing.email:
+                return existing
+            return None
+
+        mock_customer_manager.get_customer_by_email.side_effect = get_customer_by_email
+        mock_customer_manager.list_customers.return_value = [admin]
+
+        app = create_app(
+            state_db=mock_state_db,
+            enable_auth=False,
+            customer_manager=mock_customer_manager,
+        )
+        client = TestClient(app)
+        client.post("/portal/login", data={"email": admin.email, "password": "testpass"})
+
+        response = client.post(
+            "/portal/admin/users/add",
+            data={"customer_name": "Dup", "email": existing.email},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "error=" in response.headers["location"]
+        assert "User+already+exists" in response.headers["location"]
+
+    def test_admin_users_add_invalid_domain_error(self, mock_state_db):
+        settings = get_settings_for_testing(whitelist_domains="example.com")
+
+        mock_customer_manager = MagicMock()
+        admin = MagicMock()
+        admin.customer_id = "cust-admin"
+        admin.is_admin = True
+        admin.email = "admin@example.com"
+        admin.customer_name = "Admin"
+
+        mock_customer_manager.get_customer_by_email.side_effect = lambda e: admin if e == admin.email else None
+        mock_customer_manager.list_customers.return_value = [admin]
+
+        app = create_app(
+            state_db=mock_state_db,
+            enable_auth=False,
+            customer_manager=mock_customer_manager,
+            settings=settings,
+        )
+        client = TestClient(app)
+        client.post("/portal/login", data={"email": admin.email, "password": "testpass"})
+
+        response = client.post(
+            "/portal/admin/users/add",
+            data={"customer_name": "Bad", "email": "bad@notallowed.com"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "error=" in response.headers["location"]
+        assert "notallowed.com" in response.headers["location"]
+
+    def test_admin_users_set_admin_non_admin_forbidden(self, mock_state_db):
+        mock_customer_manager = MagicMock()
+        non_admin = MagicMock()
+        non_admin.customer_id = "cust-001"
+        non_admin.is_admin = False
+        non_admin.email = "user@example.com"
+        mock_customer_manager.get_customer_by_email.return_value = non_admin
+
+        app = create_app(
+            state_db=mock_state_db,
+            enable_auth=False,
+            customer_manager=mock_customer_manager,
+        )
+        client = TestClient(app)
+        client.post("/portal/login", data={"email": non_admin.email, "password": "testpass"})
+
+        response = client.post(
+            "/portal/admin/users/set-admin",
+            data={"email": "other@example.com", "is_admin": "true"},
+        )
+        assert response.status_code == 403
+        assert response.json()["detail"] == "Admin access required"
+
+    def test_admin_users_set_admin_success(self, mock_state_db):
+        mock_customer_manager = MagicMock()
+        admin = MagicMock()
+        admin.customer_id = "cust-admin"
+        admin.is_admin = True
+        admin.email = "admin@example.com"
+        admin.customer_name = "Admin"
+
+        mock_customer_manager.get_customer_by_email.side_effect = lambda e: admin if e == admin.email else None
+        mock_customer_manager.set_admin_status.return_value = True
+
+        app = create_app(
+            state_db=mock_state_db,
+            enable_auth=False,
+            customer_manager=mock_customer_manager,
+        )
+        client = TestClient(app)
+        client.post("/portal/login", data={"email": admin.email, "password": "testpass"})
+
+        response = client.post(
+            "/portal/admin/users/set-admin",
+            data={"email": "other@example.com", "is_admin": "true"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert response.headers["location"].startswith("/portal/admin/users?success=")
+        mock_customer_manager.set_admin_status.assert_called_once_with(email="other@example.com", is_admin=True)
+
+    def test_admin_users_remove_admin_success(self, mock_state_db):
+        mock_customer_manager = MagicMock()
+        admin = MagicMock()
+        admin.customer_id = "cust-admin"
+        admin.is_admin = True
+        admin.email = "admin@example.com"
+        admin.customer_name = "Admin"
+
+        mock_customer_manager.get_customer_by_email.side_effect = lambda e: admin if e == admin.email else None
+        mock_customer_manager.set_admin_status.return_value = True
+
+        app = create_app(
+            state_db=mock_state_db,
+            enable_auth=False,
+            customer_manager=mock_customer_manager,
+        )
+        client = TestClient(app)
+        client.post("/portal/login", data={"email": admin.email, "password": "testpass"})
+
+        response = client.post(
+            "/portal/admin/users/set-admin",
+            data={"email": "other@example.com", "is_admin": "false"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert response.headers["location"].startswith("/portal/admin/users?success=")
+        mock_customer_manager.set_admin_status.assert_called_once_with(email="other@example.com", is_admin=False)
+
+    def test_admin_users_set_password_non_admin_forbidden(self, mock_state_db):
+        mock_customer_manager = MagicMock()
+        non_admin = MagicMock()
+        non_admin.customer_id = "cust-001"
+        non_admin.is_admin = False
+        non_admin.email = "user@example.com"
+        mock_customer_manager.get_customer_by_email.return_value = non_admin
+
+        app = create_app(
+            state_db=mock_state_db,
+            enable_auth=False,
+            customer_manager=mock_customer_manager,
+        )
+        client = TestClient(app)
+        client.post("/portal/login", data={"email": non_admin.email, "password": "testpass"})
+
+        response = client.post(
+            "/portal/admin/users/set-password",
+            data={
+                "email": "other@example.com",
+                "password": "NewPass123!",
+                "confirm_password": "NewPass123!",
+                "force_change": "on",
+            },
+        )
+        assert response.status_code == 403
+        assert response.json()["detail"] == "Admin access required"
+
+    def test_admin_users_set_password_password_mismatch_redirects(self, mock_state_db):
+        mock_customer_manager = MagicMock()
+        admin = MagicMock()
+        admin.customer_id = "cust-admin"
+        admin.is_admin = True
+        admin.email = "admin@example.com"
+        admin.customer_name = "Admin"
+
+        mock_customer_manager.get_customer_by_email.side_effect = lambda e: admin if e == admin.email else None
+        mock_cognito_auth = MagicMock()
+        mock_cognito_auth.authenticate.return_value = {"access_token": "at", "id_token": "it"}
+
+        app = create_app(
+            state_db=mock_state_db,
+            enable_auth=False,
+            customer_manager=mock_customer_manager,
+            cognito_auth=mock_cognito_auth,
+        )
+        client = TestClient(app)
+        client.post("/portal/login", data={"email": admin.email, "password": "testpass"})
+
+        response = client.post(
+            "/portal/admin/users/set-password",
+            data={
+                "email": "other@example.com",
+                "password": "NewPass123!",
+                "confirm_password": "DifferentPass!",
+                "force_change": "on",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert response.headers["location"].startswith("/portal/admin/users?error=")
+        assert "Passwords+do+not+match" in response.headers["location"]
+        mock_cognito_auth.set_user_password.assert_not_called()
+
+    def test_admin_users_set_password_success_temporary_force_change(self, mock_state_db):
+        mock_customer_manager = MagicMock()
+        admin = MagicMock()
+        admin.customer_id = "cust-admin"
+        admin.is_admin = True
+        admin.email = "admin@example.com"
+        admin.customer_name = "Admin"
+
+        mock_customer_manager.get_customer_by_email.side_effect = lambda e: admin if e == admin.email else None
+        mock_cognito_auth = MagicMock()
+        mock_cognito_auth.authenticate.return_value = {"access_token": "at", "id_token": "it"}
+
+        app = create_app(
+            state_db=mock_state_db,
+            enable_auth=False,
+            customer_manager=mock_customer_manager,
+            cognito_auth=mock_cognito_auth,
+        )
+        client = TestClient(app)
+        client.post("/portal/login", data={"email": admin.email, "password": "testpass"})
+
+        response = client.post(
+            "/portal/admin/users/set-password",
+            data={
+                "email": "other@example.com",
+                "password": "NewPass123!",
+                "confirm_password": "NewPass123!",
+                "force_change": "on",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert response.headers["location"].startswith("/portal/admin/users?success=")
+        mock_cognito_auth.set_user_password.assert_called_once_with(
+            email="other@example.com",
+            password="NewPass123!",
+            permanent=False,
+        )
+
+    def test_admin_users_set_password_success_permanent_when_force_change_unchecked(self, mock_state_db):
+        mock_customer_manager = MagicMock()
+        admin = MagicMock()
+        admin.customer_id = "cust-admin"
+        admin.is_admin = True
+        admin.email = "admin@example.com"
+        admin.customer_name = "Admin"
+
+        mock_customer_manager.get_customer_by_email.side_effect = lambda e: admin if e == admin.email else None
+        mock_cognito_auth = MagicMock()
+        mock_cognito_auth.authenticate.return_value = {"access_token": "at", "id_token": "it"}
+
+        app = create_app(
+            state_db=mock_state_db,
+            enable_auth=False,
+            customer_manager=mock_customer_manager,
+            cognito_auth=mock_cognito_auth,
+        )
+        client = TestClient(app)
+        client.post("/portal/login", data={"email": admin.email, "password": "testpass"})
+
+        response = client.post(
+            "/portal/admin/users/set-password",
+            data={
+                "email": "other@example.com",
+                "password": "NewPass123!",
+                "confirm_password": "NewPass123!",
+                # Checkbox absent => force_change is None
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert response.headers["location"].startswith("/portal/admin/users?success=")
+        mock_cognito_auth.set_user_password.assert_called_once_with(
+            email="other@example.com",
+            password="NewPass123!",
+            permanent=True,
+        )
+
+    def test_admin_users_set_password_http_exception_redirects(self, mock_state_db):
+        mock_customer_manager = MagicMock()
+        admin = MagicMock()
+        admin.customer_id = "cust-admin"
+        admin.is_admin = True
+        admin.email = "admin@example.com"
+        admin.customer_name = "Admin"
+
+        mock_customer_manager.get_customer_by_email.side_effect = lambda e: admin if e == admin.email else None
+        mock_cognito_auth = MagicMock()
+        mock_cognito_auth.authenticate.return_value = {"access_token": "at", "id_token": "it"}
+        mock_cognito_auth.set_user_password.side_effect = HTTPException(status_code=403, detail="Domain not allowed")
+
+        app = create_app(
+            state_db=mock_state_db,
+            enable_auth=False,
+            customer_manager=mock_customer_manager,
+            cognito_auth=mock_cognito_auth,
+        )
+        client = TestClient(app)
+        client.post("/portal/login", data={"email": admin.email, "password": "testpass"})
+
+        response = client.post(
+            "/portal/admin/users/set-password",
+            data={
+                "email": "bad@notallowed.com",
+                "password": "NewPass123!",
+                "confirm_password": "NewPass123!",
+                "force_change": "on",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert response.headers["location"].startswith("/portal/admin/users?error=")
+        assert "Domain+not+allowed" in response.headers["location"]
 
 
 @pytest.fixture
@@ -117,6 +555,30 @@ class TestPortalRoutes:
         assert response.status_code == 200
         assert "text/html" in response.headers["content-type"]
         assert b"Create" in response.content or b"register" in response.content.lower()
+        # Branding/title
+        assert b"Create Account - Ursa Customer Portal" in response.content
+        assert b"Ursa" in response.content
+        assert b"Daylily Customer Portal" not in response.content
+        # Cost center semantics: clarify chargeback tag vs AWS Budget
+        assert b"Cost Center (chargeback tag)" in response.content
+        assert b"not an AWS Budget" in response.content
+        # Legal links exist (checkbox text)
+        assert b"/terms" in response.content
+        assert b"/privacy" in response.content
+
+    def test_terms_page(self, client):
+        """Terms page renders without authentication."""
+        response = client.get("/terms")
+        assert response.status_code == 200
+        assert "text/html" in response.headers["content-type"]
+        assert b"Terms of Service" in response.content
+
+    def test_privacy_page(self, client):
+        """Privacy page renders without authentication."""
+        response = client.get("/privacy")
+        assert response.status_code == 200
+        assert "text/html" in response.headers["content-type"]
+        assert b"Privacy Policy" in response.content
 
     def test_portal_worksets_list(self, authenticated_client):
         """Test worksets list page loads (requires auth)."""
@@ -158,6 +620,228 @@ class TestPortalRoutes:
         assert response.status_code == 200
         assert "text/html" in response.headers["content-type"]
         assert b"File" in response.content
+
+    def test_portal_files_buckets_page_renders_link_actions_card_above_list(self, authenticated_client):
+        """Buckets page should render Link Bucket actions above the linked buckets list."""
+        response = authenticated_client.get("/portal/files/buckets")
+        assert response.status_code == 200
+        assert "text/html" in response.headers["content-type"]
+
+        html = response.text
+        assert 'id="link-bucket-actions-card"' in html
+        assert 'id="linked-buckets-card"' in html
+        assert html.index('id="link-bucket-actions-card"') < html.index('id="linked-buckets-card"')
+
+    def test_portal_files_buckets_page_has_discover_redirect_button_and_no_modal(self, authenticated_client):
+        """Buckets page should provide a redirect to auto-discover; modal-based discover UI should be removed."""
+        response = authenticated_client.get("/portal/files/buckets")
+        assert response.status_code == 200
+        assert "text/html" in response.headers["content-type"]
+
+        html = response.text
+        assert 'id="discover-files-redirect-btn"' in html
+        assert 'href="/portal/files/register?tab=discover"' in html
+        assert 'id="discover-modal"' not in html
+
+        assert html.index('id="link-bucket-actions-card"') < html.index('id="discover-files-redirect-btn"')
+        assert html.index('id="discover-files-redirect-btn"') < html.index('id="linked-buckets-card"')
+
+    def test_portal_biospecimen_subjects_action_label_is_add_new_biospecimen(self, authenticated_client):
+        """Biospecimen subjects page should use the required wording for the add action."""
+        def _inject_biospecimen_registry(app, registry) -> None:
+            for route in app.routes:
+                if getattr(route, "path", None) not in {
+                    "/portal/biospecimen",
+                    "/portal/biospecimen/subjects",
+                }:
+                    continue
+
+                endpoint = getattr(route, "endpoint", None)
+                if not endpoint or not getattr(endpoint, "__closure__", None):
+                    continue
+
+                for cell in endpoint.__closure__:
+                    try:
+                        obj = cell.cell_contents
+                    except ValueError:
+                        continue
+                    if isinstance(obj, PortalDependencies):
+                        obj.biospecimen_registry = registry
+                        return
+
+            raise AssertionError(
+                "Could not locate PortalDependencies closure for biospecimen subjects route"
+            )
+
+        fake_subject = SimpleNamespace(
+            subject_id="subject-001",
+            identifier="SUBJ-001",
+            display_name="Test Subject",
+            sex="unknown",
+            cohort=None,
+            created_at="2024-01-01",
+        )
+        fake_registry = MagicMock()
+        fake_registry.list_subjects.return_value = [fake_subject]
+        fake_registry.list_biosamples_for_subject.return_value = []
+        fake_registry.list_biosamples.return_value = []
+        fake_registry.list_libraries.return_value = []
+
+        _inject_biospecimen_registry(authenticated_client.app, fake_registry)
+
+        response = authenticated_client.get("/portal/biospecimen/subjects")
+        assert response.status_code == 200
+        assert "text/html" in response.headers["content-type"]
+
+        html = response.text
+        assert 'title="Add new biospecimen"' in html
+        assert 'aria-label="Add new biospecimen"' in html
+        assert 'title="Add Biosample"' not in html
+
+    def test_portal_biospecimen_subjects_add_new_card_is_above_list(self, authenticated_client):
+        """Biospecimen subjects page should render the Add New card above the subjects list/table."""
+        def _inject_biospecimen_registry(app, registry) -> None:
+            for route in app.routes:
+                if getattr(route, "path", None) not in {
+                    "/portal/biospecimen",
+                    "/portal/biospecimen/subjects",
+                }:
+                    continue
+
+                endpoint = getattr(route, "endpoint", None)
+                if not endpoint or not getattr(endpoint, "__closure__", None):
+                    continue
+
+                for cell in endpoint.__closure__:
+                    try:
+                        obj = cell.cell_contents
+                    except ValueError:
+                        continue
+                    if isinstance(obj, PortalDependencies):
+                        obj.biospecimen_registry = registry
+                        return
+
+            raise AssertionError(
+                "Could not locate PortalDependencies closure for biospecimen subjects route"
+            )
+
+        fake_subject = SimpleNamespace(
+            subject_id="subject-001",
+            identifier="SUBJ-001",
+            display_name="Test Subject",
+            sex="unknown",
+            cohort=None,
+            created_at="2024-01-01",
+        )
+        fake_registry = MagicMock()
+        fake_registry.list_subjects.return_value = [fake_subject]
+        fake_registry.list_biosamples_for_subject.return_value = []
+        fake_registry.list_biosamples.return_value = []
+        fake_registry.list_libraries.return_value = []
+
+        _inject_biospecimen_registry(authenticated_client.app, fake_registry)
+
+        response = authenticated_client.get("/portal/biospecimen/subjects")
+        assert response.status_code == 200
+        assert "text/html" in response.headers["content-type"]
+
+        html = response.text
+        assert 'id="add-new-subject-card"' in html
+        assert 'id="subjects-table-card"' in html
+        assert html.index('id="add-new-subject-card"') < html.index('id="subjects-table-card"')
+        assert 'class="page-actions"' not in html
+
+    def test_portal_subjects_route_redirects_to_biospecimen_subjects(self, authenticated_client):
+        """/portal/subjects should exist as a dedicated entrypoint and redirect to biospecimen subjects."""
+        response = authenticated_client.get("/portal/subjects", follow_redirects=False)
+        assert response.status_code == 302
+        assert response.headers.get("location") == "/portal/biospecimen/subjects"
+
+        # Follow redirect and ensure the destination renders.
+        follow = authenticated_client.get("/portal/subjects")
+        assert follow.status_code == 200
+        assert "text/html" in follow.headers["content-type"]
+
+
+class TestPortalBucketsEditDialog:
+    """Regression tests for per-bucket Edit button + modal on /portal/files/buckets."""
+
+    @pytest.fixture
+    def mock_linked_bucket(self):
+        bucket = MagicMock()
+        bucket.bucket_id = "bucket-abc123"
+        bucket.customer_id = "cust-001"
+        bucket.bucket_name = "test-linked-bucket"
+        bucket.display_name = "Test Linked Bucket"
+        bucket.description = "A test bucket"
+        bucket.bucket_type = "secondary"
+        bucket.prefix_restriction = None
+        bucket.read_only = False
+        bucket.is_validated = True
+        bucket.can_read = True
+        bucket.can_write = True
+        bucket.can_list = True
+        bucket.region = "us-west-2"
+        return bucket
+
+    @pytest.fixture
+    def mock_linked_bucket_manager(self, mock_linked_bucket):
+        manager = MagicMock()
+        manager.list_customer_buckets.return_value = [mock_linked_bucket]
+        manager.get_bucket.return_value = mock_linked_bucket
+        return manager
+
+    @pytest.fixture
+    def mock_customer_manager(self):
+        manager = MagicMock()
+        customer = MagicMock()
+        customer.customer_id = "cust-001"
+        customer.is_admin = False
+        customer.email = "test@example.com"
+        manager.get_customer_by_email.return_value = customer
+        manager.list_customers.return_value = [customer]
+        return manager
+
+    def _make_client(self, mock_state_db: MagicMock, *, mock_customer_manager: MagicMock, mock_linked_bucket_manager: MagicMock):
+        with patch("daylib.routes.portal.RegionAwareS3Client", return_value=MagicMock()), patch(
+            "daylib.workset_api.FILE_MANAGEMENT_AVAILABLE", True
+        ), patch("daylib.workset_api.LinkedBucketManager", return_value=mock_linked_bucket_manager):
+            app = create_app(
+                state_db=mock_state_db,
+                enable_auth=False,
+                customer_manager=mock_customer_manager,
+            )
+
+        client = TestClient(app)
+        client.post("/portal/login", data={"email": "test@example.com", "password": "testpass"})
+        return client
+
+    def test_buckets_page_renders_edit_button_and_modal_fields(
+        self,
+        mock_state_db,
+        mock_customer_manager,
+        mock_linked_bucket_manager,
+    ):
+        client = self._make_client(
+            mock_state_db,
+            mock_customer_manager=mock_customer_manager,
+            mock_linked_bucket_manager=mock_linked_bucket_manager,
+        )
+
+        response = client.get("/portal/files/buckets")
+        assert response.status_code == 200
+        assert "text/html" in response.headers["content-type"]
+
+        html = response.text
+        assert "editBucket('bucket-abc123')" in html
+
+        # Modal + required form controls
+        assert 'id="edit-bucket-modal"' in html
+        assert 'id="edit-display-name"' in html
+        assert 'id="edit-bucket-type"' in html
+        assert 'id="edit-bucket-prefix"' in html
+        assert 'id="edit-bucket-description"' in html
+        assert 'id="edit-bucket-read-only"' in html
 
     def test_portal_usage(self, authenticated_client):
         """Test usage page loads (requires auth)."""
@@ -331,6 +1015,7 @@ class TestPortalRoutes:
         assert response.status_code == 200
         assert "text/html" in response.headers["content-type"]
         assert b"Account" in response.content or b"Settings" in response.content
+        assert b"Cost Center (chargeback tag)" in response.content
 
     def test_unauthenticated_redirect(self, client):
         """Test that unauthenticated users are redirected to login."""
@@ -1242,6 +1927,214 @@ class TestPortalFileRegistration:
         pass  # Placeholder for future session-mocked tests
 
 
+class TestPortalFileUpload:
+    """Tests for POST /portal/files/upload endpoint."""
+
+    @pytest.fixture
+    def mock_linked_bucket(self):
+        bucket = MagicMock()
+        bucket.bucket_id = "bucket-abc123"
+        bucket.customer_id = "cust-001"
+        bucket.bucket_name = "test-linked-bucket"
+        bucket.display_name = "Test Linked Bucket"
+        bucket.is_validated = True
+        bucket.can_read = True
+        bucket.can_write = True
+        return bucket
+
+    @pytest.fixture
+    def mock_linked_bucket_manager(self, mock_linked_bucket):
+        manager = MagicMock()
+        manager.get_bucket.return_value = mock_linked_bucket
+        manager.list_customer_buckets.return_value = [mock_linked_bucket]
+        return manager
+
+    @pytest.fixture
+    def mock_customer_manager(self):
+        manager = MagicMock()
+        customer = MagicMock()
+        customer.customer_id = "cust-001"
+        customer.is_admin = False
+        customer.email = "test@example.com"
+        manager.get_customer_by_email.return_value = customer
+        manager.list_customers.return_value = [customer]
+        return manager
+
+    def _make_client_with_file_upload(
+        self,
+        mock_state_db: MagicMock,
+        *,
+        mock_customer_manager: MagicMock,
+        mock_linked_bucket_manager: MagicMock,
+    ) -> tuple[TestClient, MagicMock]:
+        """Create an authenticated client with linked bucket manager + mocked S3 client."""
+        mock_s3_client = MagicMock()
+
+        with patch("daylib.routes.portal.RegionAwareS3Client", return_value=mock_s3_client), patch(
+            "daylib.workset_api.FILE_MANAGEMENT_AVAILABLE", True
+        ), patch("daylib.workset_api.LinkedBucketManager", return_value=mock_linked_bucket_manager):
+            app = create_app(
+                state_db=mock_state_db,
+                enable_auth=False,
+                customer_manager=mock_customer_manager,
+            )
+
+        client = TestClient(app)
+        client.post("/portal/login", data={"email": "test@example.com", "password": "testpass"})
+        return client, mock_s3_client
+
+    def test_upload_requires_auth(self, mock_state_db, mock_customer_manager, mock_linked_bucket_manager):
+        with patch("daylib.routes.portal.RegionAwareS3Client", return_value=MagicMock()), patch(
+            "daylib.workset_api.FILE_MANAGEMENT_AVAILABLE", True
+        ), patch("daylib.workset_api.LinkedBucketManager", return_value=mock_linked_bucket_manager):
+            app = create_app(
+                state_db=mock_state_db,
+                enable_auth=False,
+                customer_manager=mock_customer_manager,
+            )
+
+        client = TestClient(app)
+        response = client.post(
+            "/portal/files/upload",
+            data={"bucket_id": "bucket-abc123", "prefix": ""},
+            files={"file": ("hello.txt", b"hello")},
+        )
+        assert response.status_code == 401
+
+    def test_upload_returns_503_without_file_management(self, mock_state_db):
+        client = _make_authenticated_client(
+            mock_state_db,
+            customer_id="cust-001",
+            is_admin=False,
+            email="test@example.com",
+        )
+        response = client.post(
+            "/portal/files/upload",
+            data={"bucket_id": "bucket-abc123", "prefix": ""},
+            files={"file": ("hello.txt", b"hello")},
+        )
+        assert response.status_code == 503
+        assert "File management" in response.json()["detail"]
+
+    def test_upload_bucket_not_found_404(
+        self, mock_state_db, mock_customer_manager, mock_linked_bucket_manager
+    ):
+        mock_linked_bucket_manager.get_bucket.return_value = None
+        client, _mock_s3 = self._make_client_with_file_upload(
+            mock_state_db,
+            mock_customer_manager=mock_customer_manager,
+            mock_linked_bucket_manager=mock_linked_bucket_manager,
+        )
+
+        response = client.post(
+            "/portal/files/upload",
+            data={"bucket_id": "bucket-abc123", "prefix": ""},
+            files={"file": ("hello.txt", b"hello")},
+        )
+        assert response.status_code == 404
+
+    def test_upload_bucket_wrong_customer_403(
+        self, mock_state_db, mock_customer_manager, mock_linked_bucket_manager, mock_linked_bucket
+    ):
+        mock_linked_bucket.customer_id = "cust-999"
+        client, _mock_s3 = self._make_client_with_file_upload(
+            mock_state_db,
+            mock_customer_manager=mock_customer_manager,
+            mock_linked_bucket_manager=mock_linked_bucket_manager,
+        )
+
+        response = client.post(
+            "/portal/files/upload",
+            data={"bucket_id": "bucket-abc123", "prefix": ""},
+            files={"file": ("hello.txt", b"hello")},
+        )
+        assert response.status_code == 403
+        assert "Access denied" in response.json()["detail"]
+
+    def test_upload_bucket_no_write_403(
+        self, mock_state_db, mock_customer_manager, mock_linked_bucket_manager, mock_linked_bucket
+    ):
+        mock_linked_bucket.can_write = False
+        client, _mock_s3 = self._make_client_with_file_upload(
+            mock_state_db,
+            mock_customer_manager=mock_customer_manager,
+            mock_linked_bucket_manager=mock_linked_bucket_manager,
+        )
+
+        response = client.post(
+            "/portal/files/upload",
+            data={"bucket_id": "bucket-abc123", "prefix": ""},
+            files={"file": ("hello.txt", b"hello")},
+        )
+        assert response.status_code == 403
+        assert "Write access" in response.json()["detail"]
+
+    def test_upload_s3_access_denied_surfaces_403(
+        self, mock_state_db, mock_customer_manager, mock_linked_bucket_manager
+    ):
+        client, mock_s3 = self._make_client_with_file_upload(
+            mock_state_db,
+            mock_customer_manager=mock_customer_manager,
+            mock_linked_bucket_manager=mock_linked_bucket_manager,
+        )
+        mock_s3.upload_fileobj.side_effect = ClientError(
+            {"Error": {"Code": "AccessDenied", "Message": "Denied"}},
+            "PutObject",
+        )
+
+        response = client.post(
+            "/portal/files/upload",
+            data={"bucket_id": "bucket-abc123", "prefix": ""},
+            files={"file": ("hello.txt", b"hello")},
+        )
+        assert response.status_code == 403
+        assert "AccessDenied" in response.json()["detail"]
+
+    def test_upload_success_calls_s3_with_normalized_prefix(
+        self, mock_state_db, mock_customer_manager, mock_linked_bucket_manager
+    ):
+        client, mock_s3 = self._make_client_with_file_upload(
+            mock_state_db,
+            mock_customer_manager=mock_customer_manager,
+            mock_linked_bucket_manager=mock_linked_bucket_manager,
+        )
+
+        response = client.post(
+            "/portal/files/upload",
+            data={"bucket_id": "bucket-abc123", "prefix": "/foo/bar/"},
+            files={"file": ("hello.txt", b"hello")},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["bucket"] == "test-linked-bucket"
+        assert data["key"] == "foo/bar/hello.txt"
+
+        assert mock_s3.upload_fileobj.call_count == 1
+        _args, kwargs = mock_s3.upload_fileobj.call_args
+        assert kwargs == {}
+        assert _args[1] == "test-linked-bucket"
+        assert _args[2] == "foo/bar/hello.txt"
+
+    def test_upload_missing_filename_returns_422_from_validation(
+        self, mock_state_db, mock_customer_manager, mock_linked_bucket_manager
+    ):
+        client, _mock_s3 = self._make_client_with_file_upload(
+            mock_state_db,
+            mock_customer_manager=mock_customer_manager,
+            mock_linked_bucket_manager=mock_linked_bucket_manager,
+        )
+
+        response = client.post(
+            "/portal/files/upload",
+            data={"bucket_id": "bucket-abc123", "prefix": ""},
+            files={"file": ("", b"hello")},
+        )
+        # FastAPI/Starlette treats empty filenames as an invalid upload and returns 422
+        # before our route logic can run. The route-level 400 guard remains as defense-in-depth.
+        assert response.status_code == 422
+
+
 class TestPortalFileAutoRegistration:
     """Tests for the portal file auto-registration implementation."""
 
@@ -1922,26 +2815,148 @@ class TestVerifyWorksetOwnership:
         assert verify_workset_ownership(workset, "cust-B") is False
 
 
+class TestVerifyWorksetAccess:
+    """Unit tests for verify_workset_access helper function."""
+
+    def test_admin_can_access_any_workset_for_customer(self):
+        from daylib.routes.dependencies import verify_workset_access
+
+        workset = {
+            "workset_id": "ws-1",
+            "customer_id": "cust-A",
+            "metadata": {"created_by_email": "someone@example.com"},
+        }
+        assert (
+            verify_workset_access(
+                workset,
+                customer_id="cust-A",
+                user_email="admin@example.com",
+                is_admin=True,
+            )
+            is True
+        )
+
+    def test_non_admin_requires_created_by_email_match(self):
+        from daylib.routes.dependencies import verify_workset_access
+
+        workset = {
+            "workset_id": "ws-1",
+            "customer_id": "cust-A",
+            "metadata": {"created_by_email": "owner@example.com"},
+        }
+        assert (
+            verify_workset_access(
+                workset,
+                customer_id="cust-A",
+                user_email="other@example.com",
+                is_admin=False,
+            )
+            is False
+        )
+        assert (
+            verify_workset_access(
+                workset,
+                customer_id="cust-A",
+                user_email="owner@example.com",
+                is_admin=False,
+            )
+            is True
+        )
+
+    def test_legacy_workset_allows_any_authenticated_user_for_customer(self):
+        from daylib.routes.dependencies import verify_workset_access
+
+        legacy_workset = {
+            "workset_id": "ws-legacy",
+            "customer_id": "cust-A",
+            "metadata": {"submitted_by": "cust-A"},
+        }
+        assert (
+            verify_workset_access(
+                legacy_workset,
+                customer_id="cust-A",
+                user_email="user@example.com",
+                is_admin=False,
+            )
+            is True
+        )
+        assert (
+            verify_workset_access(
+                legacy_workset,
+                customer_id="cust-A",
+                user_email=None,
+                is_admin=False,
+            )
+            is False
+        )
+
+    def test_cross_customer_denied(self):
+        from daylib.routes.dependencies import verify_workset_access
+
+        workset = {
+            "workset_id": "ws-1",
+            "customer_id": "cust-B",
+            "metadata": {"created_by_email": "user@example.com"},
+        }
+        assert (
+            verify_workset_access(
+                workset,
+                customer_id="cust-A",
+                user_email="user@example.com",
+                is_admin=False,
+            )
+            is False
+        )
+
+
 class TestPortalAuthzSurfaces:
     """HTTP-level regression tests for portal authorization surfaces."""
 
-    def test_portal_dashboard_filters_worksets_by_customer_id(self, mock_state_db):
-        """Dashboard must only show worksets owned by the logged-in customer."""
-        client = _make_authenticated_client(mock_state_db, customer_id="customer-A", is_admin=False)
+    def test_portal_dashboard_filters_worksets_by_user(self, mock_state_db):
+        """Dashboard must only show worksets the logged-in user can access."""
+        user1_email = "user1@example.com"
+        user2_email = "user2@example.com"
+        user1_client = _make_authenticated_client(
+            mock_state_db,
+            customer_id="customer-A",
+            is_admin=False,
+            email=user1_email,
+        )
+        user2_client = _make_authenticated_client(
+            mock_state_db,
+            customer_id="customer-A",
+            is_admin=False,
+            email=user2_email,
+        )
+        admin_client = _make_authenticated_client(
+            mock_state_db,
+            customer_id="customer-A",
+            is_admin=True,
+            email="admin@example.com",
+        )
 
         def list_by_state(state, limit=100):
             if state == WorksetState.READY:
                 return [
                     {
-                        "workset_id": "ws-owned",
+                        "workset_id": "ws-user1",
                         "state": "ready",
                         "customer_id": "customer-A",
+                        "metadata": {"created_by_email": user1_email},
                         "created_at": "2026-01-24T00:00:00Z",
                     },
                     {
-                        "workset_id": "ws-not-owned",
+                        "workset_id": "ws-user2",
+                        "state": "ready",
+                        "customer_id": "customer-A",
+                        "metadata": {"created_by_email": user2_email},
+                        "created_at": "2026-01-24T00:00:00Z",
+                    },
+                    {
+                        "workset_id": "ws-other-customer",
                         "state": "ready",
                         "customer_id": "customer-B",
+                        "metadata": {"created_by_email": user1_email},
                         "created_at": "2026-01-24T00:00:00Z",
                     },
                 ]
@@ -1949,10 +2964,23 @@ class TestPortalAuthzSurfaces:
 
         mock_state_db.list_worksets_by_state.side_effect = list_by_state
 
-        response = client.get("/portal")
-        assert response.status_code == 200
-        assert b"ws-owned" in response.content
-        assert b"ws-not-owned" not in response.content
+        response1 = user1_client.get("/portal")
+        assert response1.status_code == 200
+        assert b"ws-user1" in response1.content
+        assert b"ws-user2" not in response1.content
+        assert b"ws-other-customer" not in response1.content
+
+        response2 = user2_client.get("/portal")
+        assert response2.status_code == 200
+        assert b"ws-user2" in response2.content
+        assert b"ws-user1" not in response2.content
+        assert b"ws-other-customer" not in response2.content
+
+        response_admin = admin_client.get("/portal")
+        assert response_admin.status_code == 200
+        assert b"ws-user1" in response_admin.content
+        assert b"ws-user2" in response_admin.content
+        assert b"ws-other-customer" not in response_admin.content
 
     def test_clusters_sensitive_sections_are_admin_only(self, mock_state_db, monkeypatch):
         """Clusters page must hide budget/queue and IP details from non-admins."""
@@ -2022,3 +3050,85 @@ class TestPortalAuthzSurfaces:
         assert b"AWS Budget" not in non_admin_response.content
         assert b"Slurm Job Queue" not in non_admin_response.content
         assert b"Public IP" not in non_admin_response.content
+
+    def test_clusters_delete_button_is_admin_only(self, mock_state_db, monkeypatch):
+        """Delete cluster button must be visible only to admins on /portal/clusters."""
+
+        class _FakeUrsaConfig:
+            is_configured = True
+            aws_profile = None
+
+            def get_allowed_regions(self):
+                return ["us-west-2"]
+
+        monkeypatch.setattr("daylib.ursa_config.get_ursa_config", lambda: _FakeUrsaConfig())
+
+        mock_cluster = MagicMock()
+        mock_cluster.to_dict.return_value = {
+            "cluster_name": "test-cluster",
+            "region": "us-west-2",
+            "cluster_status": "CREATE_COMPLETE",
+            "compute_fleet_status": "RUNNING",
+            "head_node": None,
+            "budget_info": None,
+            "job_queue": None,
+        }
+
+        mock_service = MagicMock()
+        mock_service.get_all_clusters_with_status.return_value = [mock_cluster]
+        monkeypatch.setattr("daylib.cluster_service.get_cluster_service", lambda **kwargs: mock_service)
+
+        admin_client = _make_authenticated_client(mock_state_db, customer_id="cust-admin", is_admin=True)
+        admin_response = admin_client.get("/portal/clusters")
+        assert admin_response.status_code == 200
+        assert b"data-testid=\"delete-cluster-btn\"" in admin_response.content
+
+        non_admin_client = _make_authenticated_client(mock_state_db, customer_id="cust-user", is_admin=False)
+        non_admin_response = non_admin_client.get("/portal/clusters")
+        assert non_admin_response.status_code == 200
+        assert b"data-testid=\"delete-cluster-btn\"" not in non_admin_response.content
+
+    def test_api_delete_cluster_requires_admin(self, mock_state_db, monkeypatch):
+        """DELETE /api/clusters/* must be admin-only."""
+
+        class _FakeUrsaConfig:
+            is_configured = True
+            aws_profile = None
+
+            def get_allowed_regions(self):
+                return ["us-west-2"]
+
+        monkeypatch.setattr("daylib.ursa_config.get_ursa_config", lambda: _FakeUrsaConfig())
+
+        mock_service = MagicMock()
+        mock_service.delete_cluster.return_value = {}
+        monkeypatch.setattr("daylib.cluster_service.get_cluster_service", lambda **kwargs: mock_service)
+
+        non_admin_client = _make_authenticated_client(mock_state_db, customer_id="cust-user", is_admin=False)
+        resp = non_admin_client.delete("/api/clusters/test-cluster?region=us-west-2")
+        assert resp.status_code == 403
+
+    def test_api_delete_cluster_admin_returns_command(self, mock_state_db, monkeypatch):
+        """Admin delete should return a pcluster command string for audit/debug."""
+
+        class _FakeUrsaConfig:
+            is_configured = True
+            aws_profile = None
+
+            def get_allowed_regions(self):
+                return ["us-west-2"]
+
+        monkeypatch.setattr("daylib.ursa_config.get_ursa_config", lambda: _FakeUrsaConfig())
+
+        mock_service = MagicMock()
+        mock_service.delete_cluster.return_value = {}
+        monkeypatch.setattr("daylib.cluster_service.get_cluster_service", lambda **kwargs: mock_service)
+
+        admin_client = _make_authenticated_client(mock_state_db, customer_id="cust-admin", is_admin=True)
+        resp = admin_client.delete("/api/clusters/test-cluster?region=us-west-2")
+        assert resp.status_code == 200
+        payload = resp.json()
+        assert payload["success"] is True
+        assert payload["cluster_name"] == "test-cluster"
+        assert payload["region"] == "us-west-2"
+        assert payload["pcluster_command"] == "pcluster delete-cluster --region us-west-2 -n test-cluster"

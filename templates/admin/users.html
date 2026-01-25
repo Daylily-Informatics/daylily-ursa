@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+{% set active_page = 'admin_users' %}
+
+{% block title %}User Management - Ursa Customer Portal{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="page-header">
+        <h1 class="page-title">User Management</h1>
+        <p class="page-subtitle">Admin-only: create users (customers) and view existing users</p>
+    </div>
+
+    {% if error %}
+    <div class="alert alert-error">
+        <i class="fas fa-exclamation-circle"></i>
+        <span>{{ error }}</span>
+    </div>
+    {% endif %}
+
+    {% if success %}
+    <div class="alert alert-success">
+        <i class="fas fa-check-circle"></i>
+        <div>
+            <strong>Success</strong>
+            <p class="mb-0" style="font-size: 0.875rem;">{{ success }}</p>
+        </div>
+    </div>
+    {% endif %}
+
+    <div class="grid grid-2 gap-xl">
+        <div class="card">
+            <h3 class="card-title"><i class="fas fa-user-plus"></i> Add User</h3>
+            <form method="post" action="/portal/admin/users/add">
+                <div class="form-group">
+                    <label class="form-label" for="customer_name">Customer Name</label>
+                    <input id="customer_name" name="customer_name" type="text" class="form-control" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label" for="email">Email Address</label>
+                    <input id="email" name="email" type="email" class="form-control" required>
+                </div>
+                <button type="submit" class="btn btn-primary">
+                    <i class="fas fa-plus"></i> Create User
+                </button>
+            </form>
+        </div>
+
+        <div class="card">
+            <h3 class="card-title"><i class="fas fa-key"></i> Set User Password</h3>
+            <p class="text-muted" style="margin-bottom: 1rem; font-size: 0.875rem;">
+                This sets a Cognito password. If "Force password change" is checked, the user must change it on next login.
+            </p>
+            <form method="post" action="/portal/admin/users/set-password">
+                <div class="form-group">
+                    <label class="form-label" for="pw_email">Email Address</label>
+                    <input id="pw_email" name="email" type="email" class="form-control" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label" for="pw_password">New Password</label>
+                    <input id="pw_password" name="password" type="password" class="form-control" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label" for="pw_confirm_password">Confirm Password</label>
+                    <input id="pw_confirm_password" name="confirm_password" type="password" class="form-control" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">
+                        <input type="checkbox" name="force_change" checked>
+                        Force password change on next login
+                    </label>
+                </div>
+                <button type="submit" class="btn btn-primary">
+                    <i class="fas fa-save"></i> Set Password
+                </button>
+            </form>
+        </div>
+
+        <div class="card" style="grid-column: 1 / -1;">
+            <h3 class="card-title"><i class="fas fa-users"></i> Existing Users</h3>
+
+            {% if customers and customers|length > 0 %}
+            <table class="job-table" style="width: 100%;">
+                <thead>
+                    <tr>
+                        <th>Email</th>
+                        <th>Customer Name</th>
+                        <th>Customer ID</th>
+                        <th>Admin</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for c in customers %}
+                    <tr>
+                        <td>{{ c.email | default('') }}</td>
+                        <td>{{ c.customer_name | default('') }}</td>
+                        <td><code>{{ c.customer_id | default('') }}</code></td>
+                        <td>{{ 'Yes' if c.is_admin else 'No' }}</td>
+                        <td>
+                            {% if c.email %}
+                            <form method="post" action="/portal/admin/users/set-admin" style="display: inline;">
+                                <input type="hidden" name="email" value="{{ c.email }}">
+                                {% if c.is_admin %}
+                                <input type="hidden" name="is_admin" value="false">
+                                <button type="submit" class="btn btn-sm btn-outline">Revoke admin</button>
+                                {% else %}
+                                <input type="hidden" name="is_admin" value="true">
+                                <button type="submit" class="btn btn-sm btn-success">Make admin</button>
+                                {% endif %}
+                            </form>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <p class="text-muted">No users found.</p>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -132,6 +132,41 @@ def verify_workset_ownership(workset: Dict[str, Any], customer_id: str) -> bool:
     return False
 
 
+def verify_workset_access(
+    workset: Dict[str, Any],
+    *,
+    customer_id: str,
+    user_email: Optional[str],
+    is_admin: bool,
+) -> bool:
+    """Check whether a user can access a workset.
+
+    Rules:
+    - Workset must belong to `customer_id`.
+    - Admins can access any workset for the customer.
+    - Non-admins can access only worksets they created (`metadata.created_by_email`).
+    - Legacy worksets without `created_by_email` allow any authenticated user
+      within the customer (backwards compatible; owner cannot be inferred).
+    """
+    if not verify_workset_ownership(workset, customer_id):
+        return False
+
+    if is_admin:
+        return True
+
+    if not user_email:
+        return False
+
+    metadata = workset.get("metadata", {})
+    if isinstance(metadata, dict):
+        created_by_email = metadata.get("created_by_email")
+        if created_by_email:
+            return bool(created_by_email == user_email)
+
+    # Legacy fallback (no owner recorded): allow customer-scoped access.
+    return True
+
+
 # ========== Pydantic Models for Workset API ==========
 
 
