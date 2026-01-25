@@ -351,6 +351,49 @@ def test_deserialize_item(state_db):
     assert deserialized["metrics"]["values"] == [1.1, 2.2]
 
 
+def test_deserialize_item_promotes_sample_count_from_metadata(state_db):
+    """Test that sample_count is promoted from metadata to top level.
+
+    This ensures templates can use ws.sample_count instead of ws.metadata.sample_count.
+    Regression test for: "Samples" column in Recent Worksets always showing 0.
+    """
+    item = {
+        "workset_id": "test-ws",
+        "state": "ready",
+        "metadata": {
+            "sample_count": 5,
+            "pipeline_type": "germline",
+            "samples": [{"sample_id": f"S{i}"} for i in range(5)],
+        },
+    }
+
+    deserialized = state_db._deserialize_item(item)
+
+    # sample_count should be promoted to top level
+    assert deserialized["sample_count"] == 5
+    # pipeline_type should also be promoted
+    assert deserialized["pipeline_type"] == "germline"
+    # Original metadata should still be intact
+    assert deserialized["metadata"]["sample_count"] == 5
+    assert deserialized["metadata"]["pipeline_type"] == "germline"
+
+
+def test_deserialize_item_does_not_overwrite_top_level_sample_count(state_db):
+    """Test that top-level sample_count is not overwritten by metadata."""
+    item = {
+        "workset_id": "test-ws",
+        "sample_count": 10,  # Top-level takes precedence
+        "metadata": {
+            "sample_count": 5,  # Should not overwrite
+        },
+    }
+
+    deserialized = state_db._deserialize_item(item)
+
+    # Top-level value should be preserved
+    assert deserialized["sample_count"] == 10
+
+
 def test_record_failure_transient(state_db, mock_dynamodb):
     """Test recording a transient failure."""
     mock_table = mock_dynamodb["table"]

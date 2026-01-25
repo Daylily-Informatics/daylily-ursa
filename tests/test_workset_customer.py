@@ -164,6 +164,56 @@ def test_list_customers(customer_manager, mock_aws):
     assert customers[1].customer_id == "test-2"
 
 
+def test_update_customer(customer_manager, mock_aws):
+    """Test updating customer configuration."""
+    mock_table = mock_aws["table"]
+    # Simulate existing customer in DB
+    mock_table.get_item.return_value = {
+        "Item": {
+            "customer_id": "test-123",
+            "customer_name": "Old Name",
+            "email": "old@example.com",
+            "s3_bucket": "test-bucket",
+            "max_concurrent_worksets": 5,
+            "max_storage_gb": 1000,
+            "billing_account_id": "OLD-BA",
+            "cost_center": "OLD-CC",
+        }
+    }
+
+    # Update only customer_name and cost_center
+    updated = customer_manager.update_customer(
+        customer_id="test-123",
+        customer_name="New Name",
+        cost_center="NEW-CC",
+    )
+
+    assert updated is not None
+    assert updated.customer_name == "New Name"
+    assert updated.cost_center == "NEW-CC"
+    # Fields not updated should remain the same
+    assert updated.email == "old@example.com"
+    assert updated.billing_account_id == "OLD-BA"
+
+    # Verify put_item was called to save updates
+    mock_table.put_item.assert_called_once()
+
+
+def test_update_customer_not_found(customer_manager, mock_aws):
+    """Test updating non-existent customer returns None."""
+    mock_table = mock_aws["table"]
+    mock_table.get_item.return_value = {}
+
+    result = customer_manager.update_customer(
+        customer_id="nonexistent",
+        customer_name="New Name",
+    )
+
+    assert result is None
+    # Should not attempt to save if customer not found
+    mock_table.put_item.assert_not_called()
+
+
 # =============================================================================
 # API Customer Isolation Tests
 # =============================================================================
@@ -276,4 +326,123 @@ class TestAPICustomerIsolation:
 
         # Should not match any customer
         assert verify_workset_ownership(workset_no_owner, "any-customer") is False
+
+
+class TestBillingAccountIdIsMetadataOnly:
+    """Tests documenting that billing_account_id is metadata-only.
+
+    Per Task 27 (NEW_FINAL_LINGERING_TASKS.md):
+    - billing_account_id visibility is already implemented (captured at register +
+      displayed on /portal/account) => 'visible' is STALE (already done).
+    - For 'usable': Only add tests to detect whether any existing code path uses
+      billing_account_id (e.g., affects billing, workset submissions, tags, AWS ops).
+      If this cannot be reliably tested in-unit (or only exists in external infra),
+      do not implement new behavior; document result in test comments and treat as
+      skipped per instruction.
+
+    INVESTIGATION RESULTS (2026-01-25):
+    -----------------------------------
+    1. billing_account_id is defined in CustomerConfig dataclass (workset_customer.py)
+    2. It is stored in DynamoDB via _save_customer_config() (conditionally, only if not None)
+    3. It is returned in API responses via CustomerResponse model (workset_api.py)
+    4. It is displayed on the /portal/account page (templates/account.html)
+    5. It is NOT used in daylib/billing.py - BillingCalculator calculates costs from:
+       - compute_cost_usd: From Snakemake benchmark data (actual spot instance pricing)
+       - storage_bytes: From S3 storage metrics
+       - sample_count: From workset metadata
+       - platform_fee_usd: Configurable markup based on rates
+    6. It is NOT used in workset registration (workset_api.py does not tag worksets with it)
+    7. It is NOT used in AWS operations or resource tagging
+
+    CONCLUSION: billing_account_id is metadata-only. It is captured and displayed but
+    NOT operationally used in any code path that affects billing, workset processing,
+    or AWS resource management. This is intentional - billing is calculated from actual
+    workset data, not routed to external billing accounts.
+
+    These tests document this finding for future reference.
+    """
+
+    def test_billing_account_id_stored_and_retrieved(self, customer_manager, mock_aws):
+        """Verify billing_account_id is correctly stored and retrieved.
+
+        This confirms the 'visible' part is working - the field is persisted.
+        """
+        mock_table = mock_aws["table"]
+        mock_table.get_item.return_value = {}
+
+        # Create customer with billing_account_id
+        config = CustomerConfig(
+            customer_id="test-ba-123",
+            customer_name="Test BA Customer",
+            email="testba@example.com",
+            s3_bucket="test-ba-bucket",
+            billing_account_id="BA-ACME-001",
+        )
+        customer_manager._save_customer_config(config)
+
+        # Verify billing_account_id was saved to DynamoDB
+        mock_table.put_item.assert_called_once()
+        call_args = mock_table.put_item.call_args
+        item = call_args[1]["Item"]
+        assert item["billing_account_id"] == "BA-ACME-001"
+
+    def test_billing_calculator_does_not_use_billing_account_id(self):
+        """Document that BillingCalculator does NOT use billing_account_id.
+
+        This test verifies the 'usable' investigation finding: billing calculations
+        are based on actual workset data (compute costs, storage, samples), NOT on
+        any billing_account_id routing.
+
+        SKIPPED IMPLEMENTATION per task instruction: Since billing_account_id is not
+        used operationally, there is no new behavior to implement. This test documents
+        the architecture decision that billing is calculated from workset data.
+        """
+        from daylib.billing import BillingCalculator
+
+        # BillingCalculator signature and methods do not accept billing_account_id
+        # This is by design - billing is calculated from workset data
+
+        # Verify BillingCalculator.__init__ signature has no billing_account_id param
+        import inspect
+        init_sig = inspect.signature(BillingCalculator.__init__)
+        init_params = list(init_sig.parameters.keys())
+        assert "billing_account_id" not in init_params, (
+            "BillingCalculator should not accept billing_account_id - "
+            "billing is calculated from workset data, not routed to accounts"
+        )
+
+        # Verify calculate_workset_billing does not accept billing_account_id
+        calc_sig = inspect.signature(BillingCalculator.calculate_workset_billing)
+        calc_params = list(calc_sig.parameters.keys())
+        assert "billing_account_id" not in calc_params, (
+            "calculate_workset_billing should not use billing_account_id"
+        )
+
+        # Verify calculate_customer_billing does not accept billing_account_id
+        cust_sig = inspect.signature(BillingCalculator.calculate_customer_billing)
+        cust_params = list(cust_sig.parameters.keys())
+        assert "billing_account_id" not in cust_params, (
+            "calculate_customer_billing should not use billing_account_id"
+        )
+
+    def test_billing_account_id_not_in_billing_module_source(self):
+        """Verify billing_account_id is not referenced anywhere in billing module.
+
+        This is a regression test to ensure billing_account_id remains metadata-only.
+        If this test fails in the future, it means someone has started using
+        billing_account_id operationally and the architecture has changed.
+        """
+        import daylib.billing as billing_module
+        import inspect
+
+        # Get the source code of the entire billing module
+        source = inspect.getsource(billing_module)
+
+        # billing_account_id should NOT appear anywhere in the billing module
+        assert "billing_account_id" not in source, (
+            "billing_account_id should not be referenced in daylib/billing.py - "
+            "billing is calculated from workset data (compute costs, storage, samples), "
+            "not routed to external billing accounts. If this test fails, the "
+            "architecture has changed and this test should be updated."
+        )
 

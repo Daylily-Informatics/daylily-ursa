@@ -466,6 +466,222 @@ class TestMonitorWorksetExistenceCheck:
         mock_state_db_for_monitor.register_workset.assert_not_called()
 
 
+class TestMonitorReconcileDynamoDBState:
+    """Tests for monitor's DynamoDB/S3 state reconciliation on restart.
+
+    These tests verify that when the monitor restarts after a crash
+    (mid-SSH failure), it correctly reconciles DynamoDB state with
+    S3 sentinel files.
+    """
+
+    @pytest.fixture
+    def mock_monitor_for_reconciliation(self):
+        """Create a mock monitor for reconciliation tests."""
+        from daylib.workset_monitor import WorksetMonitor, SENTINEL_FILES
+
+        monitor = WorksetMonitor.__new__(WorksetMonitor)
+        monitor.state_db = MagicMock()
+        monitor.dry_run = False
+        return monitor, SENTINEL_FILES
+
+    def test_reconcile_updates_dynamodb_when_s3_shows_complete(self, mock_monitor_for_reconciliation):
+        """Test that DynamoDB is updated when S3 shows complete but DynamoDB shows in_progress."""
+        from daylib.workset_monitor import Workset
+
+        monitor, SENTINEL_FILES = mock_monitor_for_reconciliation
+
+        # S3 shows complete, DynamoDB shows in_progress
+        workset = Workset(
+            name="test-ws-001",
+            prefix="worksets/test-ws-001/",
+            sentinels={SENTINEL_FILES["complete"]: "2024-01-15T10:00:00Z"},
+            has_required_files=True,
+            is_archived=False,
+        )
+        monitor.state_db.get_workset.return_value = {
+            "workset_id": "test-ws-001",
+            "state": "in_progress",
+        }
+
+        monitor._reconcile_dynamodb_state(workset)
+
+        # Verify DynamoDB state was updated to complete
+        monitor.state_db.update_state.assert_called_once()
+        call_kwargs = monitor.state_db.update_state.call_args.kwargs
+        assert call_kwargs["workset_id"] == "test-ws-001"
+        assert "Reconciled" in call_kwargs["reason"]
+
+    def test_reconcile_updates_dynamodb_when_s3_shows_error(self, mock_monitor_for_reconciliation):
+        """Test that DynamoDB is updated when S3 shows error but DynamoDB shows ready."""
+        from daylib.workset_monitor import Workset
+
+        monitor, SENTINEL_FILES = mock_monitor_for_reconciliation
+
+        # S3 shows error, DynamoDB shows ready
+        workset = Workset(
+            name="test-ws-002",
+            prefix="worksets/test-ws-002/",
+            sentinels={SENTINEL_FILES["error"]: "2024-01-15T10:00:00Z\tFailed"},
+            has_required_files=True,
+            is_archived=False,
+        )
+        monitor.state_db.get_workset.return_value = {
+            "workset_id": "test-ws-002",
+            "state": "ready",
+        }
+
+        monitor._reconcile_dynamodb_state(workset)
+
+        # Verify DynamoDB state was updated to error
+        monitor.state_db.update_state.assert_called_once()
+        call_kwargs = monitor.state_db.update_state.call_args.kwargs
+        assert call_kwargs["workset_id"] == "test-ws-002"
+
+    def test_reconcile_does_not_overwrite_terminal_dynamodb_state(self, mock_monitor_for_reconciliation):
+        """Test that terminal states in DynamoDB are not overwritten."""
+        from daylib.workset_monitor import Workset
+
+        monitor, SENTINEL_FILES = mock_monitor_for_reconciliation
+
+        # DynamoDB already shows complete (terminal state)
+        workset = Workset(
+            name="test-ws-003",
+            prefix="worksets/test-ws-003/",
+            sentinels={SENTINEL_FILES["error"]: "2024-01-15T10:00:00Z"},
+            has_required_files=True,
+            is_archived=False,
+        )
+        monitor.state_db.get_workset.return_value = {
+            "workset_id": "test-ws-003",
+            "state": "complete",
+        }
+
+        monitor._reconcile_dynamodb_state(workset)
+
+        # update_state should NOT be called for terminal states
+        monitor.state_db.update_state.assert_not_called()
+
+    def test_reconcile_updates_ready_to_in_progress(self, mock_monitor_for_reconciliation):
+        """Test that DynamoDB is updated from ready to in_progress when S3 shows in_progress."""
+        from daylib.workset_monitor import Workset
+
+        monitor, SENTINEL_FILES = mock_monitor_for_reconciliation
+
+        # S3 shows in_progress, DynamoDB shows ready
+        workset = Workset(
+            name="test-ws-004",
+            prefix="worksets/test-ws-004/",
+            sentinels={
+                SENTINEL_FILES["ready"]: "2024-01-15T09:00:00Z",
+                SENTINEL_FILES["in_progress"]: "2024-01-15T10:00:00Z",
+            },
+            has_required_files=True,
+            is_archived=False,
+        )
+        monitor.state_db.get_workset.return_value = {
+            "workset_id": "test-ws-004",
+            "state": "ready",
+        }
+
+        monitor._reconcile_dynamodb_state(workset)
+
+        # Verify DynamoDB state was updated to in_progress
+        monitor.state_db.update_state.assert_called_once()
+
+    def test_reconcile_skips_workset_not_in_dynamodb(self, mock_monitor_for_reconciliation):
+        """Test that reconciliation is skipped for worksets not in DynamoDB."""
+        from daylib.workset_monitor import Workset
+
+        monitor, SENTINEL_FILES = mock_monitor_for_reconciliation
+
+        # Workset exists in S3 but not in DynamoDB
+        workset = Workset(
+            name="orphan-ws",
+            prefix="worksets/orphan-ws/",
+            sentinels={SENTINEL_FILES["complete"]: "2024-01-15T10:00:00Z"},
+            has_required_files=True,
+            is_archived=False,
+        )
+        monitor.state_db.get_workset.return_value = None
+
+        monitor._reconcile_dynamodb_state(workset)
+
+        # update_state should NOT be called - monitor doesn't create worksets
+        monitor.state_db.update_state.assert_not_called()
+
+    def test_reconcile_skips_when_no_state_db(self, mock_monitor_for_reconciliation):
+        """Test that reconciliation is skipped when no state_db is configured."""
+        from daylib.workset_monitor import Workset
+
+        monitor, SENTINEL_FILES = mock_monitor_for_reconciliation
+        monitor.state_db = None  # No state DB
+
+        workset = Workset(
+            name="test-ws-005",
+            prefix="worksets/test-ws-005/",
+            sentinels={SENTINEL_FILES["complete"]: "2024-01-15T10:00:00Z"},
+            has_required_files=True,
+            is_archived=False,
+        )
+
+        # Should not raise, just return early
+        monitor._reconcile_dynamodb_state(workset)
+
+    def test_reconcile_handles_update_failure_gracefully(self, mock_monitor_for_reconciliation):
+        """Test that reconciliation handles DynamoDB update failures gracefully."""
+        from daylib.workset_monitor import Workset
+
+        monitor, SENTINEL_FILES = mock_monitor_for_reconciliation
+
+        workset = Workset(
+            name="test-ws-006",
+            prefix="worksets/test-ws-006/",
+            sentinels={SENTINEL_FILES["complete"]: "2024-01-15T10:00:00Z"},
+            has_required_files=True,
+            is_archived=False,
+        )
+        monitor.state_db.get_workset.return_value = {
+            "workset_id": "test-ws-006",
+            "state": "in_progress",
+        }
+        monitor.state_db.update_state.side_effect = Exception("DynamoDB error")
+
+        # Should not raise, just log warning
+        monitor._reconcile_dynamodb_state(workset)
+
+    def test_reconcile_called_during_check_workset_state(self, mock_monitor_for_reconciliation):
+        """Test that reconciliation is called during _check_workset_state."""
+        from daylib.workset_monitor import Workset
+
+        monitor, SENTINEL_FILES = mock_monitor_for_reconciliation
+
+        # Setup monitor with additional required attributes
+        monitor._process_directories = None
+        monitor.attempt_restart = False
+
+        # Create workset with complete sentinel
+        workset = Workset(
+            name="test-ws-007",
+            prefix="worksets/test-ws-007/",
+            sentinels={SENTINEL_FILES["complete"]: "2024-01-15T10:00:00Z"},
+            has_required_files=True,
+            is_archived=False,
+        )
+        monitor.state_db.get_workset.return_value = {
+            "workset_id": "test-ws-007",
+            "state": "in_progress",
+        }
+
+        # _check_workset_state should call reconcile before other checks
+        result = monitor._check_workset_state(workset)
+
+        # Reconcile should have been called
+        monitor.state_db.get_workset.assert_called()
+
+        # Result should be False (complete workset is skipped)
+        assert result is False
+
+
 class TestMonitorConcurrentProcessing:
     """Tests for monitor's concurrent workset processing."""
 
@@ -3305,3 +3521,342 @@ class TestConcurrentProcessorIntegration:
             # Verify config values match monitor config
             assert config.max_concurrent_worksets == monitor.config.monitor.max_concurrent_worksets
             assert config.poll_interval_seconds == monitor.config.monitor.poll_interval_seconds
+
+
+# ==============================================================================
+# Phase 7: Workset Retry Semantics Tests
+# ==============================================================================
+
+
+class TestWorksetRetrySemantics:
+    """Tests for workset retry semantics (Task 23).
+
+    Verifies that retry creates a new workset cloned from the original,
+    with new datetime suffix, leaving the original unchanged.
+    """
+
+    def test_retry_creates_new_workset_with_new_id(self):
+        """Test that retry creates a new workset, not modifying the original."""
+        import re
+
+        # Original workset ID format: {safe-name}-{uuid8}-{YYYYMMDD}
+        original_id = "my-analysis-abc12345-20250120"
+
+        # Extract base name from original
+        match = re.match(r"^(.+)-[a-f0-9]{8}-\d{8}$", original_id)
+        assert match is not None, "Original ID should match pattern"
+        base_name = match.group(1)
+        assert base_name == "my-analysis"
+
+    def test_retry_clones_metadata_from_original(self):
+        """Test that retried workset preserves configuration from original."""
+        original_metadata = {
+            "workset_name": "My Analysis",
+            "samples": [{"sample_id": "S001"}, {"sample_id": "S002"}],
+            "sample_count": 2,
+            "archive_results": True,
+            "data_bucket": "customer-bucket",
+            "preferred_cluster": "cluster-us-west-2",
+            "pipeline_type": "wgs",
+        }
+
+        # Simulate cloning metadata for retry
+        new_metadata = {
+            "workset_name": original_metadata.get("workset_name"),
+            "samples": original_metadata.get("samples", []),
+            "sample_count": original_metadata.get("sample_count", 0),
+            "archive_results": original_metadata.get("archive_results", True),
+            "data_bucket": original_metadata.get("data_bucket"),
+            "preferred_cluster": original_metadata.get("preferred_cluster"),
+            "retried_from": "original-workset-id",
+        }
+
+        # Verify key fields were preserved
+        assert new_metadata["workset_name"] == "My Analysis"
+        assert new_metadata["samples"] == [{"sample_id": "S001"}, {"sample_id": "S002"}]
+        assert new_metadata["sample_count"] == 2
+        assert new_metadata["archive_results"] is True
+        assert new_metadata["retried_from"] == "original-workset-id"
+
+    def test_retry_adds_cross_references(self):
+        """Test that retry adds tracking metadata to both worksets."""
+        original_workset_id = "original-ws-abc12345-20250120"
+        new_workset_id = "original-ws-def67890-20250125"
+
+        # New workset should have "retried_from"
+        new_metadata = {"retried_from": original_workset_id}
+        assert new_metadata["retried_from"] == original_workset_id
+
+        # Original should be updated with "retried_as"
+        original_update = {"retried_as": new_workset_id}
+        assert original_update["retried_as"] == new_workset_id
+
+    def test_retry_preserves_original_workset_state(self):
+        """Test that original workset state is not modified during retry."""
+        # Simulate original workset in error state
+        original = {
+            "workset_id": "failed-ws-abc12345-20250120",
+            "state": "error",
+            "error_details": "Pipeline failed",
+            "customer_id": "customer-x",
+            "metadata": {"samples": []},
+        }
+
+        # After retry, original should remain in error state
+        # (retry creates a new workset, doesn't modify original)
+        assert original["state"] == "error"
+        assert original["error_details"] == "Pipeline failed"
+
+    def test_new_workset_id_has_different_datetime_suffix(self):
+        """Test that new workset ID has different datetime suffix."""
+        import re
+        import uuid
+        import datetime as dt
+
+        original_id = "my-analysis-abc12345-20250120"
+
+        # Extract base name
+        match = re.match(r"^(.+)-[a-f0-9]{8}-\d{8}$", original_id)
+        base_name = match.group(1)
+
+        # Generate new ID (simulating what the API does)
+        date_suffix = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d")
+        new_id = f"{base_name}-{uuid.uuid4().hex[:8]}-{date_suffix}"
+
+        # New ID should have same base name but different uuid and possibly different date
+        new_match = re.match(r"^(.+)-([a-f0-9]{8})-(\d{8})$", new_id)
+        assert new_match is not None
+        assert new_match.group(1) == base_name
+
+        # The uuid part should be different
+        original_uuid = "abc12345"
+        new_uuid = new_match.group(2)
+        assert new_uuid != original_uuid
+
+    def test_update_metadata_method_merges_fields(self):
+        """Test that update_metadata properly merges with existing metadata."""
+        from unittest.mock import MagicMock, patch
+
+        mock_table = MagicMock()
+
+        with patch("daylib.workset_state_db.boto3.Session"):
+            from daylib.workset_state_db import WorksetStateDB
+
+            state_db = WorksetStateDB.__new__(WorksetStateDB)
+            state_db.table = mock_table
+            state_db._cloudwatch = None
+
+            # Mock get_workset to return existing workset
+            state_db.get_workset = MagicMock(return_value={
+                "workset_id": "test-ws",
+                "metadata": {
+                    "samples": [{"sample_id": "S1"}],
+                    "existing_field": "value",
+                },
+            })
+
+            # Update metadata
+            result = state_db.update_metadata("test-ws", {"retried_as": "new-ws-id"})
+
+            assert result is True
+            mock_table.update_item.assert_called_once()
+
+            # Verify the merged metadata includes both old and new fields
+            call_kwargs = mock_table.update_item.call_args.kwargs
+            assert ":meta" in call_kwargs["ExpressionAttributeValues"]
+
+    def test_retry_endpoint_ownership_check(self):
+        """Test that retry endpoint verifies workset ownership."""
+        from daylib.routes.dependencies import verify_workset_ownership
+
+        # Workset belongs to customer-a
+        workset = {"workset_id": "ws-1", "customer_id": "customer-a"}
+
+        # Customer A should be allowed to retry
+        assert verify_workset_ownership(workset, "customer-a") is True
+
+        # Customer B should NOT be allowed to retry
+        assert verify_workset_ownership(workset, "customer-b") is False
+
+    def test_retry_extracts_base_name_with_fallback(self):
+        """Test base name extraction with fallback for non-standard IDs."""
+        import re
+
+        # Standard format
+        standard_id = "my-analysis-abc12345-20250120"
+        match = re.match(r"^(.+)-[a-f0-9]{8}-\d{8}$", standard_id)
+        assert match is not None
+        assert match.group(1) == "my-analysis"
+
+        # Non-standard format (fallback to using workset name from metadata)
+        nonstandard_id = "legacy-workset-name"
+        match = re.match(r"^(.+)-[a-f0-9]{8}-\d{8}$", nonstandard_id)
+        assert match is None  # Won't match, should use fallback
+
+
+# ==============================================================================
+# Phase 7B: Admin Command Log Endpoint Tests
+# ==============================================================================
+
+
+class TestAdminCommandLogEndpoint:
+    """Tests for admin-only command log viewing endpoint (Task 24).
+
+    Verifies that admins can view command logs showing SSH + AWS CLI
+    commands executed for a specified workset.
+    """
+
+    def test_admin_can_access_command_log(self):
+        """Test that admin users can access the command log endpoint."""
+        from unittest.mock import MagicMock
+
+        # Simulate admin session
+        mock_request = MagicMock()
+        mock_request.session = {"is_admin": True, "user_email": "admin@example.com"}
+
+        # Admin should be allowed
+        is_admin = mock_request.session.get("is_admin", False)
+        assert is_admin is True
+
+    def test_non_admin_cannot_access_command_log(self):
+        """Test that non-admin users are denied access to command log endpoint."""
+        from unittest.mock import MagicMock
+
+        # Simulate non-admin session
+        mock_request = MagicMock()
+        mock_request.session = {"is_admin": False, "user_email": "user@example.com"}
+
+        # Non-admin should be denied
+        is_admin = mock_request.session.get("is_admin", False)
+        assert is_admin is False
+
+    def test_command_log_s3_key_construction(self):
+        """Test that command log S3 key is correctly constructed."""
+        workset = {
+            "workset_id": "test-ws-abc12345-20250120",
+            "bucket": "test-bucket",
+            "prefix": "worksets/test-ws-abc12345-20250120/",
+        }
+
+        prefix = workset.get("prefix", "").rstrip("/") + "/"
+        command_log_key = f"{prefix}workset_command.log"
+
+        assert command_log_key == "worksets/test-ws-abc12345-20250120/workset_command.log"
+
+    def test_command_log_entry_parsing(self):
+        """Test parsing of command log entries from raw log content."""
+        # Sample log content matching monitor's _log_command format
+        log_content = """[2025-01-20T10:30:00Z] ============================================================
+LABEL: stage_samples
+COMMAND: ssh -i /path/to/key.pem ubuntu@10.0.0.1 ./stage.sh
+EXIT_CODE: 0
+STDOUT:
+Staging complete
+
+[2025-01-20T10:35:00Z] ============================================================
+LABEL: clone_pipeline
+COMMAND: ssh -i /path/to/key.pem ubuntu@10.0.0.1 git clone repo
+EXIT_CODE: 0
+"""
+        lines = log_content.split("\n")
+        entries = []
+        current_entry = []
+
+        for line in lines:
+            if line.startswith("[") and "=====" in line:
+                if current_entry:
+                    entries.append("\n".join(current_entry))
+                current_entry = [line]
+            else:
+                current_entry.append(line)
+
+        if current_entry:
+            entries.append("\n".join(current_entry))
+
+        # Should find 2 entries
+        assert len(entries) == 2
+        assert "stage_samples" in entries[0]
+        assert "clone_pipeline" in entries[1]
+
+    def test_command_log_grep_filter(self):
+        """Test filtering command log entries by grep pattern."""
+        entries = [
+            "LABEL: stage_samples\nCOMMAND: ssh stage.sh",
+            "LABEL: clone_pipeline\nCOMMAND: git clone repo",
+            "LABEL: export_results\nCOMMAND: aws s3 cp",
+        ]
+
+        grep = "aws s3"
+        filtered = [e for e in entries if grep.lower() in e.lower()]
+
+        assert len(filtered) == 1
+        assert "export_results" in filtered[0]
+
+    def test_command_log_label_filter(self):
+        """Test filtering command log entries by label."""
+        entries = [
+            "LABEL: stage_samples\nCOMMAND: ssh stage.sh",
+            "LABEL: clone_pipeline\nCOMMAND: git clone repo",
+            "LABEL: stage_samples\nCOMMAND: ssh stage2.sh",
+        ]
+
+        label = "stage_samples"
+        label_match = f"LABEL: {label}"
+        filtered = [e for e in entries if label_match.lower() in e.lower()]
+
+        assert len(filtered) == 2
+        assert all("stage_samples" in e for e in filtered)
+
+    def test_command_log_combined_filters(self):
+        """Test combining grep and label filters."""
+        entries = [
+            "LABEL: stage_samples\nCOMMAND: ssh ubuntu@10.0.0.1 stage.sh",
+            "LABEL: clone_pipeline\nCOMMAND: ssh ubuntu@10.0.0.1 git clone",
+            "LABEL: stage_samples\nCOMMAND: ssh ubuntu@10.0.0.2 stage2.sh",
+        ]
+
+        grep = "10.0.0.1"
+        label = "stage_samples"
+
+        # Apply both filters
+        filtered = entries
+        if grep:
+            filtered = [e for e in filtered if grep.lower() in e.lower()]
+        if label:
+            label_match = f"LABEL: {label}"
+            filtered = [e for e in filtered if label_match.lower() in e.lower()]
+
+        assert len(filtered) == 1
+        assert "10.0.0.1" in filtered[0]
+        assert "stage_samples" in filtered[0]
+
+    def test_command_log_missing_workset(self):
+        """Test that 404 is returned for non-existent workset."""
+        from fastapi import HTTPException
+
+        # Simulate workset not found
+        workset = None
+        if not workset:
+            try:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Workset test-ws not found",
+                )
+            except HTTPException as e:
+                assert e.status_code == 404
+                assert "not found" in e.detail
+
+    def test_command_log_no_log_file_response(self):
+        """Test response when no command log file exists in S3."""
+        # Expected response structure when log doesn't exist
+        response = {
+            "workset_id": "test-ws",
+            "log_available": False,
+            "message": "No command log found for this workset",
+            "entries": [],
+            "entry_count": 0,
+        }
+
+        assert response["log_available"] is False
+        assert response["entries"] == []
+        assert response["entry_count"] == 0

@@ -15,11 +15,14 @@ pip install -e .
 ## Starting the API Server
 
 ```bash
-# Basic server
-uvicorn daylib.workset_api:app --host 0.0.0.0 --port 8000
+# Using the ursa CLI (recommended)
+ursa server start --foreground
 
-# With auto-reload for development
-uvicorn daylib.workset_api:app --reload --host 0.0.0.0 --port 8000
+# Using the packaged console script
+daylily-workset-api --host 0.0.0.0 --port 8001
+
+# With uvicorn directly (development)
+uvicorn daylib.workset_api:app --host 0.0.0.0 --port 8001 --reload
 ```
 
 ## Common API Calls

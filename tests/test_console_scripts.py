@@ -73,7 +73,11 @@ def test_ursa_server_start_uses_packaged_entrypoint(monkeypatch):
         captured["cmd"] = cmd
         captured["cwd"] = cwd
         captured["kwargs"] = kwargs
-        return 0
+        class _DummyCompletedProcess:
+            def __init__(self, returncode: int):
+                self.returncode = returncode
+
+        return _DummyCompletedProcess(0)
 
     monkeypatch.setattr(server_mod.subprocess, "run", _fake_run)
 
@@ -89,3 +93,8 @@ def test_ursa_server_start_uses_packaged_entrypoint(monkeypatch):
     assert isinstance(cmd, list)
     assert cmd[:3] == [sys.executable, "-m", "daylib.workset_api_cli"]
     assert not any("bin/daylily-workset-api" in str(part) for part in cmd)
+
+    kwargs = captured.get("kwargs")
+    assert isinstance(kwargs, dict)
+    assert isinstance(kwargs.get("env"), dict)
+    assert kwargs["env"].get("DAYLILY_ENABLE_AUTH") == "false"

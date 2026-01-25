@@ -201,8 +201,8 @@
             <div class="card">
                 <div class="card-header" style="padding: 0 0 var(--spacing-md) 0;">
                     <h3 class="card-title" style="margin: 0;">Account Details</h3>
-                    <button class="btn btn-outline btn-sm" onclick="showRenameModal()">
-                        <i class="fas fa-edit"></i> Rename
+                    <button class="btn btn-outline btn-sm" onclick="showEditModal()">
+                        <i class="fas fa-edit"></i> Edit
                     </button>
                 </div>
                 <dl style="margin: 0;">
@@ -220,11 +220,15 @@
                     </div>
                     <div class="d-flex justify-between mb-md">
                         <dt class="text-muted">Max Worksets</dt>
-                        <dd>{{ customer.max_concurrent_worksets | default(10) }}</dd>
+                        <dd id="customer-max-worksets">{{ customer.max_concurrent_worksets | default(10) }}</dd>
+                    </div>
+                    <div class="d-flex justify-between mb-md">
+                        <dt class="text-muted">Billing Account ID</dt>
+                        <dd id="customer-billing-account">{{ customer.billing_account_id | default('N/A') }}</dd>
                     </div>
                     <div class="d-flex justify-between">
                         <dt class="text-muted">Cost Center (chargeback tag)</dt>
-                        <dd>{{ customer.cost_center | default('N/A') }}</dd>
+                        <dd id="customer-cost-center">{{ customer.cost_center | default('N/A') }}</dd>
                     </div>
                 </dl>
             </div>
@@ -242,25 +246,39 @@
     </div>
 </div>
 
-<!-- Rename Modal -->
-<div class="modal" id="rename-modal">
-    <div class="modal-content" style="max-width: 400px;">
+<!-- Edit Account Modal -->
+<div class="modal" id="edit-modal">
+    <div class="modal-content" style="max-width: 500px;">
         <div class="modal-header">
-            <h3>Rename Account</h3>
-            <button class="modal-close" onclick="closeModal('rename-modal')">&times;</button>
+            <h3>Edit Account</h3>
+            <button class="modal-close" onclick="closeModal('edit-modal')">&times;</button>
         </div>
         <div class="modal-body">
             <div class="form-group">
                 <label class="form-label">Display Name</label>
-                <input type="text" id="new-display-name" class="form-control"
+                <input type="text" id="edit-display-name" class="form-control"
                        value="{{ customer.customer_name | default(customer.customer_id) }}"
                        placeholder="Enter display name">
                 <p class="form-text">This name will be shown in the portal header and reports.</p>
             </div>
+            <div class="form-group">
+                <label class="form-label">Billing Account ID</label>
+                <input type="text" id="edit-billing-account" class="form-control"
+                       value="{{ customer.billing_account_id | default('') }}"
+                       placeholder="Enter billing account ID">
+                <p class="form-text">Used for billing and invoicing purposes.</p>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Cost Center</label>
+                <input type="text" id="edit-cost-center" class="form-control"
+                       value="{{ customer.cost_center | default('') }}"
+                       placeholder="Enter cost center">
+                <p class="form-text">Used for chargeback tagging on AWS resources.</p>
+            </div>
         </div>
         <div class="modal-footer">
-            <button class="btn btn-outline" onclick="closeModal('rename-modal')">Cancel</button>
-            <button class="btn btn-primary" onclick="saveDisplayName()">
+            <button class="btn btn-outline" onclick="closeModal('edit-modal')">Cancel</button>
+            <button class="btn btn-primary" onclick="saveAccountDetails()">
                 <i class="fas fa-save"></i> Save
             </button>
         </div>
@@ -280,13 +298,16 @@ document.addEventListener('DOMContentLoaded', function() {
     setInterval(refreshDashboardStats, 60000);
 });
 
-function showRenameModal() {
-    showModal('rename-modal');
-    document.getElementById('new-display-name').focus();
+function showEditModal() {
+    showModal('edit-modal');
+    document.getElementById('edit-display-name').focus();
 }
 
-async function saveDisplayName() {
-    const newName = document.getElementById('new-display-name').value.trim();
+async function saveAccountDetails() {
+    const newName = document.getElementById('edit-display-name').value.trim();
+    const billingAccount = document.getElementById('edit-billing-account').value.trim();
+    const costCenter = document.getElementById('edit-cost-center').value.trim();
+
     if (!newName) {
         showToast('error', 'Error', 'Please enter a display name');
         return;
@@ -295,28 +316,38 @@ async function saveDisplayName() {
     const customerId = window.UrsaConfig?.customerId;
     if (!customerId) return;
 
+    // Build update payload with only non-empty fields
+    const updateData = { customer_name: newName };
+    if (billingAccount) updateData.billing_account_id = billingAccount;
+    if (costCenter) updateData.cost_center = costCenter;
+
     try {
         const response = await fetch(`/api/v1/customers/${customerId}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ customer_name: newName })
+            body: JSON.stringify(updateData)
         });
 
         if (response.ok) {
-            document.getElementById('customer-display-name').innerHTML = `<strong>${newName}</strong>`;
+            const data = await response.json();
+            // Update display elements
+            document.getElementById('customer-display-name').innerHTML = `<strong>${data.customer_name}</strong>`;
+            document.getElementById('customer-billing-account').textContent = data.billing_account_id || 'N/A';
+            document.getElementById('customer-cost-center').textContent = data.cost_center || 'N/A';
+
             // Update header if exists
             const headerName = document.querySelector('.user-name');
-            if (headerName) headerName.textContent = newName;
+            if (headerName) headerName.textContent = data.customer_name;
 
-            closeModal('rename-modal');
-            showToast('success', 'Saved', 'Display name updated');
+            closeModal('edit-modal');
+            showToast('success', 'Saved', 'Account details updated');
         } else {
             const error = await response.json();
-            showToast('error', 'Error', error.detail || 'Failed to update name');
+            showToast('error', 'Error', error.detail || 'Failed to update account');
         }
     } catch (error) {
-        console.error('Rename error:', error);
-        showToast('error', 'Error', 'Failed to update name');
+        console.error('Edit account error:', error);
+        showToast('error', 'Error', 'Failed to update account');
     }
 }
 </script>

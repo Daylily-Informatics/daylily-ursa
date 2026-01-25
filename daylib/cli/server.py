@@ -21,6 +21,17 @@ LOG_DIR = CONFIG_DIR / "logs"
 PID_FILE = CONFIG_DIR / "server.pid"
 
 
+def _require_auth_dependencies() -> None:
+    """Fail fast if auth is requested but optional auth deps aren't installed."""
+
+    try:
+        import jose  # noqa: F401
+    except ImportError:
+        console.print("[red]✗[/red]  Authentication requested but python-jose is not installed")
+        console.print("   Install with: [cyan]python -m pip install -e \".[auth]\"[/cyan]")
+        raise typer.Exit(1)
+
+
 def _ensure_dir():
     """Ensure .ursa directories exist."""
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
@@ -141,6 +152,7 @@ def start(
 
     # Set auth env var for the API server
     if auth:
+        _require_auth_dependencies()
         env["DAYLILY_ENABLE_AUTH"] = "true"
         # Pass Cognito config from ursa config to environment if not already set
         if ursa_config.cognito_user_pool_id and not os.environ.get("COGNITO_USER_POOL_ID"):
@@ -149,6 +161,19 @@ def start(
             env["COGNITO_APP_CLIENT_ID"] = ursa_config.cognito_app_client_id
         if ursa_config.cognito_region and not os.environ.get("COGNITO_REGION"):
             env["COGNITO_REGION"] = ursa_config.cognito_region
+
+        missing: list[str] = []
+        if not env.get("COGNITO_USER_POOL_ID"):
+            missing.append("COGNITO_USER_POOL_ID")
+        if not (env.get("COGNITO_APP_CLIENT_ID") or env.get("COGNITO_CLIENT_ID")):
+            missing.append("COGNITO_APP_CLIENT_ID")
+        if not env.get("COGNITO_REGION"):
+            missing.append("COGNITO_REGION")
+        if missing:
+            console.print("[red]✗[/red]  Authentication enabled but Cognito config is missing")
+            console.print("   Missing: [cyan]" + ", ".join(missing) + "[/cyan]")
+            console.print("   Set via environment variables or in your Ursa config file")
+            raise typer.Exit(1)
         console.print("[green]✓[/green]  Authentication ENABLED")
     else:
         env["DAYLILY_ENABLE_AUTH"] = "false"
@@ -195,7 +220,9 @@ def start(
         console.print(f"[green]✓[/green]  Starting server on [cyan]http://{host}:{port}[/cyan]")
         console.print("   Press Ctrl+C to stop\n")
         try:
-            subprocess.run(cmd, cwd=Path.cwd())
+            result = subprocess.run(cmd, cwd=Path.cwd(), env=env)
+            if result.returncode != 0:
+                raise typer.Exit(result.returncode)
         except KeyboardInterrupt:
             console.print("\n[yellow]⚠[/yellow]  Server stopped")
 

@@ -40,6 +40,7 @@ from daylib.routes.dependencies import (
     QueueStats,
     SchedulingStats,
     CustomerCreate,
+    CustomerUpdate,
     CustomerResponse,
     WorksetValidationResponse,
     WorkYamlGenerateRequest,
@@ -789,6 +790,64 @@ def create_app(
         ):
             """Get customer details."""
             config = customer_manager.get_customer_config(customer_id)
+            if not config:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Customer {customer_id} not found",
+                )
+
+            return CustomerResponse(
+                customer_id=config.customer_id,
+                customer_name=config.customer_name,
+                email=config.email,
+                s3_bucket=config.s3_bucket,
+                max_concurrent_worksets=config.max_concurrent_worksets,
+                max_storage_gb=config.max_storage_gb,
+                billing_account_id=config.billing_account_id,
+                cost_center=config.cost_center,
+            )
+
+        @app.patch("/api/v1/customers/{customer_id}", response_model=CustomerResponse, tags=["customers"])
+        async def update_customer(
+            customer_id: str,
+            update: CustomerUpdate,
+            request: Request,
+            current_user: Optional[Dict] = Depends(get_current_user),
+        ):
+            """Update customer details (partial update).
+
+            Customers can only update their own account.
+            Admins can update any account.
+            """
+            # Get session customer for authorization check
+            session_customer_id = request.session.get("customer_id") if hasattr(request, "session") else None
+            session_email = request.session.get("user_email") if hasattr(request, "session") else None
+
+            # Check if user is admin
+            is_admin = False
+            if session_email:
+                session_customer = customer_manager.get_customer_by_email(session_email)
+                if session_customer and session_customer.is_admin:
+                    is_admin = True
+
+            # Authorization: must be own account or admin
+            if not is_admin and session_customer_id != customer_id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="You can only update your own account",
+                )
+
+            # Perform the update
+            config = customer_manager.update_customer(
+                customer_id=customer_id,
+                customer_name=update.customer_name,
+                email=update.email,
+                billing_account_id=update.billing_account_id,
+                cost_center=update.cost_center,
+                max_concurrent_worksets=update.max_concurrent_worksets,
+                max_storage_gb=update.max_storage_gb,
+            )
+
             if not config:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
@@ -1810,7 +1869,17 @@ def create_app(
             customer_id: str,
             workset_id: str,
         ):
-            """Retry a failed customer workset."""
+            """Retry a failed customer workset by creating a new cloned workset.
+
+            Creates a new workset with a new datetime suffix, cloning all
+            configuration from the original. The original workset is left
+            unchanged for audit trail purposes.
+
+            Returns:
+                The newly created retry workset (not the original).
+            """
+            import datetime as dt
+
             if not customer_manager:
                 raise HTTPException(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -1824,24 +1893,137 @@ def create_app(
                     detail=f"Customer {customer_id} not found",
                 )
 
-            workset = state_db.get_workset(workset_id)
-            if not workset:
+            original = state_db.get_workset(workset_id)
+            if not original:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail=f"Workset {workset_id} not found",
                 )
 
             # Verify workset belongs to this customer (by customer_id, not bucket)
-            if not verify_workset_ownership(workset, customer_id):
+            if not verify_workset_ownership(original, customer_id):
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="Workset does not belong to this customer",
                 )
 
-            # Reset to ready state for retry
-            state_db.update_state(workset_id, WorksetState.READY, "Retry requested by user")
-            updated = state_db.get_workset(workset_id)
-            return updated
+            # Extract base name from original workset ID (remove uuid8-YYYYMMDD suffix)
+            # Format: {safe-name}-{uuid8}-{YYYYMMDD}
+            import re
+            match = re.match(r"^(.+)-[a-f0-9]{8}-\d{8}$", workset_id)
+            if match:
+                base_name = match.group(1)
+            else:
+                # Fallback: use original workset name from metadata or ID
+                original_meta = original.get("metadata", {})
+                base_name = original_meta.get("workset_name", workset_id)[:30]
+                base_name = base_name.replace(" ", "-").lower()
+
+            # Generate new workset ID with new datetime suffix
+            date_suffix = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d")
+            new_workset_id = f"{base_name}-{uuid.uuid4().hex[:8]}-{date_suffix}"
+
+            # Clone metadata from original workset
+            original_meta = original.get("metadata", {})
+            new_metadata = {
+                "workset_name": original_meta.get("workset_name", base_name),
+                "archive_results": original_meta.get("archive_results", True),
+                "submitted_by": customer_id,
+                "priority": original.get("priority", "normal"),
+                "workset_type": original.get("workset_type", "ruo"),
+                "samples": original_meta.get("samples", []),
+                "sample_count": original_meta.get("sample_count", 0),
+                "data_bucket": original_meta.get("data_bucket", config.s3_bucket),
+                "data_buckets": original_meta.get("data_buckets", []),
+                "preferred_cluster": original.get("preferred_cluster"),
+                "cluster_region": original.get("cluster_region"),
+                # Retry tracking metadata
+                "retried_from": workset_id,
+                "retry_reason": "User requested retry",
+            }
+
+            # Preserve optional fields if present
+            for key in ["created_by_email", "pipeline_type"]:
+                if key in original_meta:
+                    new_metadata[key] = original_meta[key]
+
+            # Determine bucket and prefix for new workset
+            bucket = original.get("bucket") or config.s3_bucket
+            prefix = f"worksets/{new_workset_id}/"
+            priority = original.get("priority", "normal")
+            workset_type = original.get("workset_type", "ruo")
+            preferred_cluster = original.get("preferred_cluster")
+            cluster_region = original.get("cluster_region")
+
+            # Register the new workset using integration layer if available
+            from daylib.ursa_config import get_ursa_config
+            from daylib.workset_state_db import WorksetType
+
+            ursa_config = get_ursa_config()
+            effective_integration = integration
+            if not effective_integration and bucket and INTEGRATION_AVAILABLE:
+                effective_integration = WorksetIntegration(
+                    state_db=state_db,
+                    bucket=bucket,
+                    region=cluster_region or settings.get_effective_region(),
+                    profile=ursa_config.aws_profile or settings.aws_profile,
+                )
+
+            if effective_integration:
+                success = effective_integration.register_workset(
+                    workset_id=new_workset_id,
+                    bucket=bucket,
+                    prefix=prefix,
+                    priority=priority,
+                    workset_type=workset_type,
+                    metadata=new_metadata,
+                    customer_id=customer_id,
+                    preferred_cluster=preferred_cluster,
+                    cluster_region=cluster_region,
+                    write_s3=True,
+                    write_dynamodb=True,
+                )
+            else:
+                # Fallback to DynamoDB-only registration
+                try:
+                    ws_priority = WorksetPriority(priority)
+                except ValueError:
+                    ws_priority = WorksetPriority.NORMAL
+                try:
+                    ws_type = WorksetType(workset_type)
+                except ValueError:
+                    ws_type = WorksetType.RUO
+
+                success = state_db.register_workset(
+                    workset_id=new_workset_id,
+                    bucket=bucket,
+                    prefix=prefix,
+                    priority=ws_priority,
+                    workset_type=ws_type,
+                    metadata=new_metadata,
+                    customer_id=customer_id,
+                    preferred_cluster=preferred_cluster,
+                    cluster_region=cluster_region,
+                )
+
+            if not success:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to create retry workset",
+                )
+
+            # Update original workset metadata to track retry
+            try:
+                state_db.update_metadata(
+                    workset_id,
+                    {"retried_as": new_workset_id},
+                )
+            except Exception as e:
+                LOGGER.warning("Failed to update original workset with retry link: %s", e)
+
+            # Return the new workset
+            new_workset = state_db.get_workset(new_workset_id)
+            return new_workset
 
         @app.post("/api/customers/{customer_id}/worksets/{workset_id}/archive", tags=["customer-worksets"])
         async def archive_customer_workset(
@@ -2011,6 +2193,161 @@ def create_app(
             if hard_delete:
                 return {"status": "deleted", "workset_id": workset_id, "hard_delete": True}
             return state_db.get_workset(workset_id)
+
+        @app.get("/api/admin/worksets/{workset_id}/command-log", tags=["admin"])
+        async def get_workset_command_log(
+            request: Request,
+            workset_id: str,
+            grep: Optional[str] = Query(None, description="Filter log entries containing this text"),
+            label: Optional[str] = Query(None, description="Filter by command label (e.g., stage_samples, clone_pipeline)"),
+            limit: int = Query(1000, ge=1, le=10000, description="Maximum lines to return"),
+        ):
+            """Admin-only endpoint to view command logs for a workset.
+
+            Retrieves the workset_command.log file from S3 which contains all SSH
+            and AWS CLI commands executed by the monitor for this workset.
+
+            Log format includes:
+            - Timestamp
+            - Label (e.g., stage_samples, clone_pipeline, export_results)
+            - Command executed
+            - Exit code
+            - Stdout (truncated)
+            - Stderr (truncated)
+
+            Args:
+                workset_id: Workset identifier
+                grep: Optional text filter - only return entries containing this text
+                label: Optional label filter - only return entries with this command label
+                limit: Maximum lines to return (default 1000)
+
+            Returns:
+                JSON with log entries and metadata
+            """
+            # Admin-only authorization
+            is_admin = getattr(request, "session", {}).get("is_admin", False)
+            if not is_admin:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Admin access required to view command logs",
+                )
+
+            workset = state_db.get_workset(workset_id)
+            if not workset:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Workset {workset_id} not found",
+                )
+
+            bucket = workset.get("bucket")
+            prefix = workset.get("prefix", "").rstrip("/") + "/"
+            if not bucket or not prefix:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Workset missing bucket or prefix",
+                )
+
+            # Build the S3 key for the command log
+            command_log_key = f"{prefix}workset_command.log"
+
+            try:
+                # Create boto3 session using settings
+                app_settings = request.app.state.settings
+                session_kwargs = {"region_name": app_settings.get_effective_region()}
+                if app_settings.aws_profile:
+                    session_kwargs["profile_name"] = app_settings.aws_profile
+                session = boto3.Session(**session_kwargs)
+                s3_client = session.client("s3")
+
+                # Fetch the command log from S3
+                try:
+                    response = s3_client.get_object(Bucket=bucket, Key=command_log_key)
+                    log_content = response["Body"].read().decode("utf-8")
+                except s3_client.exceptions.NoSuchKey:
+                    return {
+                        "workset_id": workset_id,
+                        "log_available": False,
+                        "message": "No command log found for this workset",
+                        "entries": [],
+                        "entry_count": 0,
+                    }
+
+            except Exception as e:
+                LOGGER.warning("Failed to fetch command log for %s: %s", workset_id, str(e))
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Failed to fetch command log: {str(e)}",
+                )
+
+            # Parse and filter log entries
+            lines = log_content.split("\n")
+            entries: List[str] = []
+            current_entry: List[str] = []
+            entry_count = 0
+
+            for line in lines:
+                # New entry starts with timestamp marker
+                if line.startswith("[") and "=====" in line:
+                    if current_entry:
+                        entry_text = "\n".join(current_entry)
+                        # Apply filters
+                        include_entry = True
+                        if grep and grep.lower() not in entry_text.lower():
+                            include_entry = False
+                        if label:
+                            label_match = f"LABEL: {label}"
+                            if label_match.lower() not in entry_text.lower():
+                                include_entry = False
+                        if include_entry:
+                            entries.append(entry_text)
+                            entry_count += 1
+                    current_entry = [line]
+                else:
+                    current_entry.append(line)
+
+            # Don't forget the last entry
+            if current_entry:
+                entry_text = "\n".join(current_entry)
+                include_entry = True
+                if grep and grep.lower() not in entry_text.lower():
+                    include_entry = False
+                if label:
+                    label_match = f"LABEL: {label}"
+                    if label_match.lower() not in entry_text.lower():
+                        include_entry = False
+                if include_entry:
+                    entries.append(entry_text)
+                    entry_count += 1
+
+            # Apply limit (on lines, not entries for consistency)
+            total_lines = sum(len(e.split("\n")) for e in entries)
+            if total_lines > limit:
+                # Truncate entries to fit within limit
+                limited_entries = []
+                line_count = 0
+                for entry in entries:
+                    entry_lines = len(entry.split("\n"))
+                    if line_count + entry_lines <= limit:
+                        limited_entries.append(entry)
+                        line_count += entry_lines
+                    else:
+                        break
+                entries = limited_entries
+
+            return {
+                "workset_id": workset_id,
+                "log_available": True,
+                "bucket": bucket,
+                "key": command_log_key,
+                "entry_count": entry_count,
+                "entries_returned": len(entries),
+                "filters_applied": {
+                    "grep": grep,
+                    "label": label,
+                    "limit": limit,
+                },
+                "entries": entries,
+            }
 
         @app.post("/api/customers/{customer_id}/worksets/{workset_id}/restore", tags=["customer-worksets"])
         async def restore_customer_workset(

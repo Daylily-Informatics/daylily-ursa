@@ -305,6 +305,55 @@ class CustomerManager:
         table.put_item(Item=item)
         LOGGER.info("Saved customer config for %s", config.customer_id)
 
+    def update_customer(
+        self,
+        customer_id: str,
+        customer_name: Optional[str] = None,
+        email: Optional[str] = None,
+        billing_account_id: Optional[str] = None,
+        cost_center: Optional[str] = None,
+        max_concurrent_worksets: Optional[int] = None,
+        max_storage_gb: Optional[int] = None,
+    ) -> Optional[CustomerConfig]:
+        """Update customer configuration fields.
+
+        Only provided fields will be updated (partial update).
+
+        Args:
+            customer_id: Customer ID to update
+            customer_name: New display name (optional)
+            email: New email address (optional)
+            billing_account_id: New billing account ID (optional)
+            cost_center: New cost center (optional)
+            max_concurrent_worksets: New max concurrent worksets (optional)
+            max_storage_gb: New max storage GB (optional)
+
+        Returns:
+            Updated CustomerConfig or None if customer not found
+        """
+        config = self.get_customer_config(customer_id)
+        if not config:
+            LOGGER.warning("Cannot update customer %s: not found", customer_id)
+            return None
+
+        # Update only provided fields
+        if customer_name is not None:
+            config.customer_name = customer_name
+        if email is not None:
+            config.email = email
+        if billing_account_id is not None:
+            config.billing_account_id = billing_account_id
+        if cost_center is not None:
+            config.cost_center = cost_center
+        if max_concurrent_worksets is not None:
+            config.max_concurrent_worksets = max_concurrent_worksets
+        if max_storage_gb is not None:
+            config.max_storage_gb = max_storage_gb
+
+        self._save_customer_config(config)
+        LOGGER.info("Updated customer config for %s", customer_id)
+        return config
+
     def get_customer_config(self, customer_id: str) -> Optional[CustomerConfig]:
         """Get customer configuration.
 

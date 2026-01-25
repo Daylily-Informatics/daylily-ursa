@@ -245,6 +245,17 @@ class CustomerCreate(BaseModel):
     cost_center: Optional[str] = None
 
 
+class CustomerUpdate(BaseModel):
+    """Request model for updating a customer (partial update)."""
+
+    customer_name: Optional[str] = Field(None, min_length=1, max_length=100)
+    email: Optional[EmailStr] = None
+    max_concurrent_worksets: Optional[int] = Field(None, ge=1, le=50)
+    max_storage_gb: Optional[int] = Field(None, ge=100, le=10000)
+    billing_account_id: Optional[str] = None
+    cost_center: Optional[str] = None
+
+
 class CustomerResponse(BaseModel):
     """Response model for customer data."""
 

@@ -1659,6 +1659,11 @@ class WorksetMonitor:
     # Workset state machine
     # ------------------------------------------------------------------
     def _check_workset_state(self, workset: Workset) -> bool:
+        # Reconcile DynamoDB state with S3 sentinels on each check.
+        # This handles cases where the monitor crashed/restarted after writing
+        # S3 sentinels but before updating DynamoDB.
+        self._reconcile_dynamodb_state(workset)
+
         if not self._should_process(workset):
             LOGGER.info(
                 "Skipping %s: not selected via --process-directory", workset.name

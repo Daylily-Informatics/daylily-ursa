@@ -803,6 +803,57 @@ class WorksetStateDB:
         except ClientError as e:
             LOGGER.warning("Failed to update progress for %s: %s", workset_id, str(e))
 
+    def update_metadata(
+        self,
+        workset_id: str,
+        metadata_updates: Dict[str, Any],
+    ) -> bool:
+        """Update specific fields within the workset's metadata.
+
+        This performs a partial update, merging the new fields with existing
+        metadata rather than replacing it entirely.
+
+        Args:
+            workset_id: Workset identifier
+            metadata_updates: Dictionary of metadata fields to add/update
+
+        Returns:
+            True if update succeeded, False otherwise
+        """
+        now_iso = dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
+
+        # Get current workset to merge metadata
+        current = self.get_workset(workset_id)
+        if not current:
+            LOGGER.warning("Cannot update metadata: workset %s not found", workset_id)
+            return False
+
+        # Merge metadata
+        current_metadata = current.get("metadata", {})
+        if isinstance(current_metadata, str):
+            import json
+            try:
+                current_metadata = json.loads(current_metadata)
+            except json.JSONDecodeError:
+                current_metadata = {}
+
+        merged_metadata = {**current_metadata, **metadata_updates}
+
+        try:
+            self.table.update_item(
+                Key={"workset_id": workset_id},
+                UpdateExpression="SET metadata = :meta, updated_at = :now",
+                ExpressionAttributeValues={
+                    ":meta": self._serialize_metadata(merged_metadata),
+                    ":now": now_iso,
+                },
+            )
+            LOGGER.debug("Updated metadata for workset %s: %s", workset_id, list(metadata_updates.keys()))
+            return True
+        except ClientError as e:
+            LOGGER.warning("Failed to update metadata for %s: %s", workset_id, str(e))
+            return False
+
     def update_execution_environment(
         self,
         workset_id: str,
@@ -1475,7 +1526,11 @@ class WorksetStateDB:
         return result
 
     def _deserialize_item(self, item: Dict[str, Any]) -> Dict[str, Any]:
-        """Convert DynamoDB types to Python types."""
+        """Convert DynamoDB types to Python types.
+
+        Also promotes commonly-accessed metadata fields to the top level
+        for easier template access (e.g., sample_count, pipeline_type).
+        """
         def convert(obj: Any) -> Any:
             if isinstance(obj, Decimal):
                 return float(obj)
@@ -1486,6 +1541,18 @@ class WorksetStateDB:
             return obj
 
         result: Dict[str, Any] = convert(item)
+
+        # Promote commonly-accessed metadata fields to top level for template access.
+        # This allows templates to use ws.sample_count instead of ws.metadata.sample_count.
+        metadata = result.get("metadata", {})
+        if isinstance(metadata, dict):
+            # Promote sample_count if not already at top level
+            if "sample_count" not in result and "sample_count" in metadata:
+                result["sample_count"] = metadata["sample_count"]
+            # Promote pipeline_type if not already at top level
+            if "pipeline_type" not in result and "pipeline_type" in metadata:
+                result["pipeline_type"] = metadata["pipeline_type"]
+
         return result
 
     def _emit_metric(self, metric_name: str, value: float) -> None:
