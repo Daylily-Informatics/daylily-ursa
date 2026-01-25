@@ -14,6 +14,25 @@ S3_STANDARD_COST_PER_GB_MONTH = 0.023
 DATA_TRANSFER_CROSS_REGION_PER_GB = 0.02
 DATA_TRANSFER_INTERNET_PER_GB = 0.09
 
+
+def _detect_bucket_region(bucket: str) -> Optional[str]:
+    """Best-effort S3 bucket region detection.
+
+    This is used for coarse transfer categorization (intra-region vs cross-region).
+    """
+
+    if not bucket:
+        return None
+    try:
+        import boto3
+
+        client = boto3.client("s3")
+        response = client.get_bucket_location(Bucket=bucket)
+        # AWS returns None for us-east-1 (legacy behavior)
+        return response.get("LocationConstraint") or "us-east-1"
+    except Exception:
+        return None
+
 FASTQ_SUFFIXES = (".fastq", ".fastq.gz", ".fq", ".fq.gz")
 
 
@@ -170,7 +189,14 @@ def _parse_benchmark_costs(results_dir: Path, *, debug: bool = False) -> float:
     return total
 
 
-def gather_metrics(pipeline_dir: Path, *, debug: bool = False) -> Dict[str, object]:
+def gather_metrics(
+    pipeline_dir: Path,
+    *,
+    debug: bool = False,
+    cluster_region: Optional[str] = None,
+    results_bucket: Optional[str] = None,
+    results_bucket_region: Optional[str] = None,
+) -> Dict[str, object]:
     pipeline_dir = pipeline_dir.resolve()
     config_dir = pipeline_dir / "config"
     samples_path = config_dir / "samples.tsv"
@@ -206,6 +232,34 @@ def gather_metrics(pipeline_dir: Path, *, debug: bool = False) -> Dict[str, obje
     _debug_command(debug, "results_size_bytes", f"du -sb {results_dir}")
     results_size = _total_dir_size(results_dir, debug=debug)
     metrics["results_size_bytes"] = results_size
+
+    # ---------------------------------------------------------------------
+    # Transfer metering (coarse): attribute exported results bytes to either
+    # intra-region or cross-region transfer depending on cluster vs bucket
+    # region. Internet egress is not measurable here (no access logs), so
+    # it defaults to 0.
+    # ---------------------------------------------------------------------
+    effective_cluster_region = (
+        cluster_region
+        or os.environ.get("AWS_REGION")
+        or os.environ.get("AWS_DEFAULT_REGION")
+    )
+    effective_bucket_region = results_bucket_region
+    if not effective_bucket_region and results_bucket:
+        effective_bucket_region = _detect_bucket_region(results_bucket)
+
+    intra_bytes = 0
+    cross_bytes = 0
+    internet_bytes = 0
+    if results_size and effective_cluster_region and effective_bucket_region:
+        if effective_cluster_region == effective_bucket_region:
+            intra_bytes = int(results_size)
+        else:
+            cross_bytes = int(results_size)
+
+    metrics["data_transfer_intra_region_bytes"] = intra_bytes
+    metrics["data_transfer_cross_region_bytes"] = cross_bytes
+    metrics["data_transfer_internet_bytes"] = internet_bytes
 
     if results_size:
         metrics["s3_daily_cost_usd"] = (
@@ -246,6 +300,21 @@ def main(argv: Optional[List[str]] = None) -> None:
     )
     parser.add_argument("pipeline_dir", help="Path to the cloned pipeline directory")
     parser.add_argument(
+        "--cluster-region",
+        default=None,
+        help="AWS region the pipeline cluster is running in (for transfer categorization)",
+    )
+    parser.add_argument(
+        "--results-bucket",
+        default=None,
+        help="S3 bucket receiving exported results (for transfer categorization)",
+    )
+    parser.add_argument(
+        "--results-bucket-region",
+        default=None,
+        help="AWS region for results bucket (avoids bucket location lookup)",
+    )
+    parser.add_argument(
         "--json", action="store_true", help="Emit metrics as JSON (default)"
     )
     parser.add_argument(
@@ -258,7 +327,13 @@ def main(argv: Optional[List[str]] = None) -> None:
         level=logging.DEBUG if args.debug else logging.WARNING,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
-    metrics = gather_metrics(Path(args.pipeline_dir), debug=args.debug)
+    metrics = gather_metrics(
+        Path(args.pipeline_dir),
+        debug=args.debug,
+        cluster_region=args.cluster_region,
+        results_bucket=args.results_bucket,
+        results_bucket_region=args.results_bucket_region,
+    )
     print(json.dumps(metrics))
 
 

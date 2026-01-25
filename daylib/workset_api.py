@@ -2202,12 +2202,25 @@ def create_app(
             if not force_refresh:
                 cached = state_db.get_performance_metrics(workset_id)
                 if cached and cached.get("is_final"):
+                    cached_metrics = cached.get("metrics", {})
+                    if isinstance(cached_metrics, dict):
+                        post_export_metrics = cached_metrics.get("post_export_metrics")
+                        if isinstance(post_export_metrics, dict):
+                            post_export_metrics.setdefault(
+                                "data_transfer_intra_region_bytes", 0
+                            )
+                            post_export_metrics.setdefault(
+                                "data_transfer_cross_region_bytes", 0
+                            )
+                            post_export_metrics.setdefault(
+                                "data_transfer_internet_bytes", 0
+                            )
                     # Have final cached metrics - return them
                     return {
                         "workset_id": workset_id,
                         "cached": True,
                         "is_final": True,
-                        **cached.get("metrics", {}),
+                        **(cached_metrics if isinstance(cached_metrics, dict) else {}),
                     }
 
             # Try to fetch metrics - first from headnode, then fall back to S3
@@ -2308,6 +2321,29 @@ def create_app(
                                 total_size += obj.get("Size", 0)
 
                         if total_size > 0:
+                            # Coarse transfer metering: if we can determine the results
+                            # bucket region, attribute bytes to intra/cross-region based
+                            # on cluster region; otherwise attribute to internet to avoid
+                            # under-billing.
+                            bucket_region = None
+                            try:
+                                loc = s3_client.get_bucket_location(Bucket=bucket)
+                                bucket_region = loc.get("LocationConstraint") or "us-east-1"
+                            except Exception:
+                                bucket_region = None
+
+                            intra_bytes = 0
+                            cross_bytes = 0
+                            internet_bytes = 0
+                            cluster_region = str(workset_region) if workset_region else None
+                            if cluster_region and bucket_region:
+                                if cluster_region == bucket_region:
+                                    intra_bytes = int(total_size)
+                                else:
+                                    cross_bytes = int(total_size)
+                            else:
+                                internet_bytes = int(total_size)
+
                             # Format human-readable size
                             def format_bytes(size_bytes: int) -> str:
                                 size = float(size_bytes)
@@ -2320,6 +2356,9 @@ def create_app(
                             post_export_metrics = {
                                 "analysis_directory_size_bytes": total_size,
                                 "analysis_directory_size_human": format_bytes(total_size),
+                                "data_transfer_intra_region_bytes": intra_bytes,
+                                "data_transfer_cross_region_bytes": cross_bytes,
+                                "data_transfer_internet_bytes": internet_bytes,
                             }
                             if metrics_data is None:
                                 metrics_data = {}
@@ -2339,6 +2378,14 @@ def create_app(
 
             # Cache the results if we got any
             if metrics_data and any(metrics_data.values()):
+                post_export_metrics = None
+                if isinstance(metrics_data, dict):
+                    post_export_metrics = metrics_data.get("post_export_metrics")
+                if isinstance(post_export_metrics, dict):
+                    post_export_metrics.setdefault("data_transfer_intra_region_bytes", 0)
+                    post_export_metrics.setdefault("data_transfer_cross_region_bytes", 0)
+                    post_export_metrics.setdefault("data_transfer_internet_bytes", 0)
+
                 # Cache with is_final=True if workset is in terminal state
                 state_db.update_performance_metrics(
                     workset_id, metrics_data, is_final=is_terminal_state
@@ -2678,16 +2725,21 @@ def create_app(
                 "total": round(sum(costs), 2),
             }
 
-        @app.get("/api/customers/{customer_id}/dashboard/cost-breakdown", tags=["customer-dashboard"])
+
+        @app.get(
+            "/api/customers/{customer_id}/dashboard/cost-breakdown",
+            tags=["customer-dashboard"],
+        )
         async def get_dashboard_cost_breakdown(
             customer_id: str,
         ):
             """Get cost breakdown by category.
 
-            Returns compute, storage, and transfer costs.
+            Returns compute, storage, and transfer costs (split into 3 transfer types).
+
             - Compute: From dedicated cost_report fields (Phase 5B) or estimates
             - Storage: From dedicated storage_metrics fields (Phase 5C) at $0.023/GB/month
-            - Transfer: Per-GB rate for data egress
+            - Transfer: intra-region ($0), cross-region, and internet egress
             """
             if not state_db:
                 raise HTTPException(
@@ -2711,21 +2763,31 @@ def create_app(
             # Shared billing logic (used by both portal Usage page + dashboard chart)
             from daylib.billing import calculate_customer_cost_breakdown
 
-            breakdown = calculate_customer_cost_breakdown(state_db, customer_id, limit=500)
+            breakdown = calculate_customer_cost_breakdown(
+                state_db,
+                customer_id,
+                limit=500,
+            )
 
-            categories: list[str] = []
-            values: list[float] = []
-            if breakdown["compute_cost_usd"] > 0:
-                categories.append("Compute")
-                values.append(breakdown["compute_cost_usd"])
-            if breakdown["storage_cost_usd"] > 0:
-                categories.append("Storage")
-                values.append(breakdown["storage_cost_usd"])
-            if breakdown["transfer_cost_usd"] > 0:
-                categories.append("Transfer")
-                values.append(breakdown["transfer_cost_usd"])
-
-            if not categories:
+            # Always return explicit transfer categories so the portal can present:
+            # - intra-region transfer (typically $0/GB)
+            # - cross-region transfer
+            # - internet egress
+            categories: list[str] = [
+                "Compute",
+                "Storage",
+                "Transfer (Intra-region)",
+                "Transfer (Cross-region)",
+                "Internet egress",
+            ]
+            values: list[float] = [
+                float(breakdown.get("compute_cost_usd", 0.0) or 0.0),
+                float(breakdown.get("storage_cost_usd", 0.0) or 0.0),
+                float(breakdown.get("transfer_intra_region_cost_usd", 0.0) or 0.0),
+                float(breakdown.get("transfer_cross_region_cost_usd", 0.0) or 0.0),
+                float(breakdown.get("transfer_internet_cost_usd", 0.0) or 0.0),
+            ]
+            if all(v == 0.0 for v in values):
                 categories = ["Compute"]
                 values = [0.0]
 
@@ -2737,7 +2799,20 @@ def create_app(
                 "compute_cost_usd": breakdown["compute_cost_usd"],
                 "storage_cost_usd": breakdown["storage_cost_usd"],
                 "transfer_cost_usd": breakdown["transfer_cost_usd"],
+                "transfer_intra_region_cost_usd": breakdown.get(
+                    "transfer_intra_region_cost_usd", 0.0
+                ),
+                "transfer_cross_region_cost_usd": breakdown.get(
+                    "transfer_cross_region_cost_usd", 0.0
+                ),
+                "transfer_internet_cost_usd": breakdown.get(
+                    "transfer_internet_cost_usd", 0.0
+                ),
+                "transfer_intra_region_gb": breakdown.get("transfer_intra_region_gb", 0.0),
+                "transfer_cross_region_gb": breakdown.get("transfer_cross_region_gb", 0.0),
+                "transfer_internet_gb": breakdown.get("transfer_internet_gb", 0.0),
                 "storage_gb": breakdown["storage_gb"],
+                "rates": breakdown.get("rates", {}),
             }
 
     # ========== Billing Endpoints (Phase 5D) ==========

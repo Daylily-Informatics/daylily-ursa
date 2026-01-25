@@ -1,5 +1,7 @@
 """Tests for customer portal routes."""
 
+import csv
+import io
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -208,7 +210,61 @@ class TestPortalRoutes:
         assert "text/csv" in response.headers["content-type"]
         assert "attachment;" in response.headers["content-disposition"]
         assert "ursa-usage-report-customer-A-" in response.headers["content-disposition"]
-        assert b"date,workset_id,sample_count" in response.content
+
+        csv_text = response.content.decode("utf-8")
+        reader = csv.reader(io.StringIO(csv_text))
+        header = next(reader)
+        assert header == [
+            "date",
+            "workset_id",
+            "sample_count",
+            "compute_cost_usd",
+            "storage_gb",
+            "storage_cost_usd",
+            "transfer_gb",
+            "transfer_cost_usd",
+            "intra_region_transfer_gb",
+            "intra_region_transfer_cost_usd",
+            "cross_region_transfer_gb",
+            "cross_region_transfer_cost_usd",
+            "internet_egress_gb",
+            "internet_egress_cost_usd",
+            "total_cost_usd",
+            "has_actual_compute_cost",
+        ]
+
+        rows = list(reader)
+
+        def _row_by_workset_id(workset_id: str) -> list[str]:
+            return next(r for r in rows if r and r[1] == workset_id)
+
+        def _float(row: list[str], col: str) -> float:
+            idx = header.index(col)
+            return float(row[idx])
+
+        # Per-workset rows should include the new per-category transfer columns.
+        ws1 = _row_by_workset_id("ws-001")
+        ws2 = _row_by_workset_id("ws-002")
+
+        assert _float(ws1, "intra_region_transfer_gb") == 0.0
+        assert _float(ws1, "intra_region_transfer_cost_usd") == 0.0
+        assert _float(ws1, "cross_region_transfer_gb") == 0.0
+        assert _float(ws1, "cross_region_transfer_cost_usd") == 0.0
+
+        # With no metered transfer metrics, billing falls back to internet egress ~= storage bytes.
+        assert _float(ws1, "internet_egress_gb") == 100.0
+        assert _float(ws1, "internet_egress_cost_usd") == 9.0
+
+        assert _float(ws2, "internet_egress_gb") == 50.0
+        assert _float(ws2, "internet_egress_cost_usd") == 4.5
+
+        # Sanity-check the TOTAL row matches the header width and aggregates new columns.
+        total_row = next(r for r in rows if r and r[0] == "TOTAL")
+        assert len(total_row) == len(header)
+        assert _float(total_row, "intra_region_transfer_gb") == 0.0
+        assert _float(total_row, "cross_region_transfer_gb") == 0.0
+        assert _float(total_row, "internet_egress_gb") == 150.0
+        assert _float(total_row, "internet_egress_cost_usd") == 13.5
         assert b"TOTAL" in response.content
 
     def test_portal_usage_and_cost_breakdown_api_share_totals(self, mock_state_db):
@@ -236,9 +292,22 @@ class TestPortalRoutes:
         assert html.status_code == 200
         assert f"${expected['total']:.2f}".encode() in html.content
 
+
+        # Transfer breakdown should be displayed as 3 line items on the usage page.
+        assert b"Transfer (Intra-region)" in html.content
+        assert b"Transfer (Cross-region)" in html.content
+        assert b"Internet egress" in html.content
+
         api = client.get("/api/customers/customer-A/dashboard/cost-breakdown")
         assert api.status_code == 200
         payload = api.json()
+        assert payload["categories"] == [
+            "Compute",
+            "Storage",
+            "Transfer (Intra-region)",
+            "Transfer (Cross-region)",
+            "Internet egress",
+        ]
         assert payload["total"] == expected["total"]
         assert round(sum(payload["values"]), 2) == expected["total"]
 

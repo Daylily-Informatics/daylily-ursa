@@ -157,7 +157,7 @@ class WorksetStateDB:
             region,
         )
         assert hasattr(self.table, "table_name")
-	        
+
     def create_table_if_not_exists(self) -> None:
         """Create the DynamoDB table with appropriate schema."""
         try:
@@ -167,7 +167,7 @@ class WorksetStateDB:
         except ClientError as e:
             if e.response["Error"]["Code"] != "ResourceNotFoundException":
                 raise
-        
+
         LOGGER.info("Creating table %s", self.table_name)
         table = self.dynamodb.create_table(
             TableName=self.table_name,

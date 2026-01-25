@@ -36,7 +36,10 @@ class BillingRates:
     s3_storage_per_gb_month: float = 0.023  # S3 Standard
     
     # Transfer rates (per GB)
+    # NOTE: Internet egress uses `data_egress_per_gb` for backwards-compatibility.
     data_egress_per_gb: float = 0.09  # AWS data transfer out
+    data_transfer_intra_region_per_gb: float = 0.00
+    data_transfer_cross_region_per_gb: float = 0.02
     
     # Platform fees
     platform_fee_per_sample: float = 0.0  # Optional per-sample fee
@@ -64,7 +67,20 @@ class WorksetBillingItem:
     storage_gb: float = 0.0
     storage_cost_usd: float = 0.0
     
-    # Transfer costs (estimated)
+    # Transfer costs (metered when available; otherwise estimated)
+    transfer_intra_region_bytes: int = 0
+    transfer_intra_region_gb: float = 0.0
+    transfer_intra_region_cost_usd: float = 0.0
+
+    transfer_cross_region_bytes: int = 0
+    transfer_cross_region_gb: float = 0.0
+    transfer_cross_region_cost_usd: float = 0.0
+
+    transfer_internet_bytes: int = 0
+    transfer_internet_gb: float = 0.0
+    transfer_internet_cost_usd: float = 0.0
+
+    # Backwards-compatible aggregate view
     transfer_gb: float = 0.0
     transfer_cost_usd: float = 0.0
     
@@ -204,18 +220,70 @@ class BillingCalculator:
             # Fall back to performance_metrics
             pm = workset.get("performance_metrics", {})
             if pm and isinstance(pm, dict):
-                export_metrics = pm.get("post_export_metrics", {}) or pm.get("pre_export_metrics", {})
-                if export_metrics:
-                    item.storage_bytes = int(export_metrics.get("analysis_directory_size_bytes", 0) or 0)
+                storage_export_metrics = pm.get("post_export_metrics") or pm.get(
+                    "pre_export_metrics"
+                )
+                if isinstance(storage_export_metrics, dict) and storage_export_metrics:
+                    item.storage_bytes = int(
+                        storage_export_metrics.get("analysis_directory_size_bytes", 0) or 0
+                    )
                     item.has_actual_storage = True
 
         # Calculate storage cost
         item.storage_gb = self._bytes_to_gb(item.storage_bytes)
         item.storage_cost_usd = item.storage_gb * self.rates.s3_storage_per_gb_month
 
-        # Calculate transfer cost (assume all storage is transferred once)
-        item.transfer_gb = item.storage_gb
-        item.transfer_cost_usd = item.transfer_gb * self.rates.data_egress_per_gb
+        # Calculate transfer cost.
+        # If granular transfer metering is present in performance_metrics, use it.
+        # Otherwise, preserve prior behavior by assuming all results bytes egress once.
+        pm = workset.get("performance_metrics", {})
+        export_metrics: Dict[str, Any] = {}
+        if pm and isinstance(pm, dict):
+            raw_export_metrics = pm.get("post_export_metrics") or pm.get("pre_export_metrics")
+            if isinstance(raw_export_metrics, dict):
+                export_metrics = raw_export_metrics
+
+        item.transfer_intra_region_bytes = int(
+            export_metrics.get("data_transfer_intra_region_bytes", 0) or 0
+        )
+        item.transfer_cross_region_bytes = int(
+            export_metrics.get("data_transfer_cross_region_bytes", 0) or 0
+        )
+        item.transfer_internet_bytes = int(
+            export_metrics.get("data_transfer_internet_bytes", 0) or 0
+        )
+
+        metered_bytes = (
+            item.transfer_intra_region_bytes
+            + item.transfer_cross_region_bytes
+            + item.transfer_internet_bytes
+        )
+        if metered_bytes == 0 and item.storage_bytes > 0:
+            # Backwards-compatible fallback (was: assume all storage egresses once).
+            item.transfer_internet_bytes = int(item.storage_bytes)
+
+        item.transfer_intra_region_gb = self._bytes_to_gb(item.transfer_intra_region_bytes)
+        item.transfer_cross_region_gb = self._bytes_to_gb(item.transfer_cross_region_bytes)
+        item.transfer_internet_gb = self._bytes_to_gb(item.transfer_internet_bytes)
+
+        item.transfer_intra_region_cost_usd = (
+            item.transfer_intra_region_gb * self.rates.data_transfer_intra_region_per_gb
+        )
+        item.transfer_cross_region_cost_usd = (
+            item.transfer_cross_region_gb * self.rates.data_transfer_cross_region_per_gb
+        )
+        item.transfer_internet_cost_usd = item.transfer_internet_gb * self.rates.data_egress_per_gb
+
+        item.transfer_gb = (
+            item.transfer_intra_region_gb
+            + item.transfer_cross_region_gb
+            + item.transfer_internet_gb
+        )
+        item.transfer_cost_usd = (
+            item.transfer_intra_region_cost_usd
+            + item.transfer_cross_region_cost_usd
+            + item.transfer_internet_cost_usd
+        )
 
         # Calculate platform fee
         if self.rates.platform_fee_per_sample > 0:
@@ -361,12 +429,22 @@ class BillingCalculator:
                     "compute_usd": self._round_currency(item.compute_cost_usd, 2),
                     "storage_gb": self._round_currency(item.storage_gb, 2),
                     "storage_usd": self._round_currency(item.storage_cost_usd, 2),
+                    "transfer_intra_region_gb": self._round_currency(item.transfer_intra_region_gb, 2),
+                    "transfer_intra_region_usd": self._round_currency(item.transfer_intra_region_cost_usd, 2),
+                    "transfer_cross_region_gb": self._round_currency(item.transfer_cross_region_gb, 2),
+                    "transfer_cross_region_usd": self._round_currency(item.transfer_cross_region_cost_usd, 2),
+                    "transfer_internet_gb": self._round_currency(item.transfer_internet_gb, 2),
+                    "transfer_internet_usd": self._round_currency(item.transfer_internet_cost_usd, 2),
                     "transfer_usd": self._round_currency(item.transfer_cost_usd, 2),
                     "platform_fee_usd": self._round_currency(item.platform_fee_usd, 2),
                     "total_usd": self._round_currency(item.total_cost_usd, 2),
                     "has_actual_cost": item.has_actual_compute_cost,
                 }
             )
+
+        total_transfer_intra = sum(i.transfer_intra_region_cost_usd for i in summary.workset_items)
+        total_transfer_cross = sum(i.transfer_cross_region_cost_usd for i in summary.workset_items)
+        total_transfer_internet = sum(i.transfer_internet_cost_usd for i in summary.workset_items)
 
         return {
             "customer_id": customer_id,
@@ -382,6 +460,9 @@ class BillingCalculator:
                 "total_storage_gb": summary.total_storage_gb,
                 "compute_cost_usd": self._round_currency(summary.total_compute_cost_usd, 2),
                 "storage_cost_usd": self._round_currency(summary.total_storage_cost_usd, 2),
+                "transfer_intra_region_cost_usd": self._round_currency(total_transfer_intra, 2),
+                "transfer_cross_region_cost_usd": self._round_currency(total_transfer_cross, 2),
+                "transfer_internet_cost_usd": self._round_currency(total_transfer_internet, 2),
                 "transfer_cost_usd": self._round_currency(summary.total_transfer_cost_usd, 2),
                 "platform_fee_usd": self._round_currency(summary.total_platform_fee_usd, 2),
                 "grand_total_usd": self._round_currency(summary.grand_total_usd, 2),
@@ -390,6 +471,8 @@ class BillingCalculator:
             "rates": {
                 "s3_storage_per_gb_month": self.rates.s3_storage_per_gb_month,
                 "data_egress_per_gb": self.rates.data_egress_per_gb,
+                "data_transfer_intra_region_per_gb": self.rates.data_transfer_intra_region_per_gb,
+                "data_transfer_cross_region_per_gb": self.rates.data_transfer_cross_region_per_gb,
                 "platform_fee_per_sample": self.rates.platform_fee_per_sample,
                 "platform_fee_percentage": self.rates.platform_fee_percentage,
             },
@@ -428,6 +511,12 @@ def calculate_customer_cost_breakdown(
     total_compute_cost = 0.0
     total_storage_cost = 0.0
     total_transfer_cost = 0.0
+    total_transfer_intra_cost = 0.0
+    total_transfer_cross_cost = 0.0
+    total_transfer_internet_cost = 0.0
+    total_transfer_intra_gb = 0.0
+    total_transfer_cross_gb = 0.0
+    total_transfer_internet_gb = 0.0
     total_storage_bytes = 0
     has_actual_costs = False
 
@@ -436,6 +525,12 @@ def calculate_customer_cost_breakdown(
         total_compute_cost += item.compute_cost_usd
         total_storage_cost += item.storage_cost_usd
         total_transfer_cost += item.transfer_cost_usd
+        total_transfer_intra_cost += item.transfer_intra_region_cost_usd
+        total_transfer_cross_cost += item.transfer_cross_region_cost_usd
+        total_transfer_internet_cost += item.transfer_internet_cost_usd
+        total_transfer_intra_gb += item.transfer_intra_region_gb
+        total_transfer_cross_gb += item.transfer_cross_region_gb
+        total_transfer_internet_gb += item.transfer_internet_gb
         total_storage_bytes += item.storage_bytes
         if item.has_actual_compute_cost:
             has_actual_costs = True
@@ -449,11 +544,19 @@ def calculate_customer_cost_breakdown(
         "compute_cost_usd": round(total_compute_cost, 2),
         "storage_cost_usd": round(total_storage_cost, 4),
         "transfer_cost_usd": round(total_transfer_cost, 4),
+        "transfer_intra_region_cost_usd": round(total_transfer_intra_cost, 4),
+        "transfer_cross_region_cost_usd": round(total_transfer_cross_cost, 4),
+        "transfer_internet_cost_usd": round(total_transfer_internet_cost, 4),
+        "transfer_intra_region_gb": round(total_transfer_intra_gb, 2),
+        "transfer_cross_region_gb": round(total_transfer_cross_gb, 2),
+        "transfer_internet_gb": round(total_transfer_internet_gb, 2),
         "storage_gb": round(storage_gb, 2),
         "total_storage_bytes": total_storage_bytes,
         "rates": {
             "s3_storage_per_gb_month": calculator.rates.s3_storage_per_gb_month,
             "data_egress_per_gb": calculator.rates.data_egress_per_gb,
+            "data_transfer_intra_region_per_gb": calculator.rates.data_transfer_intra_region_per_gb,
+            "data_transfer_cross_region_per_gb": calculator.rates.data_transfer_cross_region_per_gb,
         },
     }
 

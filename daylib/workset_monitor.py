@@ -2795,10 +2795,41 @@ class WorksetMonitor:
             self._metrics_script_cache = ""
         return self._metrics_script_cache
 
-    def _metrics_args(self, pipeline_dir: PurePosixPath) -> List[str]:
+
+    def _metrics_args(self, workset: Workset, pipeline_dir: PurePosixPath) -> List[str]:
         args: List[str] = []
         if self.debug:
             args.append("--debug")
+
+        cluster_region: Optional[str] = None
+        results_bucket: Optional[str] = None
+        if self.state_db:
+            try:
+                ctx = self.state_db.get_execution_context(workset.name)
+            except Exception:
+                ctx = None
+            if ctx and isinstance(ctx, dict):
+                raw_cluster_region = ctx.get("cluster_region")
+                if raw_cluster_region:
+                    cluster_region = str(raw_cluster_region)
+
+                export_s3_uri = ctx.get("export_s3_uri")
+                if (
+                    export_s3_uri
+                    and isinstance(export_s3_uri, str)
+                    and export_s3_uri.startswith("s3://")
+                ):
+                    remainder = export_s3_uri[5:]
+                    if "/" in remainder:
+                        results_bucket = remainder.split("/", 1)[0]
+                    else:
+                        results_bucket = remainder
+
+        if cluster_region:
+            args.extend(["--cluster-region", cluster_region])
+        if results_bucket:
+            args.extend(["--results-bucket", results_bucket])
+
         args.append(str(pipeline_dir))
         return args
 
@@ -2834,11 +2865,13 @@ class WorksetMonitor:
         if not script:
             LOGGER.debug("Metrics script unavailable; skipping remote metrics for %s", workset.name)
             return None
+
         command = (
             "python3 - <<'PY'\n"
             f"{script}\n"
             "if __name__ == '__main__':\n"
-            f"    main([{', '.join(json.dumps(arg) for arg in self._metrics_args(pipeline_dir))}])\n"
+
+            f"    main([{', '.join(json.dumps(arg) for arg in self._metrics_args(workset, pipeline_dir))}])\n"
             "PY"
         )
         result = self._run_headnode_command(
@@ -2908,9 +2941,12 @@ class WorksetMonitor:
             "fastq_size_bytes",
             "cram_count",
             "cram_size_bytes",
-            "vcf_count",
-            "vcf_size_bytes",
-            "results_size_bytes",
+                "vcf_count",
+                "vcf_size_bytes",
+                "results_size_bytes",
+                "data_transfer_intra_region_bytes",
+                "data_transfer_cross_region_bytes",
+                "data_transfer_internet_bytes",
             "s3_daily_cost_usd",
             "cram_transfer_cross_region_cost",
             "cram_transfer_internet_cost",
@@ -3630,6 +3666,47 @@ class WorksetMonitor:
                 )
         except Exception as exc:
             LOGGER.warning("Failed to get S3 directory size for %s: %s", workset.name, exc)
+
+
+        # Transfer metering (coarse): attribute exported results bytes to either
+        # intra-region or cross-region transfer depending on cluster vs bucket
+        # region. Internet egress is not measurable here (no access logs), so we
+        # conservatively attribute unknown-region bytes to internet to avoid
+        # under-billing.
+        size_for_transfer = int(metrics.get("analysis_directory_size_bytes", 0) or 0)
+        intra_bytes = 0
+        cross_bytes = 0
+        internet_bytes = 0
+        if size_for_transfer > 0:
+            cluster_region: Optional[str] = None
+            if self.state_db:
+                try:
+                    ctx = self.state_db.get_execution_context(workset.name)
+                except Exception:
+                    ctx = None
+                if ctx and isinstance(ctx, dict):
+                    raw_cluster_region = ctx.get("cluster_region")
+                    if raw_cluster_region:
+                        cluster_region = str(raw_cluster_region)
+
+            bucket_region: Optional[str] = None
+            try:
+                response = self._s3.get_bucket_location(Bucket=bucket)
+                bucket_region = response.get("LocationConstraint") or "us-east-1"
+            except Exception:
+                bucket_region = None
+
+            if cluster_region and bucket_region:
+                if cluster_region == bucket_region:
+                    intra_bytes = size_for_transfer
+                else:
+                    cross_bytes = size_for_transfer
+            else:
+                internet_bytes = size_for_transfer
+
+        metrics["data_transfer_intra_region_bytes"] = intra_bytes
+        metrics["data_transfer_cross_region_bytes"] = cross_bytes
+        metrics["data_transfer_internet_bytes"] = internet_bytes
 
         # 2. Collect per-sample output file metrics from S3
         per_sample_metrics: Dict[str, Dict[str, Any]] = {}

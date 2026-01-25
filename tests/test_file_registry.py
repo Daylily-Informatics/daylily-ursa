@@ -6,15 +6,15 @@ import pytest
 from unittest.mock import MagicMock, patch
 
 from daylib.file_registry import (
-	    BiosampleMetadata,
-	    FileMetadata,
-	    FileRegistration,
-	    FileRegistry,
-	    FileSet,
-	    FileWorksetUsage,
-	    SequencingMetadata,
-	    generate_file_id,
-	)
+    BiosampleMetadata,
+    FileMetadata,
+    FileRegistration,
+    FileRegistry,
+    FileSet,
+    FileWorksetUsage,
+    SequencingMetadata,
+    generate_file_id,
+)
 
 
 @pytest.fixture

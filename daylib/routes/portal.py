@@ -17,7 +17,7 @@ import logging
 import csv
 import io
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
@@ -1935,7 +1935,24 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                 usage["storage_cost_usd"] = breakdown["storage_cost_usd"]
                 usage["transfer_cost_usd"] = breakdown["transfer_cost_usd"]
                 usage["total_cost"] = breakdown["total"]
+
+                # Transfer breakdown (3-way)
+                usage["transfer_intra_region_cost_usd"] = breakdown["transfer_intra_region_cost_usd"]
+                usage["transfer_cross_region_cost_usd"] = breakdown["transfer_cross_region_cost_usd"]
+                usage["transfer_internet_cost_usd"] = breakdown["transfer_internet_cost_usd"]
+                usage["transfer_intra_region_gb"] = breakdown["transfer_intra_region_gb"]
+                usage["transfer_cross_region_gb"] = breakdown["transfer_cross_region_gb"]
+                usage["transfer_internet_gb"] = breakdown["transfer_internet_gb"]
+
+                # Rate fields (backwards-compatible aggregate key retained for template fallbacks)
                 usage["transfer_rate_per_gb"] = breakdown["rates"]["data_egress_per_gb"]
+                usage["transfer_intra_region_rate_per_gb"] = breakdown["rates"][
+                    "data_transfer_intra_region_per_gb"
+                ]
+                usage["transfer_cross_region_rate_per_gb"] = breakdown["rates"][
+                    "data_transfer_cross_region_per_gb"
+                ]
+                usage["transfer_internet_rate_per_gb"] = breakdown["rates"]["data_egress_per_gb"]
                 usage["workset_storage_bytes"] = breakdown["total_storage_bytes"]
                 usage["workset_storage_gb"] = breakdown["storage_gb"]
                 usage["storage_gb"] = breakdown["storage_gb"]
@@ -1986,7 +2003,8 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                         {
                             "date": "-",
                             "type": "Storage",
-                            "workset_id": "All worksets",
+                            "workset_id": None,
+                            "workset_label": "All worksets",
                             "quantity": breakdown["storage_gb"],
                             "unit": "GB/month",
                             "cost": breakdown["storage_cost_usd"],
@@ -1994,17 +2012,44 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                         }
                     )
 
-                if breakdown["transfer_cost_usd"] > 0:
-                    usage_details.append(
-                        {
-                            "date": "-",
-                            "type": "Transfer",
-                            "workset_id": "All worksets",
-                            "quantity": "-",
-                            "unit": "GB",
-                            "cost": breakdown["transfer_cost_usd"],
-                            "is_actual": False,
-                        }
+                if (
+                    breakdown.get("transfer_intra_region_gb", 0) > 0
+                    or breakdown.get("transfer_cross_region_gb", 0) > 0
+                    or breakdown.get("transfer_internet_gb", 0) > 0
+                ):
+                    usage_details.extend(
+                        [
+                            {
+                                "date": "-",
+                                "type": "Transfer",
+                                "workset_id": None,
+                                "workset_label": "All worksets (Transfer: Intra-region)",
+                                "quantity": breakdown.get("transfer_intra_region_gb", 0),
+                                "unit": "GB",
+                                "cost": breakdown.get("transfer_intra_region_cost_usd", 0),
+                                "is_actual": False,
+                            },
+                            {
+                                "date": "-",
+                                "type": "Transfer",
+                                "workset_id": None,
+                                "workset_label": "All worksets (Transfer: Cross-region)",
+                                "quantity": breakdown.get("transfer_cross_region_gb", 0),
+                                "unit": "GB",
+                                "cost": breakdown.get("transfer_cross_region_cost_usd", 0),
+                                "is_actual": False,
+                            },
+                            {
+                                "date": "-",
+                                "type": "Transfer",
+                                "workset_id": None,
+                                "workset_label": "All worksets (Internet egress)",
+                                "quantity": breakdown.get("transfer_internet_gb", 0),
+                                "unit": "GB",
+                                "cost": breakdown.get("transfer_internet_cost_usd", 0),
+                                "is_actual": False,
+                            },
+                        ]
                     )
             except Exception as e:
                 LOGGER.warning(f"Failed to load usage details: {e}")
@@ -2060,17 +2105,29 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                 "storage_cost_usd",
                 "transfer_gb",
                 "transfer_cost_usd",
+                "intra_region_transfer_gb",
+                "intra_region_transfer_cost_usd",
+                "cross_region_transfer_gb",
+                "cross_region_transfer_cost_usd",
+                "internet_egress_gb",
+                "internet_egress_cost_usd",
                 "total_cost_usd",
                 "has_actual_compute_cost",
             ]
         )
 
         transfer_gb_total = 0.0
+        transfer_intra_gb_total = 0.0
+        transfer_cross_gb_total = 0.0
+        internet_egress_gb_total = 0.0
         for ws in worksets:
             item = calculator.calculate_workset_billing(ws)
             completed_at = item.completed_at or ws.get("updated_at", ws.get("created_at", ""))
             completed_date = completed_at[:10] if completed_at else "-"
             transfer_gb_total += float(item.transfer_gb or 0)
+            transfer_intra_gb_total += float(item.transfer_intra_region_gb or 0)
+            transfer_cross_gb_total += float(item.transfer_cross_region_gb or 0)
+            internet_egress_gb_total += float(item.transfer_internet_gb or 0)
             writer.writerow(
                 [
                     completed_date,
@@ -2081,6 +2138,12 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                     round(item.storage_cost_usd, 4),
                     round(item.transfer_gb, 2),
                     round(item.transfer_cost_usd, 4),
+                    round(item.transfer_intra_region_gb, 2),
+                    round(item.transfer_intra_region_cost_usd, 4),
+                    round(item.transfer_cross_region_gb, 2),
+                    round(item.transfer_cross_region_cost_usd, 4),
+                    round(item.transfer_internet_gb, 2),
+                    round(item.transfer_internet_cost_usd, 4),
                     round(item.total_cost_usd, 2),
                     bool(item.has_actual_compute_cost),
                 ]
@@ -2097,13 +2160,21 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                 breakdown["storage_cost_usd"],
                 round(transfer_gb_total, 2),
                 breakdown["transfer_cost_usd"],
+                round(transfer_intra_gb_total, 2),
+                breakdown.get("transfer_intra_region_cost_usd", 0.0),
+                round(transfer_cross_gb_total, 2),
+                breakdown.get("transfer_cross_region_cost_usd", 0.0),
+                round(internet_egress_gb_total, 2),
+                breakdown.get("transfer_internet_cost_usd", 0.0),
                 breakdown["total"],
                 "",
             ]
         )
 
         csv_text = output.getvalue()
-        filename = f"ursa-usage-report-{customer_id}-{datetime.utcnow().strftime('%Y-%m-%d')}.csv"
+        filename = (
+            f"ursa-usage-report-{customer_id}-{datetime.now(timezone.utc).strftime('%Y-%m-%d')}.csv"
+        )
         headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
         return StreamingResponse(iter([csv_text]), media_type="text/csv", headers=headers)
 

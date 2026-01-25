@@ -66,7 +66,8 @@ prefer clusters in us-west-2
 - [x] Add "Edit" button to Billing Info card.
 - [x] Fix mismatch between cost numbers in the card vs the pie chart (must derive from the same source).
 - [x] Fix "Export report" button not working.
-- [ ] Present transfer cost as 3 explicit options: within-region, cross-region, internet egress.
+- [x] Present transfer cost as 3 explicit options: within-region, cross-region, internet egress.
+  - Implemented end-to-end across billing calculations, portal UI, dashboard chart, and usage CSV export (with tests).
 
 ### 2.2 Register page
 - [ ] Change title branding to "Ursa" and fix the header/logo presentation.

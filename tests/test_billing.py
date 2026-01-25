@@ -35,6 +35,8 @@ class TestBillingRates:
         rates = BillingRates()
         assert rates.s3_storage_per_gb_month == 0.023
         assert rates.data_egress_per_gb == 0.09
+        assert rates.data_transfer_intra_region_per_gb == 0.00
+        assert rates.data_transfer_cross_region_per_gb == 0.02
         assert rates.platform_fee_per_sample == 0.0
         assert rates.platform_fee_percentage == 0.0
 
@@ -43,11 +45,15 @@ class TestBillingRates:
         rates = BillingRates(
             s3_storage_per_gb_month=0.05,
             data_egress_per_gb=0.15,
+            data_transfer_intra_region_per_gb=0.01,
+            data_transfer_cross_region_per_gb=0.03,
             platform_fee_per_sample=1.0,
             platform_fee_percentage=0.10,
         )
         assert rates.s3_storage_per_gb_month == 0.05
         assert rates.data_egress_per_gb == 0.15
+        assert rates.data_transfer_intra_region_per_gb == 0.01
+        assert rates.data_transfer_cross_region_per_gb == 0.03
         assert rates.platform_fee_per_sample == 1.0
         assert rates.platform_fee_percentage == 0.10
 
@@ -85,8 +91,28 @@ class TestWorksetBillingCalculation:
         assert item.storage_gb == pytest.approx(5.0, rel=0.01)
         # Storage cost: 5 GB * $0.023 = $0.115
         assert item.storage_cost_usd == pytest.approx(0.115, rel=0.01)
-        # Transfer cost: 5 GB * $0.09 = $0.45
-        assert item.transfer_cost_usd == pytest.approx(0.45, rel=0.01)
+
+        # Transfer defaults to three explicit categories. With no metered transfer metrics,
+        # billing falls back to internet egress ~= storage bytes.
+        assert item.transfer_intra_region_gb == 0.0
+        assert item.transfer_intra_region_cost_usd == 0.0
+        assert item.transfer_cross_region_gb == 0.0
+        assert item.transfer_cross_region_cost_usd == 0.0
+        assert item.transfer_internet_gb == pytest.approx(5.0, rel=0.01)
+        assert item.transfer_internet_cost_usd == pytest.approx(0.45, rel=0.01)
+
+        assert item.transfer_gb == pytest.approx(
+            item.transfer_intra_region_gb
+            + item.transfer_cross_region_gb
+            + item.transfer_internet_gb,
+            rel=0.001,
+        )
+        assert item.transfer_cost_usd == pytest.approx(
+            item.transfer_intra_region_cost_usd
+            + item.transfer_cross_region_cost_usd
+            + item.transfer_internet_cost_usd,
+            rel=0.001,
+        )
         # Total: 25.50 + 0.115 + 0.45 = 26.065
         assert item.total_cost_usd == pytest.approx(26.065, rel=0.01)
 
@@ -288,9 +314,23 @@ class TestInvoiceGeneration:
         assert invoice["summary"]["total_worksets"] == 1
         assert invoice["summary"]["total_samples"] == 3
         assert invoice["summary"]["compute_cost_usd"] == 50.0
+        assert invoice["summary"]["transfer_intra_region_cost_usd"] == 0.0
+        assert invoice["summary"]["transfer_cross_region_cost_usd"] == 0.0
+        assert invoice["summary"]["transfer_internet_cost_usd"] == 0.9
+        assert invoice["summary"]["transfer_cost_usd"] == 0.9
         assert len(invoice["line_items"]) == 1
-        assert invoice["line_items"][0]["workset_id"] == "ws-001"
+        item = invoice["line_items"][0]
+        assert item["workset_id"] == "ws-001"
+        assert item["transfer_intra_region_gb"] == 0.0
+        assert item["transfer_intra_region_usd"] == 0.0
+        assert item["transfer_cross_region_gb"] == 0.0
+        assert item["transfer_cross_region_usd"] == 0.0
+        assert item["transfer_internet_gb"] == 10.0
+        assert item["transfer_internet_usd"] == 0.9
+        assert item["transfer_usd"] == 0.9
         assert invoice["rates"]["s3_storage_per_gb_month"] == 0.023
+        assert invoice["rates"]["data_transfer_intra_region_per_gb"] == 0.00
+        assert invoice["rates"]["data_transfer_cross_region_per_gb"] == 0.02
         assert invoice["accuracy"]["has_actual_costs"] is True
 
 

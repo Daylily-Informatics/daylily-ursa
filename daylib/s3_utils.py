@@ -164,6 +164,30 @@ class RegionAwareS3Client:
             self._bucket_regions[bucket_normalized] = region
         
         return region
+
+    def get_bucket_location(self, Bucket: str, **kwargs) -> Dict[str, Any]:
+        """Call GetBucketLocation for a bucket.
+
+        This uses the *default* client because the bucket's region is what we're
+        trying to determine.
+
+        Notes:
+        - We intentionally do not swallow exceptions here; callers may want to
+          treat unknown-region buckets conservatively.
+        - On success, we opportunistically populate the internal bucket->region
+          cache.
+        """
+        normalized_bucket = _normalize_bucket_name_required(Bucket)
+        response = cast(
+            Dict[str, Any],
+            self._default_client.get_bucket_location(Bucket=normalized_bucket, **kwargs),
+        )
+
+        region = response.get("LocationConstraint") or "us-east-1"
+        with self._bucket_regions_lock:
+            self._bucket_regions[normalized_bucket] = str(region)
+
+        return response
     
     def get_client_for_bucket(self, bucket: str) -> Any:
         """Get the region-appropriate S3 client for a bucket.
