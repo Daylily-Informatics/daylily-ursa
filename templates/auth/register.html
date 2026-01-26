@@ -2,13 +2,13 @@
 {% set hide_header = true %}
 {% set hide_footer = true %}
 
-{% block title %}Create Account - Daylily Customer Portal{% endblock %}
+{% block title %}Create Account - Ursa Customer Portal{% endblock %}
 
 {% block content %}
 <div class="auth-container">
     <div class="auth-card" style="max-width: 550px;">
         <div class="auth-header">
-            <div class="auth-logo">🌸 Daylily</div>
+            <div class="auth-logo">Ursa</div>
             <h1 class="auth-title">Create your account</h1>
             <p class="auth-subtitle">Get started with genomics processing in minutes</p>
         </div>
@@ -57,7 +57,7 @@
                 <div class="form-group">
                     <label for="password_confirm" class="form-label required">Confirm Password</label>
                     <input type="password" id="password_confirm" name="password_confirm" class="form-control" 
-                           placeholder="Confirm password" required>
+                           placeholder="Confirm password" required minlength="8">
                 </div>
             </div>
             {% endif %}
@@ -98,9 +98,13 @@
                 </div>
                 
                 <div class="form-group">
-                    <label for="cost_center" class="form-label">Cost Center</label>
+                    <label for="cost_center" class="form-label">Cost Center (chargeback tag)</label>
                     <input type="text" id="cost_center" name="cost_center" class="form-control" 
                            placeholder="e.g., GENOMICS-001">
+                    <p class="form-text">
+                        Optional. Used for internal chargeback reporting and applied as the AWS tag <code>CostCenter</code>.
+                        This is not an AWS Budget / spending limit.
+                    </p>
                 </div>
             </div>
             
@@ -117,6 +121,23 @@
                         <input type="radio" name="s3_option" value="byob" onchange="toggleBucketInput()">
                         <span><strong>Bring Your Own Bucket</strong> - Use your existing S3 bucket</span>
                     </label>
+                </div>
+            </div>
+
+            <div id="auto-provision-section">
+                <div class="form-group">
+                    <label for="bucket_region" class="form-label">Bucket Region</label>
+                    <select id="bucket_region" name="bucket_region" class="form-control form-select">
+                        {% for region in allowed_regions | default(['us-west-2', 'us-east-1', 'eu-west-1']) %}
+                        <option value="{{ region }}" {% if region == default_region %}selected{% endif %}>
+                            {{ region }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                    <p class="form-text">
+                        <i class="fas fa-info-circle text-info"></i>
+                        Select the AWS region closest to your data and compute resources to minimize transfer costs.
+                    </p>
                 </div>
             </div>
 
@@ -222,8 +243,11 @@
 <script>
 function toggleBucketInput() {
     const byobSection = document.getElementById('byob-section');
+    const autoProvisionSection = document.getElementById('auto-provision-section');
     const byobRadio = document.querySelector('input[name="s3_option"][value="byob"]');
-    byobSection.style.display = byobRadio.checked ? 'block' : 'none';
+    const isByob = byobRadio.checked;
+    byobSection.style.display = isByob ? 'block' : 'none';
+    autoProvisionSection.style.display = isByob ? 'none' : 'block';
 }
 
 async function validateBucket() {

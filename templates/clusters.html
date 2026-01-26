@@ -87,6 +87,18 @@
                     <span class="badge badge-sm" style="background: var(--color-bg-secondary);">{{ cluster.region }}</span>
                 </div>
                 <div class="d-flex gap-sm">
+                    {% if is_admin %}
+                    <button
+                        class="btn btn-sm btn-danger"
+                        data-testid="delete-cluster-btn"
+                        data-cluster-name="{{ cluster.cluster_name }}"
+                        data-region="{{ cluster.region }}"
+                        onclick="deleteCluster(this)"
+                        title="Delete cluster (admin-only)"
+                    >
+                        <i class="fas fa-trash"></i>
+                    </button>
+                    {% endif %}
                     {% set status_class = 'success' if cluster.cluster_status == 'CREATE_COMPLETE' else 'warning' if 'IN_PROGRESS' in cluster.cluster_status else 'error' if 'FAILED' in cluster.cluster_status else 'secondary' %}
                     <span class="badge badge-{{ status_class }}">{{ cluster.cluster_status }}</span>
                 </div>
@@ -162,6 +174,9 @@
                         {% endif %}
                     </div>
                     <h5 class="text-xs text-muted mb-xs mt-sm"><i class="fas fa-dollar-sign"></i> AWS Budget</h5>
+                    <div class="text-xs text-muted mb-xs">
+                        Admin-only. AWS Budgets are separate from customer Cost Centers (chargeback tags).
+                    </div>
                     <div class="budget-grid">
                         <div class="budget-item">
                             <span class="text-muted text-xs">Total Budget</span>
@@ -507,6 +522,56 @@ async function refreshClusters() {
     } finally {
         btn.disabled = false;
         icon.classList.remove('fa-spin');
+    }
+}
+
+async function deleteCluster(buttonEl) {
+    if (!buttonEl) return;
+
+    const clusterName = buttonEl.dataset.clusterName;
+    const region = buttonEl.dataset.region;
+
+    if (!clusterName || !region) {
+        showToast('Missing cluster name/region for deletion', 'error');
+        return;
+    }
+
+    const cmd = `pcluster delete-cluster --region ${region} -n ${clusterName}`;
+
+    const ok1 = confirm(
+        `Delete cluster "${clusterName}" in ${region}?\n\nCommand:\n${cmd}\n\nThis cannot be undone.`
+    );
+    if (!ok1) return;
+
+    const typed = prompt(`Type the cluster name to confirm deletion:\n\n${clusterName}`);
+    if (typed !== clusterName) {
+        showToast('Deletion cancelled (name did not match)', 'error');
+        return;
+    }
+
+    const originalHtml = buttonEl.innerHTML;
+    buttonEl.disabled = true;
+    buttonEl.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+
+    try {
+        const response = await fetch(
+            `/api/clusters/${encodeURIComponent(clusterName)}?region=${encodeURIComponent(region)}`,
+            { method: 'DELETE' },
+        );
+        const data = await response.json().catch(() => ({}));
+
+        if (response.ok && data.success) {
+            showToast(`Cluster "${clusterName}" deletion initiated`, 'success');
+            setTimeout(() => window.location.reload(), 1500);
+        } else {
+            const detail = data.detail || data.message || 'Unknown error';
+            showToast(`Failed to delete cluster: ${detail}`, 'error');
+        }
+    } catch (error) {
+        showToast(`Failed to delete cluster: ${error.message}`, 'error');
+    } finally {
+        buttonEl.disabled = false;
+        buttonEl.innerHTML = originalHtml;
     }
 }
 

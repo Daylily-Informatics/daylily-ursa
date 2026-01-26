@@ -69,7 +69,26 @@
             <div>
                 <div class="stat-value">${{ "%.4f"|format(usage.transfer_cost_usd | default(0)) }}</div>
                 <div class="stat-label">Transfer Cost</div>
-                <div class="text-muted text-xs">Placeholder @ $0.10/GB</div>
+                <div class="text-muted text-xs">
+                    <div>
+                        Transfer (Intra-region):
+                        ${{ "%.4f"|format(usage.transfer_intra_region_cost_usd | default(0)) }}
+                        ({{ "%.2f"|format(usage.transfer_intra_region_gb | default(0)) }} GB
+                        @ ${{ "%.2f"|format(usage.transfer_intra_region_rate_per_gb | default(0.00)) }}/GB)
+                    </div>
+                    <div>
+                        Transfer (Cross-region):
+                        ${{ "%.4f"|format(usage.transfer_cross_region_cost_usd | default(0)) }}
+                        ({{ "%.2f"|format(usage.transfer_cross_region_gb | default(0)) }} GB
+                        @ ${{ "%.2f"|format(usage.transfer_cross_region_rate_per_gb | default(0.02)) }}/GB)
+                    </div>
+                    <div>
+                        Internet egress:
+                        ${{ "%.4f"|format(usage.transfer_internet_cost_usd | default(0)) }}
+                        ({{ "%.2f"|format(usage.transfer_internet_gb | default(0)) }} GB
+                        @ ${{ "%.2f"|format(usage.transfer_internet_rate_per_gb | default(usage.transfer_rate_per_gb | default(0.09))) }}/GB)
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -130,6 +149,8 @@
                         <td>
                             {% if item.workset_id %}
                             <a href="/portal/worksets/{{ item.workset_id }}">{{ item.workset_id[:20] }}{% if item.workset_id|length > 20 %}...{% endif %}</a>
+                            {% elif item.workset_label %}
+                            {{ item.workset_label }}
                             {% else %}
                             -
                             {% endif %}
@@ -198,14 +219,19 @@
     <!-- Billing Info -->
     <div class="grid grid-2 mt-xl">
         <div class="card">
-            <h3 class="card-title"><i class="fas fa-credit-card"></i> Billing Information</h3>
+                <div class="d-flex justify-between align-center mb-md">
+                    <h3 class="card-title" style="margin: 0;"><i class="fas fa-credit-card"></i> Billing Information</h3>
+                    <a class="btn btn-sm btn-outline" href="/portal/account">
+                        <i class="fas fa-edit"></i> Edit
+                    </a>
+                </div>
             <dl style="margin: 0;">
                 <div class="d-flex justify-between mb-md">
                     <dt class="text-muted">Billing Account</dt>
                     <dd>{{ customer.billing_account_id | default('Not configured') }}</dd>
                 </div>
                 <div class="d-flex justify-between mb-md">
-                    <dt class="text-muted">Cost Center</dt>
+                    <dt class="text-muted">Cost Center (chargeback tag)</dt>
                     <dd>{{ customer.cost_center | default('N/A') }}</dd>
                 </div>
                 <div class="d-flex justify-between mb-md">
@@ -262,8 +288,7 @@ function changePeriod() {
 }
 
 function exportUsageReport() {
-    // TODO: Implement export functionality
-    showToast('info', 'Export', 'Export functionality coming soon');
+        window.location.href = '/portal/usage/export';
 }
 </script>
 {% endblock %}

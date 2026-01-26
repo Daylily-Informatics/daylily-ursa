@@ -101,7 +101,7 @@
                     <dd>{{ customer.billing_account_id | default('Not configured') }}</dd>
                 </div>
                 <div class="d-flex justify-between mb-md">
-                    <dt class="text-muted">Cost Center</dt>
+                    <dt class="text-muted">Cost Center (chargeback tag)</dt>
                     <dd>{{ customer.cost_center | default('N/A') }}</dd>
                 </div>
                 <div class="d-flex justify-between mb-md">
@@ -217,26 +217,17 @@
                         </thead>
                         <tbody>
                             <tr>
-                                <td><code>DAYLILY_CONTROL_BUCKET</code></td>
-                                <td>{% if env_vars.DAYLILY_CONTROL_BUCKET %}<span class="env-value set">{{ env_vars.DAYLILY_CONTROL_BUCKET }}</span>{% else %}<span class="env-value not-set">Not set</span>{% endif %}</td>
-                                <td>S3 bucket for workset registration and management (primary)</td>
-                            </tr>
-                            <tr>
-                                <td><code>DAYLILY_MONITOR_BUCKET</code></td>
-                                <td>{% if env_vars.DAYLILY_MONITOR_BUCKET %}<span class="env-value set">{{ env_vars.DAYLILY_MONITOR_BUCKET }}</span>{% else %}<span class="env-value not-set">Not set</span>{% endif %}</td>
-                                <td>S3 bucket for workset monitoring (fallback if DAYLILY_CONTROL_BUCKET not set)</td>
+                                <td colspan="3" class="text-center text-muted">
+                                    <em>S3 buckets are now discovered from cluster tags.</em><br>
+                                    <small>Each cluster has an <code>aws-parallelcluster-monitor-bucket</code> tag that specifies its bucket.</small>
+                                </td>
                             </tr>
                         </tbody>
                     </table>
                 </div>
-                <div class="alert alert-warning mt-md">
-                    <strong>Configuration Priority:</strong>
-                    <ol class="mb-0">
-                        <li>CLI argument: <code>--control-bucket</code></li>
-                        <li>Environment variable: <code>DAYLILY_CONTROL_BUCKET</code></li>
-                        <li>Environment variable: <code>DAYLILY_MONITOR_BUCKET</code></li>
-                        <li>Integration layer configuration</li>
-                    </ol>
+                <div class="alert alert-info mt-md">
+                    <strong>Bucket Configuration:</strong>
+                    <p class="mb-0">S3 buckets are automatically discovered from the cluster you select during workset creation. Each ParallelCluster has a tag <code>aws-parallelcluster-monitor-bucket</code> that specifies its associated bucket.</p>
                 </div>
             </div>
 
@@ -496,7 +487,7 @@
                 </div>
                 <div class="form-group">
                     <label class="form-label required">Confirm New Password</label>
-                    <input type="password" id="confirm-password" class="form-control" required>
+                    <input type="password" id="confirm-password" class="form-control" required minlength="8">
                 </div>
                 <button type="submit" class="btn btn-primary btn-block">
                     <i class="fas fa-check"></i> Update Password
@@ -709,6 +700,11 @@ async function submitPasswordChange(event) {
     const newPassword = document.getElementById('new-password').value;
     const confirmPassword = document.getElementById('confirm-password').value;
 
+    if (newPassword.length < 8) {
+        showToast('error', 'Error', 'Password must be at least 8 characters');
+        return;
+    }
+
     if (newPassword !== confirmPassword) {
         showToast('error', 'Error', 'Passwords do not match');
         return;
@@ -730,7 +726,9 @@ async function submitPasswordChange(event) {
             document.getElementById('change-password-form').reset();
         } else {
             const error = await response.json();
-            showToast('error', 'Error', error.detail || 'Failed to change password');
+            const detail = error.detail;
+            const msg = Array.isArray(detail) ? detail.map(d => d.msg || String(d)).join('; ') : detail;
+            showToast('error', 'Error', msg || 'Failed to change password');
         }
     } catch (error) {
         console.error('Password change error:', error);
@@ -791,9 +789,12 @@ async function generateApiToken() {
             document.getElementById('new-token-display').style.display = 'block';
             document.getElementById('new-token-name').value = '';
             loadApiTokens();
+            showToast('success', 'Created', 'API token generated (copy it now; it will not be shown again)');
         } else {
             const error = await response.json();
-            showToast('error', 'Error', error.detail || 'Failed to generate token');
+            const detail = error.detail;
+            const msg = Array.isArray(detail) ? detail.map(d => d.msg || String(d)).join('; ') : detail;
+            showToast('error', 'Error', msg || 'Failed to generate token');
         }
     } catch (error) {
         console.error('Token generation error:', error);

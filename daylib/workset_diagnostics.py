@@ -7,7 +7,6 @@ for troubleshooting workset failures.
 from __future__ import annotations
 
 import datetime as dt
-import json
 import logging
 import re
 from dataclasses import dataclass, field
@@ -616,7 +615,7 @@ def format_diagnostic_report(result: DiagnosticResult) -> str:
             f"Category: {result.error_code.category.value}",
             f"Retryable: {'Yes' if result.error_code.retryable else 'No'}",
             "",
-            f"Description:",
+            "Description:",
             f"  {result.error_code.description}",
             "",
             f"Confidence: {result.confidence * 100:.0f}%",

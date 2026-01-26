@@ -12,8 +12,8 @@ import re
 import shlex
 import subprocess
 from dataclasses import dataclass, field
-from pathlib import Path, PurePosixPath
-from typing import Any, Dict, List, Optional, Sequence
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
 import boto3
@@ -152,16 +152,20 @@ class PipelineStatusFetcher:
         Args:
             cluster_name: Name of the ParallelCluster
             region: AWS region
-            profile: Optional AWS profile name
+            profile: Optional AWS profile name (passed via AWS_PROFILE env var)
 
         Returns:
             Headnode IP address or None if not found
         """
         import json
+        import os
 
         cmd = ["pcluster", "describe-cluster-instances", "--region", region, "-n", cluster_name]
+
+        # pcluster doesn't accept --profile flag; use AWS_PROFILE environment variable
+        env = os.environ.copy()
         if profile:
-            cmd.extend(["--profile", profile])
+            env["AWS_PROFILE"] = profile
 
         try:
             result = subprocess.run(
@@ -169,6 +173,7 @@ class PipelineStatusFetcher:
                 capture_output=True,
                 timeout=30,
                 check=False,
+                env=env,
             )
             if result.returncode != 0:
                 LOGGER.warning(
@@ -219,10 +224,26 @@ class PipelineStatusFetcher:
             return []
         return [f.strip() for f in output.strip().split("\n") if f.strip()]
 
+    def get_progress_lines(
+        self, headnode_ip: str, workset_name: str
+    ) -> Optional[str]:
+        """Get all progress lines from Snakemake logs using grep.
+
+        Uses: grep ' steps ' <log_dir>/*.log | sort
+        This reliably finds all progress updates across all log files.
+        """
+        log_dir = self._get_snakemake_log_dir(workset_name)
+        cmd = f"grep ' steps ' {shlex.quote(log_dir)}/*.log 2>/dev/null | sort"
+        return self._run_ssh_command(headnode_ip, cmd)
+
     def get_latest_log_content(
         self, headnode_ip: str, workset_name: str, tail_lines: int = 50
     ) -> Optional[str]:
-        """Get the tail of the latest Snakemake log file."""
+        """Get the tail of the latest Snakemake log file.
+
+        Used for fetching recent log lines, current rule, and errors.
+        For progress parsing, use get_progress_lines() instead.
+        """
         log_dir = self._get_snakemake_log_dir(workset_name)
         cmd = (
             f"LOG=$(ls -t {shlex.quote(log_dir)}/*.snakemake.log 2>/dev/null | head -1) && "
@@ -344,15 +365,17 @@ class PipelineStatusFetcher:
             # Get log files
             status.log_files = self.get_log_files(headnode_ip, workset_name)
 
-            # Get latest log content
-            log_content = self.get_latest_log_content(headnode_ip, workset_name)
-            if log_content:
-                # Parse progress
-                completed, total, percent = self.parse_progress(log_content)
+            # Get progress using grep (more reliable than tail)
+            progress_lines = self.get_progress_lines(headnode_ip, workset_name)
+            if progress_lines:
+                completed, total, percent = self.parse_progress(progress_lines)
                 status.steps_completed = completed
                 status.steps_total = total
                 status.percent_complete = percent
 
+            # Get latest log content for other info (current rule, errors, recent lines)
+            log_content = self.get_latest_log_content(headnode_ip, workset_name)
+            if log_content:
                 # Parse current rule
                 status.current_rule = self.parse_current_rule(log_content)
 
@@ -385,7 +408,11 @@ class PipelineStatusFetcher:
         return f"{self.clone_dest_root}/{workset_name}/{self.repo_dir_name}/results/day/hg38/other_reports/{filename}"
 
     def fetch_tsv_file(
-        self, headnode_ip: str, workset_name: str, filename: str
+        self,
+        headnode_ip: str,
+        workset_name: str,
+        filename: str,
+        expected_columns: Optional[List[str]] = None,
     ) -> Optional[List[Dict[str, str]]]:
         """Fetch a TSV file from headnode and parse into list of dicts.
 
@@ -393,6 +420,8 @@ class PipelineStatusFetcher:
             headnode_ip: IP address of the headnode
             workset_name: Name of the workset
             filename: Name of the TSV file (e.g., 'alignstats_combo_mqc.tsv')
+            expected_columns: Expected column names to identify the header line
+                             (handles shell init noise in SSH output)
 
         Returns:
             List of dicts (one per row) or None if file not found/error
@@ -405,17 +434,53 @@ class PipelineStatusFetcher:
             LOGGER.debug("TSV file not found or empty: %s", file_path)
             return None
 
-        return self._parse_tsv(content)
+        return self._parse_tsv(content, expected_columns)
 
-    def _parse_tsv(self, content: str) -> List[Dict[str, str]]:
-        """Parse TSV content into list of dicts."""
+    # Expected column names for different TSV file types
+    # Used to find the real header line (skipping shell init noise)
+    ALIGNSTATS_EXPECTED_COLS = ["sample", "YieldReads", "WgsCoverageMean", "MappedReadsPct"]
+    BENCHMARK_EXPECTED_COLS = ["sample", "task_cost", "rule", "s"]  # "s" is common time column
+
+    def _parse_tsv(
+        self, content: str, expected_columns: Optional[List[str]] = None
+    ) -> List[Dict[str, str]]:
+        """Parse TSV content into list of dicts.
+
+        Args:
+            content: Raw TSV content (may include preamble noise from shell init)
+            expected_columns: If provided, find header line by looking for these columns.
+                             This handles cases where SSH output includes shell init
+                             messages before the actual TSV content.
+
+        Returns:
+            List of dicts (one per row), empty list if parsing fails
+        """
         lines = content.strip().split("\n")
         if len(lines) < 2:  # Need at least header + 1 data row
             return []
 
-        headers = lines[0].split("\t")
+        # Find header line - scan for first line containing expected columns
+        header_idx = 0
+        if expected_columns:
+            for i, line in enumerate(lines):
+                cols = line.split("\t")
+                # Check if any expected column is present in this line
+                if any(exp_col in cols for exp_col in expected_columns):
+                    header_idx = i
+                    break
+            else:
+                # No line matched expected columns - fall back to first line
+                LOGGER.debug(
+                    "No line matched expected columns %s, using first line as header",
+                    expected_columns,
+                )
+
+        if header_idx >= len(lines) - 1:  # Need at least header + 1 data row after header
+            return []
+
+        headers = lines[header_idx].split("\t")
         rows = []
-        for line in lines[1:]:
+        for line in lines[header_idx + 1:]:
             if not line.strip():
                 continue
             values = line.split("\t")
@@ -433,7 +498,9 @@ class PipelineStatusFetcher:
 
         Returns list of per-sample alignment metrics.
         """
-        return self.fetch_tsv_file(headnode_ip, workset_name, "alignstats_combo_mqc.tsv")
+        return self.fetch_tsv_file(
+            headnode_ip, workset_name, "alignstats_combo_mqc.tsv", self.ALIGNSTATS_EXPECTED_COLS
+        )
 
     def fetch_benchmark_data(
         self, headnode_ip: str, workset_name: str
@@ -444,11 +511,15 @@ class PipelineStatusFetcher:
         Returns list of per-rule performance metrics.
         """
         # Try singleton file first
-        result = self.fetch_tsv_file(headnode_ip, workset_name, "rules_benchmark_data_singleton.tsv")
+        result = self.fetch_tsv_file(
+            headnode_ip, workset_name, "rules_benchmark_data_singleton.tsv", self.BENCHMARK_EXPECTED_COLS
+        )
         if result:
             return result
         # Fall back to mqc file
-        return self.fetch_tsv_file(headnode_ip, workset_name, "rules_benchmark_data_mqc.tsv")
+        return self.fetch_tsv_file(
+            headnode_ip, workset_name, "rules_benchmark_data_mqc.tsv", self.BENCHMARK_EXPECTED_COLS
+        )
 
     def fetch_performance_metrics(
         self, headnode_ip: str, workset_name: str
@@ -538,7 +609,11 @@ class PipelineStatusFetcher:
         return f"{base_uri}/{self.repo_dir_name}/results/day/hg38/other_reports/{filename}"
 
     def fetch_tsv_from_s3(
-        self, results_s3_uri: str, filename: str, region: Optional[str] = None
+        self,
+        results_s3_uri: str,
+        filename: str,
+        region: Optional[str] = None,
+        expected_columns: Optional[List[str]] = None,
     ) -> Optional[List[Dict[str, str]]]:
         """Fetch a TSV file from S3 and parse into list of dicts.
 
@@ -546,6 +621,7 @@ class PipelineStatusFetcher:
             results_s3_uri: Base S3 URI where results were exported
             filename: Name of the TSV file (e.g., 'alignstats_combo_mqc.tsv')
             region: AWS region for S3 client
+            expected_columns: Expected column names to identify the header line
 
         Returns:
             List of dicts (one per row) or None if file not found/error
@@ -566,7 +642,7 @@ class PipelineStatusFetcher:
                 LOGGER.debug("S3 TSV file is empty: %s", s3_path)
                 return None
 
-            return self._parse_tsv(content)
+            return self._parse_tsv(content, expected_columns)
 
         except ClientError as e:
             error_code = e.response.get("Error", {}).get("Code", "")
@@ -591,7 +667,9 @@ class PipelineStatusFetcher:
         Returns:
             List of per-sample alignment metrics or None
         """
-        return self.fetch_tsv_from_s3(results_s3_uri, "alignstats_combo_mqc.tsv", region)
+        return self.fetch_tsv_from_s3(
+            results_s3_uri, "alignstats_combo_mqc.tsv", region, self.ALIGNSTATS_EXPECTED_COLS
+        )
 
     def fetch_benchmark_data_from_s3(
         self, results_s3_uri: str, region: Optional[str] = None
@@ -609,11 +687,15 @@ class PipelineStatusFetcher:
             List of per-rule performance metrics or None
         """
         # Try singleton file first
-        result = self.fetch_tsv_from_s3(results_s3_uri, "rules_benchmark_data_singleton.tsv", region)
+        result = self.fetch_tsv_from_s3(
+            results_s3_uri, "rules_benchmark_data_singleton.tsv", region, self.BENCHMARK_EXPECTED_COLS
+        )
         if result:
             return result
         # Fall back to mqc file
-        return self.fetch_tsv_from_s3(results_s3_uri, "rules_benchmark_data_mqc.tsv", region)
+        return self.fetch_tsv_from_s3(
+            results_s3_uri, "rules_benchmark_data_mqc.tsv", region, self.BENCHMARK_EXPECTED_COLS
+        )
 
     def fetch_duration_from_s3(
         self, results_s3_uri: str, region: Optional[str] = None

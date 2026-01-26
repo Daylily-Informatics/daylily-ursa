@@ -13,13 +13,12 @@ This module supports the Workset Manifest Generator and file registration system
 
 from __future__ import annotations
 
-import hashlib
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import PurePosixPath
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 
 class SequencingPlatform(str, Enum):

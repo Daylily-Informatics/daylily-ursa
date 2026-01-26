@@ -5,7 +5,7 @@ Tests the complete integration including authentication and customer scoping.
 """
 
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 from fastapi.testclient import TestClient
 
 from daylib.workset_api import create_app

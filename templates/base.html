@@ -58,6 +58,11 @@
                         <li><a href="/portal/files" class="nav-link {% if active_page == 'files' %}active{% endif %}">Files</a></li>
                         <li><a href="/portal/biospecimen" class="nav-link {% if active_page == 'biospecimen' %}active{% endif %}">Subjects</a></li>
                         <li><a href="/portal/clusters" class="nav-link {% if active_page == 'clusters' %}active{% endif %}">Clusters</a></li>
+
+                        {% if is_admin %}
+                        <li><a href="/portal/admin/users" class="nav-link {% if active_page == 'admin_users' %}active{% endif %}">Admin</a></li>
+                        {% endif %}
+                        <li><a href="/portal/monitor" class="nav-link {% if active_page == 'monitor' %}active{% endif %}">Monitor</a></li>
                         <li><a href="/portal/usage" class="nav-link {% if active_page == 'usage' %}active{% endif %}">Usage</a></li>
                     </ul>
                     
@@ -136,6 +141,8 @@
                         <li><a href="https://github.com/Daylily-Informatics" target="_blank">GitHub</a></li>
                         <li><a href="mailto:support@daylily.io">Contact Support</a></li>
                         <li><a href="/portal/docs">Documentation</a></li>
+                        <li><a href="/terms" target="_blank">Terms of Service</a></li>
+                        <li><a href="/privacy" target="_blank">Privacy Policy</a></li>
                     </ul>
                 </div>
             </div>

@@ -15,6 +15,8 @@ authors = [
 dependencies = [
     "boto3>=1.26.0",
     "pyyaml>=6.0",
+    # Cognito auth library - install from local: pip install ../daylily-cognito/dist/daylily_cognito-0.1.8-py3-none-any.whl
+    "daylily-cognito>=0.1.8",
     "fastapi>=0.104.0",
     "uvicorn[standard]>=0.24.0",
     "pydantic>=2.0.0",
@@ -56,8 +58,14 @@ cluster = [
 
 [project.scripts]
 ursa = "daylib.cli:main"
-daylily-workset-api = "daylib.workset_api:main"
-daylily-workset-monitor = "daylib.workset_monitor:main"
+daylily-workset-api = "daylib.workset_api_cli:main"
+daylily-workset-monitor = "daylib.workset_monitor_cli:main"
+daylily-stage-samples-from-local-to-headnode = "daylib.stage_samples:main"
+daylily-export-fsx-to-s3-from-local = "daylib.export_fsx:main"
+daylily-purge-customer-data = "daylib.purge_customer:main"
+daylily-workset-report = "daylib.workset_report:main"
+daylily-workset-worker = "daylib.workset_worker:main"
+daylily-workset-metrics = "daylib.workset_metrics:main"
 
 [tool.setuptools_scm]
 version_scheme = "guess-next-dev"
@@ -88,4 +96,5 @@ warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false
 ignore_missing_imports = true
+no_site_packages = true
 

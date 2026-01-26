@@ -18,14 +18,14 @@ from datetime import datetime, timezone
 from pathlib import PurePosixPath
 from typing import Any, Dict, List, Optional, Tuple
 
+import boto3
+from boto3.dynamodb.conditions import Key
+from botocore.exceptions import ClientError
+
 
 def _utc_now_iso() -> str:
     """Return current UTC time in ISO format with Z suffix."""
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-
-import boto3
-from botocore.exceptions import ClientError
-from boto3.dynamodb.conditions import Key
 
 LOGGER = logging.getLogger("daylily.file_registry")
 
@@ -365,9 +365,9 @@ class FileRegistry:
                 return None
 
             item = response["Item"]
-            LOGGER.debug(f"get_file: Converting item to FileRegistration")
+            LOGGER.debug("get_file: Converting item to FileRegistration")
             result = self._item_to_registration(item)
-            LOGGER.debug(f"get_file: Successfully converted item to FileRegistration")
+            LOGGER.debug("get_file: Successfully converted item to FileRegistration")
             return result
         except ClientError as e:
             error_code = e.response.get("Error", {}).get("Code", "Unknown")
@@ -1210,7 +1210,7 @@ class BucketFileDiscovery:
         """
         LOGGER.debug(f"check_registration_status: Starting with {len(discovered_files)} files")
         LOGGER.debug(f"check_registration_status: customer_id={customer_id}")
-        LOGGER.debug(f"check_registration_status: registry is FileRegistry instance")
+        LOGGER.debug("check_registration_status: registry is FileRegistry instance")
 
         for i, df in enumerate(discovered_files):
             try:
@@ -1230,7 +1230,7 @@ class BucketFileDiscovery:
                 # Log error but continue processing other files
                 LOGGER.warning(f"check_registration_status: Error processing file {df.key}: {str(e)}")
 
-        LOGGER.debug(f"check_registration_status: Completed successfully")
+        LOGGER.debug("check_registration_status: Completed successfully")
         return discovered_files
 
     def auto_register_files(

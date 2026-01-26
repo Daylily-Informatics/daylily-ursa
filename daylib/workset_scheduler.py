@@ -9,7 +9,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
-from daylib.workset_state_db import WorksetPriority, WorksetState, WorksetStateDB
+from daylib.workset_state_db import WorksetPriority, WorksetStateDB
 
 LOGGER = logging.getLogger("daylily.workset_scheduler")
 

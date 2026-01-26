@@ -19,7 +19,8 @@ def mock_settings():
     settings.get_effective_region.return_value = "us-west-2"
     settings.workset_table_name = "test-worksets"
     settings.customer_table_name = "test-customers"
-    settings.daylily_file_registry_table = "test-file-registry"
+    settings.daylily_linked_buckets_table = "test-linked-buckets"
+    settings.daylily_manifest_table = "test-manifests"
     return settings
 
 
@@ -146,5 +147,6 @@ class TestAwsTeardown:
                     result = runner.invoke(aws_app, ["teardown", "--force"])
                     assert result.exit_code == 0
                     assert "Deleted table" in result.output or "teardown complete" in result.output
-                    assert mock_table.delete.call_count == 3
+                    # System now has 11 tables: 4 core + 3 FILE_REGISTRY_TABLES + 4 BIOSPECIMEN_TABLES
+                    assert mock_table.delete.call_count == 11
 

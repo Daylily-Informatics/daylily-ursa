@@ -2,7 +2,7 @@
 
 import datetime as dt
 from decimal import Decimal
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from botocore.exceptions import ClientError
@@ -351,6 +351,49 @@ def test_deserialize_item(state_db):
     assert deserialized["metrics"]["values"] == [1.1, 2.2]
 
 
+def test_deserialize_item_promotes_sample_count_from_metadata(state_db):
+    """Test that sample_count is promoted from metadata to top level.
+
+    This ensures templates can use ws.sample_count instead of ws.metadata.sample_count.
+    Regression test for: "Samples" column in Recent Worksets always showing 0.
+    """
+    item = {
+        "workset_id": "test-ws",
+        "state": "ready",
+        "metadata": {
+            "sample_count": 5,
+            "pipeline_type": "germline",
+            "samples": [{"sample_id": f"S{i}"} for i in range(5)],
+        },
+    }
+
+    deserialized = state_db._deserialize_item(item)
+
+    # sample_count should be promoted to top level
+    assert deserialized["sample_count"] == 5
+    # pipeline_type should also be promoted
+    assert deserialized["pipeline_type"] == "germline"
+    # Original metadata should still be intact
+    assert deserialized["metadata"]["sample_count"] == 5
+    assert deserialized["metadata"]["pipeline_type"] == "germline"
+
+
+def test_deserialize_item_does_not_overwrite_top_level_sample_count(state_db):
+    """Test that top-level sample_count is not overwritten by metadata."""
+    item = {
+        "workset_id": "test-ws",
+        "sample_count": 10,  # Top-level takes precedence
+        "metadata": {
+            "sample_count": 5,  # Should not overwrite
+        },
+    }
+
+    deserialized = state_db._deserialize_item(item)
+
+    # Top-level value should be preserved
+    assert deserialized["sample_count"] == 10
+
+
 def test_record_failure_transient(state_db, mock_dynamodb):
     """Test recording a transient failure."""
     mock_table = mock_dynamodb["table"]
@@ -694,6 +737,10 @@ def test_archive_workset_with_reason(state_db, mock_dynamodb):
     """Test archiving a workset with a reason."""
     mock_table = mock_dynamodb["table"]
     mock_table.update_item.return_value = {}
+    # Mock get_workset to return a workset (archive_workset looks it up first)
+    mock_table.get_item.return_value = {
+        "Item": {"workset_id": "test-ws-001", "state": "complete"}
+    }
 
     result = state_db.archive_workset(
         workset_id="test-ws-001",
@@ -723,4 +770,290 @@ def test_delete_workset_with_reason(state_db, mock_dynamodb):
     call_args = mock_table.update_item.call_args
     expr_values = call_args.kwargs["ExpressionAttributeValues"]
     assert expr_values[":reason"] == "Customer request"
+
+
+# ========== Tests for Phase 1 bucket normalization fixes ==========
+
+
+class TestBucketNormalizationInStateDB:
+    """Test bucket names are normalized in WorksetStateDB.register_workset."""
+
+    def test_register_workset_normalizes_s3_prefix(self, state_db, mock_dynamodb):
+        """Test register_workset strips s3:// prefix from bucket."""
+        mock_table = mock_dynamodb["table"]
+        mock_table.put_item.return_value = {}
+
+        result = state_db.register_workset(
+            workset_id="test-ws-norm",
+            bucket="s3://my-bucket-with-prefix",
+            prefix="worksets/test/",
+            priority=WorksetPriority.NORMAL,
+            metadata={"samples": [{"sample_id": "S1"}], "sample_count": 1},
+            customer_id="test-customer",
+        )
+
+        assert result is True
+        call_args = mock_table.put_item.call_args
+        item = call_args.kwargs["Item"]
+        assert item["bucket"] == "my-bucket-with-prefix"
+
+    def test_register_workset_normalizes_bucket_with_path(self, state_db, mock_dynamodb):
+        """Test register_workset extracts bucket from s3://bucket/path format."""
+        mock_table = mock_dynamodb["table"]
+        mock_table.put_item.return_value = {}
+
+        result = state_db.register_workset(
+            workset_id="test-ws-path",
+            bucket="s3://my-bucket/some/path/component",
+            prefix="worksets/test/",
+            priority=WorksetPriority.NORMAL,
+            metadata={"samples": [{"sample_id": "S1"}], "sample_count": 1},
+            customer_id="test-customer",
+        )
+
+        assert result is True
+        call_args = mock_table.put_item.call_args
+        item = call_args.kwargs["Item"]
+        assert item["bucket"] == "my-bucket"
+
+    def test_register_workset_rejects_empty_bucket(self, state_db, mock_dynamodb):
+        """Test register_workset raises ValueError for empty bucket."""
+        with pytest.raises(ValueError, match="Invalid bucket name"):
+            state_db.register_workset(
+                workset_id="test-ws-empty",
+                bucket="",
+                prefix="worksets/test/",
+                priority=WorksetPriority.NORMAL,
+                metadata={"samples": [{"sample_id": "S1"}], "sample_count": 1},
+                customer_id="test-customer",
+            )
+
+    def test_register_workset_rejects_s3_only_bucket(self, state_db, mock_dynamodb):
+        """Test register_workset raises ValueError for 's3://' only bucket."""
+        with pytest.raises(ValueError, match="Invalid bucket name"):
+            state_db.register_workset(
+                workset_id="test-ws-s3only",
+                bucket="s3://",
+                prefix="worksets/test/",
+                priority=WorksetPriority.NORMAL,
+                metadata={"samples": [{"sample_id": "S1"}], "sample_count": 1},
+                customer_id="test-customer",
+            )
+
+    def test_register_workset_plain_bucket_unchanged(self, state_db, mock_dynamodb):
+        """Test register_workset leaves plain bucket name unchanged."""
+        mock_table = mock_dynamodb["table"]
+        mock_table.put_item.return_value = {}
+
+        result = state_db.register_workset(
+            workset_id="test-ws-plain",
+            bucket="plain-bucket-name",
+            prefix="worksets/test/",
+            priority=WorksetPriority.NORMAL,
+            metadata={"samples": [{"sample_id": "S1"}], "sample_count": 1},
+            customer_id="test-customer",
+        )
+
+        assert result is True
+        call_args = mock_table.put_item.call_args
+        item = call_args.kwargs["Item"]
+        assert item["bucket"] == "plain-bucket-name"
+
+
+class TestCostReportStorage:
+    """Tests for Phase 5B: Snakemake cost report storage."""
+
+    def test_update_cost_report_success(self, state_db, mock_dynamodb):
+        """Test storing cost report data in DynamoDB."""
+        mock_table = mock_dynamodb["table"]
+        mock_table.update_item.return_value = {}
+
+        result = state_db.update_cost_report(
+            workset_id="test-ws-001",
+            total_compute_cost_usd=12.3456,
+            per_sample_costs={"HG002": 5.1234, "HG003": 7.2222},
+            rule_count=42,
+            sample_count=2,
+        )
+
+        assert result is True
+        call_args = mock_table.update_item.call_args
+        expr_values = call_args.kwargs["ExpressionAttributeValues"]
+        assert expr_values[":cost"] == "12.3456"
+        assert expr_values[":psc"] == {"HG002": "5.1234", "HG003": "7.2222"}
+        assert expr_values[":rc"] == 42
+        assert expr_values[":sc"] == 2
+
+    def test_update_cost_report_minimal(self, state_db, mock_dynamodb):
+        """Test storing cost report with only total cost."""
+        mock_table = mock_dynamodb["table"]
+        mock_table.update_item.return_value = {}
+
+        result = state_db.update_cost_report(
+            workset_id="test-ws-002",
+            total_compute_cost_usd=0.5,
+        )
+
+        assert result is True
+        call_args = mock_table.update_item.call_args
+        expr_values = call_args.kwargs["ExpressionAttributeValues"]
+        assert expr_values[":cost"] == "0.5"
+        assert ":psc" not in expr_values
+        assert ":rc" not in expr_values
+        assert ":sc" not in expr_values
+
+    def test_update_cost_report_handles_error(self, state_db, mock_dynamodb):
+        """Test update_cost_report returns False on DynamoDB error."""
+        mock_table = mock_dynamodb["table"]
+        mock_table.update_item.side_effect = ClientError(
+            {"Error": {"Code": "ValidationException", "Message": "Test error"}},
+            "UpdateItem",
+        )
+
+        result = state_db.update_cost_report(
+            workset_id="test-ws-003",
+            total_compute_cost_usd=1.0,
+        )
+
+        assert result is False
+
+    def test_get_cost_report_success(self, state_db, mock_dynamodb):
+        """Test retrieving cost report data from DynamoDB."""
+        mock_table = mock_dynamodb["table"]
+        mock_table.get_item.return_value = {
+            "Item": {
+                "total_compute_cost_usd": "12.3456",
+                "per_sample_costs": {"HG002": "5.1234", "HG003": "7.2222"},
+                "cost_report_parsed_at": "2026-01-24T10:00:00Z",
+                "cost_report_rule_count": 42,
+                "cost_report_sample_count": 2,
+            }
+        }
+
+        result = state_db.get_cost_report("test-ws-001")
+
+        assert result is not None
+        assert result["total_compute_cost_usd"] == 12.3456
+        assert result["per_sample_costs"] == {"HG002": 5.1234, "HG003": 7.2222}
+        assert result["cost_report_parsed_at"] == "2026-01-24T10:00:00Z"
+        assert result["cost_report_rule_count"] == 42
+        assert result["cost_report_sample_count"] == 2
+
+    def test_get_cost_report_not_found(self, state_db, mock_dynamodb):
+        """Test get_cost_report returns None when workset not found."""
+        mock_table = mock_dynamodb["table"]
+        mock_table.get_item.return_value = {}
+
+        result = state_db.get_cost_report("nonexistent-ws")
+
+        assert result is None
+
+    def test_get_cost_report_partial_data(self, state_db, mock_dynamodb):
+        """Test get_cost_report handles partial data."""
+        mock_table = mock_dynamodb["table"]
+        mock_table.get_item.return_value = {
+            "Item": {
+                "total_compute_cost_usd": "5.0",
+            }
+        }
+
+        result = state_db.get_cost_report("test-ws-partial")
+
+        assert result is not None
+        assert result["total_compute_cost_usd"] == 5.0
+        assert "per_sample_costs" not in result
+
+
+class TestStorageMetrics:
+    """Tests for Phase 5C: FSx + S3 storage tracking."""
+
+    def test_update_storage_metrics_success(self, state_db, mock_dynamodb):
+        """Test storing storage metrics in DynamoDB."""
+        mock_table = mock_dynamodb["table"]
+        mock_table.update_item.return_value = {}
+
+        result = state_db.update_storage_metrics(
+            workset_id="test-ws-001",
+            results_storage_bytes=1073741824,  # 1 GB
+            fsx_storage_bytes=2147483648,  # 2 GB
+        )
+
+        assert result is True
+        call_args = mock_table.update_item.call_args
+        expr_values = call_args.kwargs["ExpressionAttributeValues"]
+        assert expr_values[":rsb"] == 1073741824
+        assert expr_values[":fsb"] == 2147483648
+
+    def test_update_storage_metrics_without_fsx(self, state_db, mock_dynamodb):
+        """Test storing storage metrics without FSx size."""
+        mock_table = mock_dynamodb["table"]
+        mock_table.update_item.return_value = {}
+
+        result = state_db.update_storage_metrics(
+            workset_id="test-ws-002",
+            results_storage_bytes=536870912,  # 512 MB
+        )
+
+        assert result is True
+        call_args = mock_table.update_item.call_args
+        expr_values = call_args.kwargs["ExpressionAttributeValues"]
+        assert expr_values[":rsb"] == 536870912
+        assert ":fsb" not in expr_values
+
+    def test_update_storage_metrics_handles_error(self, state_db, mock_dynamodb):
+        """Test update_storage_metrics returns False on DynamoDB error."""
+        mock_table = mock_dynamodb["table"]
+        mock_table.update_item.side_effect = ClientError(
+            {"Error": {"Code": "ValidationException", "Message": "Test error"}},
+            "UpdateItem",
+        )
+
+        result = state_db.update_storage_metrics(
+            workset_id="test-ws-003",
+            results_storage_bytes=1000,
+        )
+
+        assert result is False
+
+    def test_get_storage_metrics_success(self, state_db, mock_dynamodb):
+        """Test retrieving storage metrics from DynamoDB."""
+        mock_table = mock_dynamodb["table"]
+        mock_table.get_item.return_value = {
+            "Item": {
+                "results_storage_bytes": 1073741824,
+                "fsx_storage_bytes": 2147483648,
+                "storage_calculated_at": "2026-01-24T10:00:00Z",
+            }
+        }
+
+        result = state_db.get_storage_metrics("test-ws-001")
+
+        assert result is not None
+        assert result["results_storage_bytes"] == 1073741824
+        assert result["fsx_storage_bytes"] == 2147483648
+        assert result["storage_calculated_at"] == "2026-01-24T10:00:00Z"
+
+    def test_get_storage_metrics_not_found(self, state_db, mock_dynamodb):
+        """Test get_storage_metrics returns None when workset not found."""
+        mock_table = mock_dynamodb["table"]
+        mock_table.get_item.return_value = {}
+
+        result = state_db.get_storage_metrics("nonexistent-ws")
+
+        assert result is None
+
+    def test_get_storage_metrics_partial_data(self, state_db, mock_dynamodb):
+        """Test get_storage_metrics handles partial data."""
+        mock_table = mock_dynamodb["table"]
+        mock_table.get_item.return_value = {
+            "Item": {
+                "results_storage_bytes": 500000,
+            }
+        }
+
+        result = state_db.get_storage_metrics("test-ws-partial")
+
+        assert result is not None
+        assert result["results_storage_bytes"] == 500000
+        assert "fsx_storage_bytes" not in result
 

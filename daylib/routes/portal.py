@@ -14,25 +14,30 @@ Contains HTML template-based routes for:
 from __future__ import annotations
 
 import logging
+import csv
+import io
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from urllib.parse import quote_plus
 
-import boto3
-from fastapi import APIRouter, Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile, status
-from fastapi.responses import HTMLResponse, RedirectResponse
-from fastapi.staticfiles import StaticFiles
+from botocore.exceptions import ClientError
+from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile, status
+from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
 from daylib.config import Settings
+from daylib.s3_utils import RegionAwareS3Client
 from daylib.file_registry import detect_file_format as _detect_file_format
 from daylib.routes.dependencies import (
     convert_customer_for_template,
     format_file_size,
-    get_file_icon,
+    APITokenCreateRequest,
+    ChangePasswordRequest,
     PortalFileAutoRegisterRequest,
     PortalFileAutoRegisterResponse,
+    verify_workset_access,
 )
 from daylib.workset_state_db import WorksetStateDB, WorksetState
 
@@ -41,6 +46,9 @@ if TYPE_CHECKING:
     from daylib.workset_customer import CustomerManager
 
 LOGGER = logging.getLogger("daylily.routes.portal")
+
+
+PASSWORD_MIN_LENGTH = 8
 
 
 class PortalDependencies:
@@ -106,14 +114,17 @@ def _get_template_context(request: Request, deps: PortalDependencies, **kwargs) 
         "auth_enabled": deps.enable_auth,
         "current_year": datetime.now().year,
         "cache_bust": cache_bust,
-        **kwargs,
     }
     if "customer" in kwargs and kwargs["customer"]:
         context["customer_id"] = kwargs["customer"].customer_id
     if hasattr(request, "session") and request.session.get("user_email"):
         context["user_email"] = request.session.get("user_email")
         context["user_authenticated"] = True
-        context["is_admin"] = request.session.get("is_admin", False)
+        # Default is_admin from session, but allow explicit override via kwargs
+        if "is_admin" not in kwargs:
+            context["is_admin"] = request.session.get("is_admin", False)
+    # Apply kwargs last so explicit values take precedence
+    context.update(kwargs)
     return context
 
 
@@ -130,6 +141,38 @@ def _require_portal_auth(request: Request) -> Optional[RedirectResponse]:
         LOGGER.warning(f"Session missing customer_id for user {request.session.get('user_email')}")
         return RedirectResponse(url="/portal/login", status_code=302)
     return None
+
+
+def _require_admin(request: Request) -> None:
+    """Require that the current portal session is admin.
+
+    Raises:
+        HTTPException: If the user is authenticated but not admin.
+    """
+    if not bool(request.session.get("is_admin", False)):
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+
+def _validate_password_min_length(password: str) -> Optional[str]:
+    """Return an error message if password fails the minimum-length requirement."""
+    if len(password) < PASSWORD_MIN_LENGTH:
+        return f"Password must be at least {PASSWORD_MIN_LENGTH} characters"
+    return None
+
+
+def _require_portal_api_session(request: Request) -> str:
+    """Require a valid portal session for JSON endpoints.
+
+    Returns:
+        customer_id: The authenticated customer's ID.
+    """
+    if not hasattr(request, "session"):
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    user_email = request.session.get("user_email")
+    customer_id = request.session.get("customer_id")
+    if not user_email or not customer_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return str(customer_id)
 
 
 def _get_first_customer_converted(deps: PortalDependencies):
@@ -297,6 +340,26 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
     """
     router = APIRouter(tags=["portal"])
 
+    # ========== Public Legal Pages ==========
+
+    @router.get("/terms", response_class=HTMLResponse)
+    async def terms_of_service(request: Request):
+        """Public Terms of Service page."""
+        return deps.templates.TemplateResponse(
+            request,
+            "legal/terms.html",
+            _get_template_context(request, deps),
+        )
+
+    @router.get("/privacy", response_class=HTMLResponse)
+    async def privacy_policy(request: Request):
+        """Public Privacy Policy page."""
+        return deps.templates.TemplateResponse(
+            request,
+            "legal/privacy.html",
+            _get_template_context(request, deps),
+        )
+
     # ========== Dashboard ==========
 
     @router.get("/portal", response_class=HTMLResponse)
@@ -309,7 +372,7 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         customer = None
         customer_id = None
         worksets = []
-        stats = {
+        stats: Dict[str, Any] = {
             "active_worksets": 0,
             "completed_worksets": 0,
             "storage_used_gb": 0,
@@ -339,6 +402,20 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                 all_worksets = []
                 for ws_state in WorksetState:
                     batch = deps.state_db.list_worksets_by_state(ws_state, limit=100)
+
+                    # SECURITY: portal dashboard must only show worksets the user can access.
+                    session_user_email = request.session.get("user_email") if hasattr(request, "session") else None
+                    session_is_admin = bool(request.session.get("is_admin", False)) if hasattr(request, "session") else False
+                    batch = [
+                        ws
+                        for ws in batch
+                        if verify_workset_access(
+                            ws,
+                            customer_id=customer_id,
+                            user_email=session_user_email,
+                            is_admin=session_is_admin,
+                        )
+                    ]
                     all_worksets.extend(batch)
                 worksets = all_worksets[:10]
 
@@ -533,6 +610,12 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         """Handle reset password form submission."""
         if not deps.cognito_auth:
             return RedirectResponse(url="/portal/reset-password?error=Password+reset+not+available", status_code=302)
+        min_len_error = _validate_password_min_length(password)
+        if min_len_error:
+            return RedirectResponse(
+                url=f"/portal/reset-password?email={email}&error={min_len_error.replace(' ', '+')}",
+                status_code=302,
+            )
         if password != confirm_password:
             return RedirectResponse(url=f"/portal/reset-password?email={email}&error=Passwords+do+not+match", status_code=302)
         try:
@@ -567,6 +650,12 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         email = request.session.get("challenge_email")
         if not session or not email:
             return RedirectResponse(url="/portal/login?error=Session+expired.+Please+log+in+again", status_code=302)
+        min_len_error = _validate_password_min_length(new_password)
+        if min_len_error:
+            return RedirectResponse(
+                url=f"/portal/change-password?error={min_len_error.replace(' ', '+')}",
+                status_code=302,
+            )
         if new_password != confirm_password:
             return RedirectResponse(url="/portal/change-password?error=Passwords+do+not+match", status_code=302)
         try:
@@ -595,10 +684,19 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
     @router.get("/portal/register", response_class=HTMLResponse)
     async def portal_register(request: Request, error: Optional[str] = None, success: Optional[str] = None):
         """Registration page."""
+        # Get allowed regions for bucket provisioning
+        allowed_regions = deps.settings.get_allowed_regions() if deps.settings else ["us-west-2"]
+        default_region = deps.settings.get_effective_region() if deps.settings else "us-west-2"
         return deps.templates.TemplateResponse(
             request,
             "auth/register.html",
-            _get_template_context(request, deps, error=error, success=success),
+            _get_template_context(
+                request, deps,
+                error=error,
+                success=success,
+                allowed_regions=allowed_regions,
+                default_region=default_region,
+            ),
         )
 
     @router.post("/portal/register", response_class=HTMLResponse)
@@ -612,6 +710,7 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         cost_center: Optional[str] = Form(None),
         s3_option: str = Form("auto"),
         custom_s3_bucket: Optional[str] = Form(None),
+        bucket_region: Optional[str] = Form(None),
     ):
         """Handle registration form submission."""
         if not deps.customer_manager:
@@ -631,6 +730,7 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
 
         try:
             custom_bucket = None
+            effective_bucket_region = bucket_region if s3_option == "auto" else None
             if s3_option == "byob" and custom_s3_bucket:
                 custom_bucket = custom_s3_bucket.strip()
                 if custom_bucket:
@@ -651,6 +751,7 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                 billing_account_id=billing_account_id,
                 cost_center=cost_center,
                 custom_s3_bucket=custom_bucket,
+                bucket_region=effective_bucket_region,
             )
             LOGGER.info(f"Registration: enable_auth={deps.enable_auth}, cognito_auth={'SET' if deps.cognito_auth else 'NONE'}")
             if deps.enable_auth and deps.cognito_auth:
@@ -689,7 +790,74 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                 _get_template_context(request, deps, error=str(e)),
             )
 
+    # ========== Portal JSON Auth Endpoints (used by /portal/account UI) ==========
+
+    @router.post("/api/v1/auth/change-password")
+    async def portal_api_change_password(request: Request, payload: ChangePasswordRequest):
+        """Change the current user's password via portal session."""
+        _require_portal_api_session(request)
+        if not deps.cognito_auth:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Password change not available")
+        access_token = request.session.get("access_token")
+        if not access_token:
+            raise HTTPException(status_code=401, detail="Session expired; please log in again")
+
+        min_len_error = _validate_password_min_length(payload.new_password)
+        if min_len_error:
+            raise HTTPException(status_code=400, detail=min_len_error)
+
+        try:
+            deps.cognito_auth.change_password(
+                access_token=str(access_token),
+                old_password=payload.current_password,
+                new_password=payload.new_password,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+        return {"ok": True}
+
+    @router.get("/api/v1/auth/tokens")
+    async def portal_api_list_tokens(request: Request):
+        """List API tokens for the current customer (metadata only)."""
+        customer_id = _require_portal_api_session(request)
+        if not deps.customer_manager:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Token management not configured")
+        return deps.customer_manager.list_api_tokens(customer_id)
+
+    @router.post("/api/v1/auth/tokens")
+    async def portal_api_create_token(request: Request, payload: APITokenCreateRequest):
+        """Create a new API token and return the secret once."""
+        customer_id = _require_portal_api_session(request)
+        if not deps.customer_manager:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Token management not configured")
+
+        try:
+            result = deps.customer_manager.add_api_token(customer_id, name=payload.name, expiry_days=payload.expiry_days)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+        return {"token": result.get("secret"), "token_meta": result.get("token")}
+
+    @router.delete("/api/v1/auth/tokens/{token_id}")
+    async def portal_api_revoke_token(request: Request, token_id: str):
+        """Revoke an API token for the current customer."""
+        customer_id = _require_portal_api_session(request)
+        if not deps.customer_manager:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Token management not configured")
+
+        revoked = deps.customer_manager.revoke_api_token(customer_id, token_id)
+        if not revoked:
+            raise HTTPException(status_code=404, detail="Token not found")
+        return {"revoked": True}
+
     # ========== Worksets Routes ==========
+
+    # Create region-aware S3 client for portal operations (supports cross-region buckets)
+    _portal_s3_client = RegionAwareS3Client(
+        default_region=deps.region,
+        profile=deps.profile,
+    )
 
     def _get_s3_sentinel_status(bucket: str, prefix: str) -> str:
         """Get workset status from S3 sentinel files.
@@ -702,12 +870,6 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         5. daylily.ready -> ready
         6. No sentinels -> unknown
         """
-        import boto3
-        session_kwargs = {"region_name": deps.region}
-        if deps.profile:
-            session_kwargs["profile_name"] = deps.profile
-        s3 = boto3.Session(**session_kwargs).client("s3")
-
         # Sentinel file names
         sentinels = {
             "daylily.complete": "complete",
@@ -722,7 +884,8 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
             prefix = prefix + "/"
 
         try:
-            response = s3.list_objects_v2(Bucket=bucket, Prefix=prefix, MaxKeys=100)
+            # Use region-aware S3 client to handle cross-region buckets
+            response = _portal_s3_client.list_objects_v2(Bucket=bucket, Prefix=prefix, MaxKeys=100)
             found_sentinels = set()
             for obj in response.get("Contents", []):
                 key = obj["Key"]
@@ -758,8 +921,33 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         auth_redirect = _require_portal_auth(request)
         if auth_redirect:
             return auth_redirect
-        customer, _ = _get_customer_for_session(request, deps)
+        customer, customer_config = _get_customer_for_session(request, deps)
         worksets = []
+
+        # Get customer_id for filtering (security: only show customer's own worksets)
+        session_customer_id = None
+        if customer:
+            session_customer_id = customer.customer_id
+        if not session_customer_id:
+            LOGGER.warning("No customer_id in session - returning empty workset list")
+            # Return empty list if no customer context (security)
+            return deps.templates.TemplateResponse(
+                request,
+                "worksets/list.html",
+                _get_template_context(
+                    request, deps,
+                    customer=customer,
+                    worksets=[],
+                    current_page=1,
+                    total_pages=1,
+                    total_count=0,
+                    filter_status=status,
+                    filter_type=type,
+                    filter_search=search,
+                    filter_sort=sort,
+                    active_page="worksets",
+                ),
+            )
 
         # Determine which states to query based on status filter
         excluded_states = {WorksetState.ARCHIVED, WorksetState.DELETED}
@@ -780,6 +968,20 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                     continue
                 batch = deps.state_db.list_worksets_by_state(ws_state, limit=100)
                 worksets.extend(batch)
+
+        # SECURITY: Filter to only worksets the user can access
+        session_user_email = request.session.get("user_email") if hasattr(request, "session") else None
+        session_is_admin = bool(request.session.get("is_admin", False)) if hasattr(request, "session") else False
+        worksets = [
+            w
+            for w in worksets
+            if verify_workset_access(
+                w,
+                customer_id=session_customer_id,
+                user_email=session_user_email,
+                is_admin=session_is_admin,
+            )
+        ]
 
         # Process worksets and apply additional filters
         filtered_worksets = []
@@ -904,16 +1106,34 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         auth_redirect = _require_portal_auth(request)
         if auth_redirect:
             return auth_redirect
-        customer = None
+        customer, _ = _get_customer_for_session(request, deps)
         archived_worksets = []
-        if deps.customer_manager:
-            customers = deps.customer_manager.list_customers()
-            if customers:
-                customer = convert_customer_for_template(customers[0])
-                all_archived = deps.state_db.list_archived_worksets(limit=500)
-                customer_config = deps.customer_manager.get_customer_config(customers[0].customer_id)
-                if customer_config:
-                    archived_worksets = [w for w in all_archived if w.get("bucket") == customer_config.s3_bucket]
+
+        # Get customer_id for filtering (security: only show customer's own worksets)
+        session_customer_id = None
+        if customer:
+            session_customer_id = customer.customer_id
+
+        if session_customer_id:
+            all_archived = deps.state_db.list_archived_worksets(limit=500)
+            LOGGER.info("Found %d total archived worksets in DynamoDB", len(all_archived))
+
+            # SECURITY: Filter to only worksets the user can access
+            session_user_email = request.session.get("user_email") if hasattr(request, "session") else None
+            session_is_admin = bool(request.session.get("is_admin", False)) if hasattr(request, "session") else False
+            archived_worksets = [
+                w
+                for w in all_archived
+                if verify_workset_access(
+                    w,
+                    customer_id=session_customer_id,
+                    user_email=session_user_email,
+                    is_admin=session_is_admin,
+                )
+            ]
+            LOGGER.info("After customer_id filter: %d archived worksets", len(archived_worksets))
+        else:
+            LOGGER.warning("No customer_id in session - returning empty archived workset list")
         # Ensure workset_type is available for each archived workset
         for ws in archived_worksets:
             metadata = ws.get("metadata", {})
@@ -941,6 +1161,23 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         if not workset:
             raise HTTPException(status_code=404, detail="Workset not found")
         customer, _ = _get_customer_for_session(request, deps)
+
+        # SECURITY: Verify workset access before displaying
+        session_user_email = request.session.get("user_email") if hasattr(request, "session") else None
+        session_is_admin = bool(request.session.get("is_admin", False)) if hasattr(request, "session") else False
+        if customer and not verify_workset_access(
+            workset,
+            customer_id=customer.customer_id,
+            user_email=session_user_email,
+            is_admin=session_is_admin,
+        ):
+            LOGGER.warning(
+                "Access denied: customer %s attempted to view workset %s owned by %s",
+                customer.customer_id,
+                workset_id,
+                workset.get("customer_id", "unknown"),
+            )
+            raise HTTPException(status_code=404, detail="Workset not found")
         metadata = workset.get("metadata", {})
         if metadata:
             if "samples" in metadata and "samples" not in workset:
@@ -967,18 +1204,43 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         workset = deps.state_db.get_workset(workset_id)
         if not workset:
             raise HTTPException(status_code=404, detail="Workset not found")
+
+        # SECURITY: Verify workset access before allowing download
+        customer, _ = _get_customer_for_session(request, deps)
+        session_user_email = request.session.get("user_email") if hasattr(request, "session") else None
+        session_is_admin = bool(request.session.get("is_admin", False)) if hasattr(request, "session") else False
+        if customer and not verify_workset_access(
+            workset,
+            customer_id=customer.customer_id,
+            user_email=session_user_email,
+            is_admin=session_is_admin,
+        ):
+            LOGGER.warning(
+                "Access denied: customer %s attempted to download workset %s",
+                customer.customer_id,
+                workset_id,
+            )
+            raise HTTPException(status_code=404, detail="Workset not found")
+
+
         if workset.get("state") != "complete":
-            raise HTTPException(status_code=400, detail=f"Workset is not complete (current state: {workset.get('state')})")
+            raise HTTPException(
+                status_code=400,
+                detail=f"Workset is not complete (current state: {workset.get('state')})",
+            )
+
         bucket = workset.get("bucket")
+        if not bucket or not isinstance(bucket, str):
+            raise HTTPException(status_code=400, detail="No results bucket available for this workset")
         prefix = workset.get("prefix", "").rstrip("/")
         results_prefix = f"{prefix}/results/" if prefix else "results/"
         try:
-            session_kwargs = {"region_name": deps.region}
-            if deps.profile:
-                session_kwargs["profile_name"] = deps.profile
-            session = boto3.Session(**session_kwargs)
-            s3 = session.client("s3")
-            response = s3.list_objects_v2(Bucket=bucket, Prefix=results_prefix, MaxKeys=100)
+
+            response = _portal_s3_client.list_objects_v2(
+                Bucket=bucket,
+                Prefix=results_prefix,
+                MaxKeys=100,
+            )
             result_files = []
             for obj in response.get("Contents", []):
                 key = obj["Key"]
@@ -987,11 +1249,20 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                     result_files.append({"key": key, "filename": filename, "size": obj.get("Size", 0)})
             if not result_files:
                 raise HTTPException(status_code=404, detail="No result files found for this workset")
-            main_results = [f for f in result_files if f["filename"].endswith((".vcf", ".vcf.gz", ".bam", ".cram", ".html"))]
+
+            main_results = [
+                f
+                for f in result_files
+                if f["filename"].endswith((".vcf", ".vcf.gz", ".bam", ".cram", ".html"))
+            ]
             download_file = main_results[0] if main_results else result_files[0]
-            presigned_url = s3.generate_presigned_url(
+            presigned_url = _portal_s3_client.generate_presigned_url(
                 "get_object",
-                Params={"Bucket": bucket, "Key": download_file["key"], "ResponseContentDisposition": f'attachment; filename="{download_file["filename"]}"'},
+                Params={
+                    "Bucket": bucket,
+                    "Key": download_file["key"],
+                    "ResponseContentDisposition": f'attachment; filename="{download_file["filename"]}"',
+                },
                 ExpiresIn=3600,
             )
             return RedirectResponse(url=presigned_url, status_code=302)
@@ -1010,6 +1281,22 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         customer, _ = _get_customer_for_session(request, deps)
         workset = deps.state_db.get_workset(workset_id)
         if not workset:
+            raise HTTPException(status_code=404, detail="Workset not found")
+
+        # SECURITY: Verify workset access before allowing browse
+        session_user_email = request.session.get("user_email") if hasattr(request, "session") else None
+        session_is_admin = bool(request.session.get("is_admin", False)) if hasattr(request, "session") else False
+        if customer and not verify_workset_access(
+            workset,
+            customer_id=customer.customer_id,
+            user_email=session_user_email,
+            is_admin=session_is_admin,
+        ):
+            LOGGER.warning(
+                "Access denied: customer %s attempted to browse workset %s results",
+                customer.customer_id,
+                workset_id,
+            )
             raise HTTPException(status_code=404, detail="Workset not found")
 
         # Get results S3 URI
@@ -1040,14 +1327,8 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                 parent_prefix = ""
 
         try:
-            session_kwargs = {"region_name": deps.region}
-            if deps.profile:
-                session_kwargs["profile_name"] = deps.profile
-            session = boto3.Session(**session_kwargs)
-            s3 = session.client("s3")
-
             # List objects with delimiter to get folders
-            paginator = s3.get_paginator("list_objects_v2")
+            paginator = _portal_s3_client.get_paginator("list_objects_v2")
             for page in paginator.paginate(Bucket=bucket, Prefix=current_prefix, Delimiter="/"):
                 # Add folders (common prefixes)
                 for cp in page.get("CommonPrefixes", []):
@@ -1135,6 +1416,23 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         if not workset:
             raise HTTPException(status_code=404, detail="Workset not found")
 
+        # SECURITY: Verify workset access before allowing download
+        customer, _ = _get_customer_for_session(request, deps)
+        session_user_email = request.session.get("user_email") if hasattr(request, "session") else None
+        session_is_admin = bool(request.session.get("is_admin", False)) if hasattr(request, "session") else False
+        if customer and not verify_workset_access(
+            workset,
+            customer_id=customer.customer_id,
+            user_email=session_user_email,
+            is_admin=session_is_admin,
+        ):
+            LOGGER.warning(
+                "Access denied: customer %s attempted to download from workset %s",
+                customer.customer_id,
+                workset_id,
+            )
+            raise HTTPException(status_code=404, detail="Workset not found")
+
         results_uri = workset.get("results_s3_uri")
         if not results_uri:
             raise HTTPException(status_code=400, detail="No results location available")
@@ -1149,15 +1447,10 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         # Full S3 key
         full_key = base_prefix + key
 
-        try:
-            session_kwargs = {"region_name": deps.region}
-            if deps.profile:
-                session_kwargs["profile_name"] = deps.profile
-            session = boto3.Session(**session_kwargs)
-            s3 = session.client("s3")
 
+        try:
             filename = key.split("/")[-1]
-            presigned_url = s3.generate_presigned_url(
+            presigned_url = _portal_s3_client.generate_presigned_url(
                 "get_object",
                 Params={
                     "Bucket": bucket,
@@ -1328,32 +1621,51 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                 if bucket_obj.customer_id != customer.customer_id:
                     LOGGER.warning(f"Access denied: bucket {bucket_id} belongs to {bucket_obj.customer_id}, not {customer.customer_id}")
                     return RedirectResponse(url="/portal/files/buckets?error=Access+denied+to+this+bucket", status_code=302)
-                bucket = {"bucket_id": bucket_obj.bucket_id, "bucket_name": bucket_obj.bucket_name,
-                          "display_name": bucket_obj.display_name or bucket_obj.bucket_name,
-                          "read_only": bucket_obj.read_only, "can_write": bucket_obj.can_write,
-                          "can_list": bucket_obj.can_list, "can_read": bucket_obj.can_read}
+                bucket = {
+                    "bucket_id": bucket_obj.bucket_id,
+                    "bucket_name": bucket_obj.bucket_name,
+                    "display_name": bucket_obj.display_name or bucket_obj.bucket_name,
+                    "read_only": bucket_obj.read_only,
+                    "can_write": bucket_obj.can_write,
+                    "can_list": bucket_obj.can_list,
+                    "can_read": bucket_obj.can_read,
+                }
                 try:
-                    session_kwargs = {"region_name": deps.region}
-                    if deps.profile:
-                        session_kwargs["profile_name"] = deps.profile
-                    session = boto3.Session(**session_kwargs)
-                    s3 = session.client("s3")
-                    response = s3.list_objects_v2(Bucket=bucket_obj.bucket_name, Prefix=current_prefix, Delimiter="/", MaxKeys=500)
+                    response = _portal_s3_client.list_objects_v2(
+                        Bucket=bucket_obj.bucket_name,
+                        Prefix=current_prefix,
+                        Delimiter="/",
+                        MaxKeys=500,
+                    )
                     for cp in response.get("CommonPrefixes", []):
                         folder_path = cp["Prefix"]
                         folder_name = folder_path.rstrip("/").split("/")[-1]
-                        items.append({"name": folder_name, "is_folder": True, "key": folder_path,
-                                      "size_bytes": None, "last_modified": None, "file_format": None, "is_registered": False})
+                        items.append({
+                            "name": folder_name,
+                            "is_folder": True,
+                            "key": folder_path,
+                            "size_bytes": None,
+                            "last_modified": None,
+                            "file_format": None,
+                            "is_registered": False,
+                        })
                     for obj in response.get("Contents", []):
                         if obj["Key"] == current_prefix:
                             continue
                         filename = obj["Key"].split("/")[-1]
                         if filename:
                             file_format = _detect_file_format(filename)
-                            items.append({"name": filename, "is_folder": False, "key": obj["Key"],
-                                          "size_bytes": obj.get("Size", 0), "file_format": file_format,
-                                          "last_modified": obj.get("LastModified").isoformat() if obj.get("LastModified") else None,
-                                          "is_registered": False})
+                            items.append({
+                                "name": filename,
+                                "is_folder": False,
+                                "key": obj["Key"],
+                                "size_bytes": obj.get("Size", 0),
+                                "file_format": file_format,
+                                "last_modified": obj.get("LastModified").isoformat()
+                                if obj.get("LastModified")
+                                else None,
+                                "is_registered": False,
+                            })
                 except Exception as e:
                     LOGGER.warning(f"Failed to browse bucket {bucket_id}: {e}")
         if current_prefix:
@@ -1501,15 +1813,49 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         if not bucket_obj.can_write:
             raise HTTPException(status_code=403, detail="Write access not enabled for this bucket")
         try:
-            session_kwargs = {"region_name": deps.region}
-            if deps.profile:
-                session_kwargs["profile_name"] = deps.profile
-            session = boto3.Session(**session_kwargs)
-            s3 = session.client("s3")
-            s3_key = f"{prefix.strip('/')}/{file.filename}" if prefix else file.filename
-            s3.upload_fileobj(file.file, bucket_obj.bucket_name, s3_key)
+            filename = file.filename
+            if not filename:
+                raise HTTPException(status_code=400, detail="Missing filename")
+
+            normalized_prefix = prefix.strip("/")
+            s3_key = f"{normalized_prefix}/{filename}" if normalized_prefix else filename
+            # Use region-aware S3 client to avoid 403s when bucket is in a different region.
+            _portal_s3_client.upload_fileobj(file.file, bucket_obj.bucket_name, s3_key)
             LOGGER.info(f"Uploaded {file.filename} to s3://{bucket_obj.bucket_name}/{s3_key}")
-            return {"success": True, "bucket": bucket_obj.bucket_name, "key": s3_key, "filename": file.filename}
+            return {
+                "success": True,
+                "bucket": bucket_obj.bucket_name,
+                "key": s3_key,
+                "filename": file.filename,
+            }
+        except HTTPException:
+            raise
+        except ClientError as e:
+            error = e.response.get("Error", {}) if isinstance(e.response, dict) else {}
+            error_code = str(error.get("Code", ""))
+            # IAM / bucket-policy failure modes should be surfaced as 403 (not 500).
+            if error_code in {"AccessDenied", "AllAccessDisabled"}:
+                LOGGER.warning(
+                    "S3 access denied during portal upload: bucket=%s key=%s code=%s",
+                    bucket_obj.bucket_name,
+                    s3_key,
+                    error_code,
+                )
+                raise HTTPException(
+                    status_code=403,
+                    detail=(
+                        f"S3 access denied ({error_code}). "
+                        "Verify IAM permissions and bucket policy."
+                    ),
+                )
+            LOGGER.error(
+                "S3 ClientError during portal upload: bucket=%s key=%s code=%s error=%s",
+                bucket_obj.bucket_name,
+                s3_key,
+                error_code,
+                str(e),
+            )
+            raise HTTPException(status_code=500, detail="Upload failed due to an S3 error")
         except Exception as e:
             LOGGER.error(f"Upload failed: {e}")
             raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
@@ -1624,13 +1970,13 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                 customer_raw = customers[0]
                 customer = convert_customer_for_template(customer_raw)
                 storage["max_gb"] = customer.max_storage_gb
+
                 try:
-                    session_kwargs = {"region_name": deps.region}
-                    if deps.profile:
-                        session_kwargs["profile_name"] = deps.profile
-                    session = boto3.Session(**session_kwargs)
-                    s3 = session.client("s3")
-                    response = s3.list_objects_v2(Bucket=customer.s3_bucket, Prefix=prefix, Delimiter="/")
+                    response = _portal_s3_client.list_objects_v2(
+                        Bucket=customer.s3_bucket,
+                        Prefix=prefix,
+                        Delimiter="/",
+                    )
                     for cp in response.get("CommonPrefixes", []):
                         folder_path = cp["Prefix"]
                         folder_name = folder_path.rstrip("/").split("/")[-1]
@@ -1640,9 +1986,15 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                             continue
                         filename = obj["Key"].split("/")[-1]
                         if filename:
-                            files.append({"name": filename, "key": obj["Key"], "size": obj.get("Size", 0),
-                                          "size_formatted": format_file_size(obj.get("Size", 0)),
-                                          "last_modified": obj.get("LastModified").isoformat() if obj.get("LastModified") else None})
+                            files.append({
+                                "name": filename,
+                                "key": obj["Key"],
+                                "size": obj.get("Size", 0),
+                                "size_formatted": format_file_size(obj.get("Size", 0)),
+                                "last_modified": obj.get("LastModified").isoformat()
+                                if obj.get("LastModified")
+                                else None,
+                            })
                 except Exception as e:
                     LOGGER.warning(f"Failed to browse S3: {e}")
         return deps.templates.TemplateResponse(
@@ -1650,6 +2002,7 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
             "files/browser.html",
             _get_template_context(request, deps, customer=customer, storage=storage, prefix=prefix, active_page="files"),
         )
+
 
     # ========== Usage Routes ==========
 
@@ -1659,12 +2012,11 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         auth_redirect = _require_portal_auth(request)
         if auth_redirect:
             return auth_redirect
-        customer = None
-        # Cost calculation constants
-        S3_STORAGE_COST_PER_GB_MONTH = 0.023  # S3 Standard storage
-        TRANSFER_COST_PER_GB = 0.10  # Placeholder transfer cost
 
-        usage = {
+        customer, _customer_config = _get_customer_for_session(request, deps)
+        customer_id = request.session.get("customer_id")
+
+        usage: Dict[str, Any] = {
             "total_cost": 0,
             "compute_cost_usd": 0,
             "storage_cost_usd": 0,
@@ -1676,104 +2028,278 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
             "active_worksets": 0,
         }
         usage_details: List[Dict[str, Any]] = []
-        if deps.customer_manager:
-            customers = deps.customer_manager.list_customers()
-            if customers:
-                customer = convert_customer_for_template(customers[0])
-                customer_usage = deps.customer_manager.get_customer_usage(customers[0].customer_id)
-                if customer_usage:
-                    usage.update(customer_usage)
-
-        # Generate usage details from completed worksets with actual costs and storage
         workset_storage_breakdown: List[Dict[str, Any]] = []
-        if deps.state_db:
+
+        if deps.customer_manager and customer_id:
+            customer_usage = deps.customer_manager.get_customer_usage(customer_id)
+            if customer_usage:
+                usage.update(customer_usage)
+
+        # Generate usage details from completed worksets for *this customer*
+        if deps.state_db and customer_id:
             try:
-                completed_worksets = deps.state_db.list_worksets_by_state(WorksetState.COMPLETE, limit=100)
-                total_actual_compute = 0.0
-                total_workset_storage_bytes = 0
+                from daylib.billing import BillingCalculator, calculate_customer_cost_breakdown
+
+                breakdown = calculate_customer_cost_breakdown(deps.state_db, customer_id, limit=500)
+                usage["compute_cost_usd"] = breakdown["compute_cost_usd"]
+                usage["storage_cost_usd"] = breakdown["storage_cost_usd"]
+                usage["transfer_cost_usd"] = breakdown["transfer_cost_usd"]
+                usage["total_cost"] = breakdown["total"]
+
+                # Transfer breakdown (3-way)
+                usage["transfer_intra_region_cost_usd"] = breakdown["transfer_intra_region_cost_usd"]
+                usage["transfer_cross_region_cost_usd"] = breakdown["transfer_cross_region_cost_usd"]
+                usage["transfer_internet_cost_usd"] = breakdown["transfer_internet_cost_usd"]
+                usage["transfer_intra_region_gb"] = breakdown["transfer_intra_region_gb"]
+                usage["transfer_cross_region_gb"] = breakdown["transfer_cross_region_gb"]
+                usage["transfer_internet_gb"] = breakdown["transfer_internet_gb"]
+
+                # Rate fields (backwards-compatible aggregate key retained for template fallbacks)
+                usage["transfer_rate_per_gb"] = breakdown["rates"]["data_egress_per_gb"]
+                usage["transfer_intra_region_rate_per_gb"] = breakdown["rates"][
+                    "data_transfer_intra_region_per_gb"
+                ]
+                usage["transfer_cross_region_rate_per_gb"] = breakdown["rates"][
+                    "data_transfer_cross_region_per_gb"
+                ]
+                usage["transfer_internet_rate_per_gb"] = breakdown["rates"]["data_egress_per_gb"]
+                usage["workset_storage_bytes"] = breakdown["total_storage_bytes"]
+                usage["workset_storage_gb"] = breakdown["storage_gb"]
+                usage["storage_gb"] = breakdown["storage_gb"]
+                usage["workset_storage_human"] = _format_bytes(breakdown["total_storage_bytes"])
+
+                calculator = BillingCalculator(state_db=deps.state_db)
+                completed_worksets = deps.state_db.list_worksets_by_customer(
+                    customer_id,
+                    state=WorksetState.COMPLETE,
+                    limit=100,
+                )
+
                 for ws in completed_worksets:
-                    pm = ws.get("performance_metrics", {})
-                    cost_summary = pm.get("cost_summary", {}) if pm and isinstance(pm, dict) else {}
-                    # Try post_export_metrics first, fall back to pre_export_metrics for backwards compatibility
-                    export_metrics = {}
-                    if pm and isinstance(pm, dict):
-                        export_metrics = pm.get("post_export_metrics", {}) or pm.get("pre_export_metrics", {})
-                    actual_cost = float(cost_summary.get("total_cost", 0)) if cost_summary else 0
-                    # Fallback to estimated cost
-                    if actual_cost == 0:
-                        actual_cost = float(ws.get("cost_usd", 0) or ws.get("metadata", {}).get("cost_usd", 0) or 0)
-                    if actual_cost > 0:
-                        total_actual_compute += actual_cost
-                        completed_at = ws.get("updated_at", ws.get("created_at", ""))[:10]
-                        usage_details.append({
-                            "date": completed_at,
-                            "type": "Compute",
-                            "workset_id": ws.get("workset_id"),
-                            "quantity": cost_summary.get("sample_count", 1) if cost_summary else 1,
-                            "unit": "samples",
-                            "cost": actual_cost,
-                            "is_actual": bool(cost_summary),
-                        })
-                    # Collect storage info per workset
-                    storage_bytes = int(export_metrics.get("analysis_directory_size_bytes", 0) or 0) if export_metrics else 0
-                    if storage_bytes > 0:
-                        total_workset_storage_bytes += storage_bytes
-                        workset_storage_breakdown.append({
-                            "workset_id": ws.get("workset_id"),
-                            "storage_bytes": storage_bytes,
-                            "storage_human": export_metrics.get("analysis_directory_size_human", _format_bytes(storage_bytes)),
-                            "storage_gb": round(storage_bytes / (1024**3), 2),
-                            "completed_at": ws.get("updated_at", ws.get("created_at", ""))[:10],
-                        })
-                # Sort usage details by date descending
+                    item = calculator.calculate_workset_billing(ws)
+                    completed_at = item.completed_at or ws.get("updated_at", ws.get("created_at", ""))
+                    completed_date = completed_at[:10] if completed_at else "-"
+
+                    if item.compute_cost_usd > 0:
+                        usage_details.append(
+                            {
+                                "date": completed_date,
+                                "type": "Compute",
+                                "workset_id": item.workset_id,
+                                "quantity": item.sample_count or 1,
+                                "unit": "samples",
+                                "cost": item.compute_cost_usd,
+                                "is_actual": item.has_actual_compute_cost,
+                            }
+                        )
+
+                    if item.storage_bytes > 0:
+                        workset_storage_breakdown.append(
+                            {
+                                "workset_id": item.workset_id,
+                                "storage_bytes": item.storage_bytes,
+                                "storage_human": _format_bytes(item.storage_bytes),
+                                "storage_gb": round(item.storage_gb, 2),
+                                "completed_at": completed_date,
+                            }
+                        )
+
                 usage_details.sort(key=lambda x: x["date"], reverse=True)
-                # Sort storage breakdown by size descending
                 workset_storage_breakdown.sort(key=lambda x: x["storage_bytes"], reverse=True)
 
-                # Calculate cost breakdown
-                workset_storage_gb = total_workset_storage_bytes / (1024**3)
-                storage_cost = workset_storage_gb * S3_STORAGE_COST_PER_GB_MONTH
-                # Transfer cost placeholder: assume 1 transfer per workset at $0.10/GB
-                transfer_cost = workset_storage_gb * TRANSFER_COST_PER_GB
+                # Append summary rows for storage/transfer so the table aligns with the cards.
+                if breakdown["storage_gb"] > 0:
+                    usage_details.append(
+                        {
+                            "date": "-",
+                            "type": "Storage",
+                            "workset_id": None,
+                            "workset_label": "All worksets",
+                            "quantity": breakdown["storage_gb"],
+                            "unit": "GB/month",
+                            "cost": breakdown["storage_cost_usd"],
+                            "is_actual": True,
+                        }
+                    )
 
-                usage["compute_cost_usd"] = round(total_actual_compute, 2)
-                usage["storage_cost_usd"] = round(storage_cost, 4)
-                usage["transfer_cost_usd"] = round(transfer_cost, 4)
-                usage["total_cost"] = round(total_actual_compute + storage_cost + transfer_cost, 2)
-                usage["workset_storage_bytes"] = total_workset_storage_bytes
-                usage["workset_storage_gb"] = round(workset_storage_gb, 2)
-                usage["workset_storage_human"] = _format_bytes(total_workset_storage_bytes)
-
-                # Add storage cost entry to usage_details if there's storage
-                if workset_storage_gb > 0:
-                    usage_details.append({
-                        "date": "-",
-                        "type": "Storage",
-                        "workset_id": "All worksets",
-                        "quantity": round(workset_storage_gb, 2),
-                        "unit": "GB/month",
-                        "cost": storage_cost,
-                        "is_actual": True,
-                    })
-                    usage_details.append({
-                        "date": "-",
-                        "type": "Transfer",
-                        "workset_id": "Placeholder",
-                        "quantity": round(workset_storage_gb, 2),
-                        "unit": "GB",
-                        "cost": transfer_cost,
-                        "is_actual": False,
-                    })
+                if (
+                    breakdown.get("transfer_intra_region_gb", 0) > 0
+                    or breakdown.get("transfer_cross_region_gb", 0) > 0
+                    or breakdown.get("transfer_internet_gb", 0) > 0
+                ):
+                    usage_details.extend(
+                        [
+                            {
+                                "date": "-",
+                                "type": "Transfer",
+                                "workset_id": None,
+                                "workset_label": "All worksets (Transfer: Intra-region)",
+                                "quantity": breakdown.get("transfer_intra_region_gb", 0),
+                                "unit": "GB",
+                                "cost": breakdown.get("transfer_intra_region_cost_usd", 0),
+                                "is_actual": False,
+                            },
+                            {
+                                "date": "-",
+                                "type": "Transfer",
+                                "workset_id": None,
+                                "workset_label": "All worksets (Transfer: Cross-region)",
+                                "quantity": breakdown.get("transfer_cross_region_gb", 0),
+                                "unit": "GB",
+                                "cost": breakdown.get("transfer_cross_region_cost_usd", 0),
+                                "is_actual": False,
+                            },
+                            {
+                                "date": "-",
+                                "type": "Transfer",
+                                "workset_id": None,
+                                "workset_label": "All worksets (Internet egress)",
+                                "quantity": breakdown.get("transfer_internet_gb", 0),
+                                "unit": "GB",
+                                "cost": breakdown.get("transfer_internet_cost_usd", 0),
+                                "is_actual": False,
+                            },
+                        ]
+                    )
             except Exception as e:
                 LOGGER.warning(f"Failed to load usage details: {e}")
 
         return deps.templates.TemplateResponse(
             request,
             "usage.html",
-            _get_template_context(request, deps, customer=customer, usage=usage, usage_details=usage_details, workset_storage=workset_storage_breakdown, active_page="usage"),
+            _get_template_context(
+                request,
+                deps,
+                customer=customer,
+                usage=usage,
+                usage_details=usage_details,
+                workset_storage=workset_storage_breakdown,
+                active_page="usage",
+            ),
         )
 
+    @router.get("/portal/usage/export")
+    async def portal_usage_export(request: Request):
+        """Export usage report as CSV for the currently-authenticated customer."""
+        auth_redirect = _require_portal_auth(request)
+        if auth_redirect:
+            return auth_redirect
+
+        if not deps.state_db:
+            raise HTTPException(status_code=503, detail="State DB not configured")
+
+        customer_id = request.session.get("customer_id")
+        if not customer_id:
+            raise HTTPException(status_code=400, detail="Missing customer_id in session")
+
+        from daylib.billing import BillingCalculator, calculate_customer_cost_breakdown
+
+        breakdown = calculate_customer_cost_breakdown(deps.state_db, customer_id, limit=500)
+        calculator = BillingCalculator(state_db=deps.state_db)
+
+        worksets = deps.state_db.list_worksets_by_customer(
+            customer_id,
+            state=WorksetState.COMPLETE,
+            limit=500,
+        )
+
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(
+            [
+                "date",
+                "workset_id",
+                "sample_count",
+                "compute_cost_usd",
+                "storage_gb",
+                "storage_cost_usd",
+                "transfer_gb",
+                "transfer_cost_usd",
+                "intra_region_transfer_gb",
+                "intra_region_transfer_cost_usd",
+                "cross_region_transfer_gb",
+                "cross_region_transfer_cost_usd",
+                "internet_egress_gb",
+                "internet_egress_cost_usd",
+                "total_cost_usd",
+                "has_actual_compute_cost",
+            ]
+        )
+
+        transfer_gb_total = 0.0
+        transfer_intra_gb_total = 0.0
+        transfer_cross_gb_total = 0.0
+        internet_egress_gb_total = 0.0
+        for ws in worksets:
+            item = calculator.calculate_workset_billing(ws)
+            completed_at = item.completed_at or ws.get("updated_at", ws.get("created_at", ""))
+            completed_date = completed_at[:10] if completed_at else "-"
+            transfer_gb_total += float(item.transfer_gb or 0)
+            transfer_intra_gb_total += float(item.transfer_intra_region_gb or 0)
+            transfer_cross_gb_total += float(item.transfer_cross_region_gb or 0)
+            internet_egress_gb_total += float(item.transfer_internet_gb or 0)
+            writer.writerow(
+                [
+                    completed_date,
+                    item.workset_id,
+                    item.sample_count,
+                    round(item.compute_cost_usd, 2),
+                    round(item.storage_gb, 2),
+                    round(item.storage_cost_usd, 4),
+                    round(item.transfer_gb, 2),
+                    round(item.transfer_cost_usd, 4),
+                    round(item.transfer_intra_region_gb, 2),
+                    round(item.transfer_intra_region_cost_usd, 4),
+                    round(item.transfer_cross_region_gb, 2),
+                    round(item.transfer_cross_region_cost_usd, 4),
+                    round(item.transfer_internet_gb, 2),
+                    round(item.transfer_internet_cost_usd, 4),
+                    round(item.total_cost_usd, 2),
+                    bool(item.has_actual_compute_cost),
+                ]
+            )
+
+        writer.writerow([])
+        writer.writerow(
+            [
+                "TOTAL",
+                "",
+                "",
+                breakdown["compute_cost_usd"],
+                breakdown["storage_gb"],
+                breakdown["storage_cost_usd"],
+                round(transfer_gb_total, 2),
+                breakdown["transfer_cost_usd"],
+                round(transfer_intra_gb_total, 2),
+                breakdown.get("transfer_intra_region_cost_usd", 0.0),
+                round(transfer_cross_gb_total, 2),
+                breakdown.get("transfer_cross_region_cost_usd", 0.0),
+                round(internet_egress_gb_total, 2),
+                breakdown.get("transfer_internet_cost_usd", 0.0),
+                breakdown["total"],
+                "",
+            ]
+        )
+
+        csv_text = output.getvalue()
+        filename = (
+            f"ursa-usage-report-{customer_id}-{datetime.now(timezone.utc).strftime('%Y-%m-%d')}.csv"
+        )
+        headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+        return StreamingResponse(iter([csv_text]), media_type="text/csv", headers=headers)
+
     # ========== Biospecimen Routes ==========
+
+    @router.get("/portal/subjects", response_class=RedirectResponse)
+    async def portal_subjects(request: Request):
+        """Dedicated subjects entrypoint.
+
+        For now this aliases the biospecimen subjects page.
+        """
+        auth_redirect = _require_portal_auth(request)
+        if auth_redirect:
+            return auth_redirect
+        return RedirectResponse(url="/portal/biospecimen/subjects", status_code=302)
 
     @router.get("/portal/biospecimen", response_class=HTMLResponse)
     @router.get("/portal/biospecimen/subjects", response_class=HTMLResponse)
@@ -1851,13 +2377,10 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
 
         env_vars = {
             "AWS_PROFILE": app_settings.aws_profile,
-            "AWS_DEFAULT_REGION": app_settings.aws_default_region,
             "AWS_REGION": app_settings.get_effective_region(),
             "AWS_ACCESS_KEY_ID": "***" if os.getenv("AWS_ACCESS_KEY_ID") else None,
             "AWS_SECRET_ACCESS_KEY": "***" if os.getenv("AWS_SECRET_ACCESS_KEY") else None,
             "AWS_ACCOUNT_ID": app_settings.aws_account_id,
-            "DAYLILY_CONTROL_BUCKET": app_settings.daylily_control_bucket,
-            "DAYLILY_MONITOR_BUCKET": app_settings.daylily_monitor_bucket,
             "WORKSET_TABLE_NAME": app_settings.workset_table_name,
             "CUSTOMER_TABLE_NAME": app_settings.customer_table_name,
             "COGNITO_USER_POOL_ID": app_settings.cognito_user_pool_id,
@@ -1902,6 +2425,382 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
             _get_template_context(request, deps, customer=customer, active_page="support"),
         )
 
+    # ========== Monitor Dashboard Route ==========
+
+    @router.get("/portal/monitor", response_class=HTMLResponse)
+    async def portal_monitor(request: Request):
+        """Monitor dashboard - shows workset monitor daemon status and activity."""
+        auth_redirect = _require_portal_auth(request)
+        if auth_redirect:
+            return auth_redirect
+        _require_admin(request)
+        customer, _ = _get_customer_for_session(request, deps)
+
+        # Import monitor-related utilities
+        import os
+        import yaml as yaml_lib  # type: ignore[import-untyped]
+        from datetime import datetime, timezone
+
+        # Monitor paths (same as in daylib/cli/monitor.py)
+        config_dir = Path.home() / ".ursa"
+        log_dir = config_dir / "logs"
+        pid_file = config_dir / "monitor.pid"
+
+        # Check if monitor is running
+        monitor_pid = None
+        monitor_running = False
+        if pid_file.exists():
+            try:
+                pid = int(pid_file.read_text().strip())
+                os.kill(pid, 0)  # Check if process exists
+                monitor_pid = pid
+                monitor_running = True
+            except (ValueError, ProcessLookupError, PermissionError):
+                pass
+
+        # Get latest log file
+        latest_log_path = None
+        log_files = sorted(log_dir.glob("monitor_*.log"), reverse=True) if log_dir.exists() else []
+        if log_files:
+            latest_log_path = log_files[0]
+
+        # Calculate uptime if running (based on log file modification time)
+        uptime_str = None
+        start_time_str = None
+        if monitor_running and latest_log_path and latest_log_path.exists():
+            try:
+                # Use log file creation time as proxy for start time
+                log_stat = latest_log_path.stat()
+                start_time = datetime.fromtimestamp(log_stat.st_ctime, tz=timezone.utc)
+                start_time_str = start_time.strftime("%Y-%m-%d %H:%M:%S UTC")
+                uptime_seconds = (datetime.now(timezone.utc) - start_time).total_seconds()
+                hours = int(uptime_seconds // 3600)
+                minutes = int((uptime_seconds % 3600) // 60)
+                uptime_str = f"{hours}h {minutes}m" if hours > 0 else f"{minutes}m"
+            except Exception:
+                pass
+
+        # Load monitor config
+        monitor_config: Dict[str, Any] = {}
+        config_path = None
+        config_search_paths = [
+            config_dir / "monitor-config.yaml",
+            Path.cwd() / "config" / "workset-monitor-config.yaml",
+            Path.cwd() / "config" / "daylily-workset-monitor.yaml",
+        ]
+        for p in config_search_paths:
+            if p.exists():
+                config_path = p
+                break
+
+        if config_path:
+            try:
+                with config_path.open("r", encoding="utf-8") as f:
+                    monitor_config = yaml_lib.safe_load(f) or {}
+            except Exception as e:
+                LOGGER.warning(f"Failed to load monitor config: {e}")
+
+        # Extract config values for display
+        monitor_opts = monitor_config.get("monitor", {})
+        cluster_opts = monitor_config.get("cluster", {})
+        aws_opts = monitor_config.get("aws", {})
+
+        # Get max_concurrent_worksets from YAML config as default
+        max_concurrent_from_config = monitor_opts.get("max_concurrent_worksets", 1)
+        max_concurrent_runtime = max_concurrent_from_config
+
+        # If monitor is running, try to extract actual runtime value from log
+        # The monitor logs: "Poll interval: %ds, continuous: %s, max parallel: %d"
+        # Note: With verbose boto logging, this message can appear 100+ lines into the log
+        import re
+        if latest_log_path and latest_log_path.exists():
+            try:
+                with latest_log_path.open("r", encoding="utf-8", errors="replace") as f:
+                    # Read first ~200 lines to find startup message (boto debug logs can be verbose)
+                    for i, line in enumerate(f):
+                        if i > 200:
+                            break
+                        match = re.search(r"max parallel:\s*(\d+)", line, re.IGNORECASE)
+                        if match:
+                            max_concurrent_runtime = int(match.group(1))
+                            LOGGER.debug(f"Found max parallel in log line {i}: {max_concurrent_runtime}")
+                            break
+            except Exception as e:
+                LOGGER.warning(f"Failed to parse log file for max parallel: {e}")
+
+        config_display = {
+            "prefix": monitor_opts.get("prefix", "worksets/"),
+            "poll_interval_seconds": monitor_opts.get("poll_interval_seconds", 60),
+            "max_concurrent_worksets": max_concurrent_runtime,
+            "archive_prefix": monitor_opts.get("archive_prefix", ""),
+            "dynamodb_table": aws_opts.get("dynamodb_table", "daylily-worksets"),
+            "reuse_cluster_name": cluster_opts.get("reuse_cluster_name", ""),
+            "config_path": str(config_path) if config_path else "Not found",
+        }
+
+        # Get workset statistics from DynamoDB
+        stats = {
+            "in_progress": 0,
+            "ready": 0,
+            "complete": 0,
+            "error": 0,
+            "total_processed": 0,
+        }
+        try:
+            for ws_state in WorksetState:
+                batch = deps.state_db.list_worksets_by_state(ws_state, limit=500)
+                count = len(batch)
+                if ws_state == WorksetState.IN_PROGRESS:
+                    stats["in_progress"] = count
+                elif ws_state == WorksetState.READY:
+                    stats["ready"] = count
+                elif ws_state == WorksetState.COMPLETE:
+                    stats["complete"] = count
+                    stats["total_processed"] += count
+                elif ws_state == WorksetState.ERROR:
+                    stats["error"] = count
+                    stats["total_processed"] += count
+        except Exception as e:
+            LOGGER.warning(f"Failed to get workset stats: {e}")
+
+        # Read recent log lines
+        log_lines = []
+        log_error = None
+        if latest_log_path and latest_log_path.exists():
+            try:
+                with latest_log_path.open("r", encoding="utf-8", errors="replace") as f:
+                    all_lines = f.readlines()
+                    log_lines = all_lines[-100:]  # Last 100 lines
+            except Exception as e:
+                log_error = str(e)
+
+        return deps.templates.TemplateResponse(
+            request,
+            "monitor/dashboard.html",
+            _get_template_context(
+                request, deps,
+                customer=customer,
+                monitor_running=monitor_running,
+                monitor_pid=monitor_pid,
+                uptime_str=uptime_str,
+                start_time_str=start_time_str,
+                config_display=config_display,
+                stats=stats,
+                log_lines=log_lines,
+                log_error=log_error,
+                latest_log_path=str(latest_log_path) if latest_log_path else None,
+                log_files=[str(lf.name) for lf in log_files[:10]],
+                active_page="monitor",
+            ),
+        )
+
+    # ========== Admin Tools ==========
+
+    @router.get("/portal/admin/users", response_class=HTMLResponse)
+    async def portal_admin_users(
+        request: Request,
+        error: Optional[str] = None,
+        success: Optional[str] = None,
+    ):
+        """Admin: manage portal users (customers)."""
+        auth_redirect = _require_portal_auth(request)
+        if auth_redirect:
+            return auth_redirect
+        _require_admin(request)
+
+        customer, _ = _get_customer_for_session(request, deps)
+        customers = []
+        if not deps.customer_manager:
+            error = error or "Customer manager not configured"
+        else:
+            try:
+                customers = deps.customer_manager.list_customers()
+            except Exception as e:
+                LOGGER.error("Failed to list customers: %s", e)
+                error = error or "Failed to list customers"
+
+        return deps.templates.TemplateResponse(
+            request,
+            "admin/users.html",
+            _get_template_context(
+                request,
+                deps,
+                customer=customer,
+                customers=customers,
+                error=error,
+                success=success,
+                active_page="admin_users",
+            ),
+        )
+
+    @router.post("/portal/admin/users/add")
+    async def portal_admin_users_add(
+        request: Request,
+        customer_name: str = Form(...),
+        email: str = Form(...),
+    ):
+        """Admin: add a new user (creates customer config and optionally Cognito user)."""
+        auth_redirect = _require_portal_auth(request)
+        if auth_redirect:
+            return auth_redirect
+        _require_admin(request)
+
+        if not deps.customer_manager:
+            return RedirectResponse(
+                url="/portal/admin/users?error=" + quote_plus("Customer manager not configured"),
+                status_code=302,
+            )
+
+        domain_valid, domain_error = deps.settings.validate_email_domain(email)
+        if not domain_valid:
+            return RedirectResponse(
+                url="/portal/admin/users?error=" + quote_plus(domain_error),
+                status_code=302,
+            )
+
+        existing = deps.customer_manager.get_customer_by_email(email)
+        if existing:
+            return RedirectResponse(
+                url="/portal/admin/users?error=" + quote_plus("User already exists"),
+                status_code=302,
+            )
+
+        try:
+            config = deps.customer_manager.onboard_customer(customer_name=customer_name, email=email)
+        except Exception as e:
+            LOGGER.error("Failed to onboard customer for %s: %s", email, e)
+            return RedirectResponse(
+                url="/portal/admin/users?error=" + quote_plus("Failed to create user"),
+                status_code=302,
+            )
+
+        cognito_note = None
+        if deps.enable_auth and deps.cognito_auth:
+            try:
+                deps.cognito_auth.create_customer_user(
+                    email=email,
+                    customer_id=config.customer_id,
+                    temporary_password=None,
+                )
+                cognito_note = "Cognito invite sent"
+            except ValueError as e:
+                LOGGER.warning("Cognito user creation skipped for %s: %s", email, e)
+                cognito_note = "Cognito user not created"
+            except Exception as e:
+                LOGGER.error("Failed to create Cognito user for %s: %s", email, e)
+                cognito_note = "Cognito user creation failed"
+
+        msg = f"User created: {email} (Customer ID: {config.customer_id})"
+        if cognito_note:
+            msg = f"{msg}. {cognito_note}."
+
+        return RedirectResponse(
+            url="/portal/admin/users?success=" + quote_plus(msg),
+            status_code=302,
+        )
+
+
+    @router.post("/portal/admin/users/set-admin")
+    async def portal_admin_users_set_admin(
+        request: Request,
+        email: str = Form(...),
+        is_admin: str = Form(...),
+    ):
+        """Admin: set or remove admin privileges for an email."""
+        auth_redirect = _require_portal_auth(request)
+        if auth_redirect:
+            return auth_redirect
+        _require_admin(request)
+
+        if not deps.customer_manager:
+            return RedirectResponse(
+                url="/portal/admin/users?error=" + quote_plus("Customer manager not configured"),
+                status_code=302,
+            )
+
+        is_admin_normalized = str(is_admin).strip().lower()
+        desired_is_admin = is_admin_normalized in {"1", "true", "yes", "on"}
+
+        try:
+            ok = deps.customer_manager.set_admin_status(email=email, is_admin=desired_is_admin)
+        except Exception as e:
+            LOGGER.error("Failed to set admin status for %s: %s", email, e)
+            ok = False
+
+        if not ok:
+            return RedirectResponse(
+                url="/portal/admin/users?error=" + quote_plus("Failed to update admin status"),
+                status_code=302,
+            )
+
+        # If the admin modifies themselves, update session so nav reflects change immediately.
+        if request.session.get("user_email") == email:
+            request.session["is_admin"] = desired_is_admin
+
+        msg = f"Updated admin status for {email}: {'admin' if desired_is_admin else 'non-admin'}"
+        return RedirectResponse(
+            url="/portal/admin/users?success=" + quote_plus(msg),
+            status_code=302,
+        )
+
+
+    @router.post("/portal/admin/users/set-password")
+    async def portal_admin_users_set_password(
+        request: Request,
+        email: str = Form(...),
+        password: str = Form(...),
+        confirm_password: str = Form(...),
+        force_change: Optional[str] = Form(None),
+    ):
+        """Admin: set/reset a user's password (Cognito)."""
+        auth_redirect = _require_portal_auth(request)
+        if auth_redirect:
+            return auth_redirect
+        _require_admin(request)
+
+        if password != confirm_password:
+            return RedirectResponse(
+                url="/portal/admin/users?error=" + quote_plus("Passwords do not match"),
+                status_code=302,
+            )
+
+        if not deps.cognito_auth:
+            return RedirectResponse(
+                url="/portal/admin/users?error=" + quote_plus("Cognito auth not configured"),
+                status_code=302,
+            )
+
+        # HTML checkbox sends e.g. 'on' when checked; absent when unchecked.
+        force_change_normalized = str(force_change).strip().lower() if force_change is not None else ""
+        desired_permanent = force_change_normalized not in {"1", "true", "yes", "on"}
+
+        try:
+            deps.cognito_auth.set_user_password(email=email, password=password, permanent=desired_permanent)
+        except HTTPException as e:
+            # CognitoAuth may raise HTTPException (e.g., domain whitelist violations).
+            return RedirectResponse(
+                url="/portal/admin/users?error=" + quote_plus(str(e.detail)),
+                status_code=302,
+            )
+        except ValueError as e:
+            return RedirectResponse(
+                url="/portal/admin/users?error=" + quote_plus(str(e)),
+                status_code=302,
+            )
+        except Exception as e:
+            LOGGER.error("Failed to set password for %s: %s", email, e)
+            return RedirectResponse(
+                url="/portal/admin/users?error=" + quote_plus("Failed to set password"),
+                status_code=302,
+            )
+
+        note = "Temporary password set; user must change on next login" if not desired_permanent else "Password set"
+        msg = f"{note}: {email}"
+        return RedirectResponse(
+            url="/portal/admin/users?success=" + quote_plus(msg),
+            status_code=302,
+        )
+
     # ========== Clusters Routes ==========
 
     @router.get("/portal/clusters", response_class=HTMLResponse)
@@ -1917,24 +2816,34 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         regions = []
         error = None
         # Check if user is admin to determine if we should fetch SSH status
-        is_admin = customer and customer.is_admin
+        is_admin = bool(request.session.get("is_admin", False))
         try:
-            from daylib.cluster_service import ClusterService
+            from daylib.cluster_service import get_cluster_service
+            from daylib.ursa_config import get_ursa_config
 
-            allowed_regions = deps.settings.get_allowed_regions()
-            regions = allowed_regions
+            # Use UrsaConfig for regions (preferred) with fallback to legacy env var
+            ursa_config = get_ursa_config()
+            if ursa_config.is_configured:
+                allowed_regions = ursa_config.get_allowed_regions()
+                aws_profile = ursa_config.aws_profile or deps.settings.aws_profile
+            else:
+                allowed_regions = deps.settings.get_allowed_regions()
+                aws_profile = deps.settings.aws_profile
+
+            regions = allowed_regions or []
 
             if allowed_regions:
-                service = ClusterService(
+                # Use global singleton to share cache across requests
+                service = get_cluster_service(
                     regions=allowed_regions,
-                    aws_profile=deps.settings.aws_profile,
+                    aws_profile=aws_profile,
                     cache_ttl_seconds=300,
                 )
                 # Only fetch SSH status for admin users
                 all_clusters = service.get_all_clusters_with_status(
                     fetch_ssh_status=is_admin,
                 )
-                clusters = [c.to_dict() for c in all_clusters]
+                clusters = [c.to_dict(include_sensitive=is_admin) for c in all_clusters]
         except Exception as e:
             LOGGER.error(f"Failed to fetch clusters: {e}")
             error = str(e)
@@ -1949,8 +2858,105 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                 regions=regions,
                 error=error,
                 active_page="clusters",
+                is_admin=is_admin,  # Explicitly pass to ensure template matches fetch_ssh_status
             ),
         )
+
+    # ========== Monitor API Endpoints (for AJAX) ==========
+
+    @router.get("/api/monitor/status")
+    async def api_monitor_status(request: Request):
+        """Get monitor status as JSON for AJAX updates."""
+        auth_redirect = _require_portal_auth(request)
+        if auth_redirect:
+            return auth_redirect
+        _require_admin(request)
+        import os
+
+        config_dir = Path.home() / ".ursa"
+        pid_file = config_dir / "monitor.pid"
+
+        # Check if monitor is running
+        monitor_pid = None
+        monitor_running = False
+        if pid_file.exists():
+            try:
+                pid = int(pid_file.read_text().strip())
+                os.kill(pid, 0)
+                monitor_pid = pid
+                monitor_running = True
+            except (ValueError, ProcessLookupError, PermissionError):
+                pass
+
+        # Get workset statistics from DynamoDB
+        stats = {
+            "in_progress": 0,
+            "ready": 0,
+            "complete": 0,
+            "error": 0,
+        }
+        try:
+            for ws_state in WorksetState:
+                batch = deps.state_db.list_worksets_by_state(ws_state, limit=500)
+                count = len(batch)
+                if ws_state == WorksetState.IN_PROGRESS:
+                    stats["in_progress"] = count
+                elif ws_state == WorksetState.READY:
+                    stats["ready"] = count
+                elif ws_state == WorksetState.COMPLETE:
+                    stats["complete"] = count
+                elif ws_state == WorksetState.ERROR:
+                    stats["error"] = count
+        except Exception as e:
+            LOGGER.warning(f"Failed to get workset stats: {e}")
+
+        return {
+            "running": monitor_running,
+            "pid": monitor_pid,
+            "stats": stats,
+        }
+
+    @router.get("/api/monitor/logs")
+    async def api_monitor_logs(
+        request: Request,
+        lines: int = Query(100, ge=10, le=500),
+        level: Optional[str] = Query(None),
+    ):
+        """Get recent monitor log lines as JSON for AJAX updates."""
+
+        auth_redirect = _require_portal_auth(request)
+        if auth_redirect:
+            return auth_redirect
+        _require_admin(request)
+
+        config_dir = Path.home() / ".ursa"
+        log_dir = config_dir / "logs"
+
+        # Get latest log file
+        log_files = sorted(log_dir.glob("monitor_*.log"), reverse=True) if log_dir.exists() else []
+        if not log_files:
+            return {"lines": [], "error": None, "log_file": None}
+
+        latest_log = log_files[0]
+        log_lines = []
+        error = None
+
+        try:
+            with latest_log.open("r", encoding="utf-8", errors="replace") as f:
+                all_lines = f.readlines()
+                log_lines = [line.rstrip() for line in all_lines[-lines:]]
+
+                # Filter by level if specified
+                if level:
+                    log_lines = [line for line in log_lines if f"[{level}]" in line]
+        except Exception as e:
+            error = str(e)
+
+        return {
+            "lines": log_lines,
+            "error": error,
+            "log_file": str(latest_log.name),
+        }
 
     return router
 

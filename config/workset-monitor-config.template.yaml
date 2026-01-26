@@ -34,10 +34,10 @@ aws:
 # -----------------------------------------------------------------------------
 # Monitor Configuration
 # -----------------------------------------------------------------------------
+# NOTE: The monitor does not have a default bucket. Each workset has its own bucket
+# assigned during creation based on the selected cluster's region. Bucket mappings
+# are defined in ~/.ursa/config.yaml (see config/ursa-config.example.yaml).
 monitor:
-  # S3 bucket where worksets are stored
-  bucket: your-daylily-bucket
-
   # S3 prefix for active worksets (must end with /)
   # This must match the server's S3_PREFIX setting (default: worksets/)
   prefix: worksets/
@@ -54,8 +54,13 @@ monitor:
   # Run continuously (true) or single scan and exit (false)
   continuous: true
 
-  # S3 prefix for sentinel index files (state tracking)
-  sentinel_index_prefix: worksets/.monitor/
+  # Maximum number of worksets to process concurrently
+  max_concurrent_worksets: 1
+
+  # Optional: S3 prefix for sentinel index files (global state tracking)
+  # If set, requires sentinel_index_bucket to specify which bucket to use
+  # sentinel_index_prefix: worksets/.monitor/
+  # sentinel_index_bucket: your-primary-bucket
 
 # -----------------------------------------------------------------------------
 # Cluster Configuration
@@ -93,7 +98,7 @@ pipeline:
   # Local directory for staging manifests before transfer
   local_stage_root: .
   
-  # S3 bucket URI for reference data (defaults to monitor bucket if omitted)
+  # S3 bucket URI for reference data (REQUIRED - no default fallback)
   reference_bucket: s3://your-daylily-bucket/
   
   # SSH identity file for headnode connection
@@ -108,7 +113,7 @@ pipeline:
   # Command to stage samples to the headnode
   # Available variables: {profile}, {region}, {reference_bucket}, {analysis_samples}, {output_dir}
   # Note: --config-dir ensures generated samples.tsv/units.tsv are written to the workset state dir
-  stage_command: ./bin/daylily-stage-samples-from-local-to-headnode --profile {profile} --region {region} --reference-bucket {reference_bucket} --config-dir {output_dir} {analysis_samples}
+  stage_command: daylily-stage-samples-from-local-to-headnode --profile {profile} --region {region} --reference-bucket {reference_bucket} --config-dir {output_dir} {analysis_samples}
   
   # Command to clone the pipeline repository
   # Available variables: {clone_args}
@@ -125,7 +130,7 @@ pipeline:
   # Available variables: {cluster}, {target_uri}, {region}, {profile}, {output_dir},
   #                      {workdir_name}, {workset_dir}, {pipeline_dir}, {workset}
   # IMPORTANT: {output_dir} must be used for --output-dir to match where monitor looks for fsx_export.yaml
-  export_command: ./bin/daylily-export-fsx-to-s3-from-local --cluster {cluster} --target-uri analysis_results/ubuntu/{workdir_name} --region {region} --profile {profile} --output-dir {output_dir} --verbose
+  export_command: daylily-export-fsx-to-s3-from-local --cluster {cluster} --target-uri analysis_results/ubuntu/{workdir_name} --region {region} --profile {profile} --output-dir {output_dir} --verbose
   
   # Shell initialization command run before entering pipeline directory
   login_shell_init: source ~/.bashrc

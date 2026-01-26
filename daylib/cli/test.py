@@ -40,7 +40,7 @@ def run(
     if pattern:
         cmd.extend(["-k", pattern])
 
-    console.print(f"[cyan]Running tests...[/cyan]")
+    console.print("[cyan]Running tests...[/cyan]")
     result = subprocess.run(cmd, cwd=project_root)
     raise typer.Exit(result.returncode)
 
@@ -57,7 +57,7 @@ def coverage(
     if html:
         cmd.append("--cov-report=html")
 
-    console.print(f"[cyan]Running tests with coverage...[/cyan]")
+    console.print("[cyan]Running tests with coverage...[/cyan]")
     result = subprocess.run(cmd, cwd=project_root)
 
     if html and result.returncode == 0:
@@ -78,7 +78,7 @@ def lint(
     if fix:
         cmd.append("--fix")
 
-    console.print(f"[cyan]Running linter...[/cyan]")
+    console.print("[cyan]Running linter...[/cyan]")
     result = subprocess.run(cmd, cwd=project_root)
     raise typer.Exit(result.returncode)
 
@@ -107,7 +107,7 @@ def typecheck():
 
     cmd = [sys.executable, "-m", "mypy", "daylib/"]
 
-    console.print(f"[cyan]Running type checker...[/cyan]")
+    console.print("[cyan]Running type checker...[/cyan]")
     result = subprocess.run(cmd, cwd=project_root)
     raise typer.Exit(result.returncode)
 
@@ -138,5 +138,5 @@ def all_checks():
         console.print(f"\n[red]✗[/red]  {len(failed)} check(s) failed: {', '.join(failed)}")
         raise typer.Exit(1)
     else:
-        console.print(f"\n[green]✓[/green]  All checks passed")
+        console.print("\n[green]✓[/green]  All checks passed")
 

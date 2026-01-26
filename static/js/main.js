@@ -70,6 +70,9 @@ function showTooltip(e) {
         padding: 4px 8px;
         border-radius: 4px;
         font-size: 12px;
+        max-width: 280px;
+        white-space: normal;
+        overflow-wrap: anywhere;
         z-index: 9999;
         pointer-events: none;
     `;
@@ -77,8 +80,28 @@ function showTooltip(e) {
     document.body.appendChild(tooltip);
     
     const rect = e.target.getBoundingClientRect();
-    tooltip.style.left = rect.left + (rect.width / 2) - (tooltip.offsetWidth / 2) + 'px';
-    tooltip.style.top = rect.top - tooltip.offsetHeight - 8 + 'px';
+    const margin = 8;
+
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+
+    // Default: centered above the element.
+    let left = rect.left + (rect.width / 2) - (tooltip.offsetWidth / 2);
+    let top = rect.top - tooltip.offsetHeight - margin;
+
+    // Clamp horizontally so we never render off-screen (common for upper-right user menu).
+    left = Math.max(margin, Math.min(left, viewportWidth - tooltip.offsetWidth - margin));
+
+    // If there's not enough room above, render below.
+    if (top < margin) {
+        top = rect.bottom + margin;
+    }
+
+    // As a final fallback, clamp vertically as well.
+    top = Math.max(margin, Math.min(top, viewportHeight - tooltip.offsetHeight - margin));
+
+    tooltip.style.left = left + 'px';
+    tooltip.style.top = top + 'px';
     
     e.target._tooltip = tooltip;
 }

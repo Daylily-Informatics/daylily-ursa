@@ -8,31 +8,28 @@ This module uses shared Pydantic models from daylib.routes.dependencies.
 from __future__ import annotations
 
 import gzip
-import hashlib
 import io
 import logging
-import os
 import re
 import tarfile
 import uuid
 import zipfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, DefaultDict, Dict, List, Optional, Tuple
 
 import boto3
 import yaml  # type: ignore[import-untyped]
 
 from fastapi import Body, Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel, Field, EmailStr
 from starlette.middleware.sessions import SessionMiddleware
 
 from daylib.config import Settings, get_settings
-from daylib.workset_state_db import ErrorCategory, WorksetPriority, WorksetState, WorksetStateDB
+from daylib.workset_state_db import WorksetPriority, WorksetState, WorksetStateDB
 from daylib.workset_scheduler import WorksetScheduler
 
 # Import shared Pydantic models from routes module
@@ -43,14 +40,10 @@ from daylib.routes.dependencies import (
     QueueStats,
     SchedulingStats,
     CustomerCreate,
+    CustomerUpdate,
     CustomerResponse,
     WorksetValidationResponse,
     WorkYamlGenerateRequest,
-    ChangePasswordRequest,
-    APITokenCreateRequest,
-    PortalFileAutoRegisterRequest,
-    PortalFileAutoRegisterResponse,
-    # Utility functions
     format_file_size as _format_file_size,
     get_file_icon as _get_file_icon,
     calculate_cost_with_efficiency as _calculate_cost_with_efficiency,
@@ -201,6 +194,8 @@ def create_app(
                 region=region,
                 profile=profile,
             )
+            # Ensure table exists
+            manifest_registry.create_table_if_not_exists()
             LOGGER.info("Manifest storage enabled (table: %s)", settings.daylily_manifest_table)
         except Exception as e:
             LOGGER.warning("Failed to initialize ManifestRegistry: %s", str(e))
@@ -328,8 +323,12 @@ def create_app(
         if hasattr(request, "session"):
             user_email = request.session.get("user_email")
             if user_email:
+                customer_id = request.session.get("customer_id")
+                is_admin = bool(request.session.get("is_admin", False))
                 return {
                     "email": user_email,
+                    "customer_id": customer_id,
+                    "is_admin": is_admin,
                     "auth_type": "session",
                     "authenticated": True,
                 }
@@ -344,6 +343,18 @@ def create_app(
                     credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
                     user = cognito_auth.get_current_user(credentials)
                     if user:
+                        customer_id = user.get("custom:customer_id") or user.get("customer_id")
+                        if customer_id is not None and "customer_id" not in user:
+                            user["customer_id"] = str(customer_id)
+
+                        if customer_manager and customer_id:
+                            try:
+                                customer_config = customer_manager.get_customer_config(str(customer_id))
+                                if customer_config:
+                                    user["is_admin"] = bool(customer_config.is_admin)
+                            except Exception as e:  # pragma: no cover - defensive logging
+                                LOGGER.debug("Failed to attach is_admin for JWT user: %s", str(e))
+
                         user["auth_type"] = "jwt"
                         return user
                 except HTTPException:
@@ -366,6 +377,7 @@ def create_app(
                     return {
                         "email": customer.email,
                         "customer_id": customer.customer_id,
+                        "is_admin": bool(getattr(customer, "is_admin", False)),
                         "auth_type": "api_key",
                         "authenticated": True,
                     }
@@ -466,6 +478,7 @@ def create_app(
                 workset_type=workset.workset_type,
                 metadata=workset.metadata,
                 customer_id=workset.customer_id,
+                preferred_cluster=workset.preferred_cluster,
             )
         except ValueError as e:
             raise HTTPException(
@@ -505,22 +518,36 @@ def create_app(
     async def list_worksets(
         state: Optional[WorksetState] = Query(None, description="Filter by state"),
         priority: Optional[WorksetPriority] = Query(None, description="Filter by priority"),
+        customer_id: Optional[str] = Query(None, description="Filter by customer ownership"),
         limit: int = Query(100, ge=1, le=1000, description="Maximum results"),
     ):
-        """List worksets with optional filters."""
+        """List worksets with optional filters.
+
+        If customer_id is provided, only returns worksets owned by that customer.
+        """
+        # Fetch more if filtering by customer to account for non-matching worksets
+        fetch_limit = limit * 5 if customer_id else limit
+
         if state:
-            worksets = state_db.list_worksets_by_state(state, priority=priority, limit=limit)
+            worksets = state_db.list_worksets_by_state(state, priority=priority, limit=fetch_limit)
         else:
             # Get all states
             worksets = []
             for ws_state in WorksetState:
-                batch = state_db.list_worksets_by_state(ws_state, priority=priority, limit=limit)
+                batch = state_db.list_worksets_by_state(ws_state, priority=priority, limit=fetch_limit)
                 worksets.extend(batch)
-                if len(worksets) >= limit:
+                if len(worksets) >= fetch_limit:
                     break
-            worksets = worksets[:limit]
-        
-        return [WorksetResponse(**w) for w in worksets]
+            worksets = worksets[:fetch_limit]
+
+        # SECURITY: If customer_id provided, filter to only that customer's worksets
+        if customer_id:
+            worksets = [
+                w for w in worksets
+                if verify_workset_ownership(w, customer_id)
+            ]
+
+        return [WorksetResponse(**w) for w in worksets[:limit]]
 
     @app.put("/worksets/{workset_id}/state", response_model=WorksetResponse, tags=["worksets"])
     async def update_workset_state(workset_id: str, update: WorksetStateUpdate):
@@ -763,6 +790,64 @@ def create_app(
         ):
             """Get customer details."""
             config = customer_manager.get_customer_config(customer_id)
+            if not config:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Customer {customer_id} not found",
+                )
+
+            return CustomerResponse(
+                customer_id=config.customer_id,
+                customer_name=config.customer_name,
+                email=config.email,
+                s3_bucket=config.s3_bucket,
+                max_concurrent_worksets=config.max_concurrent_worksets,
+                max_storage_gb=config.max_storage_gb,
+                billing_account_id=config.billing_account_id,
+                cost_center=config.cost_center,
+            )
+
+        @app.patch("/api/v1/customers/{customer_id}", response_model=CustomerResponse, tags=["customers"])
+        async def update_customer(
+            customer_id: str,
+            update: CustomerUpdate,
+            request: Request,
+            current_user: Optional[Dict] = Depends(get_current_user),
+        ):
+            """Update customer details (partial update).
+
+            Customers can only update their own account.
+            Admins can update any account.
+            """
+            # Get session customer for authorization check
+            session_customer_id = request.session.get("customer_id") if hasattr(request, "session") else None
+            session_email = request.session.get("user_email") if hasattr(request, "session") else None
+
+            # Check if user is admin
+            is_admin = False
+            if session_email:
+                session_customer = customer_manager.get_customer_by_email(session_email)
+                if session_customer and session_customer.is_admin:
+                    is_admin = True
+
+            # Authorization: must be own account or admin
+            if not is_admin and session_customer_id != customer_id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="You can only update your own account",
+                )
+
+            # Perform the update
+            config = customer_manager.update_customer(
+                customer_id=customer_id,
+                customer_name=update.customer_name,
+                email=update.email,
+                billing_account_id=update.billing_account_id,
+                cost_center=update.cost_center,
+                max_concurrent_worksets=update.max_concurrent_worksets,
+                max_storage_gb=update.max_storage_gb,
+            )
+
             if not config:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
@@ -1352,7 +1437,7 @@ def create_app(
         ):
             """List worksets for a customer.
 
-            Filters worksets by the customer's S3 bucket.
+            Filters worksets by customer_id ownership (customer_id field or metadata.submitted_by).
             """
             if not customer_manager:
                 raise HTTPException(
@@ -1367,27 +1452,27 @@ def create_app(
                     detail=f"Customer {customer_id} not found",
                 )
 
-            # Get all worksets and filter by customer's bucket
+            # Get all worksets and filter by customer_id ownership
             all_worksets: List[Dict[str, Any]] = []
             if state:
                 try:
                     ws_state = WorksetState(state)
-                    all_worksets = state_db.list_worksets_by_state(ws_state, limit=limit)
+                    all_worksets = state_db.list_worksets_by_state(ws_state, limit=limit * 5)  # Fetch more to account for filtering
                 except ValueError:
                     # Invalid state value - return all states
                     for ws_state in WorksetState:
-                        batch = state_db.list_worksets_by_state(ws_state, limit=limit)
+                        batch = state_db.list_worksets_by_state(ws_state, limit=limit * 5)
                         all_worksets.extend(batch)
             else:
                 # Get worksets from all states
                 for ws_state in WorksetState:
-                    batch = state_db.list_worksets_by_state(ws_state, limit=limit)
+                    batch = state_db.list_worksets_by_state(ws_state, limit=limit * 5)
                     all_worksets.extend(batch)
 
-            # Filter to only this customer's worksets (by bucket)
+            # SECURITY: Filter to only this customer's worksets (by customer_id, not bucket)
             customer_worksets = [
                 w for w in all_worksets
-                if w.get("bucket") == config.s3_bucket
+                if verify_workset_ownership(w, customer_id)
             ]
 
             return {"worksets": customer_worksets[:limit]}
@@ -1408,10 +1493,11 @@ def create_app(
                     detail=f"Customer {customer_id} not found",
                 )
 
-            # Get all archived worksets and filter by customer's bucket
+            # SECURITY: Filter archived worksets by customer_id ownership (not bucket)
             all_archived = state_db.list_archived_worksets(limit=500)
             customer_archived = [
-                w for w in all_archived if w.get("bucket") == config.s3_bucket
+                w for w in all_archived
+                if verify_workset_ownership(w, customer_id)
             ]
             return customer_archived
 
@@ -1468,6 +1554,7 @@ def create_app(
             yaml_content: Optional[str] = Body(None, embed=True),
             manifest_id: Optional[str] = Body(None, embed=True),
             manifest_tsv_content: Optional[str] = Body(None, embed=True),
+            preferred_cluster: Optional[str] = Body(None, embed=True),
         ):
             """Create a new workset for a customer from the portal form.
 
@@ -1479,7 +1566,13 @@ def create_app(
             - yaml_content: YAML with samples array
             - manifest_id: ID of a saved manifest (retrieves TSV from ManifestRegistry)
             - manifest_tsv_content: Raw stage_samples.tsv content
+
+            Bucket is determined from the selected cluster's tags:
+            - The cluster's aws-parallelcluster-monitor-bucket tag specifies the S3 bucket
+            - A cluster must be selected for workset creation
             """
+            from daylib.ursa_config import get_ursa_config
+
             if not customer_manager:
                 raise HTTPException(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -1506,25 +1599,60 @@ def create_app(
             date_suffix = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d")
             workset_id = f"{safe_name}-{uuid.uuid4().hex[:8]}-{date_suffix}"
 
-            # Use control-plane bucket (monitor bucket) for workset registration
+            # Determine bucket from cluster tags (aws-parallelcluster-monitor-bucket)
+            # A cluster MUST be selected - bucket is discovered from its tags
             bucket = None
-            if integration and integration.bucket:
-                bucket = integration.bucket
-            if not bucket:
-                # Get from settings via app.state
-                app_settings = request.app.state.settings
-                bucket = app_settings.get_control_bucket()
-            if not bucket:
-                error_detail = (
-                    "Control bucket is not configured for workset registration. "
-                    "Please set DAYLILY_CONTROL_BUCKET or DAYLILY_MONITOR_BUCKET environment variable, "
-                    "or pass --control-bucket to the API server. "
-                    "See CONTROL_BUCKET_CONFIGURATION_GUIDE.md for details."
-                )
-                LOGGER.error(error_detail)
+            cluster_region = None
+            ursa_config = get_ursa_config()
+
+            if not preferred_cluster:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=error_detail,
+                    detail="A cluster must be selected for workset creation. "
+                           "The S3 bucket is derived from the cluster's aws-parallelcluster-monitor-bucket tag.",
+                )
+
+            # Look up cluster to get region and bucket from tags
+            try:
+                from daylib.cluster_service import get_cluster_service, ClusterInfo
+                service = get_cluster_service(
+                    regions=ursa_config.get_allowed_regions() or settings.get_allowed_regions(),
+                    aws_profile=ursa_config.aws_profile or settings.aws_profile,
+                )
+                # Get cluster info (includes tags with bucket)
+                cluster_info = service.get_cluster_by_name(preferred_cluster, force_refresh=False)
+                if not cluster_info:
+                    # Try refreshing cache in case cluster was just created
+                    cluster_info = service.get_cluster_by_name(preferred_cluster, force_refresh=True)
+
+                if cluster_info:
+                    cluster_region = cluster_info.region
+                    bucket = cluster_info.get_monitor_bucket_name()
+                    if bucket:
+                        LOGGER.info(
+                            "Using bucket %s from cluster %s tag (region %s)",
+                            bucket, preferred_cluster, cluster_region
+                        )
+                    else:
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=f"Cluster '{preferred_cluster}' does not have a monitor bucket tag set. "
+                                   f"Clusters must have the '{ClusterInfo.MONITOR_BUCKET_TAG}' tag "
+                                   f"with the S3 bucket URI (e.g., s3://your-bucket).",
+                        )
+                else:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail=f"Cluster '{preferred_cluster}' not found in configured regions. "
+                               f"Scanned regions: {', '.join(ursa_config.get_allowed_regions() or settings.get_allowed_regions())}",
+                    )
+            except HTTPException:
+                raise
+            except Exception as e:
+                LOGGER.error("Failed to look up cluster %s: %s", preferred_cluster, e)
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Failed to query cluster metadata: {e}",
                 )
 
             # Use provided prefix or generate one based on workset ID
@@ -1607,6 +1735,11 @@ def create_app(
             except ValueError:
                 ws_type = WorksetType.RUO
 
+            current_user = get_current_user(request)
+            created_by_email = None
+            if current_user and isinstance(current_user, dict):
+                created_by_email = current_user.get("email")
+
             # Store additional metadata from the form
             metadata = {
                 "workset_name": workset_name,
@@ -1622,15 +1755,31 @@ def create_app(
                 "sample_count": len(normalized_samples),
                 "data_bucket": config.s3_bucket,
                 "data_buckets": [config.s3_bucket] if config.s3_bucket else [],
+                "preferred_cluster": preferred_cluster,
+                "cluster_region": cluster_region,
             }
+
+            if created_by_email:
+                metadata["created_by_email"] = created_by_email
 
             # If we have raw TSV content (from manifest), pass it for direct S3 write
             if manifest_tsv_for_s3:
                 metadata["stage_samples_tsv"] = manifest_tsv_for_s3
 
-            # Use integration layer if available for unified registration
-            if integration:
-                success = integration.register_workset(
+            # Use integration layer for unified registration (DynamoDB + S3)
+            # If no global integration exists but we have a bucket, create one ad-hoc
+            effective_integration = integration
+            if not effective_integration and bucket and INTEGRATION_AVAILABLE:
+                LOGGER.info("Creating ad-hoc integration for bucket %s (region %s)", bucket, cluster_region)
+                effective_integration = WorksetIntegration(
+                    state_db=state_db,
+                    bucket=bucket,
+                    region=cluster_region or settings.get_effective_region(),
+                    profile=ursa_config.aws_profile or settings.aws_profile,
+                )
+
+            if effective_integration:
+                success = effective_integration.register_workset(
                     workset_id=workset_id,
                     bucket=bucket,
                     prefix=prefix,
@@ -1638,11 +1787,14 @@ def create_app(
                     workset_type=ws_type.value,
                     metadata=metadata,
                     customer_id=customer_id,
+                    preferred_cluster=preferred_cluster,
+                    cluster_region=cluster_region,
                     write_s3=True,
                     write_dynamodb=True,
                 )
             else:
-                # Fallback to DynamoDB-only registration
+                # Fallback to DynamoDB-only registration (no S3 files)
+                LOGGER.warning("No integration layer available - S3 files will NOT be created")
                 try:
                     ws_priority = WorksetPriority(priority)
                 except ValueError:
@@ -1657,6 +1809,8 @@ def create_app(
                         workset_type=ws_type,
                         metadata=metadata,
                         customer_id=customer_id,
+                        preferred_cluster=preferred_cluster,
+                        cluster_region=cluster_region,
                     )
                 except ValueError as e:
                     raise HTTPException(
@@ -1706,7 +1860,7 @@ def create_app(
                     detail="Workset does not belong to this customer",
                 )
 
-            state_db.update_state(workset_id, WorksetState.ERROR, "Cancelled by user")
+            state_db.update_state(workset_id, WorksetState.CANCELED, "Canceled by user")
             updated = state_db.get_workset(workset_id)
             return updated
 
@@ -1715,7 +1869,17 @@ def create_app(
             customer_id: str,
             workset_id: str,
         ):
-            """Retry a failed customer workset."""
+            """Retry a failed customer workset by creating a new cloned workset.
+
+            Creates a new workset with a new datetime suffix, cloning all
+            configuration from the original. The original workset is left
+            unchanged for audit trail purposes.
+
+            Returns:
+                The newly created retry workset (not the original).
+            """
+            import datetime as dt
+
             if not customer_manager:
                 raise HTTPException(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -1729,24 +1893,137 @@ def create_app(
                     detail=f"Customer {customer_id} not found",
                 )
 
-            workset = state_db.get_workset(workset_id)
-            if not workset:
+            original = state_db.get_workset(workset_id)
+            if not original:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail=f"Workset {workset_id} not found",
                 )
 
             # Verify workset belongs to this customer (by customer_id, not bucket)
-            if not verify_workset_ownership(workset, customer_id):
+            if not verify_workset_ownership(original, customer_id):
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="Workset does not belong to this customer",
                 )
 
-            # Reset to ready state for retry
-            state_db.update_state(workset_id, WorksetState.READY, "Retry requested by user")
-            updated = state_db.get_workset(workset_id)
-            return updated
+            # Extract base name from original workset ID (remove uuid8-YYYYMMDD suffix)
+            # Format: {safe-name}-{uuid8}-{YYYYMMDD}
+            import re
+            match = re.match(r"^(.+)-[a-f0-9]{8}-\d{8}$", workset_id)
+            if match:
+                base_name = match.group(1)
+            else:
+                # Fallback: use original workset name from metadata or ID
+                original_meta = original.get("metadata", {})
+                base_name = original_meta.get("workset_name", workset_id)[:30]
+                base_name = base_name.replace(" ", "-").lower()
+
+            # Generate new workset ID with new datetime suffix
+            date_suffix = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d")
+            new_workset_id = f"{base_name}-{uuid.uuid4().hex[:8]}-{date_suffix}"
+
+            # Clone metadata from original workset
+            original_meta = original.get("metadata", {})
+            new_metadata = {
+                "workset_name": original_meta.get("workset_name", base_name),
+                "archive_results": original_meta.get("archive_results", True),
+                "submitted_by": customer_id,
+                "priority": original.get("priority", "normal"),
+                "workset_type": original.get("workset_type", "ruo"),
+                "samples": original_meta.get("samples", []),
+                "sample_count": original_meta.get("sample_count", 0),
+                "data_bucket": original_meta.get("data_bucket", config.s3_bucket),
+                "data_buckets": original_meta.get("data_buckets", []),
+                "preferred_cluster": original.get("preferred_cluster"),
+                "cluster_region": original.get("cluster_region"),
+                # Retry tracking metadata
+                "retried_from": workset_id,
+                "retry_reason": "User requested retry",
+            }
+
+            # Preserve optional fields if present
+            for key in ["created_by_email", "pipeline_type"]:
+                if key in original_meta:
+                    new_metadata[key] = original_meta[key]
+
+            # Determine bucket and prefix for new workset
+            bucket = original.get("bucket") or config.s3_bucket
+            prefix = f"worksets/{new_workset_id}/"
+            priority = original.get("priority", "normal")
+            workset_type = original.get("workset_type", "ruo")
+            preferred_cluster = original.get("preferred_cluster")
+            cluster_region = original.get("cluster_region")
+
+            # Register the new workset using integration layer if available
+            from daylib.ursa_config import get_ursa_config
+            from daylib.workset_state_db import WorksetType
+
+            ursa_config = get_ursa_config()
+            effective_integration = integration
+            if not effective_integration and bucket and INTEGRATION_AVAILABLE:
+                effective_integration = WorksetIntegration(
+                    state_db=state_db,
+                    bucket=bucket,
+                    region=cluster_region or settings.get_effective_region(),
+                    profile=ursa_config.aws_profile or settings.aws_profile,
+                )
+
+            if effective_integration:
+                success = effective_integration.register_workset(
+                    workset_id=new_workset_id,
+                    bucket=bucket,
+                    prefix=prefix,
+                    priority=priority,
+                    workset_type=workset_type,
+                    metadata=new_metadata,
+                    customer_id=customer_id,
+                    preferred_cluster=preferred_cluster,
+                    cluster_region=cluster_region,
+                    write_s3=True,
+                    write_dynamodb=True,
+                )
+            else:
+                # Fallback to DynamoDB-only registration
+                try:
+                    ws_priority = WorksetPriority(priority)
+                except ValueError:
+                    ws_priority = WorksetPriority.NORMAL
+                try:
+                    ws_type = WorksetType(workset_type)
+                except ValueError:
+                    ws_type = WorksetType.RUO
+
+                success = state_db.register_workset(
+                    workset_id=new_workset_id,
+                    bucket=bucket,
+                    prefix=prefix,
+                    priority=ws_priority,
+                    workset_type=ws_type,
+                    metadata=new_metadata,
+                    customer_id=customer_id,
+                    preferred_cluster=preferred_cluster,
+                    cluster_region=cluster_region,
+                )
+
+            if not success:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to create retry workset",
+                )
+
+            # Update original workset metadata to track retry
+            try:
+                state_db.update_metadata(
+                    workset_id,
+                    {"retried_as": new_workset_id},
+                )
+            except Exception as e:
+                LOGGER.warning("Failed to update original workset with retry link: %s", e)
+
+            # Return the new workset
+            new_workset = state_db.get_workset(new_workset_id)
+            return new_workset
 
         @app.post("/api/customers/{customer_id}/worksets/{workset_id}/archive", tags=["customer-worksets"])
         async def archive_customer_workset(
@@ -1917,6 +2194,161 @@ def create_app(
                 return {"status": "deleted", "workset_id": workset_id, "hard_delete": True}
             return state_db.get_workset(workset_id)
 
+        @app.get("/api/admin/worksets/{workset_id}/command-log", tags=["admin"])
+        async def get_workset_command_log(
+            request: Request,
+            workset_id: str,
+            grep: Optional[str] = Query(None, description="Filter log entries containing this text"),
+            label: Optional[str] = Query(None, description="Filter by command label (e.g., stage_samples, clone_pipeline)"),
+            limit: int = Query(1000, ge=1, le=10000, description="Maximum lines to return"),
+        ):
+            """Admin-only endpoint to view command logs for a workset.
+
+            Retrieves the workset_command.log file from S3 which contains all SSH
+            and AWS CLI commands executed by the monitor for this workset.
+
+            Log format includes:
+            - Timestamp
+            - Label (e.g., stage_samples, clone_pipeline, export_results)
+            - Command executed
+            - Exit code
+            - Stdout (truncated)
+            - Stderr (truncated)
+
+            Args:
+                workset_id: Workset identifier
+                grep: Optional text filter - only return entries containing this text
+                label: Optional label filter - only return entries with this command label
+                limit: Maximum lines to return (default 1000)
+
+            Returns:
+                JSON with log entries and metadata
+            """
+            # Admin-only authorization
+            is_admin = getattr(request, "session", {}).get("is_admin", False)
+            if not is_admin:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Admin access required to view command logs",
+                )
+
+            workset = state_db.get_workset(workset_id)
+            if not workset:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Workset {workset_id} not found",
+                )
+
+            bucket = workset.get("bucket")
+            prefix = workset.get("prefix", "").rstrip("/") + "/"
+            if not bucket or not prefix:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Workset missing bucket or prefix",
+                )
+
+            # Build the S3 key for the command log
+            command_log_key = f"{prefix}workset_command.log"
+
+            try:
+                # Create boto3 session using settings
+                app_settings = request.app.state.settings
+                session_kwargs = {"region_name": app_settings.get_effective_region()}
+                if app_settings.aws_profile:
+                    session_kwargs["profile_name"] = app_settings.aws_profile
+                session = boto3.Session(**session_kwargs)
+                s3_client = session.client("s3")
+
+                # Fetch the command log from S3
+                try:
+                    response = s3_client.get_object(Bucket=bucket, Key=command_log_key)
+                    log_content = response["Body"].read().decode("utf-8")
+                except s3_client.exceptions.NoSuchKey:
+                    return {
+                        "workset_id": workset_id,
+                        "log_available": False,
+                        "message": "No command log found for this workset",
+                        "entries": [],
+                        "entry_count": 0,
+                    }
+
+            except Exception as e:
+                LOGGER.warning("Failed to fetch command log for %s: %s", workset_id, str(e))
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Failed to fetch command log: {str(e)}",
+                )
+
+            # Parse and filter log entries
+            lines = log_content.split("\n")
+            entries: List[str] = []
+            current_entry: List[str] = []
+            entry_count = 0
+
+            for line in lines:
+                # New entry starts with timestamp marker
+                if line.startswith("[") and "=====" in line:
+                    if current_entry:
+                        entry_text = "\n".join(current_entry)
+                        # Apply filters
+                        include_entry = True
+                        if grep and grep.lower() not in entry_text.lower():
+                            include_entry = False
+                        if label:
+                            label_match = f"LABEL: {label}"
+                            if label_match.lower() not in entry_text.lower():
+                                include_entry = False
+                        if include_entry:
+                            entries.append(entry_text)
+                            entry_count += 1
+                    current_entry = [line]
+                else:
+                    current_entry.append(line)
+
+            # Don't forget the last entry
+            if current_entry:
+                entry_text = "\n".join(current_entry)
+                include_entry = True
+                if grep and grep.lower() not in entry_text.lower():
+                    include_entry = False
+                if label:
+                    label_match = f"LABEL: {label}"
+                    if label_match.lower() not in entry_text.lower():
+                        include_entry = False
+                if include_entry:
+                    entries.append(entry_text)
+                    entry_count += 1
+
+            # Apply limit (on lines, not entries for consistency)
+            total_lines = sum(len(e.split("\n")) for e in entries)
+            if total_lines > limit:
+                # Truncate entries to fit within limit
+                limited_entries = []
+                line_count = 0
+                for entry in entries:
+                    entry_lines = len(entry.split("\n"))
+                    if line_count + entry_lines <= limit:
+                        limited_entries.append(entry)
+                        line_count += entry_lines
+                    else:
+                        break
+                entries = limited_entries
+
+            return {
+                "workset_id": workset_id,
+                "log_available": True,
+                "bucket": bucket,
+                "key": command_log_key,
+                "entry_count": entry_count,
+                "entries_returned": len(entries),
+                "filters_applied": {
+                    "grep": grep,
+                    "label": label,
+                    "limit": limit,
+                },
+                "entries": entries,
+            }
+
         @app.post("/api/customers/{customer_id}/worksets/{workset_id}/restore", tags=["customer-worksets"])
         async def restore_customer_workset(
             customer_id: str,
@@ -2020,43 +2452,51 @@ def create_app(
             # Attempt to fetch live pipeline status from headnode
             pipeline_status = None
             if PIPELINE_STATUS_AVAILABLE and PipelineStatusFetcher is not None:
-                cluster_name = workset.get("cluster_name")
                 workset_name = workset.get("name") or workset.get("workset_name")
+                # Use cached headnode IP from DynamoDB (stored by monitor when workset started)
+                headnode_ip = workset.get("execution_headnode_ip")
 
-                if cluster_name and workset_name:
+                if headnode_ip and workset_name:
                     try:
-                        # Create fetcher with settings from environment
+                        # Get workset region for region-specific SSH key
+                        workset_region = (
+                            workset.get("execution_cluster_region")
+                            or workset.get("cluster_region")
+                            or settings.get_effective_region()
+                        )
+
+                        # Try to get region-specific SSH key from ursa_config
+                        ssh_key = settings.pipeline_ssh_identity_file
+                        try:
+                            from daylib.ursa_config import get_ursa_config
+                            ursa_cfg = get_ursa_config()
+                            region_key = ursa_cfg.get_ssh_key_for_region(workset_region)
+                            if region_key:
+                                ssh_key = region_key
+                                LOGGER.debug("Using region-specific SSH key for %s: %s", workset_region, ssh_key)
+                        except Exception as e:
+                            LOGGER.debug("Could not load ursa_config for region SSH key: %s", e)
+
+                        # Create fetcher with region-aware SSH key
                         fetcher = PipelineStatusFetcher(
                             ssh_user=settings.pipeline_ssh_user,
-                            ssh_identity_file=settings.pipeline_ssh_identity_file,
+                            ssh_identity_file=ssh_key,
                             timeout=settings.pipeline_ssh_timeout,
                             clone_dest_root=settings.pipeline_clone_dest_root,
                             repo_dir_name=settings.pipeline_repo_dir_name,
                         )
 
-                        # Get headnode IP from cluster
-                        headnode_ip = fetcher.get_headnode_ip(
-                            cluster_name,
-                            region=settings.get_effective_region(),
-                            profile=settings.aws_profile,
+                        # Use headnode IP from DynamoDB (no pcluster call needed)
+                        # Derive tmux session name (matches monitor convention)
+                        tmux_session = f"daylily-{workset_name}"
+
+                        # Fetch status
+                        status_obj = fetcher.fetch_status(
+                            headnode_ip=headnode_ip,
+                            workset_name=workset_name,
+                            tmux_session_name=tmux_session,
                         )
-
-                        if headnode_ip:
-                            # Derive tmux session name (matches monitor convention)
-                            tmux_session = f"daylily-{workset_name}"
-
-                            # Fetch status
-                            status_obj = fetcher.fetch_status(
-                                headnode_ip=headnode_ip,
-                                workset_name=workset_name,
-                                tmux_session_name=tmux_session,
-                            )
-                            pipeline_status = status_obj.to_dict()
-                        else:
-                            LOGGER.debug(
-                                "Could not get headnode IP for cluster %s",
-                                cluster_name,
-                            )
+                        pipeline_status = status_obj.to_dict()
                     except Exception as e:
                         LOGGER.warning(
                             "Failed to fetch pipeline status for %s: %s",
@@ -2124,12 +2564,25 @@ def create_app(
             if not force_refresh:
                 cached = state_db.get_performance_metrics(workset_id)
                 if cached and cached.get("is_final"):
+                    cached_metrics = cached.get("metrics", {})
+                    if isinstance(cached_metrics, dict):
+                        post_export_metrics = cached_metrics.get("post_export_metrics")
+                        if isinstance(post_export_metrics, dict):
+                            post_export_metrics.setdefault(
+                                "data_transfer_intra_region_bytes", 0
+                            )
+                            post_export_metrics.setdefault(
+                                "data_transfer_cross_region_bytes", 0
+                            )
+                            post_export_metrics.setdefault(
+                                "data_transfer_internet_bytes", 0
+                            )
                     # Have final cached metrics - return them
                     return {
                         "workset_id": workset_id,
                         "cached": True,
                         "is_final": True,
-                        **cached.get("metrics", {}),
+                        **(cached_metrics if isinstance(cached_metrics, dict) else {}),
                     }
 
             # Try to fetch metrics - first from headnode, then fall back to S3
@@ -2137,33 +2590,45 @@ def create_app(
             metrics_source = None
 
             if PIPELINE_STATUS_AVAILABLE and PipelineStatusFetcher is not None:
-                cluster_name = workset.get("cluster_name") or workset.get("execution_cluster_name")
                 workset_name = workset.get("name") or workset.get("workset_name") or workset_id
                 results_s3_uri = workset.get("results_s3_uri")
+                # Use cached headnode IP from DynamoDB (stored by monitor when workset started)
+                headnode_ip = workset.get("execution_headnode_ip")
+
+                # Get workset region for region-specific SSH key
+                workset_region = (
+                    workset.get("execution_cluster_region")
+                    or workset.get("cluster_region")
+                    or settings.get_effective_region()
+                )
+
+                # Try to get region-specific SSH key from ursa_config
+                ssh_key = settings.pipeline_ssh_identity_file
+                try:
+                    from daylib.ursa_config import get_ursa_config
+                    ursa_cfg = get_ursa_config()
+                    region_key = ursa_cfg.get_ssh_key_for_region(workset_region)
+                    if region_key:
+                        ssh_key = region_key
+                except Exception:
+                    pass
 
                 fetcher = PipelineStatusFetcher(
                     ssh_user=settings.pipeline_ssh_user,
-                    ssh_identity_file=settings.pipeline_ssh_identity_file,
+                    ssh_identity_file=ssh_key,
                     timeout=settings.pipeline_ssh_timeout,
                     clone_dest_root=settings.pipeline_clone_dest_root,
                     repo_dir_name=settings.pipeline_repo_dir_name,
                 )
 
-                # Try headnode first (for running worksets)
-                if cluster_name and workset_name and not is_terminal_state:
+                # Try headnode first (for running worksets) - use IP from DynamoDB
+                if headnode_ip and workset_name and not is_terminal_state:
                     try:
-                        headnode_ip = fetcher.get_headnode_ip(
-                            cluster_name,
-                            region=settings.get_effective_region(),
-                            profile=settings.aws_profile,
+                        metrics_data = fetcher.fetch_performance_metrics(
+                            headnode_ip, workset_name
                         )
-
-                        if headnode_ip:
-                            metrics_data = fetcher.fetch_performance_metrics(
-                                headnode_ip, workset_name
-                            )
-                            if metrics_data and any(metrics_data.values()):
-                                metrics_source = "headnode"
+                        if metrics_data and any(metrics_data.values()):
+                            metrics_source = "headnode"
                     except Exception as e:
                         LOGGER.warning(
                             "Failed to fetch performance metrics from headnode for %s: %s",
@@ -2218,17 +2683,44 @@ def create_app(
                                 total_size += obj.get("Size", 0)
 
                         if total_size > 0:
+                            # Coarse transfer metering: if we can determine the results
+                            # bucket region, attribute bytes to intra/cross-region based
+                            # on cluster region; otherwise attribute to internet to avoid
+                            # under-billing.
+                            bucket_region = None
+                            try:
+                                loc = s3_client.get_bucket_location(Bucket=bucket)
+                                bucket_region = loc.get("LocationConstraint") or "us-east-1"
+                            except Exception:
+                                bucket_region = None
+
+                            intra_bytes = 0
+                            cross_bytes = 0
+                            internet_bytes = 0
+                            cluster_region = str(workset_region) if workset_region else None
+                            if cluster_region and bucket_region:
+                                if cluster_region == bucket_region:
+                                    intra_bytes = int(total_size)
+                                else:
+                                    cross_bytes = int(total_size)
+                            else:
+                                internet_bytes = int(total_size)
+
                             # Format human-readable size
                             def format_bytes(size_bytes: int) -> str:
+                                size = float(size_bytes)
                                 for unit in ["B", "KB", "MB", "GB", "TB"]:
-                                    if abs(size_bytes) < 1024.0:
-                                        return f"{size_bytes:.1f}{unit}"
-                                    size_bytes /= 1024.0
-                                return f"{size_bytes:.1f}PB"
+                                    if abs(size) < 1024.0:
+                                        return f"{size:.1f}{unit}"
+                                    size /= 1024.0
+                                return f"{size:.1f}PB"
 
                             post_export_metrics = {
                                 "analysis_directory_size_bytes": total_size,
                                 "analysis_directory_size_human": format_bytes(total_size),
+                                "data_transfer_intra_region_bytes": intra_bytes,
+                                "data_transfer_cross_region_bytes": cross_bytes,
+                                "data_transfer_internet_bytes": internet_bytes,
                             }
                             if metrics_data is None:
                                 metrics_data = {}
@@ -2248,6 +2740,14 @@ def create_app(
 
             # Cache the results if we got any
             if metrics_data and any(metrics_data.values()):
+                post_export_metrics = None
+                if isinstance(metrics_data, dict):
+                    post_export_metrics = metrics_data.get("post_export_metrics")
+                if isinstance(post_export_metrics, dict):
+                    post_export_metrics.setdefault("data_transfer_intra_region_bytes", 0)
+                    post_export_metrics.setdefault("data_transfer_cross_region_bytes", 0)
+                    post_export_metrics.setdefault("data_transfer_internet_bytes", 0)
+
                 # Cache with is_final=True if workset is in terminal state
                 state_db.update_performance_metrics(
                     workset_id, metrics_data, is_final=is_terminal_state
@@ -2325,35 +2825,42 @@ def create_app(
                     detail="Pipeline status module not available",
                 )
 
-            cluster_name = workset.get("cluster_name")
             workset_name = workset.get("name") or workset.get("workset_name")
+            # Use cached headnode IP from DynamoDB (stored by monitor when workset started)
+            headnode_ip = workset.get("execution_headnode_ip")
 
-            if not cluster_name or not workset_name:
+            if not headnode_ip or not workset_name:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Workset missing cluster_name or name",
+                    detail="Workset missing execution_headnode_ip or name",
                 )
+
+            # Get workset region for region-specific SSH key
+            workset_region = (
+                workset.get("execution_cluster_region")
+                or workset.get("cluster_region")
+                or settings.get_effective_region()
+            )
+
+            # Try to get region-specific SSH key from ursa_config
+            ssh_key = settings.pipeline_ssh_identity_file
+            try:
+                from daylib.ursa_config import get_ursa_config
+                ursa_cfg = get_ursa_config()
+                region_key = ursa_cfg.get_ssh_key_for_region(workset_region)
+                if region_key:
+                    ssh_key = region_key
+            except Exception:
+                pass
 
             try:
                 fetcher = PipelineStatusFetcher(
                     ssh_user=settings.pipeline_ssh_user,
-                    ssh_identity_file=settings.pipeline_ssh_identity_file,
+                    ssh_identity_file=ssh_key,
                     timeout=settings.pipeline_ssh_timeout,
                     clone_dest_root=settings.pipeline_clone_dest_root,
                     repo_dir_name=settings.pipeline_repo_dir_name,
                 )
-
-                headnode_ip = fetcher.get_headnode_ip(
-                    cluster_name,
-                    region=settings.get_effective_region(),
-                    profile=settings.aws_profile,
-                )
-
-                if not headnode_ip:
-                    raise HTTPException(
-                        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                        detail=f"Could not connect to cluster {cluster_name}",
-                    )
 
                 content = fetcher.get_full_log_content(headnode_ip, workset_name, log_filename)
                 if content is None:
@@ -2420,9 +2927,9 @@ def create_app(
             start_date = end_date - timedelta(days=days - 1)
 
             # Initialize counters for each day
-            daily_submitted = defaultdict(int)
-            daily_completed = defaultdict(int)
-            daily_failed = defaultdict(int)
+            daily_submitted: DefaultDict[str, int] = defaultdict(int)
+            daily_completed: DefaultDict[str, int] = defaultdict(int)
+            daily_failed: DefaultDict[str, int] = defaultdict(int)
 
             for ws in all_worksets:
                 state_history = ws.get("state_history", [])
@@ -2514,7 +3021,7 @@ def create_app(
             start_date = end_date - timedelta(days=days - 1)
 
             # Track daily costs
-            daily_costs = defaultdict(float)
+            daily_costs: DefaultDict[str, float] = defaultdict(float)
 
             for ws in all_worksets:
                 # Get cost from performance metrics or estimate
@@ -2580,17 +3087,28 @@ def create_app(
                 "total": round(sum(costs), 2),
             }
 
-        @app.get("/api/customers/{customer_id}/dashboard/cost-breakdown", tags=["customer-dashboard"])
+
+        @app.get(
+            "/api/customers/{customer_id}/dashboard/cost-breakdown",
+            tags=["customer-dashboard"],
+        )
         async def get_dashboard_cost_breakdown(
             customer_id: str,
         ):
             """Get cost breakdown by category.
 
-            Returns compute, storage, and transfer costs.
-            - Compute: From benchmark data (actual) or estimates
-            - Storage: $0.023/GB/month for S3 Standard
-            - Transfer: $0.10/GB placeholder rate
+            Returns compute, storage, and transfer costs (split into 3 transfer types).
+
+            - Compute: From dedicated cost_report fields (Phase 5B) or estimates
+            - Storage: From dedicated storage_metrics fields (Phase 5C) at $0.023/GB/month
+            - Transfer: intra-region ($0), cross-region, and internet egress
             """
+            if not state_db:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="State DB not configured",
+                )
+
             if not customer_manager:
                 raise HTTPException(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -2604,80 +3122,202 @@ def create_app(
                     detail=f"Customer {customer_id} not found",
                 )
 
-            # Cost calculation constants
-            S3_STORAGE_COST_PER_GB_MONTH = 0.023  # S3 Standard storage
-            TRANSFER_COST_PER_GB = 0.10  # Placeholder transfer cost
+            # Shared billing logic (used by both portal Usage page + dashboard chart)
+            from daylib.billing import calculate_customer_cost_breakdown
 
-            # Get all completed worksets
-            completed_worksets = state_db.list_worksets_by_state(WorksetState.COMPLETE, limit=500)
-            customer_worksets = [ws for ws in completed_worksets if verify_workset_ownership(ws, customer_id)]
+            breakdown = calculate_customer_cost_breakdown(
+                state_db,
+                customer_id,
+                limit=500,
+            )
 
-            total_compute_cost = 0.0
-            total_storage_bytes = 0
-
-            for ws in customer_worksets:
-                pm = ws.get("performance_metrics", {})
-                if pm and isinstance(pm, dict):
-                    cost_summary = pm.get("cost_summary", {})
-                    if cost_summary and isinstance(cost_summary, dict):
-                        total_compute_cost += float(cost_summary.get("total_cost", 0))
-                    else:
-                        # Fall back to estimated
-                        cost = float(ws.get("cost_usd", 0) or 0)
-                        if cost == 0:
-                            metadata = ws.get("metadata", {})
-                            if isinstance(metadata, dict):
-                                cost = float(metadata.get("cost_usd", 0) or metadata.get("estimated_cost_usd", 0) or 0)
-                        total_compute_cost += cost
-
-                    # Collect storage from export metrics
-                    export_metrics = pm.get("post_export_metrics", {}) or pm.get("pre_export_metrics", {})
-                    if export_metrics and isinstance(export_metrics, dict):
-                        total_storage_bytes += int(export_metrics.get("analysis_directory_size_bytes", 0) or 0)
-                else:
-                    # Fall back to estimated cost
-                    cost = float(ws.get("cost_usd", 0) or 0)
-                    if cost == 0:
-                        metadata = ws.get("metadata", {})
-                        if isinstance(metadata, dict):
-                            cost = float(metadata.get("cost_usd", 0) or metadata.get("estimated_cost_usd", 0) or 0)
-                    total_compute_cost += cost
-
-            # Calculate storage and transfer costs
-            storage_gb = total_storage_bytes / (1024**3)
-            storage_cost = storage_gb * S3_STORAGE_COST_PER_GB_MONTH
-            transfer_cost = storage_gb * TRANSFER_COST_PER_GB
-
-            # Build response with all three categories
-            categories = []
-            values = []
-
-            if total_compute_cost > 0:
-                categories.append("Compute")
-                values.append(round(total_compute_cost, 2))
-
-            if storage_cost > 0:
-                categories.append("Storage")
-                values.append(round(storage_cost, 4))
-
-            if transfer_cost > 0:
-                categories.append("Transfer")
-                values.append(round(transfer_cost, 4))
-
-            # Default if no costs
-            if not categories:
+            # Always return explicit transfer categories so the portal can present:
+            # - intra-region transfer (typically $0/GB)
+            # - cross-region transfer
+            # - internet egress
+            categories: list[str] = [
+                "Compute",
+                "Storage",
+                "Transfer (Intra-region)",
+                "Transfer (Cross-region)",
+                "Internet egress",
+            ]
+            values: list[float] = [
+                float(breakdown.get("compute_cost_usd", 0.0) or 0.0),
+                float(breakdown.get("storage_cost_usd", 0.0) or 0.0),
+                float(breakdown.get("transfer_intra_region_cost_usd", 0.0) or 0.0),
+                float(breakdown.get("transfer_cross_region_cost_usd", 0.0) or 0.0),
+                float(breakdown.get("transfer_internet_cost_usd", 0.0) or 0.0),
+            ]
+            if all(v == 0.0 for v in values):
                 categories = ["Compute"]
-                values = [0]
+                values = [0.0]
 
-            total = total_compute_cost + storage_cost + transfer_cost
             return {
                 "categories": categories,
                 "values": values,
-                "total": round(total, 2),
-                "has_actual_costs": total_compute_cost > 0,
-                "compute_cost_usd": round(total_compute_cost, 2),
-                "storage_cost_usd": round(storage_cost, 4),
-                "transfer_cost_usd": round(transfer_cost, 4),
+                "total": breakdown["total"],
+                "has_actual_costs": breakdown["has_actual_costs"],
+                "compute_cost_usd": breakdown["compute_cost_usd"],
+                "storage_cost_usd": breakdown["storage_cost_usd"],
+                "transfer_cost_usd": breakdown["transfer_cost_usd"],
+                "transfer_intra_region_cost_usd": breakdown.get(
+                    "transfer_intra_region_cost_usd", 0.0
+                ),
+                "transfer_cross_region_cost_usd": breakdown.get(
+                    "transfer_cross_region_cost_usd", 0.0
+                ),
+                "transfer_internet_cost_usd": breakdown.get(
+                    "transfer_internet_cost_usd", 0.0
+                ),
+                "transfer_intra_region_gb": breakdown.get("transfer_intra_region_gb", 0.0),
+                "transfer_cross_region_gb": breakdown.get("transfer_cross_region_gb", 0.0),
+                "transfer_internet_gb": breakdown.get("transfer_internet_gb", 0.0),
+                "storage_gb": breakdown["storage_gb"],
+                "rates": breakdown.get("rates", {}),
+            }
+
+    # ========== Billing Endpoints (Phase 5D) ==========
+
+    if state_db and customer_manager:
+        from daylib.billing import BillingCalculator
+
+        # Initialize billing calculator with default rates
+        billing_calculator = BillingCalculator(state_db=state_db)
+
+        @app.get("/api/customers/{customer_id}/billing/summary", tags=["billing"])
+        async def get_customer_billing_summary(
+            customer_id: str,
+            days: int = Query(30, ge=1, le=365, description="Number of days to include"),
+        ):
+            """Get billing summary for a customer.
+
+            Returns aggregated costs from completed worksets including:
+            - Compute costs (from Snakemake benchmark data)
+            - Storage costs (per-GB S3 storage)
+            - Transfer costs (data egress)
+            - Platform fees (if configured)
+            """
+            config = customer_manager.get_customer_config(customer_id)
+            if not config:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Customer {customer_id} not found",
+                )
+
+            period_end = datetime.now(timezone.utc)
+            period_start = period_end - timedelta(days=days)
+
+            summary = billing_calculator.calculate_customer_billing(
+                customer_id=customer_id,
+                period_start=period_start,
+                period_end=period_end,
+            )
+
+            return {
+                "customer_id": customer_id,
+                "period_start": summary.period_start,
+                "period_end": summary.period_end,
+                "total_worksets": summary.total_worksets,
+                "billable_worksets": summary.billable_worksets,
+                "total_samples": summary.total_samples,
+                "total_storage_gb": summary.total_storage_gb,
+                "costs": {
+                    "compute_usd": summary.total_compute_cost_usd,
+                    "storage_usd": summary.total_storage_cost_usd,
+                    "transfer_usd": summary.total_transfer_cost_usd,
+                    "platform_fee_usd": summary.total_platform_fee_usd,
+                    "grand_total_usd": summary.grand_total_usd,
+                },
+                "accuracy": {
+                    "has_actual_costs": summary.has_actual_costs,
+                    "estimated_worksets": summary.estimated_worksets,
+                },
+            }
+
+        @app.get("/api/customers/{customer_id}/billing/invoice", tags=["billing"])
+        async def get_customer_invoice(
+            customer_id: str,
+            days: int = Query(30, ge=1, le=365, description="Number of days to include"),
+        ):
+            """Generate invoice data for a customer.
+
+            Returns detailed invoice with line items for each workset.
+            Suitable for rendering invoices or exporting to billing systems.
+            """
+            config = customer_manager.get_customer_config(customer_id)
+            if not config:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Customer {customer_id} not found",
+                )
+
+            period_end = datetime.now(timezone.utc)
+            period_start = period_end - timedelta(days=days)
+
+            invoice_data = billing_calculator.generate_invoice_data(
+                customer_id=customer_id,
+                period_start=period_start,
+                period_end=period_end,
+            )
+
+            # Add customer info
+            invoice_data["customer_name"] = config.customer_name
+            invoice_data["customer_email"] = config.email
+            invoice_data["billing_account_id"] = config.billing_account_id
+            invoice_data["cost_center"] = config.cost_center
+
+            return invoice_data
+
+        @app.get("/api/customers/{customer_id}/billing/workset/{workset_id}", tags=["billing"])
+        async def get_workset_billing(
+            customer_id: str,
+            workset_id: str,
+        ):
+            """Get billing details for a specific workset.
+
+            Returns detailed cost breakdown including actual vs estimated costs.
+            """
+            config = customer_manager.get_customer_config(customer_id)
+            if not config:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Customer {customer_id} not found",
+                )
+
+            workset = state_db.get_workset(workset_id)
+            if not workset:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Workset {workset_id} not found",
+                )
+
+            if not verify_workset_ownership(workset, customer_id):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Workset does not belong to this customer",
+                )
+
+            item = billing_calculator.calculate_workset_billing(workset)
+
+            return {
+                "workset_id": item.workset_id,
+                "customer_id": item.customer_id,
+                "completed_at": item.completed_at,
+                "samples": item.sample_count,
+                "rules_executed": item.rule_count,
+                "costs": {
+                    "compute_usd": billing_calculator._round_currency(item.compute_cost_usd, 2),
+                    "storage_gb": billing_calculator._round_currency(item.storage_gb, 2),
+                    "storage_usd": billing_calculator._round_currency(item.storage_cost_usd, 2),
+                    "transfer_usd": billing_calculator._round_currency(item.transfer_cost_usd, 2),
+                    "platform_fee_usd": billing_calculator._round_currency(item.platform_fee_usd, 2),
+                    "total_usd": billing_calculator._round_currency(item.total_cost_usd, 2),
+                },
+                "accuracy": {
+                    "has_actual_compute_cost": item.has_actual_compute_cost,
+                    "has_actual_storage": item.has_actual_storage,
+                },
             }
 
     # ========== Workset Validation Endpoints ==========
@@ -3018,6 +3658,50 @@ def create_app(
             "apply_command": f"aws s3api put-bucket-policy --bucket {bucket_name} --policy file://bucket-policy.json",
         }
 
+    @app.get("/api/s3/bucket-region/{bucket_name}", tags=["utilities"])
+    async def get_bucket_region(
+        bucket_name: str,
+        current_user: Optional[Dict] = Depends(get_current_user),
+    ):
+        """Get the AWS region where an S3 bucket is located.
+
+        Args:
+            bucket_name: S3 bucket name
+
+        Returns:
+            Bucket region information.
+        """
+        import boto3
+        from botocore.exceptions import ClientError
+
+        try:
+            session_kwargs = {}
+            if profile:
+                session_kwargs["profile_name"] = profile
+            session = boto3.Session(**session_kwargs)
+            s3_client = session.client("s3")
+
+            # get_bucket_location returns None for us-east-1, otherwise the region
+            response = s3_client.get_bucket_location(Bucket=bucket_name)
+            location = response.get("LocationConstraint")
+            # us-east-1 returns None or empty string
+            bucket_region = location if location else "us-east-1"
+
+            return {
+                "bucket": bucket_name,
+                "region": bucket_region,
+            }
+        except ClientError as e:
+            error_code = e.response.get("Error", {}).get("Code", "Unknown")
+            if error_code == "NoSuchBucket":
+                raise HTTPException(status_code=404, detail=f"Bucket '{bucket_name}' not found")
+            elif error_code == "AccessDenied":
+                raise HTTPException(status_code=403, detail=f"Access denied to bucket '{bucket_name}'")
+            else:
+                raise HTTPException(status_code=500, detail=f"Failed to get bucket region: {str(e)}")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to get bucket region: {str(e)}")
+
     # ========== Cluster Management Endpoints ==========
 
     @app.get("/api/clusters", tags=["clusters"])
@@ -3036,19 +3720,27 @@ def create_app(
         Set fetch_status=true to also fetch budget and job queue info via SSH.
         """
         try:
-            from daylib.cluster_service import ClusterService
+            from daylib.cluster_service import get_cluster_service
+            from daylib.ursa_config import get_ursa_config
 
-            allowed_regions = settings.get_allowed_regions()
+            # Use UrsaConfig for regions (preferred) with fallback to legacy env var
+            ursa_config = get_ursa_config()
+            if ursa_config.is_configured:
+                allowed_regions = ursa_config.get_allowed_regions()
+            else:
+                allowed_regions = settings.get_allowed_regions()
+
             if not allowed_regions:
                 return {
                     "clusters": [],
                     "regions": [],
-                    "error": "No regions configured. Set URSA_ALLOWED_REGIONS environment variable.",
+                    "error": "No regions configured. Create ~/.ursa/ursa-config.yaml with region definitions.",
                 }
 
-            service = ClusterService(
+            # Use global singleton to share cache across requests
+            service = get_cluster_service(
                 regions=allowed_regions,
-                aws_profile=settings.aws_profile,
+                aws_profile=ursa_config.aws_profile or settings.aws_profile,
                 cache_ttl_seconds=300,
             )
 
@@ -3069,9 +3761,75 @@ def create_app(
             LOGGER.error(f"Failed to list clusters: {e}")
             return {
                 "clusters": [],
-                "regions": settings.get_allowed_regions(),
+                "regions": [],
                 "error": str(e),
             }
+
+    @app.delete("/api/clusters/{cluster_name}", tags=["clusters"])
+    async def delete_cluster(
+        cluster_name: str,
+        region: str = Query(..., description="AWS region where the cluster is located"),
+        current_user: Optional[Dict] = Depends(get_current_user),
+    ):
+        """Delete a ParallelCluster instance (admin-only).
+
+        This is a destructive operation.
+        """
+        from daylib.file_api import _enforce_admin_only
+
+        _enforce_admin_only(current_user, operation="delete clusters")
+
+        try:
+            from daylib.cluster_service import get_cluster_service
+            from daylib.ursa_config import get_ursa_config
+
+            ursa_config = get_ursa_config()
+            if ursa_config.is_configured:
+                allowed_regions = ursa_config.get_allowed_regions()
+            else:
+                allowed_regions = settings.get_allowed_regions()
+
+            if not allowed_regions:
+                raise HTTPException(
+                    status_code=400,
+                    detail="No regions configured. Create ~/.ursa/ursa-config.yaml with region definitions.",
+                )
+
+            if region not in allowed_regions:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Region '{region}' is not configured for this deployment",
+                )
+
+            service = get_cluster_service(
+                regions=allowed_regions,
+                aws_profile=ursa_config.aws_profile or settings.aws_profile,
+                cache_ttl_seconds=300,
+            )
+
+            result = service.delete_cluster(cluster_name, region)
+            if "error" in result:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Failed to delete cluster: {result['error']}",
+                )
+
+            cmd = f"pcluster delete-cluster --region {region} -n {cluster_name}"
+            profile = ursa_config.aws_profile or settings.aws_profile
+
+            return {
+                "success": True,
+                "cluster_name": cluster_name,
+                "region": region,
+                "pcluster_command": cmd,
+                "aws_profile": profile,
+                "message": f"Cluster '{cluster_name}' deletion initiated",
+            }
+        except HTTPException:
+            raise
+        except Exception as e:
+            LOGGER.error(f"Failed to delete cluster {cluster_name}: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
 
     # ========== Customer Portal Routes ==========
 
@@ -3091,6 +3849,8 @@ def create_app(
         if BIOSPECIMEN_AVAILABLE:
             try:
                 biospecimen_registry_for_portal = BiospecimenRegistry(region=region, profile=profile)
+                # Ensure tables exist
+                biospecimen_registry_for_portal.create_tables_if_not_exist()
                 LOGGER.info("Biospecimen registry initialized for portal")
             except Exception as e:
                 LOGGER.warning("Failed to initialize biospecimen registry for portal: %s", str(e))
