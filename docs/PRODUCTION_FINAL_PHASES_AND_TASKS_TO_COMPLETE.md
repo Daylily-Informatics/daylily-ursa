@@ -9,7 +9,7 @@ email_address=johnm@lsmc.life
 ui password:C4un3y!!C4un3y!!
 customer_id=lsmc-76fd9f2a
 workset-manifest=augment-testing-manifest
-config ~/.ursa/ursa-config.yaml
+config ~/.config/ursa/ursa-config.yaml
 prefer clusters in us-west-2
 
 ## Assumptions

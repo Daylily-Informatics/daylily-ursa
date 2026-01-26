@@ -89,10 +89,10 @@ def generate(
     template = """# Ursa Configuration
 # ==================
 # This file is loaded by 'ursa server start' and other commands.
-# For multi-region configuration, use ~/.ursa/ursa-config.yaml instead.
+# For multi-region configuration, use ~/.config/ursa/ursa-config.yaml instead.
 
 # ========== AWS Configuration ==========
-# Regions are configured in ~/.ursa/ursa-config.yaml
+# Regions are configured in ~/.config/ursa/ursa-config.yaml
 # Do NOT use AWS_DEFAULT_REGION - regions must be explicit per API call
 
 # Regions to scan for ParallelCluster instances (comma-separated)

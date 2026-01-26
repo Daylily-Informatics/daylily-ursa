@@ -1,4 +1,4 @@
-"""Ursa configuration loader for ~/.ursa/ursa-config.yaml.
+"""Ursa configuration loader for ~/.config/ursa/ursa-config.yaml.
 
 This module provides:
 - List of AWS regions to scan for ParallelCluster instances
@@ -7,6 +7,10 @@ This module provides:
 
 S3 buckets are discovered from cluster tags (aws-parallelcluster-monitor-bucket)
 rather than being configured statically per region.
+
+Configuration follows XDG Base Directory conventions:
+- Config file: ~/.config/ursa/ursa-config.yaml
+- Legacy paths (~/.ursa/*) are checked for backward compatibility
 """
 
 import logging
@@ -39,11 +43,12 @@ class RegionConfig:
             return None
         return str(Path(self.ssh_pem).expanduser())
 
-# Canonical config path
-DEFAULT_CONFIG_PATH = Path.home() / ".ursa" / "ursa-config.yaml"
+# Canonical config path (XDG Base Directory convention)
+DEFAULT_CONFIG_PATH = Path.home() / ".config" / "ursa" / "ursa-config.yaml"
 
 # Legacy paths to check (for backward compatibility during migration)
 LEGACY_CONFIG_PATHS = [
+    Path.home() / ".ursa" / "ursa-config.yaml",  # Previous canonical path
     Path.home() / ".ursa" / "ursa.yaml",
     Path.home() / ".ursa" / "config.yaml",
 ]
@@ -132,10 +137,13 @@ def validate_config_file(path: Path) -> Tuple[bool, List[str], List[str]]:
 
 @dataclass
 class UrsaConfig:
-    """Ursa configuration loaded from ~/.ursa/ursa-config.yaml.
+    """Ursa configuration loaded from ~/.config/ursa/ursa-config.yaml.
 
     S3 buckets are NOT configured here - they are discovered dynamically from
     cluster tags (aws-parallelcluster-monitor-bucket) when a cluster is selected.
+
+    Configuration follows XDG Base Directory conventions. Legacy paths under
+    ~/.ursa/ are checked for backward compatibility.
     """
 
     regions: List[RegionConfig] = field(default_factory=list)
@@ -184,7 +192,7 @@ class UrsaConfig:
 
         Args:
             config_path: Path to config file. If not provided, looks for
-                         ~/.ursa/ursa-config.yaml first, then legacy paths.
+                         ~/.config/ursa/ursa-config.yaml first, then legacy paths.
 
         Returns:
             UrsaConfig instance (empty regions list if file doesn't exist).

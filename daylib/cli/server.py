@@ -15,8 +15,8 @@ from rich.console import Console
 server_app = typer.Typer(help="API server management commands")
 console = Console()
 
-# PID and log file locations
-CONFIG_DIR = Path.home() / ".ursa"
+# PID and log file locations (XDG Base Directory: ~/.config/ursa/)
+CONFIG_DIR = Path.home() / ".config" / "ursa"
 LOG_DIR = CONFIG_DIR / "logs"
 PID_FILE = CONFIG_DIR / "server.pid"
 
@@ -33,7 +33,7 @@ def _require_auth_dependencies() -> None:
 
 
 def _ensure_dir():
-    """Ensure .ursa directories exist."""
+    """Ensure ~/.config/ursa directories exist."""
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     LOG_DIR.mkdir(parents=True, exist_ok=True)
 

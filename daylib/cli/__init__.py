@@ -26,9 +26,9 @@ def _validate_aws_env() -> None:
 
     Checks for AWS_PROFILE from either:
     - AWS_PROFILE environment variable
-    - aws_profile in ~/.ursa/ursa-config.yaml
+    - aws_profile in ~/.config/ursa/ursa-config.yaml
 
-    Regions are configured in ~/.ursa/ursa-config.yaml and explicitly passed to AWS API calls.
+    Regions are configured in ~/.config/ursa/ursa-config.yaml and explicitly passed to AWS API calls.
     """
     from daylib.ursa_config import get_ursa_config
 
@@ -43,7 +43,7 @@ def _validate_aws_env() -> None:
         errors.append(
             "AWS_PROFILE is not set.\n"
             "   Set via environment: [cyan]export AWS_PROFILE=your-profile[/cyan]\n"
-            "   Or in config file:   [cyan]~/.ursa/ursa-config.yaml[/cyan] → [dim]aws_profile: your-profile[/dim]"
+            "   Or in config file:   [cyan]~/.config/ursa/ursa-config.yaml[/cyan] → [dim]aws_profile: your-profile[/dim]"
         )
     elif aws_profile_env == "default":
         errors.append("AWS_PROFILE is 'default'. Use a named profile: [cyan]export AWS_PROFILE=your-profile[/cyan]")
@@ -134,8 +134,8 @@ def info():
     # Python
     table.add_row("Python", sys.version.split()[0])
 
-    # Config file
-    config_dir = Path.home() / ".ursa"
+    # Config file (XDG Base Directory: ~/.config/ursa/)
+    config_dir = Path.home() / ".config" / "ursa"
     if ursa_config.config_path and ursa_config.config_path.exists():
         config_status = f"[green]{ursa_config.config_path}[/green]"
         if ursa_config.from_legacy_path:

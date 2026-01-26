@@ -166,7 +166,7 @@ ursa env generate
 AWS_PROFILE=your-profile-name
 
 # Region Configuration
-# Regions are configured in ~/.ursa/ursa-config.yaml
+# Regions are configured in ~/.config/ursa/ursa-config.yaml
 # Use URSA_ALLOWED_REGIONS to specify regions to scan for clusters
 URSA_ALLOWED_REGIONS=us-west-2,us-east-1
 
