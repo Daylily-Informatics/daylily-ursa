@@ -1,5 +1,5 @@
 /**
- * Daylily Customer Portal - YAML Generator
+ * Ursa Customer Portal - YAML Generator
  */
 
 let sampleCount = 1;
@@ -131,7 +131,7 @@ function updatePreview() {
     });
     
     // Build YAML
-    let yaml = `# Daylily Work Configuration
+    let yaml = `# Ursa Work Configuration
 # Generated: ${new Date().toISOString()}
 
 workset:
@@ -242,7 +242,7 @@ async function browseFolder(prefix) {
     updateBrowserBreadcrumbs(prefix);
 
     try {
-        const data = await DaylilyAPI.files.list(customerId, prefix);
+        const data = await UrsaAPI.files.list(customerId, prefix);
         const files = data.files || [];
 
         if (files.length === 0) {

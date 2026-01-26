@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% set active_page = 'worksets' %}
 
-{% block title %}Workset {{ workset.workset_id[:12] }}... - Daylily Customer Portal{% endblock %}
+{% block title %}Workset {{ workset.workset_id[:12] }}... - Ursa Customer Portal{% endblock %}
 
 {% block extra_css %}
 <style>
@@ -671,7 +671,7 @@ async function loadPipelineStatus() {
         return;
     }
     try {
-        const response = await DaylilyAPI.worksets.getLogs(customerId, worksetId);
+        const response = await UrsaAPI.worksets.getLogs(customerId, worksetId);
         renderPipelineStatus(response.pipeline_status);
 
         // Also update state history if available
@@ -702,7 +702,7 @@ async function refreshPipelineStatus(wsId) {
 async function downloadSnakemakeLogs(wsId) {
     if (!customerId) return;
     try {
-        const response = await DaylilyAPI.worksets.getLogs(customerId, wsId);
+        const response = await UrsaAPI.worksets.getLogs(customerId, wsId);
         if (response.pipeline_status && response.pipeline_status.recent_log_lines) {
             const content = response.pipeline_status.recent_log_lines.join('\n');
             const blob = new Blob([content], { type: 'text/plain' });

@@ -1,5 +1,5 @@
 /**
- * Daylily Customer Portal - Worksets Management
+ * Ursa Customer Portal - Worksets Management
  */
 
 // Debounce timer for search input
@@ -87,7 +87,7 @@ async function refreshWorksets() {
     showLoading('Refreshing worksets...');
     
     try {
-        const data = await DaylilyAPI.worksets.list(customerId);
+        const data = await UrsaAPI.worksets.list(customerId);
         // Reload page to show updated data
         window.location.reload();
     } catch (error) {
@@ -107,7 +107,7 @@ async function cancelWorkset(worksetId) {
     showLoading('Cancelling workset...');
     
     try {
-        await DaylilyAPI.worksets.cancel(customerId, worksetId);
+        await UrsaAPI.worksets.cancel(customerId, worksetId);
         showToast('success', 'Workset Cancelled', 'The workset has been cancelled');
         setTimeout(() => window.location.reload(), 1000);
     } catch (error) {
@@ -125,7 +125,7 @@ async function retryWorkset(worksetId) {
     showLoading('Retrying workset...');
     
     try {
-        await DaylilyAPI.worksets.retry(customerId, worksetId);
+        await UrsaAPI.worksets.retry(customerId, worksetId);
         showToast('success', 'Workset Restarted', 'The workset has been queued for retry');
         setTimeout(() => window.location.reload(), 1000);
     } catch (error) {
@@ -151,7 +151,7 @@ async function bulkCancel() {
         let successCount = 0;
         for (const worksetId of selected) {
             try {
-                await DaylilyAPI.worksets.cancel(customerId, worksetId);
+                await UrsaAPI.worksets.cancel(customerId, worksetId);
                 successCount++;
             } catch (e) {
                 console.error(`Failed to cancel ${worksetId}:`, e);
@@ -212,7 +212,7 @@ async function bulkArchive() {
 
         for (const worksetId of archivable) {
             try {
-                await DaylilyAPI.worksets.archive(customerId, worksetId, reason || undefined);
+                await UrsaAPI.worksets.archive(customerId, worksetId, reason || undefined);
                 successCount++;
             } catch (e) {
                 console.error(`Failed to archive ${worksetId}:`, e);
@@ -294,7 +294,7 @@ async function bulkDelete() {
 
         for (const worksetId of deletable) {
             try {
-                await DaylilyAPI.worksets.delete(customerId, worksetId, hardDelete, reason || undefined);
+                await UrsaAPI.worksets.delete(customerId, worksetId, hardDelete, reason || undefined);
                 successCount++;
             } catch (e) {
                 console.error(`Failed to delete ${worksetId}:`, e);
@@ -382,7 +382,7 @@ async function submitWorkset(event) {
         data.preferred_cluster = preferredCluster;
 
         showLoading('Creating workset...');
-        const result = await DaylilyAPI.worksets.create(customerId, data);
+        const result = await UrsaAPI.worksets.create(customerId, data);
         showToast('success', 'Workset Submitted', 'Your workset has been queued for processing');
         setTimeout(() => {
             window.location.href = `/portal/worksets/${result.workset_id}`;
@@ -408,7 +408,7 @@ async function refreshWorksetDetail(worksetState) {
             // Re-gather stats by calling loadPerformanceMetrics with forceRefresh=true
             showLoading('Re-gathering stats from S3...');
             try {
-                const customerId = window.UrsaConfig?.customerId || window.DaylilyConfig?.customerId;
+                const customerId = window.UrsaConfig?.customerId;
                 const worksetId = window.location.pathname.split('/').pop();
 
                 const url = `/api/customers/${customerId}/worksets/${worksetId}/performance-metrics?force_refresh=true`;
@@ -438,7 +438,7 @@ async function downloadLogs(worksetId) {
     if (!customerId) return;
 
     try {
-        const logs = await DaylilyAPI.worksets.getLogs(customerId, worksetId);
+        const logs = await UrsaAPI.worksets.getLogs(customerId, worksetId);
         const blob = new Blob([logs.content], { type: 'text/plain' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -462,7 +462,7 @@ async function archiveWorkset(worksetId) {
     showLoading('Archiving workset...');
 
     try {
-        await DaylilyAPI.worksets.archive(customerId, worksetId, reason || undefined);
+        await UrsaAPI.worksets.archive(customerId, worksetId, reason || undefined);
         showToast('success', 'Workset Archived', 'The workset has been moved to archive');
         setTimeout(() => window.location.href = '/portal/worksets', 1500);
     } catch (error) {
@@ -491,7 +491,7 @@ async function deleteWorkset(worksetId) {
     showLoading(hardDelete ? 'Permanently deleting workset...' : 'Deleting workset...');
 
     try {
-        await DaylilyAPI.worksets.delete(customerId, worksetId, hardDelete, reason || undefined);
+        await UrsaAPI.worksets.delete(customerId, worksetId, hardDelete, reason || undefined);
         showToast('success', 'Workset Deleted', hardDelete ? 'Workset permanently deleted' : 'Workset marked as deleted');
         setTimeout(() => window.location.href = '/portal/worksets', 1500);
     } catch (error) {
@@ -511,7 +511,7 @@ async function restoreWorkset(worksetId) {
     showLoading('Restoring workset...');
 
     try {
-        await DaylilyAPI.worksets.restore(customerId, worksetId);
+        await UrsaAPI.worksets.restore(customerId, worksetId);
         showToast('success', 'Workset Restored', 'The workset has been restored');
         setTimeout(() => window.location.reload(), 1500);
     } catch (error) {
@@ -599,7 +599,7 @@ async function refreshSavedManifestsList() {
     if (!select) return;
 
     try {
-        const response = await DaylilyAPI.manifests.list(customerId);
+        const response = await UrsaAPI.manifests.list(customerId);
         const manifests = response.manifests || [];
 
         // Clear existing options except the placeholder

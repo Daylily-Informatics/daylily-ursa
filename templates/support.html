@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% set active_page = 'support' %}
 
-{% block title %}Contact Support - Daylily Customer Portal{% endblock %}
+{% block title %}Contact Support - Ursa Customer Portal{% endblock %}
 
 {% block content %}
 <div class="container container-sm">
@@ -63,7 +63,7 @@
             </div>
             <h4>Email</h4>
             <p class="text-muted">For general inquiries</p>
-            <a href="mailto:support@daylily.io" class="text-accent">support@daylily.io</a>
+            <a href="mailto:admin@lsmc.com" class="text-accent">admin@lsmc.com</a>
         </div>
 
         <div class="card text-center">
@@ -72,7 +72,7 @@
             </div>
             <h4>GitHub</h4>
             <p class="text-muted">Report bugs & issues</p>
-            <a href="https://github.com/Daylily-Informatics/daylily-ephemeral-cluster/issues" 
+            <a href="https://github.com/Daylily-Informatics/daylily-ursa/issues"
                target="_blank" class="text-accent">Open an Issue</a>
         </div>
 
@@ -112,7 +112,7 @@ async function submitSupportRequest(event) {
     body += `\n${message}`;
     if (includeLogs) body += `\n\n[System logs will be attached by support team]`;
     
-    const mailtoLink = `mailto:support@daylily.io?subject=${encodeURIComponent(subjectLine)}&body=${encodeURIComponent(body)}`;
+    const mailtoLink = `mailto:admin@lsmc.com?subject=${encodeURIComponent(subjectLine)}&body=${encodeURIComponent(body)}`;
     
     // Open email client
     window.location.href = mailtoLink;

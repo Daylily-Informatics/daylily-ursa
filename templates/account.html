@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% set active_page = 'account' %}
 
-{% block title %}Account Settings - Daylily Customer Portal{% endblock %}
+{% block title %}Account Settings - Ursa Customer Portal{% endblock %}
 
 {% block content %}
 <div class="container">
@@ -137,7 +137,7 @@
     <!-- Environment Variables Section -->
     <div class="card mt-xl">
         <h3 class="card-title"><i class="fas fa-cogs"></i> Environment Variables</h3>
-        <p class="text-muted mb-md">All environment variables used in the Daylily system</p>
+        <p class="text-muted mb-md">All environment variables used in the Ursa system</p>
 
         <!-- Tabs for different categories -->
         <div class="tabs mb-lg">
@@ -505,7 +505,7 @@
             <button class="modal-close" onclick="closeModal('api-tokens-modal')">&times;</button>
         </div>
         <div class="modal-body">
-            <p class="text-muted mb-md">API tokens allow programmatic access to the Daylily API.</p>
+            <p class="text-muted mb-md">API tokens allow programmatic access to the Ursa API.</p>
 
             <div id="api-tokens-list" class="mb-lg">
                 <div class="loading-spinner">Loading tokens...</div>
@@ -830,7 +830,7 @@ async function revokeToken(tokenId) {
 
 function confirmDeleteAccount() {
     if (confirm('Are you sure you want to delete your account? This action cannot be undone.')) {
-        alert('Account deletion requires contacting support. Please email support@daylilyinformatics.com');
+        alert('Account deletion requires contacting support. Please email admin@lsmc.com');
     }
 }
 </script>

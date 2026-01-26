@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% set active_page = 'files' %}
 
-{% block title %}Manage S3 Buckets - Daylily Customer Portal{% endblock %}
+{% block title %}Manage S3 Buckets - Ursa Customer Portal{% endblock %}
 
 {% block content %}
 <div class="container">
@@ -23,7 +23,7 @@
         <i class="fas fa-info-circle"></i>
         <div>
             <strong>About S3 Bucket Linking</strong>
-            <p class="mb-0">Link your S3 buckets to register files for analysis. Daylily validates read/write permissions and provides remediation steps if access is not configured correctly.</p>
+            <p class="mb-0">Link your S3 buckets to register files for analysis. Ursa validates read/write permissions and provides remediation steps if access is not configured correctly.</p>
         </div>
     </div>
 
@@ -149,7 +149,7 @@
     <!-- Bucket Policy Templates -->
     <div class="card">
         <h3 class="card-title"><i class="fas fa-shield-alt"></i> IAM Policy Templates</h3>
-        <p class="text-muted">Use these policy templates to configure access for Daylily:</p>
+        <p class="text-muted">Use these policy templates to configure access for Ursa:</p>
         
         <div class="accordion">
             <div class="accordion-item">
@@ -482,7 +482,7 @@ async function saveBucketEdit() {
 
 // Unlink bucket
 async function unlinkBucket(bucketId) {
-    if (!confirm('Are you sure you want to unlink this bucket?\n\nFiles will remain in the bucket but will no longer be accessible through Daylily.')) {
+    if (!confirm('Are you sure you want to unlink this bucket?\n\nFiles will remain in the bucket but will no longer be accessible through Ursa.')) {
         return;
     }
 

@@ -1,9 +1,9 @@
 /**
- * Daylily Customer Portal - Main JavaScript
+ * Ursa Customer Portal - Main JavaScript
  */
 
 // Global state
-const DaylilyPortal = {
+const UrsaPortal = {
     config: window.UrsaConfig || {},
     toasts: [],
 };

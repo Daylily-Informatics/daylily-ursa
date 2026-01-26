@@ -1,5 +1,5 @@
 /**
- * Daylily Customer Portal - File Manager
+ * Ursa Customer Portal - File Manager
  */
 
 let currentPrefix = window.UrsaConfig?.currentPrefix || '';
@@ -126,7 +126,7 @@ async function downloadFile(key) {
     if (!customerId) return;
     
     try {
-        const result = await DaylilyAPI.files.getDownloadUrl(customerId, key);
+        const result = await UrsaAPI.files.getDownloadUrl(customerId, key);
         window.open(result.url, '_blank');
     } catch (error) {
         showToast('error', 'Download Failed', error.message);
@@ -144,7 +144,7 @@ async function previewFile(key) {
     showLoading('Loading preview...');
 
     try {
-        const result = await DaylilyAPI.files.preview(customerId, key);
+        const result = await UrsaAPI.files.preview(customerId, key);
         hideLoading();
         showPreviewModal(result);
     } catch (error) {
@@ -242,7 +242,7 @@ async function deleteFile(key) {
     showLoading('Deleting file...');
     
     try {
-        await DaylilyAPI.files.delete(customerId, key);
+        await UrsaAPI.files.delete(customerId, key);
         showToast('success', 'Deleted', 'File deleted successfully');
         setTimeout(() => window.location.reload(), 1000);
     } catch (error) {
@@ -270,7 +270,7 @@ async function bulkDelete() {
     
     try {
         for (const key of selected) {
-            await DaylilyAPI.files.delete(window.UrsaConfig?.customerId, key);
+            await UrsaAPI.files.delete(window.UrsaConfig?.customerId, key);
         }
         showToast('success', 'Deleted', `${selected.length} files deleted`);
         setTimeout(() => window.location.reload(), 1000);
@@ -306,7 +306,7 @@ async function createFolder() {
         const folderPath = currentPrefix ? `${currentPrefix}${trimmedName}` : trimmedName;
         console.log('Creating folder:', folderPath, 'for customer:', customerId);
 
-        const result = await DaylilyAPI.files.createFolder(customerId, folderPath);
+        const result = await UrsaAPI.files.createFolder(customerId, folderPath);
 
         if (result && result.success) {
             showToast('success', 'Folder Created', `Created folder: ${trimmedName}`);
@@ -367,7 +367,7 @@ async function startUpload() {
 
         try {
             // Upload file through server proxy
-            const result = await DaylilyAPI.files.upload(customerId, file, currentPrefix);
+            const result = await UrsaAPI.files.upload(customerId, file, currentPrefix);
 
             if (!result || !result.success) {
                 throw new Error('Upload failed');

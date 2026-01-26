@@ -1,5 +1,5 @@
 /**
- * Daylily Customer Portal - Charts
+ * Ursa Customer Portal - Charts
  */
 
 // Chart.js default configuration
@@ -265,7 +265,7 @@ async function initBreakdownChart(canvasId, customerId) {
 // Update chart with real data (generic helper)
 async function updateChartData(chart, customerId, endpoint) {
     try {
-        const data = await DaylilyAPI.get(endpoint);
+        const data = await UrsaAPI.get(endpoint);
         chart.data.labels = data.labels;
         chart.data.datasets[0].data = data.values;
         chart.update();

@@ -1,6 +1,6 @@
 /**
  * Workset Manifest Generator
- * Generates stage_samples.tsv files for Daylily pipeline analysis inputs
+ * Generates stage_samples.tsv files for Ursa pipeline analysis inputs
  * 
  * Uses GA4GH terminology:
  * - Analysis Input (SAMPLE_ID): Pipeline input identifier

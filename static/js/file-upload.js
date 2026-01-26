@@ -1,5 +1,5 @@
 /**
- * Daylily Customer Portal - File Upload for Workset Submission
+ * Ursa Customer Portal - File Upload for Workset Submission
  */
 
 let selectedFiles = [];
@@ -459,7 +459,7 @@ async function uploadFilesToS3(customerId, worksetPrefix) {
     for (let i = 0; i < selectedFiles.length; i++) {
         const file = selectedFiles[i];
         try {
-            const result = await DaylilyAPI.files.upload(customerId, file, filePrefix);
+            const result = await UrsaAPI.files.upload(customerId, file, filePrefix);
             if (result.success) {
                 uploadedFiles.push(result.key);
                 bucket = result.bucket; // Capture customer's bucket from response
