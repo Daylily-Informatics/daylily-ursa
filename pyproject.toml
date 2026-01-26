@@ -15,6 +15,8 @@ authors = [
 dependencies = [
     "boto3>=1.26.0",
     "pyyaml>=6.0",
+    # Cognito auth library - install from local: pip install ../daylily-cognito/dist/daylily_cognito-0.1.8-py3-none-any.whl
+    "daylily-cognito>=0.1.8",
     "fastapi>=0.104.0",
     "uvicorn[standard]>=0.24.0",
     "pydantic>=2.0.0",

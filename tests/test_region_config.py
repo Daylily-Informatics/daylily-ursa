@@ -137,57 +137,73 @@ class TestClusterServiceRegionFallback:
 
 
 class TestGetCognitoRegion:
-    """Tests for _get_cognito_region() in daylib/cli/cognito.py."""
+    """Tests for Cognito region resolution via daylily_cognito.config.CognitoConfig.
 
-    def test_returns_cognito_region_from_config(self):
-        """Test cognito_region from config takes highest priority."""
-        from daylib.cli.cognito import _get_cognito_region
+    Note: The _get_cognito_region() function was moved to daylily-cognito library.
+    These tests verify the region resolution logic in CognitoConfig.from_legacy_env().
+    """
 
-        mock_config = MagicMock()
-        mock_config.cognito_region = "eu-west-1"
+    def test_returns_cognito_region_when_set(self):
+        """Test COGNITO_REGION takes highest priority."""
+        from daylily_cognito.config import CognitoConfig
 
-        with patch.dict(os.environ, {"AWS_REGION": "us-east-1"}, clear=True):
-            # Patch at source module where import happens
-            with patch("daylib.ursa_config.get_ursa_config", return_value=mock_config):
-                result = _get_cognito_region()
-                assert result == "eu-west-1"
+        with patch.dict(
+            os.environ,
+            {
+                "COGNITO_REGION": "eu-west-1",
+                "AWS_REGION": "us-east-1",
+                "COGNITO_USER_POOL_ID": "test-pool",
+                "COGNITO_APP_CLIENT_ID": "test-client",
+            },
+            clear=True,
+        ):
+            config = CognitoConfig.from_legacy_env()
+            assert config.region == "eu-west-1"
 
     def test_returns_aws_region_when_cognito_region_not_set(self):
-        """Test AWS_REGION is used when cognito_region not configured."""
-        from daylib.cli.cognito import _get_cognito_region
+        """Test AWS_REGION is used when COGNITO_REGION not configured."""
+        from daylily_cognito.config import CognitoConfig
 
-        mock_config = MagicMock()
-        mock_config.cognito_region = None
-
-        with patch.dict(os.environ, {"AWS_REGION": "ap-northeast-1"}, clear=True):
-            with patch("daylib.ursa_config.get_ursa_config", return_value=mock_config):
-                result = _get_cognito_region()
-                assert result == "ap-northeast-1"
+        with patch.dict(
+            os.environ,
+            {
+                "AWS_REGION": "ap-northeast-1",
+                "COGNITO_USER_POOL_ID": "test-pool",
+                "COGNITO_APP_CLIENT_ID": "test-client",
+            },
+            clear=True,
+        ):
+            config = CognitoConfig.from_legacy_env()
+            assert config.region == "ap-northeast-1"
 
     def test_returns_fallback_when_nothing_configured(self):
         """Test fallback to us-west-2 when nothing configured."""
-        from daylib.cli.cognito import _get_cognito_region
+        from daylily_cognito.config import CognitoConfig
 
-        mock_config = MagicMock()
-        mock_config.cognito_region = None
-
-        with patch.dict(os.environ, {}, clear=True):
-            os.environ.pop("AWS_REGION", None)
-            os.environ.pop("AWS_DEFAULT_REGION", None)
-            with patch("daylib.ursa_config.get_ursa_config", return_value=mock_config):
-                result = _get_cognito_region()
-                assert result == "us-west-2"
+        with patch.dict(
+            os.environ,
+            {
+                "COGNITO_USER_POOL_ID": "test-pool",
+                "COGNITO_APP_CLIENT_ID": "test-client",
+            },
+            clear=True,
+        ):
+            config = CognitoConfig.from_legacy_env()
+            assert config.region == "us-west-2"
 
     def test_ignores_aws_default_region(self):
         """Test AWS_DEFAULT_REGION is intentionally ignored."""
-        from daylib.cli.cognito import _get_cognito_region
+        from daylily_cognito.config import CognitoConfig
 
-        mock_config = MagicMock()
-        mock_config.cognito_region = None
-
-        with patch.dict(os.environ, {"AWS_DEFAULT_REGION": "eu-central-1"}, clear=True):
-            os.environ.pop("AWS_REGION", None)
-            with patch("daylib.ursa_config.get_ursa_config", return_value=mock_config):
-                result = _get_cognito_region()
-                # Should fallback to us-west-2, NOT use AWS_DEFAULT_REGION
-                assert result == "us-west-2"
+        with patch.dict(
+            os.environ,
+            {
+                "AWS_DEFAULT_REGION": "eu-central-1",
+                "COGNITO_USER_POOL_ID": "test-pool",
+                "COGNITO_APP_CLIENT_ID": "test-client",
+            },
+            clear=True,
+        ):
+            config = CognitoConfig.from_legacy_env()
+            # Should fallback to us-west-2, NOT use AWS_DEFAULT_REGION
+            assert config.region == "us-west-2"
