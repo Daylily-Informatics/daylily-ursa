@@ -15,6 +15,8 @@ from typing import Dict, List, Optional
 import boto3
 from botocore.exceptions import ClientError
 
+from daylib.security import sanitize_for_log
+
 LOGGER = logging.getLogger("daylily.workset_customer")
 
 
@@ -333,7 +335,7 @@ class CustomerManager:
         """
         config = self.get_customer_config(customer_id)
         if not config:
-            LOGGER.warning("Cannot update customer %s: not found", customer_id)
+            LOGGER.warning("Cannot update customer %s: not found", sanitize_for_log(customer_id))
             return None
 
         # Update only provided fields
@@ -351,7 +353,7 @@ class CustomerManager:
             config.max_storage_gb = max_storage_gb
 
         self._save_customer_config(config)
-        LOGGER.info("Updated customer config for %s", customer_id)
+        LOGGER.info("Updated customer config for %s", sanitize_for_log(customer_id))
         return config
 
     def get_customer_config(self, customer_id: str) -> Optional[CustomerConfig]:

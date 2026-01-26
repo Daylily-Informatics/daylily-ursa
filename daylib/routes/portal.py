@@ -28,6 +28,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
 from daylib.config import Settings
+from daylib.security import sanitize_for_log
 from daylib.s3_utils import RegionAwareS3Client
 from daylib.file_registry import detect_file_format as _detect_file_format
 from daylib.routes.dependencies import (
@@ -1173,9 +1174,9 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         ):
             LOGGER.warning(
                 "Access denied: customer %s attempted to view workset %s owned by %s",
-                customer.customer_id,
-                workset_id,
-                workset.get("customer_id", "unknown"),
+                sanitize_for_log(customer.customer_id),
+                sanitize_for_log(workset_id),
+                sanitize_for_log(workset.get("customer_id", "unknown")),
             )
             raise HTTPException(status_code=404, detail="Workset not found")
         metadata = workset.get("metadata", {})
@@ -1217,8 +1218,8 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         ):
             LOGGER.warning(
                 "Access denied: customer %s attempted to download workset %s",
-                customer.customer_id,
-                workset_id,
+                sanitize_for_log(customer.customer_id),
+                sanitize_for_log(workset_id),
             )
             raise HTTPException(status_code=404, detail="Workset not found")
 
@@ -1294,8 +1295,8 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         ):
             LOGGER.warning(
                 "Access denied: customer %s attempted to browse workset %s results",
-                customer.customer_id,
-                workset_id,
+                sanitize_for_log(customer.customer_id),
+                sanitize_for_log(workset_id),
             )
             raise HTTPException(status_code=404, detail="Workset not found")
 
@@ -1428,8 +1429,8 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         ):
             LOGGER.warning(
                 "Access denied: customer %s attempted to download from workset %s",
-                customer.customer_id,
-                workset_id,
+                sanitize_for_log(customer.customer_id),
+                sanitize_for_log(workset_id),
             )
             raise HTTPException(status_code=404, detail="Workset not found")
 
@@ -1837,8 +1838,8 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
             if error_code in {"AccessDenied", "AllAccessDisabled"}:
                 LOGGER.warning(
                     "S3 access denied during portal upload: bucket=%s key=%s code=%s",
-                    bucket_obj.bucket_name,
-                    s3_key,
+                    sanitize_for_log(bucket_obj.bucket_name),
+                    sanitize_for_log(s3_key),
                     error_code,
                 )
                 raise HTTPException(
@@ -1850,8 +1851,8 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                 )
             LOGGER.error(
                 "S3 ClientError during portal upload: bucket=%s key=%s code=%s error=%s",
-                bucket_obj.bucket_name,
-                s3_key,
+                sanitize_for_log(bucket_obj.bucket_name),
+                sanitize_for_log(s3_key),
                 error_code,
                 str(e),
             )
@@ -2668,7 +2669,7 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         try:
             config = deps.customer_manager.onboard_customer(customer_name=customer_name, email=email)
         except Exception as e:
-            LOGGER.error("Failed to onboard customer for %s: %s", email, e)
+            LOGGER.error("Failed to onboard customer for %s: %s", sanitize_for_log(email), e)
             return RedirectResponse(
                 url="/portal/admin/users?error=" + quote_plus("Failed to create user"),
                 status_code=302,
@@ -2684,10 +2685,10 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                 )
                 cognito_note = "Cognito invite sent"
             except ValueError as e:
-                LOGGER.warning("Cognito user creation skipped for %s: %s", email, e)
+                LOGGER.warning("Cognito user creation skipped for %s: %s", sanitize_for_log(email), e)
                 cognito_note = "Cognito user not created"
             except Exception as e:
-                LOGGER.error("Failed to create Cognito user for %s: %s", email, e)
+                LOGGER.error("Failed to create Cognito user for %s: %s", sanitize_for_log(email), e)
                 cognito_note = "Cognito user creation failed"
 
         msg = f"User created: {email} (Customer ID: {config.customer_id})"
@@ -2724,7 +2725,7 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         try:
             ok = deps.customer_manager.set_admin_status(email=email, is_admin=desired_is_admin)
         except Exception as e:
-            LOGGER.error("Failed to set admin status for %s: %s", email, e)
+            LOGGER.error("Failed to set admin status for %s: %s", sanitize_for_log(email), e)
             ok = False
 
         if not ok:
@@ -2788,7 +2789,7 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                 status_code=302,
             )
         except Exception as e:
-            LOGGER.error("Failed to set password for %s: %s", email, e)
+            LOGGER.error("Failed to set password for %s: %s", sanitize_for_log(email), e)
             return RedirectResponse(
                 url="/portal/admin/users?error=" + quote_plus("Failed to set password"),
                 status_code=302,

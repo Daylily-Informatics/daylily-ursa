@@ -29,6 +29,7 @@ from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
 from daylib.config import Settings, get_settings
+from daylib.security import sanitize_for_log
 from daylib.workset_state_db import WorksetPriority, WorksetState, WorksetStateDB
 from daylib.workset_scheduler import WorksetScheduler
 
@@ -1631,7 +1632,7 @@ def create_app(
                     if bucket:
                         LOGGER.info(
                             "Using bucket %s from cluster %s tag (region %s)",
-                            bucket, preferred_cluster, cluster_region
+                            sanitize_for_log(bucket), sanitize_for_log(preferred_cluster), cluster_region
                         )
                     else:
                         raise HTTPException(
@@ -1649,7 +1650,7 @@ def create_app(
             except HTTPException:
                 raise
             except Exception as e:
-                LOGGER.error("Failed to look up cluster %s: %s", preferred_cluster, e)
+                LOGGER.error("Failed to look up cluster %s: %s", sanitize_for_log(preferred_cluster), e)
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail=f"Failed to query cluster metadata: {e}",
@@ -2273,7 +2274,7 @@ def create_app(
                     }
 
             except Exception as e:
-                LOGGER.warning("Failed to fetch command log for %s: %s", workset_id, str(e))
+                LOGGER.warning("Failed to fetch command log for %s: %s", sanitize_for_log(workset_id), str(e))
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail=f"Failed to fetch command log: {str(e)}",
@@ -3828,7 +3829,7 @@ def create_app(
         except HTTPException:
             raise
         except Exception as e:
-            LOGGER.error(f"Failed to delete cluster {cluster_name}: {e}")
+            LOGGER.error("Failed to delete cluster %s: %s", sanitize_for_log(cluster_name), e)
             raise HTTPException(status_code=500, detail=str(e))
 
     # ========== Customer Portal Routes ==========

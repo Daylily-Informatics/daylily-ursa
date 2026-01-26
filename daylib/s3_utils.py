@@ -20,6 +20,8 @@ from typing import Any, Dict, Optional, cast
 import boto3
 from botocore.exceptions import ClientError
 
+from daylib.security import sanitize_for_log
+
 LOGGER = logging.getLogger("daylily.s3_utils")
 
 
@@ -155,9 +157,9 @@ class RegionAwareS3Client:
             response = self._default_client.get_bucket_location(Bucket=bucket_normalized)
             # AWS returns None for us-east-1 (legacy behavior)
             region = response.get("LocationConstraint") or "us-east-1"
-            LOGGER.debug("Bucket %s is in region %s", bucket_normalized, region)
+            LOGGER.debug("Bucket %s is in region %s", sanitize_for_log(bucket_normalized), region)
         except ClientError as e:
-            LOGGER.warning("Could not determine region for bucket %s: %s", bucket_normalized, e)
+            LOGGER.warning("Could not determine region for bucket %s: %s", sanitize_for_log(bucket_normalized), e)
             region = self.default_region
         
         with self._bucket_regions_lock:
