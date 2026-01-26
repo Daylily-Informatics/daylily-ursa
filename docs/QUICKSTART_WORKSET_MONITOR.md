@@ -14,8 +14,8 @@ Get started with the enhanced workset monitoring system in 5 minutes.
 
 ```bash
 # Clone repository
-git clone https://github.com/Daylily-Informatics/daylily-ephemeral-cluster.git
-cd daylily-ephemeral-cluster
+git clone https://github.com/Daylily-Informatics/daylily-ursa.git
+cd daylily-ursa
 
 # Install dependencies
 pip install -e .
@@ -241,6 +241,6 @@ ursa server start --port 8080 --foreground
 ## Support
 
 For issues and questions:
-- GitHub Issues: https://github.com/Daylily-Informatics/daylily-ephemeral-cluster/issues
+- GitHub Issues: https://github.com/Daylily-Informatics/daylily-ursa/issues
 - Documentation: [docs/](../docs/)
 

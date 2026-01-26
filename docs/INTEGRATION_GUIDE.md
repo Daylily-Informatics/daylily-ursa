@@ -126,7 +126,7 @@ Run API and monitor on the same instance:
 # Start API server
 python -m uvicorn daylib.workset_api:app \
     --host 0.0.0.0 \
-    --port 8000
+    --port 8001
 
 # Start monitor (separate process)
 daylily-workset-monitor \
@@ -149,7 +149,7 @@ containerDefinitions:
       - name: S3_BUCKET
         value: daylily-worksets-bucket
     portMappings:
-      - containerPort: 8000
+      - containerPort: 8001
 ```
 
 **Monitor (EC2/Lambda)**

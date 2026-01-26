@@ -2,8 +2,6 @@
 
 This guide explains how to run the Workset Monitor API with or without authentication.
 
-Pool ID: us-west-2_ipMpPcnrm
-Client ID: 3ff96u2ern8thsiv9cq1j2s87p
 ## Overview
 
 The Workset Monitor API supports two modes:
@@ -34,7 +32,7 @@ pip install -e .
 python examples/run_api_without_auth.py
 
 # Or using uvicorn directly
-uvicorn daylib.workset_api:app --host 0.0.0.0 --port 8000
+uvicorn daylib.workset_api:app --host 0.0.0.0 --port 8001
 ```
 
 ### Python Code Example
@@ -350,5 +348,4 @@ export ENABLE_AUTH=false  # or true
 
 - [Customer Portal Guide](CUSTOMER_PORTAL.md)
 - [Quick Reference](QUICK_REFERENCE.md)
-- [Feature Summary](FEATURE_SUMMARY.md)
 

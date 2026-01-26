@@ -1,5 +1,8 @@
 # daylily-ursa
 
+[![CI](https://github.com/Daylily-Informatics/daylily-ursa/actions/workflows/ci.yml/badge.svg)](https://github.com/Daylily-Informatics/daylily-ursa/actions/workflows/ci.yml)
+[![Version](https://img.shields.io/github/v/tag/Daylily-Informatics/daylily-ursa?label=version)](https://github.com/Daylily-Informatics/daylily-ursa/tags)
+
 **Daylily Workset Management API** — Automated analysis workset manager for genomics pipelines.
 
 ## Overview
