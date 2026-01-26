@@ -341,7 +341,7 @@ def create_app(
                     from fastapi.security import HTTPAuthorizationCredentials
                     token = auth_header[7:]  # Remove "Bearer " prefix
                     credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
-                    user = cognito_auth.get_current_user(credentials)
+                    user: Optional[Dict[Any, Any]] = cognito_auth.get_current_user(credentials)
                     if user:
                         customer_id = user.get("custom:customer_id") or user.get("customer_id")
                         if customer_id is not None and "customer_id" not in user:
