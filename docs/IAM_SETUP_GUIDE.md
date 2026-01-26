@@ -259,5 +259,5 @@ After setting up IAM:
 3. ✅ Start the API server
 4. ✅ Test with sample workset
 
-See `DEPLOYMENT_CHECKLIST.md` for complete deployment steps.
+See [Integration Guide](INTEGRATION_GUIDE.md) for complete deployment steps.
 

@@ -278,7 +278,7 @@ export COGNITO_APP_CLIENT_ID=XXXXXXXXXXXXXXXXXXXXXXXXXX
 
 # API configuration
 export API_HOST=0.0.0.0
-export API_PORT=8000
+export API_PORT=8001
 export ENABLE_AUTH=true
 ```
 
@@ -327,8 +327,7 @@ auth = CognitoAuth(
 
 ## See Also
 
-- [Feature Summary](FEATURE_SUMMARY.md)
-- [Concurrent Processing](CONCURRENT_PROCESSING.md)
 - [Customer Portal](CUSTOMER_PORTAL.md)
-- [Workset Validation](WORKSET_VALIDATION.md)
+- [Integration Guide](INTEGRATION_GUIDE.md)
+- [Authentication Setup](AUTHENTICATION_SETUP.md)
 

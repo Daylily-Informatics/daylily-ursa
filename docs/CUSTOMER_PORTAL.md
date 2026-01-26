@@ -300,5 +300,4 @@ print(f"Utilization: {usage['storage_utilization_percent']}%")
 
 - [Authentication Setup](AUTHENTICATION_SETUP.md)
 - [Billing Integration](BILLING_INTEGRATION.md)
-- [API Reference](API_REFERENCE.md)
 
