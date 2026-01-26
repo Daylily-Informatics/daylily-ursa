@@ -87,7 +87,7 @@ def start(
     background: bool = typer.Option(True, "--background/--foreground", "-b/-f", help="Run in background"),
     enable_dynamodb: bool = typer.Option(True, "--enable-dynamodb/--no-dynamodb", help="Enable DynamoDB state tracking (default: on)"),
     dynamodb_table: str = typer.Option("daylily-worksets", "--dynamodb-table", help="DynamoDB table name"),
-    parallel: int = typer.Option(1, "--parallel", "-p", help="Maximum number of worksets to run in parallel"),
+    parallel: Optional[int] = typer.Option(None, "--parallel", "-p", help="Maximum number of worksets to run in parallel (overrides config file)"),
 ):
     """Start the workset monitor daemon."""
     _ensure_dir()
@@ -109,6 +109,21 @@ def start(
         console.print("   Or create: [cyan]./config/workset-monitor-config.yaml[/cyan]")
         raise typer.Exit(1)
 
+    # Check ursa-config.yaml for region configuration
+    from daylib.ursa_config import get_ursa_config, DEFAULT_CONFIG_PATH
+    ursa_config = get_ursa_config()
+    if not ursa_config.is_configured:
+        console.print(f"[yellow]⚠[/yellow]  No regions configured in {DEFAULT_CONFIG_PATH}")
+        console.print("   Cluster discovery requires region definitions.")
+        console.print(f"   Create [cyan]{DEFAULT_CONFIG_PATH}[/cyan] with:")
+        console.print("")
+        console.print("[dim]   regions:")
+        console.print("     - us-west-2")
+        console.print("     - us-east-1[/dim]")
+    else:
+        regions = ursa_config.get_allowed_regions()
+        console.print(f"[green]✓[/green]  Ursa config loaded: [cyan]{len(regions)} regions[/cyan]")
+
     # Find monitor script
     monitor_script = _find_monitor_script()
 
@@ -122,7 +137,7 @@ def start(
         cmd.append("--dry-run")
     if enable_dynamodb:
         cmd.extend(["--enable-dynamodb", "--dynamodb-table", dynamodb_table])
-    if parallel > 0:
+    if parallel is not None:
         cmd.extend(["--parallel", str(parallel)])
 
     if background:
@@ -160,7 +175,7 @@ def start(
         console.print(f"   Config: [dim]{config}[/dim]")
         console.print(f"   Logs: [dim]{log_file}[/dim]")
     else:
-        console.print(f"[green]✓[/green]  Starting monitor")
+        console.print("[green]✓[/green]  Starting monitor")
         console.print(f"   Config: [dim]{config}[/dim]")
         console.print("   Press Ctrl+C to stop\n")
         try:

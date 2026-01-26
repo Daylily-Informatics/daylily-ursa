@@ -6,15 +6,16 @@ Replaces S3 sentinel files with a more robust, queryable state tracking system.
 from __future__ import annotations
 
 import datetime as dt
-import json
 import logging
 from decimal import Decimal
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 from enum import Enum
 
 import boto3
 from boto3.dynamodb.conditions import Attr
 from botocore.exceptions import ClientError
+
+from daylib.config import normalize_bucket_name
 
 LOGGER = logging.getLogger("daylily.workset_state_db")
 
@@ -156,7 +157,7 @@ class WorksetStateDB:
             region,
         )
         assert hasattr(self.table, "table_name")
-	        
+
     def create_table_if_not_exists(self) -> None:
         """Create the DynamoDB table with appropriate schema."""
         try:
@@ -166,7 +167,7 @@ class WorksetStateDB:
         except ClientError as e:
             if e.response["Error"]["Code"] != "ResourceNotFoundException":
                 raise
-        
+
         LOGGER.info("Creating table %s", self.table_name)
         table = self.dynamodb.create_table(
             TableName=self.table_name,
@@ -178,6 +179,7 @@ class WorksetStateDB:
                 {"AttributeName": "state", "AttributeType": "S"},
                 {"AttributeName": "priority", "AttributeType": "S"},
                 {"AttributeName": "created_at", "AttributeType": "S"},
+                {"AttributeName": "customer_id", "AttributeType": "S"},
             ],
             GlobalSecondaryIndexes=[
                 {
@@ -193,6 +195,16 @@ class WorksetStateDB:
                     "KeySchema": [
                         {"AttributeName": "state", "KeyType": "HASH"},
                         {"AttributeName": "created_at", "KeyType": "RANGE"},
+                    ],
+                    "Projection": {"ProjectionType": "ALL"},
+                },
+                {
+                    # GSI for efficient multi-tenant queries
+                    # Allows filtering worksets by customer without full table scan
+                    "IndexName": "customer-id-state-index",
+                    "KeySchema": [
+                        {"AttributeName": "customer_id", "KeyType": "HASH"},
+                        {"AttributeName": "state", "KeyType": "RANGE"},
                     ],
                     "Projection": {"ProjectionType": "ALL"},
                 },
@@ -244,7 +256,7 @@ class WorksetStateDB:
 
         # Check for samples in metadata
         samples = metadata.get("samples", [])
-        sample_count = metadata.get("sample_count", 0)
+        raw_sample_count = metadata.get("sample_count")
 
         # Also check stage_samples_tsv for TSV-based sample input
         tsv_content = metadata.get("stage_samples_tsv", "")
@@ -252,13 +264,18 @@ class WorksetStateDB:
         # Count samples from various sources
         if samples and len(samples) > 0:
             return len(samples)
-        if sample_count and sample_count > 0:
-            return sample_count
+        if raw_sample_count is not None:
+            try:
+                sample_count = int(raw_sample_count)
+            except (TypeError, ValueError):
+                sample_count = 0
+            if sample_count > 0:
+                return sample_count
         if tsv_content:
             # Count non-header, non-empty lines in TSV
-            lines = [l for l in tsv_content.strip().split('\n') if l.strip() and not l.startswith('#')]
+            lines = [line for line in tsv_content.strip().split("\n") if line.strip() and not line.startswith("#")]
             # Subtract 1 for header if present
-            if lines and '\t' in lines[0]:
+            if lines and "\t" in lines[0]:
                 return max(0, len(lines) - 1)
 
         raise ValueError("Workset must have at least one sample")
@@ -273,6 +290,8 @@ class WorksetStateDB:
         customer_id: Optional[str] = None,
         skip_validation: bool = False,
         workset_type: Optional[WorksetType] = None,
+        preferred_cluster: Optional[str] = None,
+        cluster_region: Optional[str] = None,
     ) -> bool:
         """Register a new workset in the database.
 
@@ -286,6 +305,8 @@ class WorksetStateDB:
             skip_validation: If True, skip customer_id and sample validation
                            (used for monitor-discovered worksets from S3)
             workset_type: Classification type (clinical, ruo, lsmc). Defaults to RUO.
+            preferred_cluster: Optional user-selected cluster for execution
+            cluster_region: AWS region of the preferred cluster (for pcluster commands)
 
         Returns:
             True if registered, False if already exists
@@ -302,13 +323,18 @@ class WorksetStateDB:
         if workset_type is None:
             workset_type = WorksetType.RUO
 
+        # Normalize bucket name (strip s3:// prefix if present)
+        normalized_bucket = normalize_bucket_name(bucket)
+        if not normalized_bucket:
+            raise ValueError(f"Invalid bucket name: {bucket}")
+
         now = dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
         item: Dict[str, Any] = {
             "workset_id": workset_id,
             "state": WorksetState.READY.value,
             "priority": priority.value,
             "workset_type": workset_type.value,
-            "bucket": bucket,
+            "bucket": normalized_bucket,
             "prefix": prefix,
             "created_at": now,
             "updated_at": now,
@@ -324,6 +350,13 @@ class WorksetStateDB:
         # Add customer_id as a top-level field if provided
         if customer_id:
             item["customer_id"] = customer_id
+
+        # Add preferred_cluster and cluster_region if specified
+        if preferred_cluster:
+            item["preferred_cluster"] = preferred_cluster
+            item["affinity_reason"] = "user_selected"
+            if cluster_region:
+                item["cluster_region"] = cluster_region
 
         if metadata:
             item["metadata"] = self._serialize_metadata(metadata)
@@ -770,6 +803,57 @@ class WorksetStateDB:
         except ClientError as e:
             LOGGER.warning("Failed to update progress for %s: %s", workset_id, str(e))
 
+    def update_metadata(
+        self,
+        workset_id: str,
+        metadata_updates: Dict[str, Any],
+    ) -> bool:
+        """Update specific fields within the workset's metadata.
+
+        This performs a partial update, merging the new fields with existing
+        metadata rather than replacing it entirely.
+
+        Args:
+            workset_id: Workset identifier
+            metadata_updates: Dictionary of metadata fields to add/update
+
+        Returns:
+            True if update succeeded, False otherwise
+        """
+        now_iso = dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
+
+        # Get current workset to merge metadata
+        current = self.get_workset(workset_id)
+        if not current:
+            LOGGER.warning("Cannot update metadata: workset %s not found", workset_id)
+            return False
+
+        # Merge metadata
+        current_metadata = current.get("metadata", {})
+        if isinstance(current_metadata, str):
+            import json
+            try:
+                current_metadata = json.loads(current_metadata)
+            except json.JSONDecodeError:
+                current_metadata = {}
+
+        merged_metadata = {**current_metadata, **metadata_updates}
+
+        try:
+            self.table.update_item(
+                Key={"workset_id": workset_id},
+                UpdateExpression="SET metadata = :meta, updated_at = :now",
+                ExpressionAttributeValues={
+                    ":meta": self._serialize_metadata(merged_metadata),
+                    ":now": now_iso,
+                },
+            )
+            LOGGER.debug("Updated metadata for workset %s: %s", workset_id, list(metadata_updates.keys()))
+            return True
+        except ClientError as e:
+            LOGGER.warning("Failed to update metadata for %s: %s", workset_id, str(e))
+            return False
+
     def update_execution_environment(
         self,
         workset_id: str,
@@ -859,6 +943,71 @@ class WorksetStateDB:
         except ClientError as e:
             LOGGER.warning("Failed to update execution environment for %s: %s", workset_id, str(e))
 
+    def set_execution_context(
+        self,
+        workset_id: str,
+        execution_context: Dict[str, Any],
+    ) -> bool:
+        """Store execution context for a workset.
+
+        The execution context captures all region/bucket/cluster details computed
+        at workset acquisition time. This ensures consistent values on resume.
+
+        Args:
+            workset_id: Workset identifier
+            execution_context: Dict with keys: cluster_name, cluster_region,
+                              execution_bucket, workset_prefix, ssh_key_path,
+                              reference_bucket, export_s3_uri, headnode_ip, pipeline_dir
+
+        Returns:
+            True if update succeeded
+        """
+        now_iso = dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
+
+        update_expr = "SET updated_at = :now, execution_context = :ctx"
+        expr_values: Dict[str, Any] = {
+            ":now": now_iso,
+            ":ctx": self._serialize_metadata(execution_context),
+        }
+
+        try:
+            self.table.update_item(
+                Key={"workset_id": workset_id},
+                UpdateExpression=update_expr,
+                ExpressionAttributeValues=expr_values,
+            )
+            LOGGER.info(
+                "Stored execution context for workset %s: cluster=%s, region=%s",
+                workset_id,
+                execution_context.get("cluster_name"),
+                execution_context.get("cluster_region"),
+            )
+            return True
+        except ClientError as e:
+            LOGGER.warning("Failed to store execution context for %s: %s", workset_id, str(e))
+            return False
+
+    def get_execution_context(self, workset_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieve stored execution context for a workset.
+
+        Args:
+            workset_id: Workset identifier
+
+        Returns:
+            Execution context dict or None if not found/not set
+        """
+        try:
+            response = self.table.get_item(
+                Key={"workset_id": workset_id},
+                ProjectionExpression="execution_context",
+            )
+            if "Item" in response and "execution_context" in response["Item"]:
+                return self._deserialize_item(response["Item"]["execution_context"])
+            return None
+        except ClientError as e:
+            LOGGER.warning("Failed to get execution context for %s: %s", workset_id, str(e))
+            return None
+
     def get_workset(self, workset_id: str) -> Optional[Dict[str, Any]]:
         """Retrieve workset details.
 
@@ -943,6 +1092,177 @@ class WorksetStateDB:
             LOGGER.warning("Failed to get performance metrics for %s: %s", workset_id, str(e))
             return None
 
+    def update_cost_report(
+        self,
+        workset_id: str,
+        total_compute_cost_usd: float,
+        per_sample_costs: Optional[Dict[str, float]] = None,
+        rule_count: Optional[int] = None,
+        sample_count: Optional[int] = None,
+    ) -> bool:
+        """Store parsed Snakemake cost report data in dedicated fields.
+
+        This stores the actual compute cost from the Snakemake benchmark data,
+        enabling accurate billing and cost tracking per workset.
+
+        Args:
+            workset_id: Workset identifier
+            total_compute_cost_usd: Total compute cost in USD from benchmark data
+            per_sample_costs: Dict mapping sample names to their compute costs
+            rule_count: Number of Snakemake rules executed
+            sample_count: Number of samples processed
+
+        Returns:
+            True if update succeeded
+        """
+        now_iso = dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
+
+        update_expr = "SET updated_at = :now, total_compute_cost_usd = :cost, cost_report_parsed_at = :parsed_at"
+        expr_values: Dict[str, Any] = {
+            ":now": now_iso,
+            ":cost": str(total_compute_cost_usd),  # Store as string for DynamoDB precision
+            ":parsed_at": now_iso,
+        }
+
+        if per_sample_costs is not None:
+            update_expr += ", per_sample_costs = :psc"
+            # Convert float values to strings for DynamoDB precision
+            expr_values[":psc"] = {k: str(v) for k, v in per_sample_costs.items()}
+
+        if rule_count is not None:
+            update_expr += ", cost_report_rule_count = :rc"
+            expr_values[":rc"] = rule_count
+
+        if sample_count is not None:
+            update_expr += ", cost_report_sample_count = :sc"
+            expr_values[":sc"] = sample_count
+
+        try:
+            self.table.update_item(
+                Key={"workset_id": workset_id},
+                UpdateExpression=update_expr,
+                ExpressionAttributeValues=expr_values,
+            )
+            LOGGER.info(
+                "Stored cost report for %s: $%.4f total (%d samples, %d rules)",
+                workset_id,
+                total_compute_cost_usd,
+                sample_count or 0,
+                rule_count or 0,
+            )
+            return True
+        except ClientError as e:
+            LOGGER.warning("Failed to store cost report for %s: %s", workset_id, str(e))
+            return False
+
+    def get_cost_report(self, workset_id: str) -> Optional[Dict[str, Any]]:
+        """Get stored cost report data for a workset.
+
+        Returns:
+            Dict with total_compute_cost_usd, per_sample_costs, cost_report_parsed_at,
+            cost_report_rule_count, cost_report_sample_count, or None if not found
+        """
+        try:
+            response = self.table.get_item(
+                Key={"workset_id": workset_id},
+                ProjectionExpression="total_compute_cost_usd, per_sample_costs, cost_report_parsed_at, cost_report_rule_count, cost_report_sample_count",
+            )
+            if "Item" not in response:
+                return None
+            item = response["Item"]
+            result: Dict[str, Any] = {}
+            if "total_compute_cost_usd" in item:
+                result["total_compute_cost_usd"] = float(item["total_compute_cost_usd"])
+            if "per_sample_costs" in item:
+                # Convert string values back to floats
+                result["per_sample_costs"] = {k: float(v) for k, v in item["per_sample_costs"].items()}
+            if "cost_report_parsed_at" in item:
+                result["cost_report_parsed_at"] = item["cost_report_parsed_at"]
+            if "cost_report_rule_count" in item:
+                result["cost_report_rule_count"] = int(item["cost_report_rule_count"])
+            if "cost_report_sample_count" in item:
+                result["cost_report_sample_count"] = int(item["cost_report_sample_count"])
+            return result if result else None
+        except ClientError as e:
+            LOGGER.warning("Failed to get cost report for %s: %s", workset_id, str(e))
+            return None
+
+    def update_storage_metrics(
+        self,
+        workset_id: str,
+        results_storage_bytes: int,
+        fsx_storage_bytes: Optional[int] = None,
+    ) -> bool:
+        """Store storage metrics for a workset.
+
+        This stores the actual storage consumption after export, enabling
+        per-GB billing and storage tracking.
+
+        Args:
+            workset_id: Workset identifier
+            results_storage_bytes: Total size of exported results in S3 (bytes)
+            fsx_storage_bytes: Size of FSx working directory before cleanup (bytes)
+
+        Returns:
+            True if update succeeded
+        """
+        now_iso = dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
+
+        update_expr = "SET updated_at = :now, results_storage_bytes = :rsb, storage_calculated_at = :calc_at"
+        expr_values: Dict[str, Any] = {
+            ":now": now_iso,
+            ":rsb": results_storage_bytes,
+            ":calc_at": now_iso,
+        }
+
+        if fsx_storage_bytes is not None:
+            update_expr += ", fsx_storage_bytes = :fsb"
+            expr_values[":fsb"] = fsx_storage_bytes
+
+        try:
+            self.table.update_item(
+                Key={"workset_id": workset_id},
+                UpdateExpression=update_expr,
+                ExpressionAttributeValues=expr_values,
+            )
+            LOGGER.info(
+                "Stored storage metrics for %s: %d bytes results, %s bytes FSx",
+                workset_id,
+                results_storage_bytes,
+                fsx_storage_bytes if fsx_storage_bytes is not None else "N/A",
+            )
+            return True
+        except ClientError as e:
+            LOGGER.warning("Failed to store storage metrics for %s: %s", workset_id, str(e))
+            return False
+
+    def get_storage_metrics(self, workset_id: str) -> Optional[Dict[str, Any]]:
+        """Get stored storage metrics for a workset.
+
+        Returns:
+            Dict with results_storage_bytes, fsx_storage_bytes, storage_calculated_at,
+            or None if not found
+        """
+        try:
+            response = self.table.get_item(
+                Key={"workset_id": workset_id},
+                ProjectionExpression="results_storage_bytes, fsx_storage_bytes, storage_calculated_at",
+            )
+            if "Item" not in response:
+                return None
+            item = response["Item"]
+            result: Dict[str, Any] = {}
+            if "results_storage_bytes" in item:
+                result["results_storage_bytes"] = int(item["results_storage_bytes"])
+            if "fsx_storage_bytes" in item:
+                result["fsx_storage_bytes"] = int(item["fsx_storage_bytes"])
+            if "storage_calculated_at" in item:
+                result["storage_calculated_at"] = item["storage_calculated_at"]
+            return result if result else None
+        except ClientError as e:
+            LOGGER.warning("Failed to get storage metrics for %s: %s", workset_id, str(e))
+            return None
+
     def list_worksets_by_state(
         self,
         state: WorksetState,
@@ -981,6 +1301,112 @@ class WorksetStateDB:
         except ClientError as e:
             LOGGER.error("Failed to list worksets: %s", str(e))
             return []
+
+    def list_worksets_by_customer(
+        self,
+        customer_id: str,
+        state: Optional[WorksetState] = None,
+        limit: int = 100,
+    ) -> List[Dict[str, Any]]:
+        """List worksets belonging to a specific customer using the customer GSI.
+
+        Uses the customer-id-state-index GSI for efficient multi-tenant queries
+        without requiring a full table scan.
+
+        Args:
+            customer_id: Customer ID to filter by (required)
+            state: Optional state filter (if provided, uses exact match)
+            limit: Maximum number of results
+
+        Returns:
+            List of workset records belonging to the customer
+        """
+        if not customer_id:
+            LOGGER.warning("list_worksets_by_customer called with empty customer_id")
+            return []
+
+        key_condition = "customer_id = :cid"
+        expr_values: Dict[str, str] = {":cid": customer_id}
+
+        if state:
+            key_condition += " AND #state = :state"
+            expr_names: Dict[str, str] = {"#state": "state"}
+            expr_values[":state"] = state.value
+        else:
+            expr_names = {}
+
+        query_kwargs: Dict[str, Any] = {
+            "IndexName": "customer-id-state-index",
+            "KeyConditionExpression": key_condition,
+            "ExpressionAttributeValues": expr_values,
+            "Limit": limit,
+        }
+        if expr_names:
+            query_kwargs["ExpressionAttributeNames"] = expr_names
+
+        try:
+            response = self.table.query(**query_kwargs)
+            items = [self._deserialize_item(item) for item in response.get("Items", [])]
+            LOGGER.debug(
+                "Found %d worksets for customer %s (state=%s)",
+                len(items),
+                customer_id,
+                state.value if state else "any",
+            )
+            return items
+        except ClientError as e:
+            error_code = e.response.get("Error", {}).get("Code", "")
+            if error_code == "ValidationException" and "customer-id-state-index" in str(e):
+                # GSI doesn't exist yet, fall back to scan with filter
+                LOGGER.warning(
+                    "GSI customer-id-state-index not found, falling back to scan for customer %s",
+                    customer_id,
+                )
+                return self._list_worksets_by_customer_scan(customer_id, state, limit)
+            LOGGER.error("Failed to list worksets for customer %s: %s", customer_id, str(e))
+            return []
+
+    def _list_worksets_by_customer_scan(
+        self,
+        customer_id: str,
+        state: Optional[WorksetState] = None,
+        limit: int = 100,
+    ) -> List[Dict[str, Any]]:
+        """Fallback method using scan when customer GSI is not available.
+
+        This is less efficient but provides backward compatibility for tables
+        created before the GSI was added.
+
+        Args:
+            customer_id: Customer ID to filter by
+            state: Optional state filter
+            limit: Maximum number of results
+
+        Returns:
+            List of workset records
+        """
+        filter_expr = Attr("customer_id").eq(customer_id)
+        if state:
+            filter_expr = filter_expr & Attr("state").eq(state.value)
+
+        items: List[Dict[str, Any]] = []
+        scan_kwargs: Dict[str, Any] = {
+            "FilterExpression": filter_expr,
+            "Limit": min(limit * 2, 500),  # Over-fetch since scan might skip non-matching
+        }
+
+        try:
+            while len(items) < limit:
+                response = self.table.scan(**scan_kwargs)
+                items.extend(response.get("Items", []))
+                if "LastEvaluatedKey" not in response:
+                    break
+                scan_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+        except ClientError as e:
+            LOGGER.error("Scan fallback failed for customer %s: %s", customer_id, str(e))
+            return []
+
+        return [self._deserialize_item(item) for item in items[:limit]]
 
     def list_locked_worksets(self, limit: int = 100) -> List[Dict[str, Any]]:
         """List worksets that currently have a lock owner.
@@ -1100,7 +1526,11 @@ class WorksetStateDB:
         return result
 
     def _deserialize_item(self, item: Dict[str, Any]) -> Dict[str, Any]:
-        """Convert DynamoDB types to Python types."""
+        """Convert DynamoDB types to Python types.
+
+        Also promotes commonly-accessed metadata fields to the top level
+        for easier template access (e.g., sample_count, pipeline_type).
+        """
         def convert(obj: Any) -> Any:
             if isinstance(obj, Decimal):
                 return float(obj)
@@ -1111,6 +1541,18 @@ class WorksetStateDB:
             return obj
 
         result: Dict[str, Any] = convert(item)
+
+        # Promote commonly-accessed metadata fields to top level for template access.
+        # This allows templates to use ws.sample_count instead of ws.metadata.sample_count.
+        metadata = result.get("metadata", {})
+        if isinstance(metadata, dict):
+            # Promote sample_count if not already at top level
+            if "sample_count" not in result and "sample_count" in metadata:
+                result["sample_count"] = metadata["sample_count"]
+            # Promote pipeline_type if not already at top level
+            if "pipeline_type" not in result and "pipeline_type" in metadata:
+                result["pipeline_type"] = metadata["pipeline_type"]
+
         return result
 
     def _emit_metric(self, metric_name: str, value: float) -> None:
@@ -1395,6 +1837,7 @@ class WorksetStateDB:
         """Archive a workset.
 
         Updates state to ARCHIVED and records archival metadata.
+        Preserves original_state for display and restore purposes.
 
         Args:
             workset_id: Workset identifier
@@ -1404,12 +1847,20 @@ class WorksetStateDB:
         Returns:
             True if successful
         """
+        # First get the current workset to preserve original_state
+        workset = self.get_workset(workset_id)
+        if not workset:
+            LOGGER.error("Cannot archive workset %s: not found", workset_id)
+            return False
+
+        original_state = workset.get("state", "unknown")
         now = dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
-        update_expr = "SET #state = :state, archived_at = :archived_at, archived_by = :archived_by"
+        update_expr = "SET #state = :state, archived_at = :archived_at, archived_by = :archived_by, original_state = :original_state"
         expr_values = {
             ":state": WorksetState.ARCHIVED.value,
             ":archived_at": now,
             ":archived_by": archived_by,
+            ":original_state": original_state,
         }
         expr_names = {"#state": "state"}
 
@@ -1424,7 +1875,7 @@ class WorksetStateDB:
                 ExpressionAttributeNames=expr_names,
                 ExpressionAttributeValues=expr_values,
             )
-            LOGGER.info("Archived workset %s by %s", workset_id, archived_by)
+            LOGGER.info("Archived workset %s (was %s) by %s", workset_id, original_state, archived_by)
             return True
         except ClientError as e:
             LOGGER.error("Failed to archive workset %s: %s", workset_id, str(e))

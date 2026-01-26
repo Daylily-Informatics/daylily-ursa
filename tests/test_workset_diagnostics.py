@@ -4,7 +4,6 @@ import pytest
 
 from daylib.workset_diagnostics import (
     ErrorAnalyzer,
-    ErrorCode,
     ErrorSeverity,
     ErrorCategory,
     DiagnosticResult,
@@ -15,11 +14,6 @@ from daylib.workset_diagnostics import (
     format_diagnostic_report,
     get_all_error_codes,
     E_OUT_OF_MEMORY,
-    E_DISK_FULL,
-    E_S3_TIMEOUT,
-    E_INVALID_FASTQ,
-    E_THROTTLING,
-    E_BWA_ERROR,
 )
 
 

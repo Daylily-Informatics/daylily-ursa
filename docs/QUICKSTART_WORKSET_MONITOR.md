@@ -72,14 +72,16 @@ print("✓ Workset registered successfully")
 ### 3. Start the Web API
 
 ```bash
-# Basic usage
-./bin/daylily-workset-api \
+# Using the ursa CLI (recommended)
+ursa server start --foreground
+
+# Or using the packaged console script directly
+daylily-workset-api \
     --table-name daylily-worksets \
     --region us-west-2 \
-    --port 8000 \
     --verbose
 
-# The API will be available at http://localhost:8001
+# The API will be available at http://localhost:8001 (default port)
 # API docs at http://localhost:8001/docs
 ```
 
@@ -232,7 +234,8 @@ Check your AWS credentials and IAM permissions. See [WORKSET_MONITOR_ENHANCEMENT
 lsof -i :8001
 
 # Try a different port
-./bin/daylily-workset-api --port 8080
+ursa server start --port 8080 --foreground
+# Or: daylily-workset-api --port 8080
 ```
 
 ## Support

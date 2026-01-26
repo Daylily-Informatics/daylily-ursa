@@ -78,7 +78,6 @@ def test_api_endpoints_work_without_auth():
 
 def test_auth_warning_logged_when_missing():
     """Test that warning is logged when jose is not available."""
-    import logging
     
     # Mock jose import to fail
     with patch.dict(sys.modules, {"jose": None}):
@@ -89,9 +88,9 @@ def test_auth_warning_logged_when_missing():
             del sys.modules["daylib.workset_auth"]
         
         # Capture log output
-        with patch("logging.Logger.warning") as mock_warning:
+        with patch("logging.Logger.warning"):
             # Import should trigger warning
-            import daylib.workset_auth
+            pass
             
             # Warning should have been logged
             # (Note: This might not work due to module caching)

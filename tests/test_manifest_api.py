@@ -233,15 +233,27 @@ def client_with_integration(
     mock_state_db, mock_customer_manager, mock_manifest_registry, mock_integration
 ):
     """FastAPI TestClient with manifest registry and integration layer wired up."""
+    from unittest.mock import patch
 
-    app = create_app(
-        state_db=mock_state_db,
-        customer_manager=mock_customer_manager,
-        manifest_registry=mock_manifest_registry,
-        integration=mock_integration,
-        enable_auth=False,
-    )
-    return TestClient(app)
+    # Mock cluster service to return cluster info when preferred_cluster is provided
+    mock_cluster_info = MagicMock()
+    mock_cluster_info.name = "test-cluster"
+    mock_cluster_info.region = "us-west-2"
+    mock_cluster_info.bucket = "control-bucket"
+    mock_cluster_info.get_monitor_bucket_name.return_value = "control-bucket"
+
+    mock_cluster_service = MagicMock()
+    mock_cluster_service.get_cluster_by_name.return_value = mock_cluster_info
+
+    with patch("daylib.cluster_service.get_cluster_service", return_value=mock_cluster_service):
+        app = create_app(
+            state_db=mock_state_db,
+            customer_manager=mock_customer_manager,
+            manifest_registry=mock_manifest_registry,
+            integration=mock_integration,
+            enable_auth=False,
+        )
+        yield TestClient(app)
 
 
 def _build_workset_payload(**overrides):
@@ -256,6 +268,7 @@ def _build_workset_payload(**overrides):
         "notification_email": None,
         "enable_qc": True,
         "archive_results": True,
+        "preferred_cluster": "test-cluster",  # Required for workset creation
     }
     base.update(overrides)
     return base

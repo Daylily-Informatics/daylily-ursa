@@ -1,0 +1,291 @@
+"""Console-script entrypoint for the Daylily workset monitor.
+
+This module exists so `pyproject.toml` can expose a stable, importable
+`daylily-workset-monitor` console script.
+"""
+
+from __future__ import annotations
+
+import argparse
+import logging
+import os
+import sys
+from pathlib import Path
+from typing import Any, Optional, Sequence
+
+from daylib.workset_monitor import (
+    MonitorConfig,
+    MonitorError,
+    WorksetMonitor,
+    configure_logging,
+)
+
+LOGGER = logging.getLogger("daylily.workset_monitor.cli")
+
+
+def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Monitor S3 workset directories and launch Daylily pipelines",
+    )
+    supported_actions = ", ".join(
+        WorksetMonitor.DEFAULT_ACTION_SEQUENCE + WorksetMonitor.OPTIONAL_ACTIONS
+    )
+    parser.add_argument(
+        "config",
+        type=Path,
+        nargs="?",
+        default=None,
+        help=(
+            "Path to the YAML configuration file. If omitted, searches: "
+            "~/.ursa/workset-monitor-config.yaml, then ./config/workset-monitor-config.yaml"
+        ),
+    )
+    parser.add_argument(
+        "--once",
+        action="store_true",
+        help="Run a single poll iteration and exit (ignored when --action is provided)",
+    )
+    parser.add_argument("--dry-run", action="store_true", help="Do not mutate S3 or execute commands")
+    parser.add_argument(
+        "--attempt-restart",
+        action="store_true",
+        help="Retry failed workset commands once starting from the failed command",
+    )
+    parser.add_argument("--verbose", action="store_true", help="Enable debug logging")
+    parser.add_argument("--debug", action="store_true", help="Print all commands executed (and in dry-run)")
+    parser.add_argument(
+        "--force-recalculate",
+        action="store_true",
+        help="Recalculate all remote workset metrics regardless of cache",
+    )
+    parser.add_argument(
+        "--process-directory",
+        dest="process_directories",
+        metavar="NAME",
+        nargs="+",
+        help="Only process the specified workset directory names",
+    )
+    parser.add_argument(
+        "--include-archive",
+        action="store_true",
+        dest="include_archive",
+        help="Include archived worksets when executing actions",
+    )
+    parser.add_argument(
+        "--action",
+        dest="actions",
+        action="append",
+        metavar="NAME",
+        help=(
+            "Execute a specific monitor action instead of running the continuous monitor. "
+            f"Supported actions: {supported_actions}"
+        ),
+    )
+
+    # Integration layer options
+    parser.add_argument(
+        "--enable-dynamodb",
+        action="store_true",
+        help="Enable DynamoDB state tracking integration",
+    )
+    parser.add_argument(
+        "--dynamodb-table",
+        default=os.environ.get("DAYLILY_DYNAMODB_TABLE", "daylily-worksets"),
+        help="DynamoDB table name for workset state (default: daylily-worksets)",
+    )
+    parser.add_argument(
+        "--enable-notifications",
+        action="store_true",
+        help="Enable SNS notifications for workset events",
+    )
+    parser.add_argument(
+        "--sns-topic-arn",
+        default=os.environ.get("DAYLILY_SNS_TOPIC_ARN"),
+        help="SNS topic ARN for notifications",
+    )
+    parser.add_argument(
+        "--parallel",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Maximum number of worksets to run in parallel (overrides config file)",
+    )
+    parser.add_argument(
+        "--concurrent",
+        action="store_true",
+        help="Use ConcurrentWorksetProcessor for advanced scheduling and retry handling",
+    )
+    parser.add_argument(
+        "--enable-scheduler",
+        action="store_true",
+        help="Enable WorksetScheduler for priority-based workset selection",
+    )
+    return parser.parse_args(argv)
+
+
+def setup_integration_components(
+    config: MonitorConfig, args: argparse.Namespace
+) -> dict[str, Any]:
+    """Initialize optional integration components.
+
+    Returns dict with state_db, integration, notification_manager, and scheduler keys.
+    """
+
+    from daylib.ursa_config import get_ursa_config
+
+    components: dict[str, Any] = {
+        "state_db": None,
+        "integration": None,
+        "notification_manager": None,
+        "scheduler": None,
+    }
+
+    if args.enable_dynamodb:
+        try:
+            from daylib.workset_state_db import WorksetStateDB
+
+            ursa_config = get_ursa_config()
+            dynamo_region = ursa_config.get_effective_dynamo_db_region()
+            source = ursa_config.get_value_source("dynamo_db_region")
+            LOGGER.info(
+                "Using DynamoDB region from %s: %s",
+                source if source != "not set" else "default",
+                dynamo_region,
+            )
+
+            state_db = WorksetStateDB(
+                table_name=args.dynamodb_table,
+                region=dynamo_region,
+                profile=config.aws.profile if config.aws.profile else None,
+            )
+            components["state_db"] = state_db
+            LOGGER.info(
+                "DynamoDB state tracking enabled (table: %s, region: %s)",
+                args.dynamodb_table,
+                dynamo_region,
+            )
+        except ImportError:
+            LOGGER.warning(
+                "DynamoDB integration requested but workset_state_db module not available"
+            )
+        except Exception as exc:
+            LOGGER.warning("Failed to initialize DynamoDB state tracking: %s", exc)
+
+    if args.enable_notifications and args.sns_topic_arn:
+        try:
+            from daylib.workset_notifications import NotificationManager, SNSNotificationChannel
+
+            notification_manager = NotificationManager()
+            sns_channel = SNSNotificationChannel(
+                topic_arn=args.sns_topic_arn,
+                region=config.aws.region,
+                profile=config.aws.profile if config.aws.profile else None,
+            )
+            notification_manager.add_channel(sns_channel)
+            components["notification_manager"] = notification_manager
+            LOGGER.info("SNS notifications enabled (topic: %s)", args.sns_topic_arn)
+        except ImportError:
+            LOGGER.warning("Notifications requested but workset_notifications module not available")
+        except Exception as exc:
+            LOGGER.warning("Failed to initialize notifications: %s", exc)
+
+    if components["state_db"]:
+        try:
+            from daylib.workset_integration import WorksetIntegration
+
+            integration = WorksetIntegration(
+                state_db=components["state_db"],
+                bucket=config.monitor.sentinel_index_bucket,
+                prefix=config.monitor.normalised_prefix(),
+                notification_manager=components["notification_manager"],
+                region=config.aws.region,
+                profile=config.aws.profile if config.aws.profile else None,
+            )
+            components["integration"] = integration
+            LOGGER.info("Integration layer initialized")
+        except ImportError:
+            LOGGER.warning("Integration layer requested but workset_integration module not available")
+        except Exception as exc:
+            LOGGER.warning("Failed to initialize integration layer: %s", exc)
+
+    if args.enable_scheduler and components["state_db"]:
+        try:
+            from daylib.workset_scheduler import WorksetScheduler
+
+            scheduler = WorksetScheduler(
+                state_db=components["state_db"],
+                max_concurrent_worksets_per_cluster=config.monitor.max_concurrent_worksets,
+                cost_optimization_enabled=True,
+            )
+            components["scheduler"] = scheduler
+            LOGGER.info(
+                "Scheduler enabled (max_concurrent_per_cluster: %d)",
+                config.monitor.max_concurrent_worksets,
+            )
+        except ImportError:
+            LOGGER.warning("Scheduler requested but workset_scheduler module not available")
+        except Exception as exc:
+            LOGGER.warning("Failed to initialize scheduler: %s", exc)
+
+    return components
+
+
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    args = parse_args(argv)
+    configure_logging(args.verbose)
+
+    try:
+        config_path = MonitorConfig.find_config(args.config)
+    except FileNotFoundError as exc:
+        LOGGER.error("%s", exc)
+        return 1
+
+    config = MonitorConfig.load(config_path)
+    if args.once and not args.actions:
+        config.monitor.continuous = False
+
+    if args.parallel is not None:
+        config.monitor.max_concurrent_worksets = args.parallel
+
+    components = setup_integration_components(config, args)
+
+    monitor = WorksetMonitor(
+        config,
+        dry_run=args.dry_run,
+        debug=args.debug,
+        process_directories=args.process_directories,
+        attempt_restart=args.attempt_restart,
+        force_recalculate_metrics=args.force_recalculate,
+        state_db=components["state_db"],
+        integration=components["integration"],
+        notification_manager=components["notification_manager"],
+        scheduler=components["scheduler"],
+    )
+
+    if args.actions:
+        try:
+            monitor.perform_actions(
+                args.actions,
+                include_archive=args.include_archive,
+            )
+        except MonitorError as exc:
+            LOGGER.error("Action execution failed: %s", exc)
+            return 1
+        return 0
+
+    if args.concurrent:
+        if not components["scheduler"]:
+            LOGGER.error("Concurrent mode requires --enable-scheduler and --enable-dynamodb")
+            return 1
+        try:
+            monitor.run_with_concurrent_processor()
+        except MonitorError as exc:
+            LOGGER.error("Concurrent processor failed: %s", exc)
+            return 1
+    else:
+        monitor.run()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

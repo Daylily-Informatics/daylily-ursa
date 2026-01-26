@@ -18,32 +18,42 @@ from daylib.cli.env import env_app
 console = Console()
 
 # Commands that skip AWS validation
-_SKIP_AWS_VALIDATION = {"version", "test", "env"}
+_SKIP_AWS_VALIDATION = {"version", "test", "env", "info"}
 
 
 def _validate_aws_env() -> None:
-    """Validate AWS environment variables.
+    """Validate AWS environment is configured.
 
-    Checks:
-    - AWS_PROFILE is set and not '' or 'default'
-    - AWS_DEFAULT_REGION is set (standard AWS environment variable)
+    Checks for AWS_PROFILE from either:
+    - AWS_PROFILE environment variable
+    - aws_profile in ~/.config/ursa/ursa-config.yaml
+
+    Regions are configured in ~/.config/ursa/ursa-config.yaml and explicitly passed to AWS API calls.
     """
-    errors = []
+    from daylib.ursa_config import get_ursa_config
 
-    # Check AWS_PROFILE
-    aws_profile = os.environ.get("AWS_PROFILE", "")
-    if not aws_profile:
-        errors.append("AWS_PROFILE is not set. Set it with: [cyan]export AWS_PROFILE=your-profile[/cyan]")
-    elif aws_profile == "default":
+    errors = []
+    ursa_config = get_ursa_config()
+
+    # Check AWS_PROFILE - either from env or config
+    aws_profile_env = os.environ.get("AWS_PROFILE", "")
+    aws_profile_config = ursa_config.aws_profile
+
+    if not aws_profile_env and not aws_profile_config:
+        errors.append(
+            "AWS_PROFILE is not set.\n"
+            "   Set via environment: [cyan]export AWS_PROFILE=your-profile[/cyan]\n"
+            "   Or in config file:   [cyan]~/.config/ursa/ursa-config.yaml[/cyan] → [dim]aws_profile: your-profile[/dim]"
+        )
+    elif aws_profile_env == "default":
         errors.append("AWS_PROFILE is 'default'. Use a named profile: [cyan]export AWS_PROFILE=your-profile[/cyan]")
 
-    # Check AWS_DEFAULT_REGION (the standard AWS env var)
-    aws_default_region = os.environ.get("AWS_DEFAULT_REGION", "")
-    if not aws_default_region:
-        errors.append("AWS_DEFAULT_REGION is not set. Set it with: [cyan]export AWS_DEFAULT_REGION=us-west-2[/cyan]")
+    # If we have a profile from config but not env, set it in environment for boto3/AWS CLI
+    if not aws_profile_env and aws_profile_config:
+        os.environ["AWS_PROFILE"] = aws_profile_config
 
     if errors:
-        console.print("[red bold]✗ AWS Environment Error[/red bold]\n")
+        console.print("[red bold]✗ AWS Configuration Error[/red bold]\n")
         for err in errors:
             console.print(f"  • {err}")
         console.print()
@@ -89,10 +99,26 @@ def version():
         console.print("ursa [cyan]dev[/cyan]")
 
 
+def _format_value_with_source(value: Optional[str], source: str) -> str:
+    """Format a config value with its source indicator."""
+    if not value:
+        return "[dim]not set[/dim]"
+
+    source_style = {
+        "env": "[green](env)[/green]",
+        "config": "[blue](config)[/blue]",
+        "not set": "",
+    }
+    return f"{value} {source_style.get(source, '')}"
+
+
 @app.command("info")
 def info():
     """Show Ursa configuration and status."""
     from rich.table import Table
+    from daylib.ursa_config import get_ursa_config, DEFAULT_CONFIG_PATH
+
+    ursa_config = get_ursa_config()
 
     table = Table(title="Ursa Info")
     table.add_column("Property", style="cyan")
@@ -108,15 +134,43 @@ def info():
     # Python
     table.add_row("Python", sys.version.split()[0])
 
-    # AWS Profile
-    table.add_row("AWS Profile", os.environ.get("AWS_PROFILE", "[dim]not set[/dim]"))
+    # Config file (XDG Base Directory: ~/.config/ursa/)
+    config_dir = Path.home() / ".config" / "ursa"
+    if ursa_config.config_path and ursa_config.config_path.exists():
+        config_status = f"[green]{ursa_config.config_path}[/green]"
+        if ursa_config.from_legacy_path:
+            config_status += " [yellow](legacy path)[/yellow]"
+    else:
+        config_status = f"[yellow]not found[/yellow] [dim]({DEFAULT_CONFIG_PATH})[/dim]"
+    table.add_row("Config File", config_status)
 
-    # AWS Region
-    table.add_row("AWS Region", os.environ.get("AWS_DEFAULT_REGION", "us-west-2"))
+    # AWS Profile (show source)
+    aws_profile = ursa_config.get_effective_aws_profile()
+    profile_source = ursa_config.get_value_source("aws_profile")
+    table.add_row("AWS Profile", _format_value_with_source(aws_profile, profile_source))
 
-    # Config dir
-    config_dir = Path.home() / ".ursa"
-    table.add_row("Config Dir", str(config_dir))
+    # Cognito Region (show source)
+    cognito_region = ursa_config.get_effective_cognito_region()
+    cognito_source = ursa_config.get_value_source("cognito_region")
+    table.add_row("Cognito Region", _format_value_with_source(cognito_region, cognito_source))
+
+    # Cognito User Pool ID (show source)
+    pool_id = os.environ.get("COGNITO_USER_POOL_ID") or ursa_config.cognito_user_pool_id
+    pool_source = ursa_config.get_value_source("cognito_user_pool_id")
+    if pool_id:
+        # Truncate for display
+        display_pool = pool_id[:20] + "..." if len(pool_id) > 20 else pool_id
+        table.add_row("Cognito Pool ID", _format_value_with_source(display_pool, pool_source))
+    else:
+        table.add_row("Cognito Pool ID", "[dim]not set[/dim]")
+
+    # Regions config
+    if ursa_config.is_configured:
+        regions = ursa_config.get_allowed_regions()
+        table.add_row("Scan Regions", f"[green]{len(regions)}[/green] [dim]({', '.join(regions)})[/dim]")
+        table.add_row("Bucket Source", "[dim]cluster tags (aws-parallelcluster-monitor-bucket)[/dim]")
+    else:
+        table.add_row("Scan Regions", "[yellow]none configured[/yellow]")
 
     # Check if server is running
     pid_file = config_dir / "server.pid"
@@ -145,6 +199,13 @@ def info():
         table.add_row("Monitor", "[dim]Stopped[/dim]")
 
     console.print(table)
+
+    # Show warnings/suggestions
+    if not ursa_config.is_configured:
+        console.print()
+        console.print("[yellow]⚠[/yellow]  No regions configured")
+        console.print(f"   Create config: [cyan]{DEFAULT_CONFIG_PATH}[/cyan]")
+        console.print("   See example:   [cyan]config/ursa-config.example.yaml[/cyan]")
 
 
 def main():

@@ -1,0 +1,352 @@
+{% extends "base.html" %}
+{% set active_page = 'monitor' %}
+
+{% block title %}Monitor Dashboard - Ursa{% endblock %}
+
+{% block content %}
+<div class="container">
+    <!-- Page Header -->
+    <div class="page-header">
+        <h1 class="page-title"><i class="fas fa-heartbeat"></i> Monitor Dashboard</h1>
+        <p class="page-subtitle">Workset monitor daemon status and activity</p>
+    </div>
+
+    <!-- Status Card -->
+    <div class="grid grid-4 mb-xl">
+        <div class="stat-card">
+            <div class="card-icon {% if monitor_running %}success{% else %}error{% endif %}">
+                <i class="fas {% if monitor_running %}fa-check-circle{% else %}fa-times-circle{% endif %}"></i>
+            </div>
+            <div>
+                <div class="stat-value">{% if monitor_running %}Running{% else %}Stopped{% endif %}</div>
+                <div class="stat-label">Daemon Status</div>
+                {% if monitor_pid %}
+                <div class="stat-subtext">PID: {{ monitor_pid }}</div>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="stat-card">
+            <div class="card-icon info">
+                <i class="fas fa-clock"></i>
+            </div>
+            <div>
+                <div class="stat-value">{{ uptime_str | default('--') }}</div>
+                <div class="stat-label">Uptime</div>
+                {% if start_time_str %}
+                <div class="stat-subtext">Since {{ start_time_str }}</div>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="stat-card">
+            <div class="card-icon primary">
+                <i class="fas fa-spinner fa-spin"></i>
+            </div>
+            <div>
+                <div class="stat-value">{{ stats.in_progress | default(0) }}</div>
+                <div class="stat-label">In Progress</div>
+                <div class="stat-subtext">Active worksets</div>
+            </div>
+        </div>
+
+        <div class="stat-card">
+            <div class="card-icon warning">
+                <i class="fas fa-layer-group"></i>
+            </div>
+            <div>
+                <div class="stat-value">{{ config_display.max_concurrent_worksets | default(1) }}</div>
+                <div class="stat-label">Max Parallel</div>
+                <div class="stat-subtext">Concurrency limit</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Activity Summary -->
+    <div class="grid grid-4 mb-xl">
+        <a href="/portal/worksets?status=ready" class="stat-card stat-card-clickable">
+            <div class="card-icon info">
+                <i class="fas fa-hourglass-half"></i>
+            </div>
+            <div>
+                <div class="stat-value">{{ stats.ready | default(0) }}</div>
+                <div class="stat-label">Ready/Queued</div>
+            </div>
+        </a>
+
+        <a href="/portal/worksets?status=complete" class="stat-card stat-card-clickable">
+            <div class="card-icon success">
+                <i class="fas fa-check"></i>
+            </div>
+            <div>
+                <div class="stat-value">{{ stats.complete | default(0) }}</div>
+                <div class="stat-label">Complete</div>
+            </div>
+        </a>
+
+        <a href="/portal/worksets?status=error" class="stat-card stat-card-clickable">
+            <div class="card-icon error">
+                <i class="fas fa-exclamation-triangle"></i>
+            </div>
+            <div>
+                <div class="stat-value">{{ stats.error | default(0) }}</div>
+                <div class="stat-label">Errors</div>
+            </div>
+        </a>
+
+        <div class="stat-card">
+            <div class="card-icon accent">
+                <i class="fas fa-chart-bar"></i>
+            </div>
+            <div>
+                <div class="stat-value">{{ stats.total_processed | default(0) }}</div>
+                <div class="stat-label">Total Processed</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Content Grid -->
+    <div class="grid" style="grid-template-columns: 1fr 1fr; gap: var(--spacing-xl);">
+        <!-- Configuration Card -->
+        <div class="card">
+            <div class="card-header">
+                <h3 class="card-title"><i class="fas fa-cog"></i> Configuration</h3>
+            </div>
+            <dl style="margin: 0;">
+                <div class="d-flex justify-between mb-md">
+                    <dt class="text-muted">Config File</dt>
+                    <dd><code style="font-size: 0.75rem;">{{ config_display.config_path }}</code></dd>
+                </div>
+                <div class="d-flex justify-between mb-md">
+                    <dt class="text-muted">Workset Prefix</dt>
+                    <dd><code>{{ config_display.prefix }}</code></dd>
+                </div>
+                <div class="d-flex justify-between mb-md">
+                    <dt class="text-muted">Poll Interval</dt>
+                    <dd>{{ config_display.poll_interval_seconds }}s</dd>
+                </div>
+                <div class="d-flex justify-between mb-md">
+                    <dt class="text-muted">Max Concurrent</dt>
+                    <dd>{{ config_display.max_concurrent_worksets }}</dd>
+                </div>
+                <div class="d-flex justify-between mb-md">
+                    <dt class="text-muted">DynamoDB Table</dt>
+                    <dd><code>{{ config_display.dynamodb_table }}</code></dd>
+                </div>
+                {% if config_display.reuse_cluster_name %}
+                <div class="d-flex justify-between mb-md">
+                    <dt class="text-muted">Default Cluster</dt>
+                    <dd><code>{{ config_display.reuse_cluster_name }}</code></dd>
+                </div>
+                {% endif %}
+                {% if config_display.archive_prefix %}
+                <div class="d-flex justify-between">
+                    <dt class="text-muted">Archive Prefix</dt>
+                    <dd><code>{{ config_display.archive_prefix }}</code></dd>
+                </div>
+                {% endif %}
+            </dl>
+        </div>
+
+        <!-- Control Actions Card -->
+        <div class="card">
+            <div class="card-header">
+                <h3 class="card-title"><i class="fas fa-terminal"></i> CLI Commands</h3>
+            </div>
+            <p class="text-muted mb-md" style="font-size: 0.875rem;">Use these commands to manage the monitor daemon:</p>
+            <div class="d-flex flex-column gap-sm">
+                <div class="code-block" style="background: var(--bg-secondary); padding: 0.5rem 0.75rem; border-radius: 4px; font-family: 'JetBrains Mono', monospace; font-size: 0.8rem;">
+                    <span class="text-muted">$</span> ursa monitor start
+                </div>
+                <div class="code-block" style="background: var(--bg-secondary); padding: 0.5rem 0.75rem; border-radius: 4px; font-family: 'JetBrains Mono', monospace; font-size: 0.8rem;">
+                    <span class="text-muted">$</span> ursa monitor stop
+                </div>
+                <div class="code-block" style="background: var(--bg-secondary); padding: 0.5rem 0.75rem; border-radius: 4px; font-family: 'JetBrains Mono', monospace; font-size: 0.8rem;">
+                    <span class="text-muted">$</span> ursa monitor status
+                </div>
+                <div class="code-block" style="background: var(--bg-secondary); padding: 0.5rem 0.75rem; border-radius: 4px; font-family: 'JetBrains Mono', monospace; font-size: 0.8rem;">
+                    <span class="text-muted">$</span> ursa monitor logs -n 50
+                </div>
+            </div>
+            {% if log_files %}
+            <div class="mt-lg">
+                <p class="text-muted mb-sm" style="font-size: 0.875rem;">Recent log files:</p>
+                <ul style="list-style: none; padding: 0; margin: 0; font-size: 0.8rem;">
+                    {% for lf in log_files[:5] %}
+                    <li class="text-muted"><code>{{ lf }}</code></li>
+                    {% endfor %}
+                </ul>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Log Viewer -->
+    <div class="card mt-xl">
+        <div class="card-header">
+            <h3 class="card-title"><i class="fas fa-file-alt"></i> Recent Logs</h3>
+            <div class="d-flex gap-sm align-center">
+                <select id="log-filter" class="form-select" style="width: auto; padding: 0.25rem 0.5rem; font-size: 0.8rem;">
+                    <option value="all">All Levels</option>
+                    <option value="INFO">INFO</option>
+                    <option value="WARNING">WARNING</option>
+                    <option value="ERROR">ERROR</option>
+                    <option value="DEBUG">DEBUG</option>
+                </select>
+                <label class="d-flex align-center gap-sm" style="font-size: 0.875rem;">
+                    <input type="checkbox" id="auto-refresh" checked>
+                    Auto-refresh
+                </label>
+                <button class="btn btn-outline btn-sm" onclick="refreshLogs()">
+                    <i class="fas fa-sync-alt"></i> Refresh
+                </button>
+            </div>
+        </div>
+        {% if latest_log_path %}
+        <div class="text-muted mb-sm" style="font-size: 0.75rem;">
+            <i class="fas fa-file"></i> {{ latest_log_path }}
+        </div>
+        {% endif %}
+        <div id="log-viewer" class="log-viewer" style="background: var(--bg-secondary); border-radius: 8px; padding: 1rem; font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; line-height: 1.5; max-height: 500px; overflow-y: auto;">
+            {% if log_error %}
+            <div class="text-error">Error reading logs: {{ log_error }}</div>
+            {% elif log_lines %}
+            {% for line in log_lines %}
+            <div class="log-line {% if 'ERROR' in line %}log-error{% elif 'WARNING' in line %}log-warning{% elif 'DEBUG' in line %}log-debug{% else %}log-info{% endif %}">{{ line | e }}</div>
+            {% endfor %}
+            {% else %}
+            <div class="text-muted">No log entries found. Start the monitor to generate logs.</div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+.log-viewer .log-line {
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+.log-viewer .log-error {
+    color: #ef4444;
+}
+.log-viewer .log-warning {
+    color: #f59e0b;
+}
+.log-viewer .log-debug {
+    color: #6b7280;
+}
+.log-viewer .log-info {
+    color: var(--text-primary);
+}
+</style>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let autoRefreshInterval = null;
+
+document.addEventListener('DOMContentLoaded', function() {
+    // Scroll log viewer to bottom
+    const logViewer = document.getElementById('log-viewer');
+    if (logViewer) {
+        logViewer.scrollTop = logViewer.scrollHeight;
+    }
+
+    // Setup auto-refresh
+    const autoRefreshCheckbox = document.getElementById('auto-refresh');
+    if (autoRefreshCheckbox.checked) {
+        startAutoRefresh();
+    }
+    autoRefreshCheckbox.addEventListener('change', function() {
+        if (this.checked) {
+            startAutoRefresh();
+        } else {
+            stopAutoRefresh();
+        }
+    });
+
+    // Setup log filter
+    document.getElementById('log-filter').addEventListener('change', filterLogs);
+});
+
+function startAutoRefresh() {
+    if (autoRefreshInterval) return;
+    autoRefreshInterval = setInterval(refreshLogs, 10000); // Every 10 seconds
+}
+
+function stopAutoRefresh() {
+    if (autoRefreshInterval) {
+        clearInterval(autoRefreshInterval);
+        autoRefreshInterval = null;
+    }
+}
+
+async function refreshLogs() {
+    try {
+        const response = await fetch('/api/monitor/logs?lines=100');
+        if (response.ok) {
+            const data = await response.json();
+            updateLogViewer(data.lines);
+            // Also refresh page stats via separate endpoint
+            refreshStats();
+        }
+    } catch (error) {
+        console.error('Failed to refresh logs:', error);
+    }
+}
+
+async function refreshStats() {
+    try {
+        const response = await fetch('/api/monitor/status');
+        if (response.ok) {
+            const data = await response.json();
+            // Update status indicators without full page reload
+            // This is a lightweight update
+        }
+    } catch (error) {
+        console.error('Failed to refresh stats:', error);
+    }
+}
+
+function updateLogViewer(lines) {
+    const logViewer = document.getElementById('log-viewer');
+    if (!logViewer || !lines) return;
+
+    logViewer.innerHTML = lines.map(line => {
+        let className = 'log-info';
+        if (line.includes('ERROR')) className = 'log-error';
+        else if (line.includes('WARNING')) className = 'log-warning';
+        else if (line.includes('DEBUG')) className = 'log-debug';
+        return `<div class="log-line ${className}">${escapeHtml(line)}</div>`;
+    }).join('');
+
+    // Apply current filter
+    filterLogs();
+
+    // Scroll to bottom
+    logViewer.scrollTop = logViewer.scrollHeight;
+}
+
+function filterLogs() {
+    const filter = document.getElementById('log-filter').value;
+    const lines = document.querySelectorAll('#log-viewer .log-line');
+
+    lines.forEach(line => {
+        if (filter === 'all') {
+            line.style.display = '';
+        } else {
+            line.style.display = line.textContent.includes(`[${filter}]`) ? '' : 'none';
+        }
+    });
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+</script>
+{% endblock %}
+

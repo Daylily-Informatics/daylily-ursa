@@ -4,7 +4,7 @@
 {% block title %}Worksets - Daylily Customer Portal{% endblock %}
 
 {% block content %}
-<div class="container">
+<div class="container container-wide">
     <!-- Page Header -->
     <div class="page-header d-flex justify-between align-center flex-wrap gap-lg">
         <div>
@@ -87,12 +87,14 @@
                         </label>
                     </th>
                     <th>Workset ID</th>
+                    <th>Workset Name</th>
                     <th>Created</th>
                     <th>Type</th>
                     <th>Customer</th>
                     <th>DynamoDB Status</th>
                     <th>S3 Status</th>
                     <th>Cluster</th>
+                    <th>Region</th>
                     <th>Pipeline</th>
                     <th>Samples</th>
                     <th>Progress</th>
@@ -115,6 +117,11 @@
                     <td>
                         <a href="/portal/worksets/{{ ws.workset_id }}" class="text-accent" style="font-family: monospace; font-size: 0.8rem;">
                             {{ ws.workset_id }}
+                        </a>
+                    </td>
+                    <td>
+                        <a href="/portal/worksets/{{ ws.workset_id }}" class="text-accent" style="font-weight: 500;">
+                            {{ ws.workset_name or ws.workset_id[:20] ~ '...' }}
                         </a>
                     </td>
                     <td style="font-size: 0.8rem;" data-sort-value="{{ ws.created_at | default('') }}">{% if ws.created_at %}{{ ws.created_at[:16] | replace('T', ' ') }}{% else %}—{% endif %}</td>
@@ -146,6 +153,15 @@
                     <td>
                         {% if ws.execution_cluster_name or ws.cluster_name %}
                         <code style="font-size: 0.75rem;">{{ ws.execution_cluster_name or ws.cluster_name }}</code>
+                        {% else %}
+                        <span class="text-muted">—</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if ws.execution_cluster_region or ws.cluster_region %}
+                        <span class="badge badge-secondary" style="font-size: 0.7rem; font-weight: normal;" title="AWS Region">
+                            {{ ws.execution_cluster_region or ws.cluster_region }}
+                        </span>
                         {% else %}
                         <span class="text-muted">—</span>
                         {% endif %}
@@ -214,6 +230,10 @@
                             <button class="btn btn-outline btn-sm" onclick="retryWorkset('{{ ws.workset_id }}')" title="Retry">
                                 <i class="fas fa-redo"></i>
                             </button>
+                            {% elif ws.state == 'canceled' %}
+                            <button class="btn btn-outline btn-sm" onclick="retryWorkset('{{ ws.workset_id }}')" title="Restart">
+                                <i class="fas fa-redo"></i>
+                            </button>
                             {% endif %}
                         </div>
                     </td>
@@ -221,7 +241,7 @@
                 {% endfor %}
                 {% else %}
                 <tr id="empty-row">
-                    <td colspan="15">
+                    <td colspan="16">
                         <div class="empty-state">
                             <div class="empty-state-icon"><i class="fas fa-folder-open"></i></div>
                             <h4 class="empty-state-title">No worksets yet</h4>

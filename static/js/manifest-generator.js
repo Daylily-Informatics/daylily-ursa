@@ -109,8 +109,17 @@ async function saveManifest() {
         return;
     }
 
+    // Validate manifest name is provided
+    const nameInput = document.getElementById('manifest-save-name');
+    const name = nameInput?.value?.trim();
+    if (!name) {
+        nameInput?.focus();
+        showToast?.('error', 'Name required', 'Please enter a manifest name') ||
+            alert('Please enter a manifest name');
+        return;
+    }
+
     const tsv = generateManifestTSV();
-    const name = document.getElementById('manifest-save-name')?.value || null;
 
     try {
         const resp = await fetch(`/api/customers/${customerId}/manifests`, {
@@ -836,7 +845,7 @@ function updateBrowserBreadcrumbs(breadcrumbs) {
 	breadcrumbEl.innerHTML = html;
 }
 
-function selectFile(key) {
+async function selectFile(key) {
 	if (!currentFileBrowserTarget) return;
 	const inputId = `edit_${currentFileBrowserTarget}`;
 	const inputEl = document.getElementById(inputId);
@@ -846,6 +855,65 @@ function selectFile(key) {
 	closeFileBrowser();
 	const shortName = key.split('/').pop();
 	showToast?.('success', 'File Selected', `Selected: ${shortName}`) || alert(`Selected: ${shortName}`);
+
+	// Auto-detect region for the selected file's bucket
+	if (currentBucketName) {
+		await detectAndDisplayBucketRegion(currentBucketName, currentFileBrowserTarget);
+	}
+}
+
+/**
+ * Detect and display the region for a bucket when a file is selected.
+ * Updates the region indicator next to the file input.
+ */
+async function detectAndDisplayBucketRegion(bucketName, targetField) {
+	const regionIndicatorId = `region_${targetField}`;
+	let regionIndicator = document.getElementById(regionIndicatorId);
+
+	// Create region indicator if it doesn't exist
+	const inputEl = document.getElementById(`edit_${targetField}`);
+	if (inputEl && !regionIndicator) {
+		regionIndicator = document.createElement('span');
+		regionIndicator.id = regionIndicatorId;
+		regionIndicator.className = 'badge badge-secondary ml-sm';
+		regionIndicator.style.fontSize = '0.7rem';
+		regionIndicator.style.fontWeight = 'normal';
+		inputEl.parentElement.appendChild(regionIndicator);
+	}
+
+	if (regionIndicator) {
+		regionIndicator.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+		regionIndicator.title = 'Detecting region...';
+	}
+
+	try {
+		const resp = await fetch(`/api/s3/bucket-region/${encodeURIComponent(bucketName)}`);
+		if (resp.ok) {
+			const data = await resp.json();
+			if (regionIndicator) {
+				regionIndicator.textContent = data.region;
+				regionIndicator.title = `File is in AWS region: ${data.region}`;
+				regionIndicator.className = 'badge badge-info ml-sm';
+			}
+			// Store the region for later use (cluster suggestion)
+			if (targetField === 'R1_FQ') {
+				window.r1FileRegion = data.region;
+			} else if (targetField === 'R2_FQ') {
+				window.r2FileRegion = data.region;
+			}
+		} else {
+			if (regionIndicator) {
+				regionIndicator.textContent = '?';
+				regionIndicator.title = 'Could not detect region';
+			}
+		}
+	} catch (err) {
+		console.warn('Failed to detect bucket region:', err);
+		if (regionIndicator) {
+			regionIndicator.textContent = '?';
+			regionIndicator.title = 'Region detection failed';
+		}
+	}
 }
 
 function escapeHtml(str) {

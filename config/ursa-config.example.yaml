@@ -1,0 +1,56 @@
+# Ursa Configuration Example
+# Copy this file to ~/.config/ursa/ursa-config.yaml and customize
+#
+# Create the directory first:
+#   mkdir -p ~/.config/ursa
+#   cp config/ursa-config.example.yaml ~/.config/ursa/ursa-config.yaml
+#
+# This file defines:
+# - AWS regions to scan for ParallelCluster instances
+# - DynamoDB region (single source of truth for workset state)
+# - AWS profile and Cognito settings
+#
+# NOTE: S3 buckets are discovered from cluster tags (aws-parallelcluster-monitor-bucket)
+# rather than being configured here. Each cluster's bucket is set during cluster creation.
+#
+# Environment variables take precedence over config file values:
+# - AWS_PROFILE overrides aws_profile
+# - DYNAMO_DB_REGION overrides dynamo_db_region
+# - COGNITO_REGION overrides cognito_region
+# - COGNITO_USER_POOL_ID overrides cognito_user_pool_id
+# - COGNITO_APP_CLIENT_ID overrides cognito_app_client_id
+
+# AWS profile to use (overridden by AWS_PROFILE env var if set)
+aws_profile: lsmc
+
+# List of AWS regions to scan for ParallelCluster instances
+# Clusters in these regions will be available for workset execution
+# Each region can have an optional ssh_pem for region-specific SSH keys
+regions:
+  - us-west-2:
+      ssh_pem: ~/.ssh/<some>-us-west-2.pem
+  - us-east-1:
+      ssh_pem: ~/.ssh/<some>-us-east-1.pem
+  - eu-central-1:
+      ssh_pem: ~/.ssh/<some>-eu-central-1.pem
+
+
+# =============================================================================
+# DynamoDB Region (Single Source of Truth)
+# =============================================================================
+# In a multi-region architecture, worksets may have S3 data and compute clusters
+# in different AWS regions. However, all workset state is stored in a SINGLE
+# DynamoDB table in this region. This ensures the API server and monitor always
+# see the same worksets.
+#
+# Each workset stores its resource region (cluster_region, execution_cluster_region)
+# in DynamoDB so the monitor knows which region to use for S3 and cluster operations.
+#
+# Default: us-west-2 (if not set)
+# Overridden by DYNAMO_DB_REGION env var
+dynamo_db_region: us-west-2
+
+# Cognito configuration (overridden by env vars COGNITO_USER_POOL_ID, COGNITO_APP_CLIENT_ID, COGNITO_REGION)
+# cognito_user_pool_id: us-west-2_xxxxxxxx
+# cognito_app_client_id: xxxxxxxxxxxxxxxxxxxxxxxxxx
+# cognito_region: us-west-2  # AWS region where Cognito User Pool is deployed

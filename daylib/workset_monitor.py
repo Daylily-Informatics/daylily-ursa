@@ -21,11 +21,13 @@ import threading
 import time
 from collections import defaultdict
 from pathlib import Path, PurePosixPath
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple, cast
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple, cast
 
 import boto3
 from botocore.exceptions import ClientError
 import yaml  # type: ignore[import-untyped]
+
+from daylib.s3_utils import RegionAwareS3Client
 
 LOGGER = logging.getLogger("daylily.workset_monitor")
 
@@ -135,14 +137,21 @@ class AWSConfig:
 
 @dataclasses.dataclass
 class MonitorOptions:
-    bucket: str
+    """Monitor configuration options.
+
+    Note: The monitor does not have a default bucket. Each workset has its own bucket
+    assigned during creation based on the selected cluster's region (from ~/.ursa/ursa-config.yaml).
+    """
+
     prefix: str
     poll_interval_seconds: int = 60
     ready_lock_backoff_seconds: int = 30
     continuous: bool = True
     sentinel_index_prefix: Optional[str] = None
+    sentinel_index_bucket: Optional[str] = None  # Bucket for sentinel index (optional global feature)
     archive_prefix: Optional[str] = None
     max_concurrent_worksets: int = 1
+    use_concurrent_processor: bool = False  # Use ConcurrentWorksetProcessor instead of ThreadPoolExecutor
 
     def normalised_prefix(self) -> str:
         prefix = self.prefix.lstrip("/")
@@ -218,12 +227,86 @@ class WorksetInputs:
 
 
 @dataclasses.dataclass
+class ExecutionContext:
+    """Canonical execution environment for a workset.
+
+    This dataclass captures all the execution-related context that should be
+    computed once at workset acquisition and reused throughout execution.
+    It eliminates scattered fallbacks and ensures consistent region/bucket usage.
+
+    Persisted to DynamoDB at workset start and retrieved on resume.
+    """
+
+    cluster_name: str
+    """Name of the ParallelCluster executing the workset."""
+
+    cluster_region: str
+    """AWS region of the execution cluster (e.g., 'us-west-2', 'eu-central-1')."""
+
+    execution_bucket: str
+    """S3 bucket for workset data (normalized, no s3:// prefix)."""
+
+    workset_prefix: str
+    """S3 prefix for workset files within execution_bucket."""
+
+    ssh_key_path: Optional[str] = None
+    """Path to SSH key for cluster access (region-specific)."""
+
+    reference_bucket: Optional[str] = None
+    """S3 bucket containing reference data (cluster-specific)."""
+
+    export_s3_uri: Optional[str] = None
+    """Target S3 URI for exporting results."""
+
+    headnode_ip: Optional[str] = None
+    """IP address of the cluster headnode (cached)."""
+
+    pipeline_dir: Optional[str] = None
+    """FSx path where pipeline is running (e.g., /fsx/analysis_results/ubuntu/<workset>/daylily-omics-analysis)."""
+
+    customer_id: Optional[str] = None
+    """Customer ID for cost attribution and AWS resource tagging via DAYLILY_PROJECT env var."""
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for DynamoDB storage."""
+        return {
+            "cluster_name": self.cluster_name,
+            "cluster_region": self.cluster_region,
+            "execution_bucket": self.execution_bucket,
+            "workset_prefix": self.workset_prefix,
+            "ssh_key_path": self.ssh_key_path,
+            "reference_bucket": self.reference_bucket,
+            "export_s3_uri": self.export_s3_uri,
+            "headnode_ip": self.headnode_ip,
+            "pipeline_dir": self.pipeline_dir,
+            "customer_id": self.customer_id,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "ExecutionContext":
+        """Create from dictionary (DynamoDB record)."""
+        return cls(
+            cluster_name=data["cluster_name"],
+            cluster_region=data["cluster_region"],
+            execution_bucket=data["execution_bucket"],
+            workset_prefix=data["workset_prefix"],
+            ssh_key_path=data.get("ssh_key_path"),
+            reference_bucket=data.get("reference_bucket"),
+            export_s3_uri=data.get("export_s3_uri"),
+            headnode_ip=data.get("headnode_ip"),
+            pipeline_dir=data.get("pipeline_dir"),
+            customer_id=data.get("customer_id"),
+        )
+
+
+@dataclasses.dataclass
 class Workset:
     name: str
     prefix: str
     sentinels: Dict[str, str]
     has_required_files: bool = False
     is_archived: bool = False
+    bucket: Optional[str] = None  # Workset-specific bucket from DynamoDB
 
     def sentinel_timestamp(self, sentinel: str) -> Optional[str]:
         return self.sentinels.get(sentinel)
@@ -244,6 +327,13 @@ class WorksetReportRow:
         return self.display_state or self.state
 
 
+# Default config search paths (in priority order)
+DEFAULT_CONFIG_SEARCH_PATHS: Tuple[str, ...] = (
+    "~/.ursa/workset-monitor-config.yaml",
+    "./config/workset-monitor-config.yaml",
+)
+
+
 @dataclasses.dataclass
 class MonitorConfig:
     aws: AWSConfig
@@ -261,6 +351,47 @@ class MonitorConfig:
         pipeline_cfg = PipelineOptions(**data["pipeline"])
         return MonitorConfig(
             aws=aws_cfg, monitor=monitor_cfg, cluster=cluster_cfg, pipeline=pipeline_cfg
+        )
+
+    @staticmethod
+    def find_config(explicit_path: Optional[Path] = None) -> Path:
+        """Find config file using search path priority.
+
+        Priority order:
+        1. Explicit path (if provided and exists)
+        2. ~/.ursa/workset-monitor-config.yaml
+        3. ./config/workset-monitor-config.yaml
+
+        Args:
+            explicit_path: Optional explicit config path from CLI
+
+        Returns:
+            Path to the config file
+
+        Raises:
+            FileNotFoundError: If no config file found
+        """
+        # If explicit path provided, use it (let load() handle missing file error)
+        if explicit_path is not None:
+            expanded = Path(os.path.expanduser(str(explicit_path)))
+            if expanded.exists():
+                LOGGER.info("Using explicit config: %s", expanded)
+                return expanded
+            # If explicit path doesn't exist, still return it to get proper error
+            return expanded
+
+        # Search default paths in priority order
+        for search_path in DEFAULT_CONFIG_SEARCH_PATHS:
+            expanded = Path(os.path.expanduser(search_path))
+            if expanded.exists():
+                LOGGER.info("Found config at: %s", expanded)
+                return expanded
+
+        # No config found
+        searched = ", ".join(DEFAULT_CONFIG_SEARCH_PATHS)
+        raise FileNotFoundError(
+            f"No config file found. Searched: {searched}\n"
+            f"Create one at ~/.ursa/workset-monitor-config.yaml or provide explicit path."
         )
 
 
@@ -292,6 +423,7 @@ class WorksetMonitor:
         state_db: Optional[Any] = None,
         integration: Optional[Any] = None,
         notification_manager: Optional[Any] = None,
+        scheduler: Optional[Any] = None,
     ) -> None:
         """Initialize the workset monitor.
 
@@ -305,6 +437,7 @@ class WorksetMonitor:
             state_db: Optional DynamoDB state database for unified state tracking
             integration: Optional WorksetIntegration for unified state operations
             notification_manager: Optional notification manager for alerts
+            scheduler: Optional WorksetScheduler for priority-based workset selection
         """
         self.config = config
         self.dry_run = dry_run
@@ -316,9 +449,14 @@ class WorksetMonitor:
         self.state_db = state_db
         self.integration = integration
         self.notification_manager = notification_manager
+        self.scheduler = scheduler
 
         self._session = boto3.session.Session(**config.aws.session_kwargs())
-        self._s3 = self._session.client("s3")
+        # Use region-aware S3 client for cross-region bucket operations
+        self._s3 = RegionAwareS3Client(
+            default_region=config.aws.region,
+            profile=config.aws.profile,
+        )
         self._sts = self._session.client("sts")
         self.lock_owner_id = f"{socket.gethostname()}-{os.getpid()}"
         self._sentinel_history: Dict[str, Dict[str, str]] = {}
@@ -342,6 +480,296 @@ class WorksetMonitor:
         self._executor: Optional[concurrent.futures.ThreadPoolExecutor] = None
         self._futures: Dict[concurrent.futures.Future, str] = {}  # future -> workset_name
         self._shutdown_event = threading.Event()  # signals graceful shutdown
+
+        # Load ursa config for region-specific settings (e.g., SSH keys)
+        self.ursa_config: Optional[Any] = None
+        try:
+            from daylib.ursa_config import get_ursa_config
+            self.ursa_config = get_ursa_config()
+        except Exception:
+            LOGGER.debug("UrsaConfig not available; region-specific SSH keys disabled")
+
+    # ------------------------------------------------------------------
+    # Scheduler integration
+    # ------------------------------------------------------------------
+    def register_cluster_capacity(
+        self,
+        cluster_name: str,
+        availability_zone: str,
+        max_vcpus: int = 1000,
+        max_memory_gb: float = 4000.0,
+        max_concurrent_worksets: int = 3,
+        cost_per_vcpu_hour: float = 0.05,
+    ) -> None:
+        """Register a cluster's capacity with the scheduler.
+
+        Args:
+            cluster_name: Name of the cluster
+            availability_zone: AWS availability zone
+            max_vcpus: Maximum vCPUs available
+            max_memory_gb: Maximum memory in GB
+            max_concurrent_worksets: Max concurrent worksets on this cluster
+            cost_per_vcpu_hour: Cost per vCPU hour (for cost optimization)
+        """
+        if not self.scheduler:
+            LOGGER.debug("No scheduler configured; skipping cluster registration")
+            return
+
+        from daylib.workset_scheduler import ClusterCapacity
+
+        capacity = ClusterCapacity(
+            cluster_name=cluster_name,
+            availability_zone=availability_zone,
+            max_vcpus=max_vcpus,
+            current_vcpus_used=0,
+            max_memory_gb=max_memory_gb,
+            current_memory_gb_used=0.0,
+            active_worksets=0,
+            max_concurrent_worksets=max_concurrent_worksets,
+            cost_per_vcpu_hour=cost_per_vcpu_hour,
+        )
+        self.scheduler.register_cluster(capacity)
+
+    def update_cluster_utilization(
+        self,
+        cluster_name: str,
+        vcpus_used: int = 0,
+        memory_gb_used: float = 0.0,
+        active_worksets: Optional[int] = None,
+    ) -> None:
+        """Update cluster utilization metrics in the scheduler.
+
+        Args:
+            cluster_name: Name of the cluster
+            vcpus_used: Current vCPU usage
+            memory_gb_used: Current memory usage in GB
+            active_worksets: Number of active worksets (auto-calculated if None)
+        """
+        if not self.scheduler:
+            return
+
+        # Auto-calculate active worksets if not provided
+        if active_worksets is None:
+            active_worksets = self._get_active_count()
+
+        self.scheduler.update_cluster_utilization(
+            cluster_name=cluster_name,
+            vcpus_used=vcpus_used,
+            memory_gb_used=memory_gb_used,
+            active_worksets=active_worksets,
+        )
+
+    def _register_discovered_clusters(self) -> None:
+        """Register all discovered clusters with the scheduler.
+
+        Called during monitor startup to populate scheduler with available clusters.
+        Uses pcluster list-clusters to discover clusters in the configured region.
+        """
+        if not self.scheduler:
+            return
+
+        try:
+            LOGGER.debug("Discovering clusters in %s for scheduler registration", self.config.aws.region)
+            cmd = ["pcluster", "list-clusters", "--region", self.config.aws.region]
+            result = self._run_command(cmd, check=False, env=self._pcluster_env())
+            if result.returncode != 0:
+                LOGGER.debug(
+                    "Unable to list clusters for scheduler (exit %s): %s",
+                    result.returncode,
+                    result.stderr.decode(errors="ignore"),
+                )
+                return
+
+            payload = self._load_pcluster_json(result.stdout)
+            if not isinstance(payload, dict):
+                LOGGER.debug("Unexpected list-clusters output for scheduler")
+                return
+
+            clusters = payload.get("clusters")
+            if not isinstance(clusters, list):
+                return
+
+            registered_count = 0
+            for cluster in clusters:
+                if not isinstance(cluster, dict):
+                    continue
+                name_raw = cluster.get("clusterName")
+                if not name_raw or not isinstance(name_raw, str):
+                    continue
+                cluster_name: str = name_raw
+                details = self._describe_cluster(cluster_name)
+                if details and self._cluster_is_ready(details):
+                    zone = self._extract_cluster_zone(details) or "unknown"
+                    self.register_cluster_capacity(
+                        cluster_name=cluster_name,
+                        availability_zone=zone,
+                    )
+                    LOGGER.info("Registered cluster %s (zone=%s) with scheduler", cluster_name, zone)
+                    registered_count += 1
+
+            LOGGER.info("Registered %d cluster(s) with scheduler", registered_count)
+        except Exception as e:
+            LOGGER.warning("Failed to register clusters with scheduler: %s", str(e))
+
+    def _get_prioritized_worksets(self, worksets: List[Workset]) -> List[Workset]:
+        """Return worksets in priority order using the scheduler if available.
+
+        When a scheduler is configured, uses scheduler.get_next_workset() to
+        prioritize based on resource requirements and cost optimization.
+        Otherwise returns the worksets in original order.
+
+        Args:
+            worksets: List of discovered worksets
+
+        Returns:
+            List of worksets in priority order
+        """
+        if not self.scheduler:
+            return worksets
+
+        # Build a lookup from workset_id to Workset object
+        workset_lookup = {w.name: w for w in worksets}
+
+        # Get prioritized order from scheduler
+        prioritized: List[Workset] = []
+        processed_ids: set = set()
+
+        while True:
+            next_workset_data = self.scheduler.get_next_workset()
+            if not next_workset_data:
+                break
+
+            workset_id = next_workset_data.get("workset_id")
+            if not workset_id or workset_id in processed_ids:
+                break
+
+            processed_ids.add(workset_id)
+
+            # Map scheduler result back to our Workset object
+            if workset_id in workset_lookup:
+                prioritized.append(workset_lookup[workset_id])
+
+        # Append any worksets not returned by scheduler (edge case)
+        for workset in worksets:
+            if workset.name not in processed_ids:
+                prioritized.append(workset)
+
+        return prioritized
+
+    # ------------------------------------------------------------------
+    # Concurrent processor integration
+    # ------------------------------------------------------------------
+    def create_workset_executor(self) -> "Callable[[Dict, Any], bool]":
+        """Create a workset executor adapter for ConcurrentWorksetProcessor.
+
+        Returns a callable that wraps monitor._process_workset for use with
+        the ConcurrentWorksetProcessor's workset_executor parameter.
+
+        Returns:
+            Callable that processes a workset dict and returns success boolean
+        """
+        def executor(workset_data: Dict, decision: Any) -> bool:
+            """Execute a workset using the monitor's processing logic.
+
+            Args:
+                workset_data: Workset dict from DynamoDB
+                decision: SchedulingDecision from scheduler
+
+            Returns:
+                True if processing succeeded, False otherwise
+            """
+            workset_id = workset_data.get("workset_id", "")
+            if not workset_id:
+                LOGGER.error("Workset data missing workset_id")
+                return False
+
+            try:
+                # Build Workset object from dict
+                bucket = workset_data.get("bucket", "")
+                prefix = workset_data.get("prefix", f"{self.config.monitor.normalised_prefix()}{workset_id}/")
+                state = workset_data.get("state", "ready")
+
+                sentinels: Dict[str, str] = {}
+                created_at = workset_data.get("created_at", "")
+                if state == "ready":
+                    sentinels[SENTINEL_FILES["ready"]] = created_at
+                elif state == "in_progress":
+                    sentinels[SENTINEL_FILES["in_progress"]] = created_at
+
+                has_required = self._verify_core_files(prefix, bucket=bucket)
+
+                workset = Workset(
+                    name=workset_id,
+                    prefix=prefix,
+                    sentinels=sentinels,
+                    has_required_files=has_required,
+                    is_archived=False,
+                    bucket=bucket,
+                )
+
+                # Process the workset
+                self._handle_workset(workset)
+                return True
+
+            except Exception as e:
+                LOGGER.error("Executor failed for %s: %s", workset_id, str(e))
+                return False
+
+        return executor
+
+    def run_with_concurrent_processor(self) -> None:
+        """Run the monitor using ConcurrentWorksetProcessor.
+
+        This is an alternative to run() that uses the ConcurrentWorksetProcessor
+        for more advanced scheduling, validation, and retry handling.
+
+        Requires scheduler and state_db to be configured.
+        """
+        if not self.scheduler:
+            raise MonitorError("Scheduler is required for concurrent processor mode")
+        if not self.state_db:
+            raise MonitorError("DynamoDB state_db is required for concurrent processor mode")
+
+        from daylib.workset_concurrent_processor import (
+            ConcurrentWorksetProcessor,
+            ProcessorConfig,
+        )
+
+        LOGGER.info("Starting Daylily workset monitor in concurrent processor mode")
+        LOGGER.info("Region: %s, max_concurrent: %d",
+                    self.config.aws.region,
+                    self.config.monitor.max_concurrent_worksets)
+
+        # Register discovered clusters with scheduler
+        self._register_discovered_clusters()
+
+        # Create processor config from monitor config
+        processor_config = ProcessorConfig(
+            max_concurrent_worksets=self.config.monitor.max_concurrent_worksets,
+            max_workers=self.config.monitor.max_concurrent_worksets,
+            poll_interval_seconds=self.config.monitor.poll_interval_seconds,
+            enable_retry=True,
+            enable_validation=True,
+            enable_notifications=self.notification_manager is not None,
+        )
+
+        # Create processor with our workset executor
+        processor = ConcurrentWorksetProcessor(
+            state_db=self.state_db,
+            scheduler=self.scheduler,
+            config=processor_config,
+            validator=None,  # Could add validator support later
+            notification_manager=self.notification_manager,
+            workset_executor=self.create_workset_executor(),
+        )
+
+        try:
+            processor.start()
+        except KeyboardInterrupt:
+            LOGGER.info("Received interrupt, stopping processor...")
+            processor.stop()
+        finally:
+            LOGGER.info("Concurrent processor shutdown complete")
 
     # ------------------------------------------------------------------
     # Public entrypoints
@@ -394,12 +822,28 @@ class WorksetMonitor:
     def _handle_workset_async(self, workset: Workset) -> None:
         """Handle a single workset in a worker thread.
 
-        This method wraps _handle_workset to ensure proper cleanup of active state.
+        This method wraps _handle_workset to ensure proper cleanup of active state
+        and updates the scheduler with cluster utilization changes.
         """
+        cluster_name = None
         try:
             self._handle_workset(workset)
         finally:
+            # Get cluster name from workset metrics for scheduler update
+            metrics = self._workset_metrics.get(workset.name, {})
+            cluster_name = metrics.get("cluster_name")
+
             self._mark_workset_inactive(workset.name)
+
+            # Update scheduler with reduced cluster utilization
+            if self.scheduler and cluster_name:
+                try:
+                    self.update_cluster_utilization(
+                        cluster_name=cluster_name,
+                        active_worksets=self._get_active_count(),
+                    )
+                except Exception as e:
+                    LOGGER.debug("Failed to update scheduler after %s: %s", workset.name, str(e))
 
     def _collect_completed_futures(self) -> None:
         """Check for completed futures and clean up."""
@@ -416,19 +860,26 @@ class WorksetMonitor:
 
         Uses a ThreadPoolExecutor to process multiple worksets in parallel up to
         the configured max_concurrent_worksets limit.
+
+        If a scheduler is configured, it will be used for priority-based workset
+        selection and cluster capacity tracking.
         """
         LOGGER.info("Starting Daylily workset monitor in %s", self.config.aws.region)
         LOGGER.info(
-            "Monitoring bucket: %s prefix: %s",
-            self.config.monitor.bucket,
+            "Monitoring prefix: %s (worksets carry individual buckets from cluster region)",
             self.config.monitor.normalised_prefix(),
         )
         LOGGER.info(
-            "Poll interval: %ds, continuous: %s, max parallel: %d",
+            "Poll interval: %ds, continuous: %s, max parallel: %d, scheduler: %s",
             self.config.monitor.poll_interval_seconds,
             self.config.monitor.continuous,
             self.config.monitor.max_concurrent_worksets,
+            "enabled" if self.scheduler else "disabled",
         )
+
+        # Register discovered clusters with scheduler at startup
+        if self.scheduler:
+            self._register_discovered_clusters()
 
         max_workers = self.config.monitor.max_concurrent_worksets
         self._executor = concurrent.futures.ThreadPoolExecutor(
@@ -460,8 +911,11 @@ class WorksetMonitor:
                     )
                     self._update_sentinel_indexes(worksets)
 
+                    # Prioritize worksets using scheduler if available
+                    prioritized_worksets = self._get_prioritized_worksets(worksets)
+
                     # Submit ready worksets to the thread pool
-                    for workset in worksets:
+                    for workset in prioritized_worksets:
                         # Skip if workset is already being processed
                         if self._is_workset_active(workset.name):
                             continue
@@ -597,9 +1051,11 @@ class WorksetMonitor:
         proceed = True
         inputs: Optional[WorksetInputs] = None
         cluster_name: Optional[str] = None
+        cluster_region: Optional[str] = None
         pipeline_dir: Optional[PurePosixPath] = None
         stage_artifacts: Optional[StageArtifacts] = None
         session_name: Optional[str] = None
+        exec_context: Optional[ExecutionContext] = None
 
         for action in actions:
             LOGGER.debug("Executing %s for %s", action, workset.name)
@@ -638,15 +1094,19 @@ class WorksetMonitor:
                 "shutdown_cluster",
             }
             if requires_cluster and cluster_name is None:
-                cluster_name = self._ensure_cluster(inputs.work_yaml)
-                LOGGER.info("Using cluster %s for workset %s", cluster_name, workset.name)
+                cluster_name, cluster_region = self._ensure_cluster(inputs.work_yaml, workset)
+                LOGGER.info("Using cluster %s (region=%s) for workset %s", cluster_name, cluster_region or self.config.aws.region, workset.name)
                 self._update_metrics(workset, {"cluster_name": cluster_name})
+                # Capture ExecutionContext for manual actions (includes customer_id for billing)
+                exec_context = self._capture_execution_environment(
+                    workset, cluster_name, inputs.target_export_uri, cluster_region=cluster_region
+                )
 
             if action == "stage_data":
                 if cluster_name is None:
                     raise MonitorError("Cluster is required to stage data")
                 stage_artifacts = self._stage_samples(
-                    workset, inputs.manifest_path, cluster_name
+                    workset, inputs.manifest_path, cluster_name, region=cluster_region
                 )
                 continue
 
@@ -659,6 +1119,7 @@ class WorksetMonitor:
                     cluster_name,
                     inputs.clone_args,
                     run_clone=run_clone,
+                    region=cluster_region,
                 )
                 continue
 
@@ -671,6 +1132,7 @@ class WorksetMonitor:
                         cluster_name,
                         inputs.clone_args,
                         run_clone=bool(inputs.clone_args),
+                        region=cluster_region,
                     )
                 if stage_artifacts is None:
                     stage_artifacts = self._stage_artifacts.get(workset.name)
@@ -679,7 +1141,8 @@ class WorksetMonitor:
                         "Stage samples output unavailable; run stage-data before run-pipeline"
                     )
                 self._push_stage_files_to_pipeline(
-                    cluster_name, pipeline_dir, inputs.manifest_path, stage_artifacts
+                    cluster_name, pipeline_dir, inputs.manifest_path, stage_artifacts,
+                    region=cluster_region,
                 )
                 session_name = self._run_pipeline(
                     workset,
@@ -687,6 +1150,8 @@ class WorksetMonitor:
                     pipeline_dir,
                     inputs.run_suffix,
                     monitor=False,
+                    region=cluster_region,
+                    customer_id=exec_context.customer_id if exec_context else None,
                 )
                 continue
 
@@ -699,6 +1164,7 @@ class WorksetMonitor:
                         cluster_name,
                         inputs.clone_args,
                         run_clone=False,
+                        region=cluster_region,
                     )
                 if session_name is None:
                     session_name = self._load_tmux_session(workset)
@@ -707,7 +1173,8 @@ class WorksetMonitor:
                         f"No tmux session recorded for {workset.name}; run run-pipeline first"
                     )
                 self._monitor_pipeline_session(
-                    workset, cluster_name, pipeline_dir, session_name
+                    workset, cluster_name, pipeline_dir, session_name,
+                    region=cluster_region,
                 )
                 continue
 
@@ -724,9 +1191,11 @@ class WorksetMonitor:
                         cluster_name,
                         inputs.clone_args,
                         run_clone=False,
+                        region=cluster_region,
                     )
                 self._export_results(
-                    workset, cluster_name, inputs.target_export_uri, pipeline_dir
+                    workset, cluster_name, inputs.target_export_uri, pipeline_dir,
+                    region=cluster_region,
                 )
                 continue
 
@@ -739,8 +1208,10 @@ class WorksetMonitor:
                         cluster_name,
                         inputs.clone_args,
                         run_clone=False,
+                        region=cluster_region,
                     )
-                self._cleanup_pipeline_directory(workset, cluster_name, pipeline_dir)
+                self._cleanup_pipeline_directory(workset, cluster_name, pipeline_dir,
+                    region=cluster_region)
                 pipeline_dir = None
                 continue
 
@@ -753,15 +1224,18 @@ class WorksetMonitor:
                         cluster_name,
                         inputs.clone_args,
                         run_clone=False,
+                        region=cluster_region,
                     )
-                self._cleanup_headnode_directory(workset, cluster_name, pipeline_dir)
+                self._cleanup_headnode_directory(workset, cluster_name, pipeline_dir,
+                    region=cluster_region)
                 continue
 
             if action == "shutdown_cluster":
                 if cluster_name is None:
-                    cluster_name = self._ensure_cluster(inputs.work_yaml)
+                    cluster_name, cluster_region = self._ensure_cluster(inputs.work_yaml, workset)
                 self._shutdown_cluster(cluster_name)
                 cluster_name = None
+                cluster_region = None
 
     def build_workset(
         self,
@@ -771,8 +1245,18 @@ class WorksetMonitor:
         sentinels: Optional[Dict[str, str]] = None,
         has_required_files: bool = True,
         is_archived: bool = False,
+        bucket: Optional[str] = None,
     ) -> Workset:
-        """Create a Workset object for direct processing."""
+        """Create a Workset object for direct processing.
+
+        Args:
+            workset_id: Workset identifier
+            prefix: S3 prefix (defaults to monitor prefix + workset_id)
+            sentinels: Sentinel file timestamps
+            has_required_files: Whether all required files are present
+            is_archived: Whether workset is archived
+            bucket: S3 bucket (defaults to monitor bucket if not specified)
+        """
         normalized_prefix = prefix or f"{self.config.monitor.normalised_prefix()}{workset_id}/"
         return Workset(
             name=workset_id,
@@ -780,6 +1264,7 @@ class WorksetMonitor:
             sentinels=sentinels or {},
             has_required_files=has_required_files,
             is_archived=is_archived,
+            bucket=bucket,
         )
 
     def write_sentinel(self, workset: Workset, sentinel_name: str, value: str) -> None:
@@ -828,7 +1313,15 @@ class WorksetMonitor:
                 continue
 
             # Get workset details from DynamoDB
-            bucket = db_workset.get("bucket", self.config.monitor.bucket)
+            bucket = db_workset.get("bucket")
+            if not bucket:
+                LOGGER.error(
+                    "Workset %s has no bucket assigned in DynamoDB. "
+                    "Worksets must be created via the portal with a cluster selection "
+                    "to assign a region-specific bucket from ~/.ursa/ursa-config.yaml.",
+                    workset_id
+                )
+                continue
             prefix = db_workset.get("prefix", f"{self.config.monitor.normalised_prefix()}{workset_id}/")
             state = db_workset.get("state", "ready")
             lock_owner = db_workset.get("lock_owner")
@@ -866,6 +1359,7 @@ class WorksetMonitor:
                 sentinels=sentinels,
                 has_required_files=has_required,
                 is_archived=False,
+                bucket=bucket,
             )
 
     def _s3_folder_exists(self, bucket: str, prefix: str) -> bool:
@@ -884,14 +1378,31 @@ class WorksetMonitor:
                 Prefix=prefix,
                 MaxKeys=1,
             )
-            return response.get("KeyCount", 0) > 0
+            key_count_raw = response.get("KeyCount", 0)
+            try:
+                key_count = int(key_count_raw or 0)
+            except (TypeError, ValueError):
+                key_count = 0
+            return key_count > 0
         except Exception as e:
             LOGGER.warning("Error checking S3 folder existence for %s/%s: %s", bucket, prefix, e)
             return False
 
-    def _list_sentinels(self, workset_prefix: str) -> Dict[str, str]:
-        """List all sentinel files for a workset with pagination safety."""
-        bucket = self.config.monitor.bucket
+    def _list_sentinels(self, workset_prefix: str, bucket: str) -> Dict[str, str]:
+        """List all sentinel files for a workset with pagination safety.
+
+        Args:
+            workset_prefix: S3 prefix for the workset
+            bucket: S3 bucket name (required - worksets must have assigned buckets)
+
+        Returns:
+            Dict mapping sentinel filename to its content/timestamp
+
+        Raises:
+            ValueError: If bucket is not provided
+        """
+        if not bucket:
+            raise ValueError(f"Bucket required to list sentinels for prefix: {workset_prefix}")
         paginator = self._s3.get_paginator("list_objects_v2")
         sentinel_timestamps: Dict[str, str] = {}
         for page in paginator.paginate(Bucket=bucket, Prefix=workset_prefix):
@@ -904,17 +1415,21 @@ class WorksetMonitor:
                     sentinel_timestamps[name] = self._read_object_text(bucket, key)
         return sentinel_timestamps
 
-    def _verify_core_files(self, workset_prefix: str, bucket: Optional[str] = None) -> bool:
+    def _verify_core_files(self, workset_prefix: str, bucket: str) -> bool:
         """Verify that a workset directory has all required files.
 
         Args:
             workset_prefix: S3 prefix for the workset
-            bucket: S3 bucket name (defaults to monitor bucket)
+            bucket: S3 bucket name (required - worksets must have assigned buckets)
 
         Returns:
             True if all required files are present
+
+        Raises:
+            ValueError: If bucket is not provided
         """
-        bucket = bucket or self.config.monitor.bucket
+        if not bucket:
+            raise ValueError(f"Bucket required to verify core files for prefix: {workset_prefix}")
         expected = [
             DEFAULT_STAGE_SAMPLES_NAME,
             WORK_YAML_NAME,
@@ -1013,6 +1528,62 @@ class WorksetMonitor:
         self._workdir_names[workset.name] = resolved
         return resolved
 
+    def _sanitize_shell_args(self, args: str, context: str) -> str:
+        """Sanitize shell arguments to prevent command injection.
+
+        Parses the args string, validates it contains no dangerous shell
+        metacharacters, and re-quotes each token for safe shell execution.
+
+        Args:
+            args: Raw arguments string from YAML
+            context: Description of where these args come from (for error messages)
+
+        Returns:
+            Sanitized arguments string with proper quoting
+
+        Raises:
+            MonitorError: If args contains potentially dangerous patterns
+        """
+        if not args:
+            return ""
+
+        # Dangerous shell metacharacters that should never appear in user args
+        # Note: We allow single quotes within quoted strings (handled by shlex)
+        dangerous_patterns = [
+            ';', '|', '&', '$', '`', '$(', '${',
+            '\n', '\r', '>', '<', '!',
+        ]
+        for pattern in dangerous_patterns:
+            if pattern in args:
+                raise MonitorError(
+                    f"{context} contain forbidden shell metacharacter: {pattern!r}"
+                )
+
+        try:
+            tokens = shlex.split(args)
+        except ValueError as e:
+            raise MonitorError(f"Failed to parse {context}: {e}") from e
+
+        # Re-quote each token to ensure safe execution
+        return " ".join(shlex.quote(token) for token in tokens)
+
+    def _sanitize_clone_args(self, clone_args: str) -> str:
+        """Sanitize clone_args to prevent command injection."""
+        return self._sanitize_shell_args(clone_args, "clone args")
+
+    def _sanitize_run_suffix(self, run_suffix: str) -> str:
+        """Sanitize run_suffix (dy-r command) to prevent command injection.
+
+        The run_suffix is expected to be a dy-r or snakemake command like:
+        - "dy-r wgs -p"
+        - "wgs -p"
+        - "dy-r wgs --samples-tsv samples.tsv -p"
+
+        This validates the input contains no dangerous shell metacharacters
+        and re-quotes all arguments.
+        """
+        return self._sanitize_shell_args(run_suffix, "run suffix (dy-r command)")
+
     def _format_clone_args(
         self, clone_args: str, workset: Workset, work_yaml: Dict[str, object]
     ) -> str:
@@ -1021,13 +1592,16 @@ class WorksetMonitor:
         # Ensure workset name has date suffix for day-clone destination
         workset_name_with_date = ensure_date_suffix(workset.name)
         mapping = {
-            "workset": workset_name_with_date,
+            "workset": self._sanitize_name(workset_name_with_date),
             "workdir_name": self._workdir_name(workset, work_yaml),
         }
         try:
-            return clone_args.format(**mapping)
+            formatted = clone_args.format(**mapping)
         except Exception:
-            return clone_args
+            formatted = clone_args
+
+        # Sanitize the formatted clone args to prevent command injection
+        return self._sanitize_clone_args(formatted)
 
     def _extract_dest_from_clone_args(self, clone_args: str) -> Optional[str]:
         if not clone_args:
@@ -1050,21 +1624,32 @@ class WorksetMonitor:
     # Sentinel logging
     # ------------------------------------------------------------------
     def _update_sentinel_indexes(self, worksets: Sequence[Workset]) -> None:
+        """Update global sentinel index files (optional feature).
+
+        Requires both sentinel_index_prefix and sentinel_index_bucket to be configured.
+        """
+        if not self.config.monitor.sentinel_index_prefix:
+            return
+        if not self.config.monitor.sentinel_index_bucket:
+            LOGGER.debug(
+                "Sentinel index prefix configured but no sentinel_index_bucket set - skipping index update"
+            )
+            return
+
         states: Dict[str, List[str]] = defaultdict(list)
         for workset in worksets:
             for sentinel, timestamp in workset.sentinels.items():
                 if sentinel in OPTIONAL_SENTINELS or sentinel == SENTINEL_FILES["ready"]:
                     states[sentinel].append(f"{workset.name}\t{timestamp}")
-        if not self.config.monitor.sentinel_index_prefix:
-            return
-        bucket = self.config.monitor.bucket
+
+        bucket = self.config.monitor.sentinel_index_bucket
         base_prefix = self.config.monitor.sentinel_index_prefix
         base_prefix = base_prefix.rstrip("/") + "/" if base_prefix else ""
         for sentinel_name, rows in states.items():
             key = f"{base_prefix}{sentinel_name}.log"
             body = "\n".join(sorted(rows)).encode("utf-8")
             LOGGER.debug(
-                "Updating sentinel index %s with %d entries", key, len(rows)
+                "Updating sentinel index %s in bucket %s with %d entries", key, bucket, len(rows)
             )
             if self.dry_run:
                 continue
@@ -1074,6 +1659,11 @@ class WorksetMonitor:
     # Workset state machine
     # ------------------------------------------------------------------
     def _check_workset_state(self, workset: Workset) -> bool:
+        # Reconcile DynamoDB state with S3 sentinels on each check.
+        # This handles cases where the monitor crashed/restarted after writing
+        # S3 sentinels but before updating DynamoDB.
+        self._reconcile_dynamodb_state(workset)
+
         if not self._should_process(workset):
             LOGGER.info(
                 "Skipping %s: not selected via --process-directory", workset.name
@@ -1160,11 +1750,51 @@ class WorksetMonitor:
             )
             return False
 
-        cluster_name = self._ensure_cluster(inputs.work_yaml)
+        # For in-progress worksets, use the STORED ExecutionContext from DynamoDB
+        # This ensures we use the correct cluster/region where the workset is actually running
+        exec_ctx = self._load_execution_context(workset)
+        cluster_name: Optional[str] = None
+        cluster_region: Optional[str] = None
+
+        if exec_ctx:
+            cluster_name = exec_ctx.cluster_name
+            cluster_region = exec_ctx.cluster_region
+            LOGGER.debug(
+                "Using stored ExecutionContext for %s: cluster=%s, region=%s, ssh_key=%s",
+                workset.name,
+                cluster_name,
+                cluster_region,
+                exec_ctx.ssh_key_path,
+            )
+        else:
+            # Legacy fallback: try to load from individual fields
+            if self.state_db:
+                try:
+                    workset_data = self.state_db.get_workset(workset.name)
+                    if workset_data:
+                        cluster_name = workset_data.get("execution_cluster_name")
+                        cluster_region = workset_data.get("execution_cluster_region")
+                        if cluster_name and cluster_region:
+                            LOGGER.debug(
+                                "Using legacy execution environment for %s: cluster=%s, region=%s",
+                                workset.name,
+                                cluster_name,
+                                cluster_region,
+                            )
+                except Exception as e:
+                    LOGGER.warning(
+                        "Failed to load execution environment for %s: %s",
+                        workset.name,
+                        str(e),
+                    )
+
+        # Fall back to _ensure_cluster if no stored execution environment
+        if not cluster_name:
+            cluster_name, cluster_region = self._ensure_cluster(inputs.work_yaml, workset)
 
         # Check pipeline sentinel status on headnode
         try:
-            status = self._pipeline_sentinel_status(cluster_name, pipeline_dir)
+            status = self._pipeline_sentinel_status(cluster_name, pipeline_dir, region=cluster_region)
         except Exception as e:
             LOGGER.warning(
                 "Failed to check pipeline status for %s: %s",
@@ -1184,7 +1814,7 @@ class WorksetMonitor:
             # Clear tmux session markers
             existing_session = self._load_tmux_session(workset)
             if existing_session:
-                self._terminate_tmux_session(cluster_name, existing_session)
+                self._terminate_tmux_session(cluster_name, existing_session, region=cluster_region)
                 self._clear_tmux_session(workset)
             self._clear_pipeline_start(workset)
 
@@ -1195,13 +1825,14 @@ class WorksetMonitor:
                     # Track progress: exporting (recovery path)
                     self._update_progress_step(workset, "exporting", f"Exporting results to {inputs.target_export_uri}")
                     results_s3_uri = self._export_results(
-                        workset, cluster_name, inputs.target_export_uri, pipeline_dir
+                        workset, cluster_name, inputs.target_export_uri, pipeline_dir,
+                        region=cluster_region,
                     )
                     # Track progress: export complete
                     self._update_progress_step(workset, "export_complete", "Export finished")
 
                     # Cleanup headnode directory after successful export (recovery path)
-                    self._cleanup_headnode_directory(workset, cluster_name, pipeline_dir)
+                    self._cleanup_headnode_directory(workset, cluster_name, pipeline_dir, region=cluster_region)
 
                     # Collect post-export metrics from S3 (recovery path)
                     try:
@@ -1268,7 +1899,7 @@ class WorksetMonitor:
             # Clear tmux session
             existing_session = self._load_tmux_session(workset)
             if existing_session:
-                self._terminate_tmux_session(cluster_name, existing_session)
+                self._terminate_tmux_session(cluster_name, existing_session, region=cluster_region)
                 self._clear_tmux_session(workset)
             self._clear_pipeline_start(workset)
 
@@ -1292,7 +1923,7 @@ class WorksetMonitor:
             existing_session = self._load_tmux_session(workset)
             if existing_session:
                 try:
-                    session_exists = self._tmux_session_exists(cluster_name, existing_session)
+                    session_exists = self._tmux_session_exists(cluster_name, existing_session, region=cluster_region)
                     if session_exists:
                         LOGGER.info(
                             "Workset %s pipeline still running (session %s)",
@@ -1508,7 +2139,11 @@ class WorksetMonitor:
         workset.sentinels[SENTINEL_FILES["lock"]] = timestamp
         LOGGER.debug("Wrote lock sentinel for %s", workset.name)
         time.sleep(self.config.monitor.ready_lock_backoff_seconds)
-        refreshed = self._list_sentinels(workset.prefix)
+        bucket = workset.bucket
+        if bucket is None:
+            LOGGER.warning("Workset %s missing bucket; cannot list sentinels", workset.name)
+            return False
+        refreshed = self._list_sentinels(workset.prefix, bucket=bucket)
         unexpected = set(refreshed) - set(initial_snapshot)
         # If anything else changed besides our lock, treat as contention and back off (no error).
         if unexpected - {SENTINEL_FILES["lock"]}:
@@ -1536,7 +2171,7 @@ class WorksetMonitor:
     # ------------------------------------------------------------------
     def _load_workset_inputs(self, workset: Workset) -> WorksetInputs:
         manifest_bytes = self._read_required_object(
-            workset.prefix, DEFAULT_STAGE_SAMPLES_NAME
+            workset, DEFAULT_STAGE_SAMPLES_NAME
         )
         self._validate_stage_manifest(manifest_bytes, workset)
         manifest_path = self._write_temp_file(
@@ -1544,7 +2179,7 @@ class WorksetMonitor:
         )
         manifest_path = self._copy_manifest_to_local(workset, manifest_path)
 
-        work_yaml_bytes = self._read_required_object(workset.prefix, WORK_YAML_NAME)
+        work_yaml_bytes = self._read_required_object(workset, WORK_YAML_NAME)
         work_yaml = yaml.safe_load(work_yaml_bytes.decode("utf-8"))
 
         workdir_name = self._workdir_name(workset, work_yaml)
@@ -1595,14 +2230,15 @@ class WorksetMonitor:
 
     def _process_workset(self, workset: Workset) -> None:
         inputs = self._load_workset_inputs(workset)
-        cluster_name = self._ensure_cluster(inputs.work_yaml)
-        LOGGER.info("Using cluster %s for workset %s", cluster_name, workset.name)
+        cluster_name, cluster_region = self._ensure_cluster(inputs.work_yaml, workset)
+        LOGGER.info("Using cluster %s (region=%s) for workset %s", cluster_name, cluster_region or self.config.aws.region, workset.name)
         self._update_metrics(workset, {"cluster_name": cluster_name})
 
-        # Capture execution environment metadata
-        self._capture_execution_environment(
-            workset, cluster_name, inputs.target_export_uri
+        # Capture execution environment metadata (includes customer_id for billing)
+        exec_context = self._capture_execution_environment(
+            workset, cluster_name, inputs.target_export_uri, cluster_region
         )
+        customer_id = exec_context.customer_id if exec_context else None
 
         completed_commands: Set[str] = set()
         clone_args = inputs.clone_args
@@ -1615,7 +2251,7 @@ class WorksetMonitor:
         else:
             # No clone; ensure fallback dir on headnode
             pipeline_dir = self._prepare_pipeline_workspace(
-                workset, cluster_name, clone_args, run_clone=False
+                workset, cluster_name, clone_args, run_clone=False, region=cluster_region
             )
 
         retry_attempted = False
@@ -1630,6 +2266,8 @@ class WorksetMonitor:
                     target_export_uri,
                     pipeline_dir,
                     completed_commands,
+                    region=cluster_region,
+                    customer_id=customer_id,
                 )
                 break
             except CommandFailedError as exc:
@@ -1653,6 +2291,8 @@ class WorksetMonitor:
         target_export_uri: Optional[str],
         pipeline_dir: Optional[PurePosixPath],
         completed_commands: Set[str],
+        region: Optional[str] = None,
+        customer_id: Optional[str] = None,
     ) -> PurePosixPath:
         # Track progress: staging and cluster provisioning in parallel
         self._update_progress_step(workset, "staging", "Staging samples and waiting for cluster")
@@ -1669,10 +2309,10 @@ class WorksetMonitor:
                 )
             else:
                 stage_future = executor.submit(
-                    self._stage_samples, workset, manifest_path, cluster_name
+                    self._stage_samples, workset, manifest_path, cluster_name, region
                 )
             cluster_future = executor.submit(
-                self._wait_for_cluster_ready, cluster_name
+                self._wait_for_cluster_ready, cluster_name, region
             )
             cluster_details = cluster_future.result()
             # Track progress: cluster is ready
@@ -1699,7 +2339,7 @@ class WorksetMonitor:
         if clone_needed:
             LOGGER.info("Running pipeline clone for %s", workset.name)
             pipeline_dir = self._prepare_pipeline_workspace(
-                workset, cluster_name, clone_args, run_clone=True
+                workset, cluster_name, clone_args, run_clone=True, region=region
             )
             completed_commands.add(clone_label)
         elif clone_args:
@@ -1709,7 +2349,7 @@ class WorksetMonitor:
             )
             if pipeline_dir is None:
                 pipeline_dir = self._prepare_pipeline_workspace(
-                    workset, cluster_name, clone_args, run_clone=False
+                    workset, cluster_name, clone_args, run_clone=False, region=region
                 )
 
         if pipeline_dir is None:
@@ -1725,7 +2365,7 @@ class WorksetMonitor:
             )
         else:
             self._push_stage_files_to_pipeline(
-                cluster_name, pipeline_dir, manifest_path, stage_artifacts
+                cluster_name, pipeline_dir, manifest_path, stage_artifacts, region=region
             )
             completed_commands.add(push_label)
 
@@ -1739,7 +2379,10 @@ class WorksetMonitor:
                 workset.name,
             )
         else:
-            self._run_pipeline(workset, cluster_name, pipeline_dir, run_suffix)
+            self._run_pipeline(
+                workset, cluster_name, pipeline_dir, run_suffix,
+                region=region, customer_id=customer_id
+            )
             completed_commands.add(run_label)
 
         # Track progress: pipeline completed, starting export
@@ -1764,7 +2407,8 @@ class WorksetMonitor:
                 # Track progress: exporting
                 self._update_progress_step(workset, "exporting", f"Exporting results to {target_export_uri}")
                 results_s3_uri = self._export_results(
-                    workset, cluster_name, target_export_uri, pipeline_dir
+                    workset, cluster_name, target_export_uri, pipeline_dir,
+                    region=region,
                 )
                 completed_commands.add(export_label)
                 # Track progress: export complete
@@ -1777,7 +2421,7 @@ class WorksetMonitor:
                     "Skipping headnode cleanup for %s: already completed", workset.name
                 )
             else:
-                self._cleanup_headnode_directory(workset, cluster_name, pipeline_dir)
+                self._cleanup_headnode_directory(workset, cluster_name, pipeline_dir, region=region)
                 completed_commands.add(cleanup_label)
 
         # Collect post-export metrics from S3 (after export is complete)
@@ -1811,24 +2455,36 @@ class WorksetMonitor:
         workset: Workset,
         cluster_name: str,
         target_export_uri: Optional[str],
-    ) -> None:
+        cluster_region: Optional[str] = None,
+    ) -> Optional[ExecutionContext]:
         """Capture execution environment metadata and store in DynamoDB.
 
         This records where and how the workset is being processed, including
-        cluster details and output locations.
+        cluster details and output locations. Also creates and persists an
+        ExecutionContext for consistent usage throughout execution and on resume.
+
+        Args:
+            workset: Workset being processed
+            cluster_name: Name of the cluster
+            target_export_uri: S3 URI for export results
+            cluster_region: AWS region of the cluster (uses config region if None)
+
+        Returns:
+            ExecutionContext if created successfully, None otherwise
         """
         if not self.state_db:
             LOGGER.debug("No state_db configured; skipping execution environment capture")
-            return
+            return None
 
         now_iso = dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
+        effective_region = cluster_region or self.config.aws.region
 
         # Get headnode IP (may already be cached)
         headnode_ip: Optional[str] = None
         try:
-            headnode_ip = self._headnode_ip(cluster_name)
+            headnode_ip = self._headnode_ip(cluster_name, region=effective_region)
         except Exception as e:
-            LOGGER.warning("Unable to get headnode IP for %s: %s", cluster_name, str(e))
+            LOGGER.warning("Unable to get headnode IP for %s in %s: %s", cluster_name, effective_region, str(e))
 
         # Parse S3 bucket and prefix from export_uri
         execution_s3_bucket: Optional[str] = None
@@ -1839,28 +2495,79 @@ class WorksetMonitor:
                 execution_s3_bucket = uri_parts[0]
                 execution_s3_prefix = uri_parts[1] if len(uri_parts) > 1 else ""
 
+        # Use workset bucket if no export URI specified
+        if not execution_s3_bucket:
+            execution_s3_bucket = workset.bucket
+            execution_s3_prefix = workset.prefix
+
+        if execution_s3_bucket is None:
+            raise MonitorError(
+                f"Workset {workset.name} has no execution bucket (missing export URI and workset.bucket)"
+            )
+
+        # Get SSH key for this region
+        ssh_key_path = self._ssh_identity(region=effective_region)
+
+        # Get reference bucket from config
+        reference_bucket = self.config.pipeline.reference_bucket
+
+        # Get customer_id from DynamoDB workset record for cost attribution
+        customer_id: Optional[str] = None
         try:
+            workset_record = self.state_db.get_workset(workset.name)
+            if workset_record:
+                customer_id = workset_record.get("customer_id")
+                if customer_id:
+                    LOGGER.debug("Retrieved customer_id=%s for workset %s", customer_id, workset.name)
+        except Exception as e:
+            LOGGER.warning("Failed to retrieve customer_id for %s: %s", workset.name, str(e))
+
+        # Create ExecutionContext
+        exec_context = ExecutionContext(
+            cluster_name=cluster_name,
+            cluster_region=effective_region,
+            execution_bucket=execution_s3_bucket,
+            workset_prefix=execution_s3_prefix or workset.prefix,
+            ssh_key_path=ssh_key_path,
+            reference_bucket=reference_bucket,
+            export_s3_uri=target_export_uri,
+            headnode_ip=headnode_ip,
+            customer_id=customer_id,
+        )
+
+        try:
+            # Store legacy fields for backward compatibility
             self.state_db.update_execution_environment(
                 workset_id=workset.name,
                 cluster_name=cluster_name,
-                cluster_region=self.config.aws.region,
+                cluster_region=effective_region,
                 headnode_ip=headnode_ip,
                 execution_s3_bucket=execution_s3_bucket,
                 execution_s3_prefix=execution_s3_prefix,
                 execution_started_at=now_iso,
             )
+
+            # Store new consolidated ExecutionContext
+            self.state_db.set_execution_context(
+                workset_id=workset.name,
+                execution_context=exec_context.to_dict(),
+            )
+
             LOGGER.info(
-                "Captured execution environment for %s: cluster=%s, region=%s",
+                "Captured execution environment for %s: cluster=%s, region=%s, ssh_key=%s",
                 workset.name,
                 cluster_name,
-                self.config.aws.region,
+                effective_region,
+                ssh_key_path,
             )
+            return exec_context
         except Exception as e:
             LOGGER.warning(
                 "Failed to capture execution environment for %s: %s",
                 workset.name,
                 str(e),
             )
+            return None
 
     def _record_execution_ended(self, workset: Workset) -> None:
         """Record execution end time in DynamoDB."""
@@ -1880,6 +2587,33 @@ class WorksetMonitor:
                 workset.name,
                 str(e),
             )
+
+    def _load_execution_context(self, workset: Workset) -> Optional[ExecutionContext]:
+        """Load stored execution context for a workset.
+
+        Used during resume to get the original execution environment settings.
+
+        Args:
+            workset: Workset to load context for
+
+        Returns:
+            ExecutionContext if found, None otherwise
+        """
+        if not self.state_db:
+            return None
+
+        try:
+            ctx_data = self.state_db.get_execution_context(workset.name)
+            if ctx_data:
+                return ExecutionContext.from_dict(ctx_data)
+            return None
+        except Exception as e:
+            LOGGER.warning(
+                "Failed to load execution context for %s: %s",
+                workset.name,
+                str(e),
+            )
+            return None
 
     def _resolve_local_state_root(self) -> Path:
         """Resolve local state root to an absolute path.
@@ -2066,10 +2800,41 @@ class WorksetMonitor:
             self._metrics_script_cache = ""
         return self._metrics_script_cache
 
-    def _metrics_args(self, pipeline_dir: PurePosixPath) -> List[str]:
+
+    def _metrics_args(self, workset: Workset, pipeline_dir: PurePosixPath) -> List[str]:
         args: List[str] = []
         if self.debug:
             args.append("--debug")
+
+        cluster_region: Optional[str] = None
+        results_bucket: Optional[str] = None
+        if self.state_db:
+            try:
+                ctx = self.state_db.get_execution_context(workset.name)
+            except Exception:
+                ctx = None
+            if ctx and isinstance(ctx, dict):
+                raw_cluster_region = ctx.get("cluster_region")
+                if raw_cluster_region:
+                    cluster_region = str(raw_cluster_region)
+
+                export_s3_uri = ctx.get("export_s3_uri")
+                if (
+                    export_s3_uri
+                    and isinstance(export_s3_uri, str)
+                    and export_s3_uri.startswith("s3://")
+                ):
+                    remainder = export_s3_uri[5:]
+                    if "/" in remainder:
+                        results_bucket = remainder.split("/", 1)[0]
+                    else:
+                        results_bucket = remainder
+
+        if cluster_region:
+            args.extend(["--cluster-region", cluster_region])
+        if results_bucket:
+            args.extend(["--results-bucket", results_bucket])
+
         args.append(str(pipeline_dir))
         return args
 
@@ -2105,11 +2870,13 @@ class WorksetMonitor:
         if not script:
             LOGGER.debug("Metrics script unavailable; skipping remote metrics for %s", workset.name)
             return None
+
         command = (
             "python3 - <<'PY'\n"
             f"{script}\n"
             "if __name__ == '__main__':\n"
-            f"    main([{', '.join(json.dumps(arg) for arg in self._metrics_args(pipeline_dir))}])\n"
+
+            f"    main([{', '.join(json.dumps(arg) for arg in self._metrics_args(workset, pipeline_dir))}])\n"
             "PY"
         )
         result = self._run_headnode_command(
@@ -2179,9 +2946,12 @@ class WorksetMonitor:
             "fastq_size_bytes",
             "cram_count",
             "cram_size_bytes",
-            "vcf_count",
-            "vcf_size_bytes",
-            "results_size_bytes",
+                "vcf_count",
+                "vcf_size_bytes",
+                "results_size_bytes",
+                "data_transfer_intra_region_bytes",
+                "data_transfer_cross_region_bytes",
+                "data_transfer_internet_bytes",
             "s3_daily_cost_usd",
             "cram_transfer_cross_region_cost",
             "cram_transfer_internet_cost",
@@ -2588,27 +3358,47 @@ class WorksetMonitor:
                     self._assert_sample_file_exists(workset, value)
 
     def _stage_samples(
-        self, workset: Workset, manifest_path: Path, cluster_name: str
+        self,
+        workset: Workset,
+        manifest_path: Path,
+        cluster_name: str,
+        region: Optional[str] = None,
     ) -> StageArtifacts:
+        """Stage sample files for workset processing.
+
+        Args:
+            workset: The workset being processed
+            manifest_path: Path to the analysis_samples manifest
+            cluster_name: Name of the target cluster
+            region: AWS region for the cluster (uses config.aws.region if None)
+
+        Returns:
+            StageArtifacts with paths to staged files and manifests
+        """
+        effective_region = region or self.config.aws.region
         manifest_argument = self._relative_manifest_argument(manifest_path)
-        reference_bucket = self._stage_reference_bucket()
+        reference_bucket = self._stage_reference_bucket(region=effective_region)
         output_dir = self._local_state_dir(workset)
+        # Quote all values that could contain special characters (command injection hardening)
         cmd = self.config.pipeline.stage_command.format(
-            profile=self.config.aws.profile,
-            region=self.config.aws.region,
-            cluster=cluster_name,
-            analysis_samples=manifest_argument,
-            reference_bucket=reference_bucket,
-            ssh_identity_file=self.config.pipeline.ssh_identity_file or "",
-            pem=self.config.pipeline.ssh_identity_file or "",
-            ssh_user=self.config.pipeline.ssh_user,
+            profile=shlex.quote(self.config.aws.profile) if self.config.aws.profile else "",
+            region=shlex.quote(effective_region),
+            cluster=shlex.quote(cluster_name),
+            analysis_samples=shlex.quote(manifest_argument),
+            reference_bucket=shlex.quote(reference_bucket) if reference_bucket else "",
+            ssh_identity_file=shlex.quote(self.config.pipeline.ssh_identity_file) if self.config.pipeline.ssh_identity_file else "",
+            pem=shlex.quote(self.config.pipeline.ssh_identity_file) if self.config.pipeline.ssh_identity_file else "",
+            ssh_user=shlex.quote(self.config.pipeline.ssh_user),
             ssh_extra_args=" ".join(
                 shlex.quote(arg) for arg in self.config.pipeline.ssh_extra_args
             ),
             output_dir=shlex.quote(str(output_dir)),
         )
         LOGGER.info(
-            "Staging samples for cluster %s with command: %s", cluster_name, cmd
+            "Staging samples for cluster %s (region=%s) with command: %s",
+            cluster_name,
+            effective_region,
+            cmd,
         )
         result = self._run_monitored_command("stage_samples", cmd, check=True)
         artifacts = self._parse_stage_samples_output(result)
@@ -2697,10 +3487,17 @@ class WorksetMonitor:
             units_manifest=units_manifest,
         )
 
-    def _wait_for_cluster_ready(self, cluster_name: str) -> Optional[Dict[str, object]]:
-        LOGGER.info("Waiting for cluster %s to become ready", cluster_name)
+    def _wait_for_cluster_ready(
+        self, cluster_name: str, region: Optional[str] = None
+    ) -> Optional[Dict[str, object]]:
+        effective_region = region or self.config.aws.region
+        LOGGER.info(
+            "Waiting for cluster %s to become ready (region=%s)",
+            cluster_name,
+            effective_region,
+        )
         for attempt in range(60):
-            details = self._describe_cluster(cluster_name)
+            details = self._describe_cluster(cluster_name, region=region)
             if details and self._cluster_is_ready(details):
                 LOGGER.debug(
                     "Cluster %s ready (checked %d times)", cluster_name, attempt + 1
@@ -2717,6 +3514,7 @@ class WorksetMonitor:
         clone_args: str,
         *,
         run_clone: bool = True,
+        region: Optional[str] = None,
     ) -> PurePosixPath:
         if clone_args and run_clone:
             init = (self.config.pipeline.login_shell_init or "").strip()
@@ -2729,6 +3527,7 @@ class WorksetMonitor:
                 cluster_name=cluster_name,
                 check=True,
                 shell=True,  # pass as raw string to bash -lc
+                region=region,
             )
             location = self._parse_day_clone_location(result.stdout)
             if not location and result.stderr:
@@ -2765,7 +3564,7 @@ class WorksetMonitor:
         workset_name_with_date = ensure_date_suffix(workset.name)
         fallback = PurePosixPath(self.config.pipeline.workdir) / workset_name_with_date
         ensure_cmd = f"mkdir -p {shlex.quote(str(fallback))}"
-        self._run_headnode_command(cluster_name, ensure_cmd, check=True, shell=True)
+        self._run_headnode_command(cluster_name, ensure_cmd, check=True, shell=True, region=region)
         self._record_pipeline_location(workset, fallback)
         return fallback
 
@@ -2775,6 +3574,7 @@ class WorksetMonitor:
         pipeline_dir: PurePosixPath,
         manifest_path: Path,
         stage_artifacts: StageArtifacts,
+        region: Optional[str] = None,
     ) -> None:
         config_dir = pipeline_dir / "config"
         mkdir_cmd = f"mkdir -p {shlex.quote(str(config_dir))}"
@@ -2784,10 +3584,11 @@ class WorksetMonitor:
             cluster_name=cluster_name,
             check=True,
             shell=True,
+            region=region,
         )
         LOGGER.info("Copying staged artifacts into %s", pipeline_dir)
         self._copy_stage_artifacts_to_pipeline(
-            cluster_name, pipeline_dir, stage_artifacts, manifest_path
+            cluster_name, pipeline_dir, stage_artifacts, manifest_path, region=region
         )
 
     def _cleanup_pipeline_directory(
@@ -2795,6 +3596,7 @@ class WorksetMonitor:
         workset: Workset,
         cluster_name: str,
         pipeline_dir: PurePosixPath,
+        region: Optional[str] = None,
     ) -> None:
         LOGGER.info(
             "Removing pipeline directory %s from cluster %s", pipeline_dir, cluster_name
@@ -2806,6 +3608,7 @@ class WorksetMonitor:
             cluster_name=cluster_name,
             check=True,
             shell=True,
+            region=region,
         )
         self._clear_pipeline_location(workset)
 
@@ -2869,6 +3672,47 @@ class WorksetMonitor:
         except Exception as exc:
             LOGGER.warning("Failed to get S3 directory size for %s: %s", workset.name, exc)
 
+
+        # Transfer metering (coarse): attribute exported results bytes to either
+        # intra-region or cross-region transfer depending on cluster vs bucket
+        # region. Internet egress is not measurable here (no access logs), so we
+        # conservatively attribute unknown-region bytes to internet to avoid
+        # under-billing.
+        size_for_transfer = int(metrics.get("analysis_directory_size_bytes", 0) or 0)
+        intra_bytes = 0
+        cross_bytes = 0
+        internet_bytes = 0
+        if size_for_transfer > 0:
+            cluster_region: Optional[str] = None
+            if self.state_db:
+                try:
+                    ctx = self.state_db.get_execution_context(workset.name)
+                except Exception:
+                    ctx = None
+                if ctx and isinstance(ctx, dict):
+                    raw_cluster_region = ctx.get("cluster_region")
+                    if raw_cluster_region:
+                        cluster_region = str(raw_cluster_region)
+
+            bucket_region: Optional[str] = None
+            try:
+                response = self._s3.get_bucket_location(Bucket=bucket)
+                bucket_region = response.get("LocationConstraint") or "us-east-1"
+            except Exception:
+                bucket_region = None
+
+            if cluster_region and bucket_region:
+                if cluster_region == bucket_region:
+                    intra_bytes = size_for_transfer
+                else:
+                    cross_bytes = size_for_transfer
+            else:
+                internet_bytes = size_for_transfer
+
+        metrics["data_transfer_intra_region_bytes"] = intra_bytes
+        metrics["data_transfer_cross_region_bytes"] = cross_bytes
+        metrics["data_transfer_internet_bytes"] = internet_bytes
+
         # 2. Collect per-sample output file metrics from S3
         per_sample_metrics: Dict[str, Dict[str, Any]] = {}
         try:
@@ -2886,10 +3730,7 @@ class WorksetMonitor:
         # Use the existing PipelineStatusFetcher for consistent parsing
         from daylib.pipeline_status import PipelineStatusFetcher
         try:
-            fetcher = PipelineStatusFetcher(
-                region=self.config.aws.region,
-                profile=self.config.aws.profile,
-            )
+            fetcher = PipelineStatusFetcher()
             perf_metrics = fetcher.fetch_performance_metrics_from_s3(
                 results_s3_uri,
                 region=self.config.aws.region,
@@ -2909,10 +3750,40 @@ class WorksetMonitor:
                             "Total compute cost for %s: $%.4f",
                             workset.name, total_cost,
                         )
+                    # Store cost report in dedicated DynamoDB fields (Phase 5B)
+                    if self.state_db:
+                        try:
+                            cost_summary = perf_metrics["cost_summary"]
+                            self.state_db.update_cost_report(
+                                workset_id=workset.name,
+                                total_compute_cost_usd=cost_summary.get("total_cost", 0.0),
+                                per_sample_costs=cost_summary.get("per_sample_costs"),
+                                rule_count=cost_summary.get("rule_count"),
+                                sample_count=cost_summary.get("sample_count"),
+                            )
+                        except Exception as cost_exc:
+                            LOGGER.warning(
+                                "Failed to store cost report for %s: %s",
+                                workset.name, cost_exc,
+                            )
         except Exception as exc:
             LOGGER.warning("Failed to fetch performance metrics from S3 for %s: %s", workset.name, exc)
 
-        # Store metrics in DynamoDB
+        # Store storage metrics in dedicated DynamoDB fields (Phase 5C)
+        if self.state_db and metrics.get("analysis_directory_size_bytes"):
+            try:
+                self.state_db.update_storage_metrics(
+                    workset_id=workset.name,
+                    results_storage_bytes=metrics["analysis_directory_size_bytes"],
+                    fsx_storage_bytes=None,  # FSx size not available after export
+                )
+            except Exception as storage_exc:
+                LOGGER.warning(
+                    "Failed to store storage metrics for %s: %s",
+                    workset.name, storage_exc,
+                )
+
+        # Store metrics in DynamoDB (legacy performance_metrics field)
         if metrics and self.state_db:
             try:
                 self.state_db.update_performance_metrics(
@@ -2940,7 +3811,7 @@ class WorksetMonitor:
             Total size in bytes
         """
         total_size = 0
-        paginator = self.s3_client.get_paginator("list_objects_v2")
+        paginator = self._s3.get_paginator("list_objects_v2")
 
         # Ensure prefix ends with / to list directory contents
         if prefix and not prefix.endswith("/"):
@@ -2966,7 +3837,7 @@ class WorksetMonitor:
             prefix: S3 prefix where results are stored
             per_sample_metrics: Dict to populate with per-sample metrics
         """
-        paginator = self.s3_client.get_paginator("list_objects_v2")
+        paginator = self._s3.get_paginator("list_objects_v2")
 
         # Ensure prefix ends with / to list directory contents
         if prefix and not prefix.endswith("/"):
@@ -3192,6 +4063,7 @@ class WorksetMonitor:
         workset: Workset,
         cluster_name: str,
         pipeline_dir: PurePosixPath,
+        region: Optional[str] = None,
     ) -> None:
         """Clean up headnode working directory after successful export.
 
@@ -3206,6 +4078,7 @@ class WorksetMonitor:
             workset: The workset being cleaned up
             cluster_name: Name of the ParallelCluster
             pipeline_dir: Path to the pipeline directory on FSx
+            region: AWS region where the cluster is located (defaults to config region)
 
         Note:
             Cleanup failures are logged as warnings but do not fail the workset.
@@ -3235,6 +4108,7 @@ class WorksetMonitor:
                 cluster_name=cluster_name,
                 check=True,
                 shell=True,
+                region=region,
             )
             self._update_progress_step(
                 workset, "cleanup_complete", f"Headnode cleanup complete for {pipeline_dir}"
@@ -3260,6 +4134,7 @@ class WorksetMonitor:
         pipeline_dir: PurePosixPath,
         stage_artifacts: StageArtifacts,
         manifest_path: Path,
+        region: Optional[str] = None,
     ) -> None:
         sample_data_root = pipeline_dir / SAMPLE_DATA_DIRNAME
         mkdir_data = f"mkdir -p {shlex.quote(str(sample_data_root))}"
@@ -3269,6 +4144,7 @@ class WorksetMonitor:
             cluster_name=cluster_name,
             check=True,
             shell=True,
+            region=region,
         )
 
         for staged_file in stage_artifacts.staged_files:
@@ -3292,6 +4168,7 @@ class WorksetMonitor:
                 cluster_name=cluster_name,
                 check=True,
                 shell=True,
+                region=region,
             )
 
         config_dir = pipeline_dir / "config"
@@ -3306,6 +4183,7 @@ class WorksetMonitor:
                 samples_target,
                 label="push_stage_files",
                 check=False,
+                region=region,
             )
         copied_units = False
         if stage_artifacts.units_manifest:
@@ -3315,6 +4193,7 @@ class WorksetMonitor:
                 units_target,
                 label="push_stage_files",
                 check=False,
+                region=region,
             )
 
         if not copied_samples:
@@ -3322,7 +4201,7 @@ class WorksetMonitor:
                 "Falling back to SCP for samples manifest from %s", manifest_path
             )
             scp_samples = self._build_scp_command(
-                cluster_name, manifest_path, samples_target
+                cluster_name, manifest_path, samples_target, region=region
             )
             self._run_monitored_command("push_stage_files", scp_samples, check=True)
 
@@ -3336,7 +4215,7 @@ class WorksetMonitor:
                 "Falling back to SCP for units manifest from %s", units_src
             )
             scp_units = self._build_scp_command(
-                cluster_name, units_src, units_target
+                cluster_name, units_src, units_target, region=region
             )
             self._run_monitored_command("push_stage_files", scp_units, check=True)
         elif not copied_units and stage_artifacts.units_manifest is not None:
@@ -3359,6 +4238,7 @@ class WorksetMonitor:
         *,
         label: str,
         check: bool,
+        region: Optional[str] = None,
     ) -> bool:
         quoted_source = shlex.quote(str(source))
         quoted_dest = shlex.quote(str(destination))
@@ -3372,6 +4252,7 @@ class WorksetMonitor:
             cluster_name=cluster_name,
             check=check,
             shell=True,
+            region=region,
         )
         if check:
             return True
@@ -3386,36 +4267,37 @@ class WorksetMonitor:
         return True
 
     def _headnode_path_exists(
-        self, cluster_name: str, path: PurePosixPath
+        self, cluster_name: str, path: PurePosixPath, region: Optional[str] = None
     ) -> bool:
         cmd = f"test -e {shlex.quote(str(path))}"
         result = self._run_headnode_command(
-            cluster_name, cmd, check=False, shell=True
+            cluster_name, cmd, check=False, shell=True, region=region
         )
         return result.returncode == 0
 
     def _pipeline_sentinel_status(
-        self, cluster_name: str, pipeline_dir: PurePosixPath
+        self, cluster_name: str, pipeline_dir: PurePosixPath, region: Optional[str] = None
     ) -> str:
         success = pipeline_dir / PIPELINE_SUCCESS_SENTINEL
         failure = pipeline_dir / PIPELINE_FAILURE_SENTINEL
-        if self._headnode_path_exists(cluster_name, success):
+        if self._headnode_path_exists(cluster_name, success, region=region):
             return "success"
-        if self._headnode_path_exists(cluster_name, failure):
+        if self._headnode_path_exists(cluster_name, failure, region=region):
             return "failure"
         return "pending"
 
-    def _tmux_session_exists(self, cluster_name: str, session_name: str) -> bool:
+    def _tmux_session_exists(self, cluster_name: str, session_name: str, region: Optional[str] = None) -> bool:
         result = self._run_headnode_command(
             cluster_name,
             ["/usr/bin/tmux", "has-session", "-t", session_name],
             check=False,
             shell=False,
+            region=region,
         )
         return result.returncode == 0
 
     def _terminate_tmux_session(
-        self, cluster_name: str, session_name: Optional[str]
+        self, cluster_name: str, session_name: Optional[str], region: Optional[str] = None
     ) -> None:
         if not session_name:
             return
@@ -3424,10 +4306,11 @@ class WorksetMonitor:
             ["/usr/bin/tmux", "kill-session", "-t", session_name],
             check=False,
             shell=False,
+            region=region,
         )
 
     def _interrupt_tmux_session(
-        self, cluster_name: str, session_name: Optional[str]
+        self, cluster_name: str, session_name: Optional[str], region: Optional[str] = None
     ) -> None:
         if not session_name:
             return
@@ -3436,6 +4319,7 @@ class WorksetMonitor:
             ["/usr/bin/tmux", "send-keys", "-t", session_name, "C-x"],
             check=False,
             shell=False,
+            region=region,
         )
 
     def _run_pipeline(
@@ -3446,6 +4330,8 @@ class WorksetMonitor:
         run_suffix: Optional[str],
         *,
         monitor: bool = True,
+        region: Optional[str] = None,
+        customer_id: Optional[str] = None,
     ) -> Optional[str]:
         if not run_suffix:
             raise MonitorError(
@@ -3453,18 +4339,18 @@ class WorksetMonitor:
                 "Provide one of: dy-r, dy_r, dy, run, run_suffix, run-suffix, run_cmd."
             )
 
-        status = self._pipeline_sentinel_status(cluster_name, pipeline_dir)
+        status = self._pipeline_sentinel_status(cluster_name, pipeline_dir, region=region)
         existing_session = self._load_tmux_session(workset)
         if status == "success":
             LOGGER.info(
                 "Pipeline already marked successful for %s; skipping rerun", workset.name
             )
-            self._terminate_tmux_session(cluster_name, existing_session)
+            self._terminate_tmux_session(cluster_name, existing_session, region=region)
             self._clear_tmux_session(workset)
             self._clear_pipeline_start(workset)
             return existing_session
         if status == "failure":
-            self._terminate_tmux_session(cluster_name, existing_session)
+            self._terminate_tmux_session(cluster_name, existing_session, region=region)
             self._clear_tmux_session(workset)
             self._clear_pipeline_start(workset)
             raise MonitorError(
@@ -3472,7 +4358,7 @@ class WorksetMonitor:
             )
 
         if existing_session and not self._tmux_session_exists(
-            cluster_name, existing_session
+            cluster_name, existing_session, region=region
         ):
             self._clear_tmux_session(workset)
             self._clear_pipeline_start(workset)
@@ -3482,8 +4368,16 @@ class WorksetMonitor:
 
         session_name = existing_session
         if not session_name:
+            # Sanitize run_suffix to prevent command injection from YAML input
+            sanitized_run_suffix = self._sanitize_run_suffix(run_suffix)
+
             # Build the main pipeline command
-            run_command = self.config.pipeline.run_prefix + run_suffix
+            run_command = self.config.pipeline.run_prefix + sanitized_run_suffix
+
+            # Prefix with DAYLILY_PROJECT for cost attribution and AWS resource tagging
+            if customer_id:
+                run_command = f"DAYLILY_PROJECT={shlex.quote(customer_id)} {run_command}"
+                LOGGER.info("Pipeline command prefixed with DAYLILY_PROJECT=%s", customer_id)
 
             # Automatically append benchmark data collection command
             # This ensures we always collect per-rule performance metrics after pipeline runs
@@ -3527,7 +4421,7 @@ class WorksetMonitor:
                 run_command,
             )
             self._record_tmux_session(workset, session_name)
-            self._write_pipeline_sentinel(cluster_name, pipeline_dir, "START")
+            self._write_pipeline_sentinel(cluster_name, pipeline_dir, "START", region=region)
             try:
                 self._run_headnode_monitored_command(
                     "run_pipeline",
@@ -3535,12 +4429,14 @@ class WorksetMonitor:
                     cluster_name=cluster_name,
                     check=True,
                     shell=False,
+                    region=region,
                 )
                 self._run_headnode_command(
                     cluster_name,
                     ["/usr/bin/tmux", "has-session", "-t", session_name],
                     check=True,
                     shell=False,
+                    region=region,
                 )
                 self._record_pipeline_start(workset, dt.datetime.now(dt.timezone.utc))
                 # Track progress: pipeline is now running
@@ -3551,11 +4447,11 @@ class WorksetMonitor:
                 self._update_progress_step(workset, "pipeline_failed", "Failed to launch pipeline")
                 raise
             finally:
-                self._write_pipeline_sentinel(cluster_name, pipeline_dir, "END")
+                self._write_pipeline_sentinel(cluster_name, pipeline_dir, "END", region=region)
 
         if monitor:
             self._monitor_pipeline_session(
-                workset, cluster_name, pipeline_dir, session_name
+                workset, cluster_name, pipeline_dir, session_name, region=region
             )
         return session_name
 
@@ -3565,6 +4461,7 @@ class WorksetMonitor:
         cluster_name: str,
         pipeline_dir: PurePosixPath,
         session_name: str,
+        region: Optional[str] = None,
     ) -> None:
         poll_interval = max(10, min(60, self.config.monitor.poll_interval_seconds))
         start_time = self._load_pipeline_start(workset)
@@ -3575,22 +4472,22 @@ class WorksetMonitor:
         timeout_seconds = (timeout_minutes or 0) * 60 if timeout_minutes else None
 
         while True:
-            status = self._pipeline_sentinel_status(cluster_name, pipeline_dir)
+            status = self._pipeline_sentinel_status(cluster_name, pipeline_dir, region=region)
             if status == "success":
                 LOGGER.info("Pipeline completed successfully for %s", workset.name)
-                self._terminate_tmux_session(cluster_name, session_name)
+                self._terminate_tmux_session(cluster_name, session_name, region=region)
                 self._clear_tmux_session(workset)
                 self._clear_pipeline_start(workset)
                 return
             if status == "failure":
-                self._terminate_tmux_session(cluster_name, session_name)
+                self._terminate_tmux_session(cluster_name, session_name, region=region)
                 self._clear_tmux_session(workset)
                 self._clear_pipeline_start(workset)
                 raise MonitorError(
                     f"Pipeline failed for {workset.name}; see {PIPELINE_FAILURE_SENTINEL}"
                 )
 
-            if not self._tmux_session_exists(cluster_name, session_name):
+            if not self._tmux_session_exists(cluster_name, session_name, region=region):
                 self._clear_tmux_session(workset)
                 self._clear_pipeline_start(workset)
                 raise MonitorError(
@@ -3605,7 +4502,7 @@ class WorksetMonitor:
                         workset.name,
                         timeout_minutes,
                     )
-                    status = self._pipeline_sentinel_status(cluster_name, pipeline_dir)
+                    status = self._pipeline_sentinel_status(cluster_name, pipeline_dir, region=region)
                     if status == "success":
                         LOGGER.info(
                             "Pipeline for %s reported success sentinel during timeout handling",
@@ -3613,15 +4510,15 @@ class WorksetMonitor:
                         )
                         continue
                     if status == "failure":
-                        self._terminate_tmux_session(cluster_name, session_name)
+                        self._terminate_tmux_session(cluster_name, session_name, region=region)
                         self._clear_tmux_session(workset)
                         self._clear_pipeline_start(workset)
                         raise MonitorError(
                             f"Pipeline failed for {workset.name}; see {PIPELINE_FAILURE_SENTINEL}"
                         )
-                    self._interrupt_tmux_session(cluster_name, session_name)
+                    self._interrupt_tmux_session(cluster_name, session_name, region=region)
                     time.sleep(5)
-                    self._terminate_tmux_session(cluster_name, session_name)
+                    self._terminate_tmux_session(cluster_name, session_name, region=region)
                     self._clear_tmux_session(workset)
                     self._clear_pipeline_start(workset)
                     raise MonitorError(
@@ -3635,6 +4532,7 @@ class WorksetMonitor:
         cluster_name: str,
         pipeline_dir: PurePosixPath,
         state: str,
+        region: Optional[str] = None,
     ) -> None:
         """
         Append a one-line UTC timestamp + state to a local log on the headnode.
@@ -3652,6 +4550,7 @@ class WorksetMonitor:
             cluster_name=cluster_name,
             check=True,
             shell=True,
+            region=region,
         )
 
     def _export_results(
@@ -3660,19 +4559,28 @@ class WorksetMonitor:
         cluster_name: str,
         target_uri: str,
         pipeline_dir: PurePosixPath,
+        region: Optional[str] = None,
     ) -> Optional[str]:
         """Export pipeline results to S3.
+
+        Args:
+            workset: The workset being exported
+            cluster_name: Name of the ParallelCluster
+            target_uri: S3 URI to export results to
+            pipeline_dir: Path to the pipeline directory on FSx
+            region: AWS region where the cluster is located (defaults to config region)
 
         Returns:
             The S3 URI of the exported results, or None if export was successful
             but URI was not captured.
         """
+        effective_region = region or self.config.aws.region
         output_dir = self._local_state_dir(workset)
         profile_value = self.config.aws.profile or ""
         command = self.config.pipeline.export_command.format(
             cluster=shlex.quote(cluster_name),
             target_uri=shlex.quote(target_uri),
-            region=shlex.quote(self.config.aws.region),
+            region=shlex.quote(effective_region),
             profile=shlex.quote(profile_value) if profile_value else "",
             output_dir=shlex.quote(str(output_dir)),
             workdir_name=self._resolve_workdir_name(workset),
@@ -3770,16 +4678,19 @@ class WorksetMonitor:
         self, workset: Workset, status_path: Path, target_uri: str
     ) -> None:
         """Backup fsx_export.yaml to the workset's S3 location for resilience."""
+        bucket = workset.bucket
+        if bucket is None:
+            raise MonitorError(f"Workset {workset.name} is missing bucket; cannot backup export status")
         # Derive S3 destination from workset bucket/prefix
         s3_key = f"{workset.prefix.rstrip('/')}/{FSX_EXPORT_STATUS_FILENAME}"
         try:
-            self.s3_client.upload_file(
+            self._s3.upload_file(
                 str(status_path),
-                workset.bucket,
+                bucket,
                 s3_key,
             )
             LOGGER.info(
-                "Backed up export status to s3://%s/%s", workset.bucket, s3_key
+                "Backed up export status to s3://%s/%s", bucket, s3_key
             )
         except Exception as exc:
             LOGGER.debug("S3 backup failed: %s", exc)
@@ -3935,18 +4846,120 @@ class WorksetMonitor:
             cluster_name,
         )
 
-    def _ensure_cluster(self, work_yaml: Dict[str, object]) -> str:
+    def _ensure_cluster(
+        self, work_yaml: Dict[str, object], workset: Optional[Workset] = None
+    ) -> Tuple[str, Optional[str]]:
+        """Ensure a cluster is available for workset processing.
+
+        Priority order:
+        1. Workset-specific preferred_cluster (user selection via portal)
+        2. Config-level reuse_cluster_name (global config default)
+        3. Find existing running cluster
+        4. Create new cluster
+
+        User selections override global defaults to allow per-workset cluster targeting.
+
+        Args:
+            work_yaml: Workset configuration
+            workset: Optional workset to check for preferred cluster
+
+        Returns:
+            Tuple of (cluster_name, cluster_region) - region may be None if using default config region
+        """
+        # 1. Check for user-selected preferred cluster from DynamoDB (highest priority)
+        preferred_cluster = None
+        cluster_region: Optional[str] = None
+        if workset and self.state_db:
+            try:
+                workset_data = self.state_db.get_workset(workset.name)
+                if workset_data:
+                    preferred_cluster = workset_data.get("preferred_cluster")
+                    cluster_region = workset_data.get("cluster_region")
+                    if preferred_cluster:
+                        # Verify the preferred cluster is available (use stored region if available)
+                        details = self._describe_cluster(preferred_cluster, region=cluster_region)
+                        if details and self._cluster_is_ready(details):
+                            LOGGER.info(
+                                "Using user-preferred cluster %s (region=%s) for workset %s (overrides global config)",
+                                preferred_cluster,
+                                cluster_region or self.config.aws.region,
+                                workset.name,
+                            )
+                            return (preferred_cluster, cluster_region)
+                        else:
+                            # Fail immediately if preferred cluster is not ready
+                            # Do NOT fall back to another cluster - user explicitly chose this one
+                            effective_region = cluster_region or self.config.aws.region
+                            cluster_status = "not found"
+                            if details:
+                                raw_status = details.get("clusterStatus")
+                                cluster_status = str(raw_status) if raw_status is not None else "unknown"
+                            raise MonitorError(
+                                f"Preferred cluster {preferred_cluster} (region={effective_region}) is not available "
+                                f"for workset {workset.name}. Cluster status: {cluster_status}. "
+                                f"Please select a different cluster or wait for the cluster to become ready."
+                            )
+            except MonitorError:
+                # Re-raise MonitorError (from cluster unavailable check above)
+                raise
+            except Exception as e:
+                LOGGER.warning(
+                    "Failed to check preferred cluster for %s: %s",
+                    workset.name,
+                    str(e),
+                )
+
+        # 2. Config-level reuse_cluster_name (global default)
         if self.config.cluster.reuse_cluster_name:
-            return self.config.cluster.reuse_cluster_name
+            LOGGER.info(
+                "Using config-specified cluster: %s",
+                self.config.cluster.reuse_cluster_name,
+            )
+            return (self.config.cluster.reuse_cluster_name, None)
+
+        # 3. Find existing running cluster
         existing = self._find_existing_cluster()
         if existing:
-            return existing
-        return self._create_cluster(work_yaml)
+            if preferred_cluster:
+                LOGGER.info(
+                    "Fallback: using existing cluster %s instead of unavailable preferred cluster %s",
+                    existing,
+                    preferred_cluster,
+                )
+            return (existing, None)
+
+        # 4. Create new cluster
+        return (self._create_cluster(work_yaml), None)
 
     def _pcluster_env(self) -> Dict[str, str]:
+        """Build environment for pcluster CLI commands.
+
+        Sets AWS_PROFILE to ensure pcluster uses correct credentials.
+        Priority: config.aws.profile > UrsaConfig.aws_profile > AWS_PROFILE env
+
+        Raises warning if no profile is configured (profile must be set in ursa-config.yaml).
+        """
         env = os.environ.copy()
-        if self.config.aws.profile:
-            env["AWS_PROFILE"] = self.config.aws.profile
+        # Determine profile with fallback chain (no 'default' fallback)
+        profile: Optional[str] = self.config.aws.profile
+        if not profile:
+            # Fall back to UrsaConfig
+            try:
+                from daylib.ursa_config import get_ursa_config
+                ursa_config = get_ursa_config()
+                profile = ursa_config.get_effective_aws_profile()
+            except Exception:
+                pass
+        if not profile:
+            # Fall back to existing env var (but not 'default')
+            profile = os.environ.get("AWS_PROFILE")
+        if profile:
+            env["AWS_PROFILE"] = profile
+        else:
+            LOGGER.warning(
+                "No AWS profile configured. Set aws_profile in ~/.ursa/ursa-config.yaml "
+                "or aws.profile in workset-monitor-config.yaml"
+            )
         return env
 
     def _load_pcluster_json(self, raw: bytes) -> Optional[Any]:
@@ -3963,8 +4976,11 @@ class WorksetMonitor:
             LOGGER.debug("Failed to decode pcluster output as JSON: %s", exc)
             return None
 
-    def _describe_cluster(self, cluster_name: str) -> Optional[Dict[str, object]]:
-        cmd = ["pcluster", "describe-cluster", "--region", self.config.aws.region, "-n", cluster_name]
+    def _describe_cluster(
+        self, cluster_name: str, region: Optional[str] = None
+    ) -> Optional[Dict[str, object]]:
+        effective_region = region or self.config.aws.region
+        cmd = ["pcluster", "describe-cluster", "--region", effective_region, "-n", cluster_name]
         result = self._run_command(cmd, check=False, env=self._pcluster_env())
         if result.returncode != 0:
             LOGGER.debug(
@@ -4105,6 +5121,9 @@ class WorksetMonitor:
 
         Skips validation for headnode-local paths (e.g., /fsx/data/genomic_data/...)
         which are reference data that already exist on the headnode filesystem.
+
+        Raises:
+            MonitorError: If workset has no bucket or sample file is missing
         """
         # Skip validation for headnode-local paths - these are validated at runtime
         if self._is_headnode_local_path(relative_path):
@@ -4113,31 +5132,52 @@ class WorksetMonitor:
             )
             return
 
+        if not workset.bucket:
+            raise MonitorError(f"Workset {workset.name} has no bucket assigned - cannot verify sample file")
         key = f"{workset.prefix}{SAMPLE_DATA_DIRNAME}/{relative_path.lstrip('/')}"
         try:
-            self._s3.head_object(Bucket=self.config.monitor.bucket, Key=key)
+            self._s3.head_object(Bucket=workset.bucket, Key=key)
         except ClientError as exc:
             raise MonitorError(f"Sample data file missing for {workset.name}: {relative_path}") from exc
-    def _read_required_object(self, workset_prefix: str, filename: str) -> bytes:
-        bucket = self.config.monitor.bucket
-        key = f"{workset_prefix}{filename}"
+    def _read_required_object(self, workset: Workset, filename: str) -> bytes:
+        """Read a required file from the workset's S3 location.
+
+        Args:
+            workset: Workset object with assigned bucket
+            filename: Name of the file to read
+
+        Returns:
+            File contents as bytes
+
+        Raises:
+            MonitorError: If workset has no bucket or file cannot be read
+        """
+        if not workset.bucket:
+            raise MonitorError(f"Workset {workset.name} has no bucket assigned - cannot read {filename}")
+        key = f"{workset.prefix}{filename}"
         try:
-            response = self._s3.get_object(Bucket=bucket, Key=key)
+            response = self._s3.get_object(Bucket=workset.bucket, Key=key)
         except ClientError as exc:
             raise MonitorError(
-                f"Missing required file {filename} in {workset_prefix}: {exc}"
+                f"Missing required file {filename} in {workset.prefix}: {exc}"
             ) from exc
         content: bytes = response["Body"].read()
         return content
 
     def _write_sentinel(self, workset: Workset, sentinel_name: str, value: str) -> None:
-        bucket = self.config.monitor.bucket
+        """Write a sentinel file to the workset's S3 location.
+
+        Raises:
+            MonitorError: If workset has no bucket assigned
+        """
+        if not workset.bucket:
+            raise MonitorError(f"Workset {workset.name} has no bucket assigned - cannot write sentinel {sentinel_name}")
         key = f"{workset.prefix}{sentinel_name}"
         body = value.encode("utf-8")
-        LOGGER.debug("Writing sentinel %s for %s", sentinel_name, workset.name)
+        LOGGER.debug("Writing sentinel %s for %s to bucket %s", sentinel_name, workset.name, workset.bucket)
         if self.dry_run:
             return
-        self._s3.put_object(Bucket=bucket, Key=key, Body=body)
+        self._s3.put_object(Bucket=workset.bucket, Key=key, Body=body)
         self._record_terminal_metrics(workset, sentinel_name, value)
 
         # Also update DynamoDB state if integration layer is available
@@ -4218,12 +5258,18 @@ class WorksetMonitor:
         return False
 
     def _delete_sentinel(self, workset: Workset, sentinel_name: str) -> None:
-        bucket = self.config.monitor.bucket
+        """Delete a sentinel file from the workset's S3 location.
+
+        Raises:
+            MonitorError: If workset has no bucket assigned
+        """
+        if not workset.bucket:
+            raise MonitorError(f"Workset {workset.name} has no bucket assigned - cannot delete sentinel {sentinel_name}")
         key = f"{workset.prefix}{sentinel_name}"
-        LOGGER.debug("Deleting sentinel %s for %s", sentinel_name, workset.name)
+        LOGGER.debug("Deleting sentinel %s for %s from bucket %s", sentinel_name, workset.name, workset.bucket)
         if self.dry_run:
             return
-        self._s3.delete_object(Bucket=bucket, Key=key)
+        self._s3.delete_object(Bucket=workset.bucket, Key=key)
 
     # ------------------------------------------------------------------
     # DynamoDB state reconciliation
@@ -4416,6 +5462,8 @@ class WorksetMonitor:
         """Flush buffered command log to S3.
 
         Appends to existing log file if present.
+
+        If workset has no bucket, logs a warning and clears the buffer without writing.
         """
         if workset.name not in self._command_log_buffer:
             return
@@ -4428,13 +5476,20 @@ class WorksetMonitor:
             self._command_log_buffer[workset.name] = []
             return
 
-        bucket = self.config.monitor.bucket
+        if not workset.bucket:
+            LOGGER.warning(
+                "Workset %s has no bucket assigned - cannot flush command log (%d lines)",
+                workset.name, len(buffer)
+            )
+            self._command_log_buffer[workset.name] = []
+            return
+
         key = f"{workset.prefix}{self.COMMAND_LOG_FILENAME}"
 
         # Try to read existing log
         existing_content = ""
         try:
-            response = self._s3.get_object(Bucket=bucket, Key=key)
+            response = self._s3.get_object(Bucket=workset.bucket, Key=key)
             existing_content = response["Body"].read().decode("utf-8")
         except self._s3.exceptions.NoSuchKey:
             pass
@@ -4446,7 +5501,7 @@ class WorksetMonitor:
 
         try:
             self._s3.put_object(
-                Bucket=bucket,
+                Bucket=workset.bucket,
                 Key=key,
                 Body=new_content.encode("utf-8"),
                 ContentType="text/plain",
@@ -4502,15 +5557,52 @@ class WorksetMonitor:
         except ValueError:
             return str(manifest_path)
 
-    def _stage_reference_bucket(self) -> str:
+    def _stage_reference_bucket(self, region: Optional[str] = None) -> str:
         """
         Return the S3 reference bucket to pass to the staging command.
-        Uses pipeline.reference_bucket if set; otherwise defaults to the monitor's bucket.
-        Always ends with a trailing '/'.
+
+        If pipeline.reference_bucket is configured and contains a region placeholder
+        (e.g., 's3://bucket-{region}/'), the placeholder will be substituted with
+        the provided region. Otherwise, the configured bucket is used as-is.
+
+        Args:
+            region: AWS region for region-specific bucket naming. If the configured
+                   bucket contains '{region}', this will be substituted.
+
+        Returns:
+            S3 URI with trailing slash
+
+        Raises:
+            MonitorError: If pipeline.reference_bucket is not configured
         """
         bucket = self.config.pipeline.reference_bucket
         if not bucket:
-            bucket = f"s3://{self.config.monitor.bucket}"
+            raise MonitorError(
+                "pipeline.reference_bucket must be configured in monitor config. "
+                "The monitor no longer has a default bucket - each workset carries its own bucket "
+                "from cluster region, and reference data location must be explicitly configured."
+            )
+
+        # Substitute region placeholder if present (e.g., 's3://bucket-{region}/')
+        if "{region}" in bucket and region:
+            bucket = bucket.format(region=region)
+        elif region:
+            # If bucket has a region suffix pattern like '-us-west-2', try to replace it
+            # Pattern: s3://prefix-{old-region}/ -> s3://prefix-{new-region}/
+            import re
+            # Match common region patterns at end of bucket name before trailing slash
+            region_pattern = r"-(us-west-[12]|us-east-[12]|eu-central-1|eu-west-[123]|ap-south-1|ap-northeast-[123]|ap-southeast-[12]|sa-east-1|ca-central-1)(/?)$"
+            match = re.search(region_pattern, bucket.rstrip("/"))
+            if match:
+                old_region = match.group(1)
+                if old_region != region:
+                    bucket = bucket.rstrip("/").replace(f"-{old_region}", f"-{region}")
+                    LOGGER.debug(
+                        "Substituted region in reference bucket: %s -> %s",
+                        old_region,
+                        region,
+                    )
+
         if not bucket.endswith("/"):
             bucket += "/"
         return bucket
@@ -4782,8 +5874,11 @@ class WorksetMonitor:
         run_shell = shell
         if isinstance(command, str) and not shell:
             run_command = shlex.split(command)
+        # Use DEVNULL for stdin to avoid "bad file descriptor" errors
+        # when running from ThreadPoolExecutor threads
         result = subprocess.run(
             run_command,
+            stdin=subprocess.DEVNULL,
             check=False,
             cwd=cwd,
             shell=run_shell,
@@ -4810,7 +5905,25 @@ class WorksetMonitor:
             raise MonitorError(f"Command failed: {cmd_display}")
         return result
 
-    def _ssh_identity(self) -> Optional[str]:
+    def _ssh_identity(self, region: Optional[str] = None) -> Optional[str]:
+        """Get the SSH identity file path, optionally region-specific.
+
+        Args:
+            region: AWS region to get SSH key for. If provided and a region-specific
+                    SSH key is configured in ursa-config.yaml, that key is used.
+                    Falls back to the global ssh_identity_file from monitor config.
+
+        Returns:
+            Expanded path to SSH private key file, or None if not configured.
+        """
+        # Try region-specific SSH key first
+        if region and self.ursa_config:
+            region_key = self.ursa_config.get_ssh_key_for_region(region)
+            if region_key:
+                LOGGER.debug("Using region-specific SSH key for %s: %s", region, region_key)
+                return str(region_key)
+
+        # Fall back to global ssh_identity_file
         identity = self.config.pipeline.ssh_identity_file
         if not identity:
             return None
@@ -4825,11 +5938,22 @@ class WorksetMonitor:
             options.extend(self.config.pipeline.ssh_extra_args)
         return options
 
-    def _headnode_ip(self, cluster_name: str) -> str:
-        cached = self._headnode_ips.get(cluster_name)
+    def _headnode_ip(self, cluster_name: str, region: Optional[str] = None) -> str:
+        """Get the headnode IP for a cluster.
+
+        Args:
+            cluster_name: Name of the ParallelCluster
+            region: AWS region where the cluster resides. If None, uses config default.
+
+        Returns:
+            Public IP address of the headnode.
+        """
+        effective_region = region or self.config.aws.region
+        cache_key = f"{effective_region}:{cluster_name}"
+        cached = self._headnode_ips.get(cache_key)
         if cached:
             return cached
-        cmd = ["pcluster", "describe-cluster-instances", "--region", self.config.aws.region, "-n", cluster_name]
+        cmd = ["pcluster", "describe-cluster-instances", "--region", effective_region, "-n", cluster_name]
         result = self._run_command(cmd, check=True, env=self._pcluster_env())
         payload = self._load_pcluster_json(result.stdout)
         if isinstance(payload, dict):
@@ -4842,9 +5966,9 @@ class WorksetMonitor:
                     if isinstance(node_type, str) and node_type.lower() == "headnode":
                         ip = instance.get("publicIpAddress") or instance.get("PublicIpAddress")
                         if isinstance(ip, str) and ip:
-                            self._headnode_ips[cluster_name] = ip
+                            self._headnode_ips[cache_key] = ip
                             return ip
-        raise MonitorError(f"Unable to determine head node address for {cluster_name}")
+        raise MonitorError(f"Unable to determine head node address for {cluster_name} in {effective_region}")
 
     def _build_remote_command(
         self,
@@ -4871,11 +5995,12 @@ class WorksetMonitor:
         *,
         cwd: Optional[str] = None,
         shell: bool = False,
+        region: Optional[str] = None,
     ) -> List[str]:
         remote_command = self._build_remote_command(command, cwd=cwd, shell=shell)
-        headnode = self._headnode_ip(cluster_name)
+        headnode = self._headnode_ip(cluster_name, region=region)
         ssh_cmd: List[str] = ["ssh"]
-        identity = self._ssh_identity()
+        identity = self._ssh_identity(region=region)
         if identity:
             ssh_cmd.extend(["-i", identity])
         ssh_cmd.extend(self._ssh_options())
@@ -4888,10 +6013,11 @@ class WorksetMonitor:
         cluster_name: str,
         local_path: Path,
         remote_path: PurePosixPath,
+        region: Optional[str] = None,
     ) -> List[str]:
-        headnode = self._headnode_ip(cluster_name)
+        headnode = self._headnode_ip(cluster_name, region=region)
         scp_cmd: List[str] = ["scp"]
-        identity = self._ssh_identity()
+        identity = self._ssh_identity(region=region)
         if identity:
             scp_cmd.extend(["-i", identity])
         scp_cmd.extend(self._ssh_options())
@@ -4907,8 +6033,9 @@ class WorksetMonitor:
         check: bool,
         cwd: Optional[str] = None,
         shell: bool = False,
+        region: Optional[str] = None,
     ) -> subprocess.CompletedProcess:
-        ssh_cmd = self._build_ssh_command(cluster_name, command, cwd=cwd, shell=shell)
+        ssh_cmd = self._build_ssh_command(cluster_name, command, cwd=cwd, shell=shell, region=region)
         return self._run_command(ssh_cmd, check=check)
 
     def _run_headnode_monitored_command(
@@ -4920,8 +6047,9 @@ class WorksetMonitor:
         check: bool,
         cwd: Optional[str] = None,
         shell: bool = False,
+        region: Optional[str] = None,
     ) -> subprocess.CompletedProcess:
-        ssh_cmd = self._build_ssh_command(cluster_name, command, cwd=cwd, shell=shell)
+        ssh_cmd = self._build_ssh_command(cluster_name, command, cwd=cwd, shell=shell, region=region)
         return self._run_monitored_command(command_label, ssh_cmd, check=check)
 
     def _yaml_get_str(self, data: Dict[str, object], keys: Sequence[str]) -> Optional[str]:

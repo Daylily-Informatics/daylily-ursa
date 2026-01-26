@@ -7,19 +7,18 @@ multipart upload support, and checksum validation.
 
 from __future__ import annotations
 
-import hashlib
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
+import boto3
+from botocore.exceptions import ClientError
+
 
 def _utc_now_iso() -> str:
     """Return current UTC time in ISO format with Z suffix."""
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-
-import boto3
-from botocore.exceptions import ClientError
 
 LOGGER = logging.getLogger("daylily.file_upload")
 

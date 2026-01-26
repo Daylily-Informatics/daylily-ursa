@@ -6,7 +6,6 @@ Handles customer provisioning, S3 bucket creation, and billing tags.
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 import secrets
 import datetime as dt
@@ -15,6 +14,8 @@ from typing import Dict, List, Optional
 
 import boto3
 from botocore.exceptions import ClientError
+
+from daylib.security import sanitize_for_log
 
 LOGGER = logging.getLogger("daylily.workset_customer")
 
@@ -32,6 +33,8 @@ class CustomerConfig:
     billing_account_id: Optional[str] = None
     cost_center: Optional[str] = None
     is_admin: bool = False
+    # Region where the customer's S3 bucket is located
+    bucket_region: Optional[str] = None
     # API tokens for this customer (stored as a list of maps in DynamoDB)
     # Each token dict contains: id, name, token_hash, created_at, expires_at, revoked
     api_tokens: List[Dict] = field(default_factory=list)
@@ -109,6 +112,7 @@ class CustomerManager:
         billing_account_id: Optional[str] = None,
         cost_center: Optional[str] = None,
         custom_s3_bucket: Optional[str] = None,
+        bucket_region: Optional[str] = None,
     ) -> CustomerConfig:
         """Onboard a new customer with provisioned resources.
 
@@ -120,12 +124,16 @@ class CustomerManager:
             billing_account_id: Optional billing account ID
             cost_center: Optional cost center code
             custom_s3_bucket: Optional customer-provided S3 bucket (BYOB)
+            bucket_region: AWS region for the bucket (defaults to self.region)
 
         Returns:
             CustomerConfig with provisioned resources
         """
         # Generate unique customer ID
         customer_id = self._generate_customer_id(customer_name)
+
+        # Determine bucket region - use provided or default to CustomerManager's region
+        effective_bucket_region = bucket_region or self.region
 
         # Use custom bucket or create new one
         if custom_s3_bucket:
@@ -135,10 +143,14 @@ class CustomerManager:
                 bucket_name,
                 customer_id,
             )
+            # For BYOB, we don't know the region unless we query it
+            # Leave bucket_region as provided or None (can be detected later)
         else:
-            # Create S3 bucket
+            # Create S3 bucket in specified region
             bucket_name = f"{self.bucket_prefix}-{customer_id}"
-            self._create_customer_bucket(bucket_name, customer_id, cost_center)
+            self._create_customer_bucket(
+                bucket_name, customer_id, cost_center, bucket_region=effective_bucket_region
+            )
 
         # Create customer record
         config = CustomerConfig(
@@ -150,6 +162,7 @@ class CustomerManager:
             max_storage_gb=max_storage_gb,
             billing_account_id=billing_account_id,
             cost_center=cost_center,
+            bucket_region=effective_bucket_region if not custom_s3_bucket else bucket_region,
         )
 
         self._save_customer_config(config)
@@ -183,6 +196,7 @@ class CustomerManager:
         bucket_name: str,
         customer_id: str,
         cost_center: Optional[str],
+        bucket_region: Optional[str] = None,
     ) -> None:
         """Create S3 bucket for customer with appropriate tags.
 
@@ -190,15 +204,19 @@ class CustomerManager:
             bucket_name: Bucket name
             customer_id: Customer ID
             cost_center: Optional cost center
+            bucket_region: AWS region for the bucket (defaults to self.region)
         """
+        # Use provided region or default to CustomerManager's region
+        target_region = bucket_region or self.region
+
         try:
-            # Create bucket
-            if self.region == "us-east-1":
+            # Create bucket - us-east-1 has special handling (no LocationConstraint)
+            if target_region == "us-east-1":
                 self.s3.create_bucket(Bucket=bucket_name)
             else:
                 self.s3.create_bucket(
                     Bucket=bucket_name,
-                    CreateBucketConfiguration={"LocationConstraint": self.region},
+                    CreateBucketConfiguration={"LocationConstraint": target_region},
                 )
 
             # Enable versioning
@@ -288,6 +306,55 @@ class CustomerManager:
 
         table.put_item(Item=item)
         LOGGER.info("Saved customer config for %s", config.customer_id)
+
+    def update_customer(
+        self,
+        customer_id: str,
+        customer_name: Optional[str] = None,
+        email: Optional[str] = None,
+        billing_account_id: Optional[str] = None,
+        cost_center: Optional[str] = None,
+        max_concurrent_worksets: Optional[int] = None,
+        max_storage_gb: Optional[int] = None,
+    ) -> Optional[CustomerConfig]:
+        """Update customer configuration fields.
+
+        Only provided fields will be updated (partial update).
+
+        Args:
+            customer_id: Customer ID to update
+            customer_name: New display name (optional)
+            email: New email address (optional)
+            billing_account_id: New billing account ID (optional)
+            cost_center: New cost center (optional)
+            max_concurrent_worksets: New max concurrent worksets (optional)
+            max_storage_gb: New max storage GB (optional)
+
+        Returns:
+            Updated CustomerConfig or None if customer not found
+        """
+        config = self.get_customer_config(customer_id)
+        if not config:
+            LOGGER.warning("Cannot update customer %s: not found", sanitize_for_log(customer_id))
+            return None
+
+        # Update only provided fields
+        if customer_name is not None:
+            config.customer_name = customer_name
+        if email is not None:
+            config.email = email
+        if billing_account_id is not None:
+            config.billing_account_id = billing_account_id
+        if cost_center is not None:
+            config.cost_center = cost_center
+        if max_concurrent_worksets is not None:
+            config.max_concurrent_worksets = max_concurrent_worksets
+        if max_storage_gb is not None:
+            config.max_storage_gb = max_storage_gb
+
+        self._save_customer_config(config)
+        LOGGER.info("Updated customer config for %s", sanitize_for_log(customer_id))
+        return config
 
     def get_customer_config(self, customer_id: str) -> Optional[CustomerConfig]:
         """Get customer configuration.

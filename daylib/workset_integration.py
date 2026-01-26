@@ -7,22 +7,20 @@ This module provides unified state synchronization between the new UI/API layer
 from __future__ import annotations
 
 import datetime as dt
-import json
 import logging
 import os
 import re
-from pathlib import PurePosixPath
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
-import boto3
 from botocore.exceptions import ClientError
 import yaml  # type: ignore[import-untyped]
 
 from daylib.config import normalize_bucket_name
+from daylib.s3_utils import RegionAwareS3Client
 
 if TYPE_CHECKING:
-    from daylib.workset_state_db import WorksetStateDB, WorksetState, WorksetPriority
-    from daylib.workset_notifications import NotificationManager, NotificationEvent
+    from daylib.workset_state_db import WorksetStateDB
+    from daylib.workset_notifications import NotificationManager
     from daylib.workset_scheduler import WorksetScheduler
 
 LOGGER = logging.getLogger("daylily.workset_integration")
@@ -101,11 +99,11 @@ class WorksetIntegration:
         if s3_client:
             self._s3 = s3_client
         else:
-            session_kwargs = {"region_name": region}
-            if profile:
-                session_kwargs["profile_name"] = profile
-            session = boto3.Session(**session_kwargs)
-            self._s3 = session.client("s3")
+            # Use region-aware S3 client for cross-region bucket operations
+            self._s3 = RegionAwareS3Client(
+                default_region=region,
+                profile=profile,
+            )
 
     def register_workset(
         self,
@@ -116,6 +114,8 @@ class WorksetIntegration:
         workset_type: str = "ruo",
         metadata: Optional[Dict[str, Any]] = None,
         customer_id: Optional[str] = None,
+        preferred_cluster: Optional[str] = None,
+        cluster_region: Optional[str] = None,
         *,
         write_s3: bool = True,
         write_dynamodb: bool = True,
@@ -130,13 +130,15 @@ class WorksetIntegration:
             workset_type: Classification type (clinical, ruo, lsmc). Default: ruo
             metadata: Additional workset metadata
             customer_id: Customer ID who owns this workset
+            preferred_cluster: User-selected cluster for execution
+            cluster_region: AWS region of the preferred cluster (for pcluster commands)
             write_s3: Whether to write S3 sentinel files
             write_dynamodb: Whether to write DynamoDB record
 
         Returns:
             True if registration successful
         """
-        target_bucket = bucket or self.bucket
+        target_bucket = normalize_bucket_name(bucket) or self.bucket
         if not target_bucket:
             raise ValueError("Bucket must be specified")
 
@@ -159,6 +161,15 @@ class WorksetIntegration:
             except ValueError:
                 ws_type = WorksetType.RUO
 
+            # Extract preferred_cluster and cluster_region from metadata if not passed directly
+            effective_preferred_cluster = preferred_cluster
+            effective_cluster_region = cluster_region
+            if metadata:
+                if not effective_preferred_cluster:
+                    effective_preferred_cluster = metadata.get("preferred_cluster")
+                if not effective_cluster_region:
+                    effective_cluster_region = metadata.get("cluster_region")
+
             db_success = self.state_db.register_workset(
                 workset_id=workset_id,
                 bucket=target_bucket,
@@ -167,6 +178,8 @@ class WorksetIntegration:
                 workset_type=ws_type,
                 metadata=metadata,
                 customer_id=customer_id,
+                preferred_cluster=effective_preferred_cluster,
+                cluster_region=effective_cluster_region,
             )
             if not db_success:
                 LOGGER.warning("DynamoDB registration failed for %s", workset_id)
@@ -223,7 +236,7 @@ class WorksetIntegration:
         Returns:
             True if update successful
         """
-        target_bucket = bucket or self.bucket
+        target_bucket = normalize_bucket_name(bucket) or self.bucket
         workset_prefix = prefix or f"{self.prefix}{workset_id}/"
 
         now = dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
@@ -340,7 +353,7 @@ class WorksetIntegration:
             LOGGER.error("Workset %s not found in DynamoDB", workset_id)
             return False
 
-        bucket_name: str = workset.get("bucket") or self.bucket or ""
+        bucket_name: str = normalize_bucket_name(workset.get("bucket")) or self.bucket or ""
         if not bucket_name:
             LOGGER.error("No bucket configured for workset %s", workset_id)
             return False
@@ -410,7 +423,7 @@ class WorksetIntegration:
         Returns:
             True if lock acquired
         """
-        target_bucket = bucket or self.bucket
+        target_bucket = normalize_bucket_name(bucket) or self.bucket
         workset_prefix = prefix or f"{self.prefix}{workset_id}/"
 
         # Try DynamoDB lock first (authoritative)
@@ -452,7 +465,7 @@ class WorksetIntegration:
         Returns:
             True if lock released
         """
-        target_bucket = bucket or self.bucket
+        target_bucket = normalize_bucket_name(bucket) or self.bucket
         workset_prefix = prefix or f"{self.prefix}{workset_id}/"
 
         # Release DynamoDB lock

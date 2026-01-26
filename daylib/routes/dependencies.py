@@ -132,6 +132,41 @@ def verify_workset_ownership(workset: Dict[str, Any], customer_id: str) -> bool:
     return False
 
 
+def verify_workset_access(
+    workset: Dict[str, Any],
+    *,
+    customer_id: str,
+    user_email: Optional[str],
+    is_admin: bool,
+) -> bool:
+    """Check whether a user can access a workset.
+
+    Rules:
+    - Workset must belong to `customer_id`.
+    - Admins can access any workset for the customer.
+    - Non-admins can access only worksets they created (`metadata.created_by_email`).
+    - Legacy worksets without `created_by_email` allow any authenticated user
+      within the customer (backwards compatible; owner cannot be inferred).
+    """
+    if not verify_workset_ownership(workset, customer_id):
+        return False
+
+    if is_admin:
+        return True
+
+    if not user_email:
+        return False
+
+    metadata = workset.get("metadata", {})
+    if isinstance(metadata, dict):
+        created_by_email = metadata.get("created_by_email")
+        if created_by_email:
+            return bool(created_by_email == user_email)
+
+    # Legacy fallback (no owner recorded): allow customer-scoped access.
+    return True
+
+
 # ========== Pydantic Models for Workset API ==========
 
 
@@ -145,6 +180,8 @@ class WorksetCreate(BaseModel):
     workset_type: WorksetType = Field(WorksetType.RUO, description="Workset classification type (clinical, ruo, lsmc)")
     metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata (must include samples)")
     customer_id: str = Field(..., description="Customer ID who owns this workset (required)")
+    preferred_cluster: Optional[str] = Field(None, description="User-selected preferred cluster for execution")
+    cluster_region: Optional[str] = Field(None, description="AWS region of the preferred cluster")
 
 
 class WorksetResponse(BaseModel):
@@ -208,6 +245,17 @@ class CustomerCreate(BaseModel):
     cost_center: Optional[str] = None
 
 
+class CustomerUpdate(BaseModel):
+    """Request model for updating a customer (partial update)."""
+
+    customer_name: Optional[str] = Field(None, min_length=1, max_length=100)
+    email: Optional[EmailStr] = None
+    max_concurrent_worksets: Optional[int] = Field(None, ge=1, le=50)
+    max_storage_gb: Optional[int] = Field(None, ge=100, le=10000)
+    billing_account_id: Optional[str] = None
+    cost_center: Optional[str] = None
+
+
 class CustomerResponse(BaseModel):
     """Response model for customer data."""
 
@@ -254,7 +302,9 @@ class ChangePasswordRequest(BaseModel):
     """Request model for changing the current user's password."""
 
     current_password: str = Field(..., min_length=1)
-    new_password: str = Field(..., min_length=8)
+    # NOTE: Do not enforce password policy solely via pydantic validation.
+    # The portal endpoints convert validation failures into user-facing messages.
+    new_password: str = Field(..., min_length=1)
 
 
 class APITokenCreateRequest(BaseModel):

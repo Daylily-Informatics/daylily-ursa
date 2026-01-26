@@ -85,7 +85,7 @@
         <div class="d-flex justify-between align-center flex-wrap gap-lg">
             <div>
                 <h1 class="page-title">
-                    {{ workset.workset_name | default('Workset Details') }}
+                    {{ workset.workset_name or workset.workset_id }}
                     <span class="badge badge-{{ workset.state | lower | replace('_', '-') }} ml-md">
                         {{ workset.state }}
                         {% if workset.state == 'in_progress' and workset.progress_step %}
@@ -110,6 +110,10 @@
                 {% elif workset.state == 'error' %}
                 <button class="btn btn-primary" onclick="retryWorkset('{{ workset.workset_id }}')">
                     <i class="fas fa-redo"></i> Retry
+                </button>
+                {% elif workset.state == 'canceled' %}
+                <button class="btn btn-primary" onclick="retryWorkset('{{ workset.workset_id }}')">
+                    <i class="fas fa-redo"></i> Restart
                 </button>
                 {% elif workset.state == 'completed' %}
                 <a href="/portal/worksets/{{ workset.workset_id }}/download" class="btn btn-primary">
@@ -186,6 +190,12 @@
     <div class="card mb-lg">
         <h3 class="card-title">Workset Information</h3>
         <div class="info-grid-compact">
+            {% if workset.workset_name %}
+            <div class="info-item" style="grid-column: span 2;">
+                <span class="info-label">Workset Name</span>
+                <span class="info-value" style="font-weight: 600;">{{ workset.workset_name }}</span>
+            </div>
+            {% endif %}
             <div class="info-item">
                 <span class="info-label">Customer</span>
                 <span class="info-value">{{ workset.customer_id | default('Unknown') }}</span>

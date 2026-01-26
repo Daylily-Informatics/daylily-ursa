@@ -9,16 +9,14 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable, Dict, List, Optional
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 
 from daylib.biospecimen import (
     BiospecimenRegistry,
-    Biospecimen,
     Biosample,
     Library,
     Subject,
-    generate_biospecimen_id,
     generate_biosample_id,
     generate_library_id,
     generate_subject_id,

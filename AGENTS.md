@@ -1,0 +1,5 @@
+# WHEN INITIALIZING A NEW TERMINAL SESSION
+
+## ALWAYS DO THIS FIRST
+source ./ursa_activate
+

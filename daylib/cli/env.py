@@ -37,9 +37,21 @@ def status():
     else:
         table.add_row("AWS Profile", "[red]Not set[/red]")
 
-    # AWS Region
-    aws_region = os.environ.get("AWS_DEFAULT_REGION", "us-west-2")
-    table.add_row("AWS Region", aws_region)
+    # AWS Region (from AWS_REGION or ursa config)
+    aws_region = os.environ.get("AWS_REGION", "")
+    if aws_region:
+        table.add_row("AWS Region", f"[green]{aws_region}[/green] (env)")
+    else:
+        # Try to get from ursa config
+        try:
+            from daylib.ursa_config import get_ursa_config
+            ursa_config = get_ursa_config()
+            if ursa_config.aws_region:
+                table.add_row("AWS Region", f"[green]{ursa_config.aws_region}[/green] (config)")
+            else:
+                table.add_row("AWS Region", "[yellow]Not configured[/yellow]")
+        except Exception:
+            table.add_row("AWS Region", "[yellow]Not configured[/yellow]")
 
     # .env file
     env_file = Path.cwd() / ".env"
@@ -77,11 +89,13 @@ def generate(
     template = """# Ursa Configuration
 # ==================
 # This file is loaded by 'ursa server start' and other commands.
+# For multi-region configuration, use ~/.config/ursa/ursa-config.yaml instead.
 
 # ========== AWS Configuration ==========
-AWS_DEFAULT_REGION=us-west-2
+# Regions are configured in ~/.config/ursa/ursa-config.yaml
+# Do NOT use AWS_DEFAULT_REGION - regions must be explicit per API call
 
-# Used by the Clusters page
+# Regions to scan for ParallelCluster instances (comma-separated)
 URSA_ALLOWED_REGIONS=us-west-2
 
 # ========== Server Configuration ==========
@@ -107,7 +121,7 @@ ENABLE_AUTH=false
 """
 
     env_file.write_text(template)
-    console.print(f"[green]✓[/green]  Created .env file")
+    console.print("[green]✓[/green]  Created .env file")
     console.print("   Edit it to configure your settings")
 
 

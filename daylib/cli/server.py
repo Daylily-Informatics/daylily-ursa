@@ -15,14 +15,25 @@ from rich.console import Console
 server_app = typer.Typer(help="API server management commands")
 console = Console()
 
-# PID and log file locations
-CONFIG_DIR = Path.home() / ".ursa"
+# PID and log file locations (XDG Base Directory: ~/.config/ursa/)
+CONFIG_DIR = Path.home() / ".config" / "ursa"
 LOG_DIR = CONFIG_DIR / "logs"
 PID_FILE = CONFIG_DIR / "server.pid"
 
 
+def _require_auth_dependencies() -> None:
+    """Fail fast if auth is requested but optional auth deps aren't installed."""
+
+    try:
+        import jose  # noqa: F401
+    except ImportError:
+        console.print("[red]✗[/red]  Authentication requested but python-jose is not installed")
+        console.print("   Install with: [cyan]python -m pip install -e \".[auth]\"[/cyan]")
+        raise typer.Exit(1)
+
+
 def _ensure_dir():
-    """Ensure .ursa directories exist."""
+    """Ensure ~/.config/ursa directories exist."""
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     LOG_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -93,27 +104,45 @@ def start(
         console.print(f"   URL: [cyan]http://{host}:{port}[/cyan]")
         return
 
-    # Check AWS_PROFILE
-    if not os.environ.get("AWS_PROFILE"):
+    # Check AWS_PROFILE (from env or config file)
+    from daylib.ursa_config import get_ursa_config, DEFAULT_CONFIG_PATH
+    ursa_config = get_ursa_config()
+
+    aws_profile = os.environ.get("AWS_PROFILE") or ursa_config.aws_profile
+    if not aws_profile:
         console.print("[red]✗[/red]  AWS_PROFILE not set")
-        console.print("   Set it with: [cyan]export AWS_PROFILE=your-profile[/cyan]")
+        console.print("   Set via environment: [cyan]export AWS_PROFILE=your-profile[/cyan]")
+        console.print(f"   Or in config file:   [cyan]{DEFAULT_CONFIG_PATH}[/cyan]")
         raise typer.Exit(1)
 
-    # Get project root (where bin/ directory is)
-    project_root = Path(__file__).parent.parent.parent
-    api_script = project_root / "bin" / "daylily-workset-api"
+    # Set in environment for subprocess and boto3
+    if not os.environ.get("AWS_PROFILE"):
+        os.environ["AWS_PROFILE"] = aws_profile
 
-    if not api_script.exists():
-        console.print(f"[red]✗[/red]  API script not found: {api_script}")
-        raise typer.Exit(1)
+    # Check config file for region configuration
+    if not ursa_config.is_configured:
+        console.print(f"[yellow]⚠[/yellow]  No regions configured in {DEFAULT_CONFIG_PATH}")
+        console.print("   Cluster discovery requires region definitions.")
+        console.print(f"   Create [cyan]{DEFAULT_CONFIG_PATH}[/cyan] with:")
+        console.print("")
+        console.print("[dim]   regions:")
+        console.print("     - us-west-2")
+        console.print("     - us-east-1[/dim]")
+    else:
+        regions = ursa_config.get_allowed_regions()
+        console.print(f"[green]✓[/green]  Ursa config loaded: [cyan]{len(regions)} regions[/cyan]")
 
-    # Build command
+    # Build command (package-safe: uses module execution, not repo-relative bin/)
     cmd = [
         sys.executable,
-        str(api_script),
-        "--host", host,
-        "--port", str(port),
-        "--profile", os.environ.get("AWS_PROFILE", ""),
+        "-m",
+        "daylib.workset_api_cli",
+        "--host",
+        host,
+        "--port",
+        str(port),
+        "--profile",
+        aws_profile,
         "--create-table",
     ]
 
@@ -123,13 +152,35 @@ def start(
 
     # Set auth env var for the API server
     if auth:
+        _require_auth_dependencies()
         env["DAYLILY_ENABLE_AUTH"] = "true"
+        # Pass Cognito config from ursa config to environment if not already set
+        if ursa_config.cognito_user_pool_id and not os.environ.get("COGNITO_USER_POOL_ID"):
+            env["COGNITO_USER_POOL_ID"] = ursa_config.cognito_user_pool_id
+        if ursa_config.cognito_app_client_id and not os.environ.get("COGNITO_APP_CLIENT_ID"):
+            env["COGNITO_APP_CLIENT_ID"] = ursa_config.cognito_app_client_id
+        if ursa_config.cognito_region and not os.environ.get("COGNITO_REGION"):
+            env["COGNITO_REGION"] = ursa_config.cognito_region
+
+        missing: list[str] = []
+        if not env.get("COGNITO_USER_POOL_ID"):
+            missing.append("COGNITO_USER_POOL_ID")
+        if not (env.get("COGNITO_APP_CLIENT_ID") or env.get("COGNITO_CLIENT_ID")):
+            missing.append("COGNITO_APP_CLIENT_ID")
+        if not env.get("COGNITO_REGION"):
+            missing.append("COGNITO_REGION")
+        if missing:
+            console.print("[red]✗[/red]  Authentication enabled but Cognito config is missing")
+            console.print("   Missing: [cyan]" + ", ".join(missing) + "[/cyan]")
+            console.print("   Set via environment variables or in your Ursa config file")
+            raise typer.Exit(1)
         console.print("[green]✓[/green]  Authentication ENABLED")
     else:
         env["DAYLILY_ENABLE_AUTH"] = "false"
         console.print("[yellow]⚠[/yellow]  Authentication DISABLED")
 
     if reload:
+        cmd.append("--reload")
         background = False  # Reload requires foreground
         console.print("[dim]Auto-reload enabled (foreground mode)[/dim]")
 
@@ -169,7 +220,9 @@ def start(
         console.print(f"[green]✓[/green]  Starting server on [cyan]http://{host}:{port}[/cyan]")
         console.print("   Press Ctrl+C to stop\n")
         try:
-            subprocess.run(cmd, cwd=Path.cwd())
+            result = subprocess.run(cmd, cwd=Path.cwd(), env=env)
+            if result.returncode != 0:
+                raise typer.Exit(result.returncode)
         except KeyboardInterrupt:
             console.print("\n[yellow]⚠[/yellow]  Server stopped")
 

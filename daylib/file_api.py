@@ -7,7 +7,6 @@ linked bucket management, and file discovery.
 
 from __future__ import annotations
 
-import json
 import logging
 import uuid
 from typing import Any, Callable, Dict, List, Optional
@@ -19,26 +18,20 @@ from pydantic import BaseModel, Field
 from daylib.file_registry import (
     BiosampleMetadata,
     BucketFileDiscovery,
-    DiscoveredFile,
     FileMetadata,
     FileRegistration,
     FileRegistry,
     FileSet,
-    FileWorksetUsage,
     SequencingMetadata,
     detect_file_format,
     generate_file_id,
 )
 from daylib.s3_bucket_validator import (
-    BucketValidationResult,
-    LinkedBucket,
     LinkedBucketManager,
     S3BucketValidator,
 )
 from daylib.file_upload import (
     FileUploadManager,
-    PresignedUrlResponse,
-    UploadSession,
     generate_upload_path,
 )
 from daylib.file_metadata import (
@@ -78,6 +71,99 @@ def _get_authenticated_customer_id(current_user: Optional[Dict]) -> Optional[str
         return str(customer_id)
 
     return None
+
+
+def _is_admin_user(current_user: Optional[Dict]) -> bool:
+    """Return True if the authenticated user should be treated as an admin."""
+
+    if not current_user:
+        return False
+    return bool(current_user.get("is_admin", False))
+
+
+def _enforce_admin_only(
+    current_user: Optional[Dict],
+    *,
+    operation: str = "perform this operation",
+) -> None:
+    """Enforce that only admin users can perform an operation.
+
+    This is intentionally strict (not a no-op in legacy/no-auth modes), because
+    admin-only operations are destructive or sensitive.
+    """
+
+    if not current_user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required",
+        )
+
+    if not _is_admin_user(current_user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Admin access required to {operation}",
+        )
+
+
+def _enforce_customer_scope(
+    current_user: Optional[Dict],
+    customer_id: str,
+    *,
+    operation: str = "access this resource",
+) -> None:
+    """Enforce that a non-admin user can only act for their own customer_id.
+
+    This is a best-effort enforcement that activates when auth context includes a
+    customer_id. When no auth context is present (legacy/no-auth modes), this is
+    a no-op.
+    """
+
+    if not current_user:
+        return
+
+    if _is_admin_user(current_user):
+        return
+
+    user_customer_id = _get_authenticated_customer_id(current_user)
+    if not user_customer_id:
+        return
+
+    if user_customer_id != customer_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Cannot {operation} for a different customer",
+        )
+
+
+def _enforce_bucket_ownership(
+    current_user: Optional[Dict],
+    bucket: Any,
+    *,
+    operation: str = "access this bucket",
+) -> None:
+    """Enforce that a non-admin user can only act on buckets they own.
+
+    This is a best-effort enforcement that activates when auth context includes a
+    customer_id. When no auth context is present (legacy/no-auth modes), this is
+    a no-op.
+    """
+
+    if not current_user:
+        return
+
+    if _is_admin_user(current_user):
+        return
+
+    user_customer_id = _get_authenticated_customer_id(current_user)
+    if not user_customer_id:
+        return
+
+    bucket_customer_id = getattr(bucket, "customer_id", None)
+    if bucket_customer_id != user_customer_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Cannot {operation} - bucket belongs to a different customer",
+        )
 
 
 def verify_file_ownership(file: Optional[FileRegistration], customer_id: str) -> bool:
@@ -803,6 +889,12 @@ def create_file_api_router(
             )
 
         try:
+            _enforce_customer_scope(
+                current_user,
+                customer_id,
+                operation="link buckets",
+            )
+
             LOGGER.info(
                 "Linking bucket: customer_id=%s, bucket_name=%s, bucket_type=%s, display_name=%s",
                 customer_id, request.bucket_name, request.bucket_type, request.display_name
@@ -842,6 +934,9 @@ def create_file_api_router(
                 region=linked_bucket.region,
                 linked_at=linked_bucket.linked_at,
             )
+
+        except HTTPException:
+            raise
         except Exception as e:
             # Don't use exc_info=True or log the raw exception object; this can trigger
             # deepcopy recursion issues when boto3 objects are attached to the exception.
@@ -871,6 +966,12 @@ def create_file_api_router(
             )
 
         try:
+            _enforce_customer_scope(
+                current_user,
+                customer_id,
+                operation="list linked buckets",
+            )
+
             buckets = linked_bucket_manager.list_customer_buckets(customer_id)
             return {
                 "customer_id": customer_id,
@@ -889,6 +990,9 @@ def create_file_api_router(
                     for b in buckets
                 ],
             }
+
+        except HTTPException:
+            raise
         except Exception as e:
             LOGGER.error("Failed to list buckets: %s", str(e))
             raise HTTPException(
@@ -909,6 +1013,19 @@ def create_file_api_router(
             )
 
         try:
+            bucket = linked_bucket_manager.get_bucket(bucket_id)
+            if bucket is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Bucket {bucket_id} not found",
+                )
+
+            _enforce_bucket_ownership(
+                current_user,
+                bucket,
+                operation="revalidate this bucket",
+            )
+
             linked_bucket, validation_result = linked_bucket_manager.revalidate_bucket(bucket_id)
             if linked_bucket is None:
                 raise HTTPException(
@@ -990,6 +1107,19 @@ def create_file_api_router(
             )
 
         try:
+            bucket = linked_bucket_manager.get_bucket(bucket_id)
+            if bucket is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Bucket not found: {bucket_id}",
+                )
+
+            _enforce_bucket_ownership(
+                current_user,
+                bucket,
+                operation="unlink this bucket",
+            )
+
             success = linked_bucket_manager.unlink_bucket(bucket_id)
             if not success:
                 raise HTTPException(
@@ -1025,6 +1155,19 @@ def create_file_api_router(
             )
 
         try:
+            bucket = linked_bucket_manager.get_bucket(bucket_id)
+            if bucket is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Bucket not found: {bucket_id}",
+                )
+
+            _enforce_bucket_ownership(
+                current_user,
+                bucket,
+                operation="update this bucket",
+            )
+
             updated = linked_bucket_manager.update_bucket(
                 bucket_id=bucket_id,
                 display_name=display_name,
@@ -1083,6 +1226,13 @@ def create_file_api_router(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail=f"Bucket not found: {bucket_id}",
                 )
+
+            _enforce_bucket_ownership(
+                current_user,
+                bucket,
+                operation="access this bucket",
+            )
+
             return {
                 "bucket_id": bucket.bucket_id,
                 "customer_id": bucket.customer_id,
@@ -1130,6 +1280,12 @@ def create_file_api_router(
             )
 
         try:
+            _enforce_customer_scope(
+                current_user,
+                customer_id,
+                operation="discover bucket files",
+            )
+
             LOGGER.debug(f"discover_bucket_files: Starting discovery for bucket_id={bucket_id}, customer_id={customer_id}")
 
             # Get the bucket to verify it exists and get bucket name
@@ -1142,6 +1298,18 @@ def create_file_api_router(
                     detail=f"Bucket not found: {bucket_id}",
                 )
             LOGGER.debug(f"discover_bucket_files: Got bucket {bucket.bucket_name}")
+
+            if bucket.customer_id != customer_id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Bucket belongs to a different customer",
+                )
+
+            _enforce_bucket_ownership(
+                current_user,
+                bucket,
+                operation="discover files in this bucket",
+            )
 
             # Parse file formats if provided
             formats_list = None
@@ -2756,7 +2924,7 @@ def create_file_api_router(
             if char in folder_name:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Folder name contains invalid character",
+                    detail="Folder name contains invalid character",
                 )
 
         # Apply prefix restriction
@@ -2912,7 +3080,7 @@ def create_file_api_router(
             return DeleteFileResponse(
                 success=True,
                 deleted_key=file_key,
-                message=f"File deleted successfully",
+                message="File deleted successfully",
             )
 
         except HTTPException:
