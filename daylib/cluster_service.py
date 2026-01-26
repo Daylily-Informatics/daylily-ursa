@@ -19,7 +19,12 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, cast
 
+from daylib.security import sanitize_for_log
+
 LOGGER = logging.getLogger("daylily.cluster_service")
+
+# AWS ParallelCluster name pattern: alphanumeric start, up to 60 chars, alphanumeric/hyphen
+_CLUSTER_NAME_PATTERN = re.compile(r'^[a-zA-Z][a-zA-Z0-9-]{0,59}$')
 
 # Global singleton instance and lock
 _global_service: Optional["ClusterService"] = None
@@ -293,6 +298,19 @@ class ClusterService:
         # Not in any cache - return None (caller can decide to refresh)
         return None
 
+    def _validate_cluster_name(self, name: str) -> None:
+        """Validate cluster name matches AWS ParallelCluster naming rules.
+
+        Raises:
+            ValueError: If name doesn't match expected pattern.
+        """
+        if not name or not _CLUSTER_NAME_PATTERN.match(name):
+            raise ValueError(
+                f"Invalid cluster name: {sanitize_for_log(name, 50)}. "
+                "Must start with a letter, contain only letters, numbers, and hyphens, "
+                "and be 1-60 characters."
+            )
+
     def _run_pcluster_command(self, args: List[str], timeout: int = 30) -> Dict[str, Any]:
         """Run a pcluster CLI command and return parsed JSON output."""
         import os
@@ -305,16 +323,18 @@ class ClusterService:
             return {"error": "pcluster CLI not installed"}
 
         cmd = [pcluster_path] + args
+        # Sanitize command for logging (args may contain user-provided values)
+        cmd_display = ' '.join(sanitize_for_log(arg, 100) for arg in cmd)
         # Set AWS_PROFILE - use explicit value or fall back to env (no 'default' fallback)
         profile = self.aws_profile or os.environ.get("AWS_PROFILE")
         if profile:
-            LOGGER.info(f"Running: AWS_PROFILE={profile} {' '.join(cmd)}")
+            LOGGER.info("Running: AWS_PROFILE=%s %s", sanitize_for_log(profile, 50), cmd_display)
         else:
             LOGGER.warning(
                 "No AWS profile configured for pcluster command. "
                 "Set aws_profile in ~/.ursa/ursa-config.yaml"
             )
-            LOGGER.info(f"Running: {' '.join(cmd)}")
+            LOGGER.info("Running: %s", cmd_display)
         LOGGER.debug(f"PATH: {os.environ.get('PATH', 'not set')[:200]}")
         try:
             env = os.environ.copy()
@@ -379,6 +399,7 @@ class ClusterService:
 
     def describe_cluster(self, cluster_name: str, region: str) -> ClusterInfo:
         """Get detailed information about a cluster."""
+        self._validate_cluster_name(cluster_name)
         result = self._run_pcluster_command(
             ["describe-cluster", "--region", region, "-n", cluster_name]
         )
@@ -396,6 +417,7 @@ class ClusterService:
         Note: ParallelCluster deletion is asynchronous; this method returns once the
         delete request is accepted by the CLI.
         """
+        self._validate_cluster_name(cluster_name)
         result = self._run_pcluster_command(
             ["delete-cluster", "--region", region, "-n", cluster_name],
             timeout=60,
