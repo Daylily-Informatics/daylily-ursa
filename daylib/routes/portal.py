@@ -614,18 +614,18 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         min_len_error = _validate_password_min_length(password)
         if min_len_error:
             return RedirectResponse(
-                url=f"/portal/reset-password?email={email}&error={min_len_error.replace(' ', '+')}",
+                url=f"/portal/reset-password?email={quote_plus(email)}&error={quote_plus(min_len_error)}",
                 status_code=302,
             )
         if password != confirm_password:
-            return RedirectResponse(url=f"/portal/reset-password?email={email}&error=Passwords+do+not+match", status_code=302)
+            return RedirectResponse(url=f"/portal/reset-password?email={quote_plus(email)}&error=Passwords+do+not+match", status_code=302)
         try:
             deps.cognito_auth.confirm_forgot_password(email, code, password)
-            LOGGER.info(f"Password reset successful for {email}")
+            LOGGER.info("Password reset successful for %s", sanitize_for_log(email))
             return RedirectResponse(url="/portal/login?success=Password+reset+successful.+Please+log+in", status_code=302)
         except ValueError as e:
-            LOGGER.warning(f"Reset password error for {email}: {e}")
-            return RedirectResponse(url=f"/portal/reset-password?email={email}&error={str(e)}", status_code=302)
+            LOGGER.warning("Reset password error for %s: %s", sanitize_for_log(email), e)
+            return RedirectResponse(url=f"/portal/reset-password?email={quote_plus(email)}&error={quote_plus(str(e))}", status_code=302)
         except Exception as e:
             LOGGER.error(f"Reset password error for {email}: {e}")
             return RedirectResponse(url=f"/portal/reset-password?email={email}&error=Password+reset+failed", status_code=302)
@@ -2951,7 +2951,8 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                 if level:
                     log_lines = [line for line in log_lines if f"[{level}]" in line]
         except Exception as e:
-            error = str(e)
+            LOGGER.warning("Failed to read log file %s: %s", latest_log.name, e)
+            error = "Failed to read log file"
 
         return {
             "lines": log_lines,
