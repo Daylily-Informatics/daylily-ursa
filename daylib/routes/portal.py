@@ -24,7 +24,7 @@ from urllib.parse import quote_plus
 
 from botocore.exceptions import ClientError
 from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile, status
-from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
 from daylib.config import Settings
@@ -2425,6 +2425,83 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
             "support.html",
             _get_template_context(request, deps, customer=customer, active_page="support"),
         )
+
+    # ========== Feature Requests Routes ==========
+
+    @router.get("/portal/feature-requests", response_class=HTMLResponse)
+    async def portal_feature_requests(request: Request):
+        """Feature requests page."""
+        auth_redirect = _require_portal_auth(request)
+        if auth_redirect:
+            return auth_redirect
+        customer, _ = _get_customer_for_session(request, deps)
+
+        # Load existing requests from JSON file
+        requests = []
+        requests_file = Path.home() / ".ursa" / "feature_requests.json"
+        if requests_file.exists():
+            try:
+                import json
+                with open(requests_file) as f:
+                    requests = json.load(f)
+                # Sort by date descending
+                requests.sort(key=lambda x: x.get("submitted_at", ""), reverse=True)
+            except Exception as e:
+                LOGGER.warning(f"Failed to load feature requests: {e}")
+
+        return deps.templates.TemplateResponse(
+            request,
+            "feature_requests.html",
+            _get_template_context(request, deps, customer=customer, requests=requests, active_page="feature_requests"),
+        )
+
+    @router.post("/portal/feature-requests")
+    async def portal_feature_requests_submit(request: Request):
+        """Handle feature request submission."""
+        auth_redirect = _require_portal_auth(request)
+        if auth_redirect:
+            return JSONResponse(status_code=401, content={"detail": "Not authenticated"})
+
+        try:
+            import json
+            from datetime import datetime, timezone
+
+            data = await request.json()
+            user_email = request.session.get("user_email", "anonymous")
+            customer_id = request.session.get("customer_id", "unknown")
+
+            feature_request = {
+                "id": f"fr-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}",
+                "title": data.get("title", "").strip(),
+                "category": data.get("category", "other"),
+                "description": data.get("description", "").strip(),
+                "priority": data.get("priority", "nice-to-have"),
+                "submitted_by": user_email,
+                "customer_id": customer_id,
+                "submitted_at": datetime.now(timezone.utc).isoformat(),
+                "status": "submitted",
+            }
+
+            # Save to JSON file
+            requests_file = Path.home() / ".ursa" / "feature_requests.json"
+            requests_file.parent.mkdir(parents=True, exist_ok=True)
+
+            requests = []
+            if requests_file.exists():
+                with open(requests_file) as f:
+                    requests = json.load(f)
+
+            requests.append(feature_request)
+
+            with open(requests_file, "w") as f:
+                json.dump(requests, f, indent=2)
+
+            LOGGER.info(f"Feature request submitted: {feature_request['id']} by {user_email}")
+            return JSONResponse(content={"status": "ok", "id": feature_request["id"]})
+
+        except Exception as e:
+            LOGGER.error(f"Failed to save feature request: {e}")
+            return JSONResponse(status_code=500, content={"detail": str(e)})
 
     # ========== Monitor Dashboard Route ==========
 
