@@ -61,6 +61,7 @@ VALID_FIELDS = {
     "cognito_region": (str, "AWS region for Cognito"),
     "cognito_user_pool_id": (str, "Cognito User Pool ID"),
     "cognito_app_client_id": (str, "Cognito App Client ID"),
+    "whitelist_domains": (str, "Comma-separated list of allowed email domains"),
 }
 
 
