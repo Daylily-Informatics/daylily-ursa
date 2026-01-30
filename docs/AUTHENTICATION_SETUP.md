@@ -16,6 +16,44 @@ The Workset Monitor API supports two modes:
    - Multi-tenant environments
    - Public-facing APIs
 
+## Shared Cognito Configuration
+
+The URSA portal uses a shared Cognito User Pool with lsmc-atlas and bloom. This ensures
+consistent authentication across all three applications.
+
+### Configuration File
+
+Create `~/.config/ursa/ursa-config.yaml`:
+
+```yaml
+# Shared Cognito pool configuration
+cognito_region: us-west-2
+cognito_user_pool_id: us-west-2_pUqKyIM1N
+cognito_app_client_id: 1glmn93pg49bove54r48t48907
+cognito_app_client_secret: <your-client-secret>
+
+# Email domain whitelist for authentication
+# Empty blocks all. Use '*' to allow all domains.
+whitelist_domains: lsmc.bio,lsmc.com,lsmc.life,daylilyinformatics.com,dyly.bio
+```
+
+### Environment Variables (Alternative)
+
+```bash
+export COGNITO_REGION=us-west-2
+export COGNITO_USER_POOL_ID=us-west-2_pUqKyIM1N
+export COGNITO_APP_CLIENT_ID=1glmn93pg49bove54r48t48907
+export COGNITO_APP_CLIENT_SECRET=<your-client-secret>
+```
+
+### App Client Secret
+
+The shared Cognito pool uses an app client with a secret. When authenticating via the
+`daylily-cognito` library, the `SECRET_HASH` is automatically computed.
+
+See [daylily-cognito README](https://github.com/Daylily-Informatics/daylily-cognito)
+for details on client secret handling.
+
 ## Running Without Authentication
 
 ### Installation
