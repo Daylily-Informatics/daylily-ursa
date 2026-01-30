@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% set active_page = 'feature_requests' %}
+
+{% block title %}Feature Requests - Ursa Customer Portal{% endblock %}
+
+{% block content %}
+<div class="container container-sm">
+    <div class="page-header text-center">
+        <h1 class="page-title"><i class="fas fa-lightbulb text-warning"></i> Feature Requests</h1>
+        <p class="page-subtitle">Help us improve Ursa by sharing your ideas</p>
+    </div>
+
+    <div class="card">
+        <form id="feature-form" onsubmit="submitFeatureRequest(event)">
+            <div class="form-group">
+                <label class="form-label required">Feature Title</label>
+                <input type="text" id="feature-title" class="form-control" required
+                       placeholder="Brief title for your feature request" maxlength="100">
+            </div>
+
+            <div class="form-group">
+                <label class="form-label required">Category</label>
+                <select id="feature-category" class="form-control form-select" required>
+                    <option value="">Select a category...</option>
+                    <option value="ui">User Interface</option>
+                    <option value="workflow">Workflow / Pipeline</option>
+                    <option value="api">API / Integration</option>
+                    <option value="reporting">Reporting / Analytics</option>
+                    <option value="performance">Performance</option>
+                    <option value="other">Other</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label class="form-label required">Description</label>
+                <textarea id="feature-description" class="form-control" rows="5" required
+                          placeholder="Describe the feature you'd like to see. What problem does it solve? How would you use it?"></textarea>
+            </div>
+
+            <div class="form-group">
+                <label class="form-label">Priority (to you)</label>
+                <select id="feature-priority" class="form-control form-select">
+                    <option value="nice-to-have">Nice to Have</option>
+                    <option value="important">Important</option>
+                    <option value="critical">Critical for My Workflow</option>
+                </select>
+            </div>
+
+            <button type="submit" class="btn btn-primary btn-block btn-lg">
+                <i class="fas fa-paper-plane"></i> Submit Feature Request
+            </button>
+        </form>
+    </div>
+
+    {% if requests %}
+    <div class="card mt-xl">
+        <h3 class="card-title"><i class="fas fa-list"></i> Recent Requests</h3>
+        <div class="table-responsive">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Title</th>
+                        <th>Category</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for req in requests[:10] %}
+                    <tr>
+                        <td>{{ req.submitted_at[:10] }}</td>
+                        <td>{{ req.title }}</td>
+                        <td><span class="badge">{{ req.category }}</span></td>
+                        <td><span class="badge badge-{{ 'success' if req.status == 'implemented' else 'warning' if req.status == 'planned' else 'info' }}">{{ req.status | default('submitted') }}</span></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
+    <div class="alert alert-info mt-xl">
+        <i class="fas fa-info-circle"></i>
+        <strong>Note:</strong> Feature requests are reviewed regularly. We prioritize based on user demand and alignment with our roadmap.
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+async function submitFeatureRequest(event) {
+    event.preventDefault();
+    
+    const data = {
+        title: document.getElementById('feature-title').value,
+        category: document.getElementById('feature-category').value,
+        description: document.getElementById('feature-description').value,
+        priority: document.getElementById('feature-priority').value,
+    };
+    
+    try {
+        const response = await fetch('/portal/feature-requests', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        });
+        
+        if (response.ok) {
+            showToast('success', 'Thank You!', 'Your feature request has been submitted.');
+            document.getElementById('feature-form').reset();
+            setTimeout(() => window.location.reload(), 1500);
+        } else {
+            const err = await response.json().catch(() => ({}));
+            showToast('error', 'Error', err.detail || 'Failed to submit request');
+        }
+    } catch (error) {
+        console.error('Error:', error);
+        showToast('error', 'Error', 'Failed to submit request');
+    }
+}
+</script>
+{% endblock %}
+
