@@ -351,10 +351,18 @@ class Settings(BaseSettings):
         """Get list of whitelisted email domains.
 
         Returns:
-            List of domain strings (lowercase), or empty list if all domains allowed.
+            List of domain strings (lowercase)
+            Empty list [] = allow all domains
+            ["__BLOCK_ALL__"] = block all domains (when empty string)
         """
-        if not self.whitelist_domains or self.whitelist_domains.strip().lower() == "all":
+        # Empty string = block all domains
+        if self.whitelist_domains == "":
+            return ["__BLOCK_ALL__"]
+
+        # "all" or "*" = allow all domains
+        if not self.whitelist_domains or self.whitelist_domains.strip().lower() in ("all", "*"):
             return []
+
         return [d.strip().lower() for d in self.whitelist_domains.split(",") if d.strip()]
 
     def is_domain_whitelisted(self, email: str) -> bool:
@@ -368,6 +376,11 @@ class Settings(BaseSettings):
             False if domain is blocked.
         """
         whitelist = self.get_whitelist_domains()
+
+        # Block all sentinel (when whitelist_domains="")
+        if whitelist == ["__BLOCK_ALL__"]:
+            return False
+
         if not whitelist:
             # No whitelist = all domains allowed
             return True
