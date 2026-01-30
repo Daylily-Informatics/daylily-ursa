@@ -196,6 +196,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             or os.getenv("COGNITO_APP_CLIENT_ID")
             or ursa_config.cognito_app_client_id
         )
+        app_client_secret = (
+            os.getenv("COGNITO_APP_CLIENT_SECRET")
+            or ursa_config.cognito_app_client_secret
+        )
         cognito_region = (
             os.getenv("COGNITO_REGION")
             or ursa_config.cognito_region
@@ -226,6 +230,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             region=cognito_region,
             user_pool_id=user_pool_id,
             app_client_id=app_client_id,
+            app_client_secret=app_client_secret,
             profile=args.profile,
             settings=settings,
         )
