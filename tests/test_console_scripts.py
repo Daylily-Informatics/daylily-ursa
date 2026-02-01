@@ -47,8 +47,8 @@ def test_console_script_entrypoints_are_importable_and_callable():
         assert callable(func), f"Console script {name!r} target is not callable: {target!r}"
 
 
-def test_ursa_server_start_uses_packaged_entrypoint(monkeypatch):
-    from daylib.cli import server as server_mod
+def test_ursa_gui_start_uses_packaged_entrypoint(monkeypatch):
+    from daylib.cli import gui as gui_mod
     import daylib.ursa_config as ursa_config_mod
 
     class DummyUrsaConfig:
@@ -63,8 +63,8 @@ def test_ursa_server_start_uses_packaged_entrypoint(monkeypatch):
 
     monkeypatch.setenv("AWS_PROFILE", "test-profile")
     monkeypatch.setattr(ursa_config_mod, "get_ursa_config", lambda reload=False: DummyUrsaConfig())
-    monkeypatch.setattr(server_mod, "_ensure_dir", lambda: None)
-    monkeypatch.setattr(server_mod, "_get_pid", lambda: None)
+    monkeypatch.setattr(gui_mod, "_ensure_dir", lambda: None)
+    monkeypatch.setattr(gui_mod, "_get_pid", lambda: None)
 
     captured: dict[str, object] = {}
 
@@ -78,9 +78,9 @@ def test_ursa_server_start_uses_packaged_entrypoint(monkeypatch):
 
         return _DummyCompletedProcess(0)
 
-    monkeypatch.setattr(server_mod.subprocess, "run", _fake_run)
+    monkeypatch.setattr(gui_mod.subprocess, "run", _fake_run)
 
-    server_mod.start(
+    gui_mod.start(
         port=1234,
         host="127.0.0.1",
         auth=False,
