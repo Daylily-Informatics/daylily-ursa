@@ -105,6 +105,10 @@ class Settings(BaseSettings):
         default=None,
         description="AWS Cognito App Client ID",
     )
+    cognito_domain: Optional[str] = Field(
+        default=None,
+        description="AWS Cognito domain (e.g., 'myapp.auth.us-west-2.amazoncognito.com')",
+    )
     enable_auth: bool = Field(
         default=False,
         description="Enable authentication (requires Cognito configuration)",

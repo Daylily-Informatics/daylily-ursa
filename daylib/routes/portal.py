@@ -20,7 +20,7 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlencode
 
 from botocore.exceptions import ClientError
 from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile, status
@@ -555,9 +555,10 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
 
     @router.get("/portal/logout", response_class=RedirectResponse)
     async def portal_logout(request: Request):
-        """Logout and redirect to login page.
+        """Logout and redirect to Cognito logout or login page.
 
-        Thoroughly clears all session data to prevent stale state.
+        Clears all session data and redirects to Cognito logout endpoint
+        if configured, otherwise redirects to local login page.
         """
         user_email = request.session.get("user_email", "unknown")
         LOGGER.info(f"Logging out user: {user_email}")
@@ -570,6 +571,24 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         request.session.clear()
 
         LOGGER.info(f"Session cleared for user: {user_email}")
+
+        # Redirect to Cognito logout if configured
+        cognito_domain = getattr(deps.settings, "cognito_domain", None)
+        cognito_client_id = getattr(deps.settings, "cognito_app_client_id", None)
+        if cognito_domain and cognito_client_id:
+            # Build Cognito logout URL
+            # The logout_uri must be registered in Cognito app client's sign-out URLs
+            logout_redirect = str(request.url_for("portal_login")) + "?success=You+have+been+logged+out"
+            params = {
+                "client_id": cognito_client_id,
+                # Include both for compatibility with different Cognito versions
+                "logout_uri": logout_redirect,
+                "redirect_uri": logout_redirect,
+            }
+            cognito_logout_url = f"https://{cognito_domain}/logout?{urlencode(params)}"
+            LOGGER.info(f"Redirecting to Cognito logout: {cognito_logout_url}")
+            return RedirectResponse(url=cognito_logout_url, status_code=302)
+
         return RedirectResponse(url="/portal/login?success=You+have+been+logged+out", status_code=302)
 
     @router.get("/portal/forgot-password", response_class=HTMLResponse)
