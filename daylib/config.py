@@ -44,8 +44,9 @@ class Settings(BaseSettings):
     """
 
     model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
+        # Configuration loaded from ~/.config/ursa/ursa-config.yaml via UrsaConfig.load()
+        # Environment variables override YAML values (standard pydantic behavior)
+        # No .env file loading - all config should be in YAML or explicit env vars
         case_sensitive=False,
         extra="ignore",
     )

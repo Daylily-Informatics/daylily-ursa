@@ -183,19 +183,21 @@ python examples/run_api_with_auth.py \
 
 For production, use certificates from AWS Certificate Manager or Let's Encrypt.
 
-## Environment Variables
+## Configuration
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `AWS_REGION` | AWS region | `us-west-2` |
-| `WORKSET_TABLE_NAME` | DynamoDB table name | `daylily-worksets` |
-| `S3_BUCKET` | S3 bucket for worksets | - |
-| `S3_PREFIX` | S3 prefix for worksets | `worksets/` |
-| `COGNITO_USER_POOL_ID` | Cognito User Pool ID | - |
-| `COGNITO_APP_CLIENT_ID` | Cognito App Client ID | - |
-| `SNS_TOPIC_ARN` | SNS topic for notifications | - |
-| `LINEAR_API_KEY` | Linear API key | - |
-| `LINEAR_TEAM_ID` | Linear team ID | - |
+Primary configuration is in `~/.config/ursa/ursa-config.yaml`. Run `ursa env generate` to create a template.
+
+### Environment Variable Overrides
+
+Environment variables can override YAML values when set:
+
+| Variable | Description | YAML Key |
+|----------|-------------|----------|
+| `AWS_PROFILE` | AWS profile | `aws_profile` |
+| `COGNITO_USER_POOL_ID` | Cognito User Pool ID | `cognito_user_pool_id` |
+| `COGNITO_APP_CLIENT_ID` | Cognito App Client ID | `cognito_app_client_id` |
+| `COGNITO_REGION` | Cognito region | `cognito_region` |
+| `DYNAMO_DB_REGION` | DynamoDB region | `dynamo_db_region` |
 
 ## Data Flow
 

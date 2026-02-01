@@ -30,8 +30,9 @@ ursa info
 # Run tests
 ursa test run
 
-# Start the API server (no auth, development mode)
-ursa server start
+# Start the GUI/Portal (HTTPS with self-signed cert, auth enabled by default)
+ursa gui start
+# Access at https://0.0.0.0:8001 (accept browser warning for self-signed cert)
 ```
 
 ## CLI Tools
@@ -63,7 +64,7 @@ ursa <group> <command> [args]
 
 | Group | Description |
 |-------|-------------|
-| `ursa server` | API server management (start, stop, status, logs) |
+| `ursa gui` | GUI/Portal management (start, stop, status, logs) |
 | `ursa monitor` | Workset monitor daemon (start, stop, status, logs) |
 | `ursa aws` | AWS resource management (setup, status, teardown) |
 | `ursa cognito` | Cognito authentication (setup, status, set-admin, set-password) |
@@ -78,12 +79,15 @@ ursa <group> <command> [args]
 **Examples:**
 
 ```bash
-# Server management
-ursa server start              # Start API server as daemon
-ursa server start --no-daemon  # Start in foreground
-ursa server stop               # Stop the server
-ursa server status             # Check server status
-ursa server logs               # Tail server logs
+# GUI/Portal management (HTTPS by default)
+ursa gui start                 # Start HTTPS GUI/Portal (auto-generates self-signed cert)
+ursa gui start --foreground    # Start in foreground
+ursa gui start --insecure-http # Use HTTP (not recommended, shows warning)
+ursa gui stop                  # Stop the GUI/Portal
+ursa gui status                # Check GUI/Portal status
+ursa gui logs                  # Tail GUI/Portal logs
+ursa gui generate-cert         # Manually generate/regenerate SSL certificate
+ursa gui cert-info             # Show certificate details and expiration
 
 # Testing
 ursa test run                  # Run test suite
@@ -156,47 +160,42 @@ daylib/
 
 ## Configuration
 
-Configuration is managed via environment variables or a `.env` file. Generate a template:
+Configuration is managed via `~/.config/ursa/ursa-config.yaml`. Generate a template:
 
 ```bash
 ursa env generate
 ```
 
-**Key Environment Variables:**
+**Example ursa-config.yaml:**
 
-```bash
+```yaml
 # AWS Configuration (required)
-AWS_PROFILE=your-profile-name
+aws_profile: your-profile-name
 
-# Region Configuration
-# Regions are configured in ~/.config/ursa/ursa-config.yaml
-# Use URSA_ALLOWED_REGIONS to specify regions to scan for clusters
-URSA_ALLOWED_REGIONS=us-west-2,us-east-1
+# Regions to scan for ParallelCluster instances
+regions:
+  - us-west-2
+  - us-east-1
 
-# S3 Configuration
-# NOTE: S3 buckets are discovered from cluster tags (aws-parallelcluster-monitor-bucket)
-# No bucket environment variables are required.
+# DynamoDB region for workset state
+dynamo_db_region: us-west-2
 
-# DynamoDB Tables (auto-created if missing)
-WORKSET_TABLE_NAME=daylily-worksets
-CUSTOMER_TABLE_NAME=daylily-customers
-DAYLILY_FILE_REGISTRY_TABLE=daylily-file-registry
+# Authentication (optional - run 'ursa cognito setup' to configure)
+# cognito_user_pool_id: us-west-2_xxxxxxxx
+# cognito_app_client_id: xxxxxxxxxxxxxxxxxxxxxxxxxx
+# cognito_region: us-west-2
 
-# Authentication (optional)
-ENABLE_AUTH=false
-COGNITO_USER_POOL_ID=us-west-2_xxxxxxxx
-COGNITO_CLIENT_ID=xxxxxxxxxxxxxxxxxxxxxxxxxx
-SESSION_SECRET_KEY=change-this-in-production
-WHITELIST_DOMAINS=all  # or comma-separated: company.com,partner.org
-
-# Server
-URSA_HOST=0.0.0.0
-URSA_PORT=8001
-
-# Multi-Region (optional)
-DAYLILY_MULTI_REGION=false
-DAYLILY_PRIMARY_REGION=us-west-2
+# Whitelist domains for user registration
+# whitelist_domains: company.com,partner.org
 ```
+
+**Environment Variable Overrides:**
+
+Environment variables override YAML values when set:
+- `AWS_PROFILE` - AWS profile name
+- `COGNITO_USER_POOL_ID` - Cognito User Pool ID
+- `COGNITO_APP_CLIENT_ID` - Cognito App Client ID
+- `COGNITO_REGION` - Cognito region
 
 See `docs/AUTHENTICATION_SETUP.md` and `docs/MULTI_REGION.md` for detailed configuration guides.
 
@@ -220,10 +219,24 @@ Workset directory sizes are automatically calculated during the pre-export phase
 - **Workset Detail**: Storage in the Resources card
 - **Usage Page**: Storage breakdown by workset
 
+### HTTPS and Security
+
+The server uses **HTTPS by default** with auto-generated self-signed certificates:
+- Certificates are stored in `~/.config/ursa/certs/`
+- Automatically generated on first run if missing
+- Browser will show a warning for self-signed certs (click "Advanced" → "Proceed")
+
+For production deployments, use your own certificates:
+```bash
+ursa gui start --cert /path/to/cert.pem --key /path/to/key.pem
+```
+
+Or via environment variables: `URSA_SSL_CERT_PATH` and `URSA_SSL_KEY_PATH`.
+
 ### Authentication Modes
 
-1. **No Auth** (development): `ursa server start`
-2. **Cognito Auth** (production): Set `ENABLE_AUTH=true` with Cognito configuration
+1. **No Auth** (development): `ursa gui start --no-auth`
+2. **Cognito Auth** (production): `ursa gui start --auth` (requires Cognito configuration in YAML)
 
 See `docs/AUTHENTICATION_SETUP.md` for setup instructions.
 

@@ -65,7 +65,6 @@ def test_ursa_server_start_uses_packaged_entrypoint(monkeypatch):
     monkeypatch.setattr(ursa_config_mod, "get_ursa_config", lambda reload=False: DummyUrsaConfig())
     monkeypatch.setattr(server_mod, "_ensure_dir", lambda: None)
     monkeypatch.setattr(server_mod, "_get_pid", lambda: None)
-    monkeypatch.setattr(server_mod, "_source_env_file", lambda: False)
 
     captured: dict[str, object] = {}
 

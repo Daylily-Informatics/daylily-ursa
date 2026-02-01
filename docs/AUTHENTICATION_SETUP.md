@@ -37,13 +37,15 @@ cognito_app_client_secret: <your-client-secret>
 whitelist_domains: lsmc.bio,lsmc.com,lsmc.life,daylilyinformatics.com,dyly.bio
 ```
 
-### Environment Variables (Alternative)
+### Environment Variable Overrides
+
+Environment variables can override YAML configuration when needed:
 
 ```bash
-export COGNITO_REGION=us-west-2
+# These override values in ~/.config/ursa/ursa-config.yaml
 export COGNITO_USER_POOL_ID=us-west-2_pUqKyIM1N
 export COGNITO_APP_CLIENT_ID=1glmn93pg49bove54r48t48907
-export COGNITO_APP_CLIENT_SECRET=<your-client-secret>
+export COGNITO_REGION=us-west-2
 ```
 
 ### App Client Secret
@@ -155,12 +157,11 @@ aws cognito-idp admin-create-user \
 ### Running the Server
 
 ```bash
-# Set environment variables
-export COGNITO_USER_POOL_ID=us-west-2_XXXXXXXXX
-export COGNITO_APP_CLIENT_ID=XXXXXXXXXXXXXXXXXXXXXXXXXX
+# Configuration is loaded from ~/.config/ursa/ursa-config.yaml
+# Ensure cognito_user_pool_id and cognito_app_client_id are set in the YAML file
 
-# Run the server
-python examples/run_api_with_auth.py
+# Run the server with authentication enabled
+ursa gui start --auth
 ```
 
 ### Python Code Example
@@ -365,22 +366,15 @@ aws cognito-idp list-user-pools --max-results 10
 
 ```bash
 # AWS Configuration
-export AWS_REGION=us-west-2
-export AWS_PROFILE=my-profile
-
-# DynamoDB Tables
-export WORKSET_TABLE_NAME=daylily-worksets
-export CUSTOMER_TABLE_NAME=daylily-customers
-
-# Cognito Configuration (only if using authentication)
-export COGNITO_USER_POOL_ID=us-west-2_XXXXXXXXX
-export COGNITO_APP_CLIENT_ID=XXXXXXXXXXXXXXXXXXXXXXXXXX
-
-# API Configuration
-export API_HOST=0.0.0.0
-export API_PORT=8000
-export ENABLE_AUTH=false  # or true
+# Optional environment variable overrides
+# These override values in ~/.config/ursa/ursa-config.yaml
+export AWS_PROFILE=my-profile  # or set aws_profile in YAML
+export COGNITO_USER_POOL_ID=us-west-2_XXXXXXXXX  # or set cognito_user_pool_id in YAML
+export COGNITO_APP_CLIENT_ID=XXXXXXXXXXXXXXXXXXXXXXXXXX  # or set cognito_app_client_id in YAML
 ```
+
+Primary configuration should be in `~/.config/ursa/ursa-config.yaml`.
+Run `ursa env generate` to create a template.
 
 ## See Also
 
