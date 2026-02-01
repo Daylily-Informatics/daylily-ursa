@@ -31,7 +31,18 @@
                 </div>
                 <div class="form-group">
                     <label class="form-label">S3 Bucket</label>
-                    <input type="text" class="form-control" value="s3://{{ customer.s3_bucket | default('') }}" readonly>
+                    <div class="bucket-status-row">
+                        <input type="text" id="s3-bucket-input" class="form-control" value="s3://{{ customer.s3_bucket | default('') }}" readonly>
+                        <span id="bucket-status-indicator" class="bucket-status-icon" title="Checking...">
+                            <i class="fas fa-spinner fa-spin"></i>
+                        </span>
+                    </div>
+                    <div id="bucket-status-message" class="form-help"></div>
+                    <div id="bucket-provision-container" style="display: none; margin-top: 0.5rem;">
+                        <button id="provision-bucket-btn" class="btn btn-primary btn-sm" onclick="provisionBucket()">
+                            <i class="fas fa-plus-circle"></i> Provision Bucket
+                        </button>
+                    </div>
                 </div>
             </form>
         </div>
@@ -672,11 +683,178 @@
         color: var(--text-muted);
         font-style: italic;
     }
+
+    /* S3 Bucket Status Indicator */
+    .bucket-status-row {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+
+    .bucket-status-row .form-control {
+        flex: 1;
+    }
+
+    .bucket-status-icon {
+        width: 2rem;
+        height: 2rem;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 50%;
+        font-size: 1rem;
+        flex-shrink: 0;
+    }
+
+    .bucket-status-icon.status-checking {
+        color: var(--text-muted);
+    }
+
+    .bucket-status-icon.status-ok {
+        background: rgba(34, 197, 94, 0.15);
+        color: #22c55e;
+    }
+
+    .bucket-status-icon.status-missing {
+        background: rgba(239, 68, 68, 0.15);
+        color: #ef4444;
+    }
+
+    .bucket-status-icon.status-warning {
+        background: rgba(245, 158, 11, 0.15);
+        color: #f59e0b;
+    }
+
+    .bucket-status-message {
+        font-size: 0.85rem;
+        margin-top: 0.25rem;
+    }
+
+    .bucket-status-message.status-ok {
+        color: #22c55e;
+    }
+
+    .bucket-status-message.status-missing {
+        color: #ef4444;
+    }
+
+    .bucket-status-message.status-warning {
+        color: #f59e0b;
+    }
 </style>
 {% endblock %}
 
 {% block extra_js %}
 <script>
+// S3 Bucket Status Functions
+async function checkBucketStatus() {
+    const indicator = document.getElementById('bucket-status-indicator');
+    const messageEl = document.getElementById('bucket-status-message');
+    const provisionContainer = document.getElementById('bucket-provision-container');
+
+    try {
+        const response = await fetch('/api/v1/account/bucket-status');
+        const data = await response.json();
+
+        // Remove previous status classes
+        indicator.className = 'bucket-status-icon';
+        messageEl.className = 'form-help bucket-status-message';
+
+        if (data.status === 'fully_configured' || data.status === 'valid') {
+            // Bucket exists and is accessible
+            indicator.classList.add('status-ok');
+            indicator.innerHTML = '<i class="fas fa-check-circle"></i>';
+            indicator.title = 'Bucket exists and is accessible';
+            messageEl.classList.add('status-ok');
+            messageEl.innerHTML = '<i class="fas fa-check"></i> Bucket verified: ' +
+                (data.can_read ? 'Read ✓' : 'Read ✗') + ', ' +
+                (data.can_write ? 'Write ✓' : 'Write ✗') + ', ' +
+                (data.can_list ? 'List ✓' : 'List ✗');
+            provisionContainer.style.display = 'none';
+        } else if (data.status === 'missing') {
+            // Bucket doesn't exist
+            indicator.classList.add('status-missing');
+            indicator.innerHTML = '<i class="fas fa-times-circle"></i>';
+            indicator.title = 'Bucket does not exist';
+            messageEl.classList.add('status-missing');
+            messageEl.textContent = 'Bucket does not exist. Click "Provision Bucket" to create it.';
+            provisionContainer.style.display = 'block';
+        } else if (data.status === 'permission_denied') {
+            // Bucket exists but permission denied
+            indicator.classList.add('status-warning');
+            indicator.innerHTML = '<i class="fas fa-exclamation-triangle"></i>';
+            indicator.title = 'Permission denied';
+            messageEl.classList.add('status-warning');
+            messageEl.textContent = 'Bucket exists but access denied. Contact support.';
+            provisionContainer.style.display = 'none';
+        } else if (data.status === 'not_configured') {
+            // No bucket configured
+            indicator.classList.add('status-missing');
+            indicator.innerHTML = '<i class="fas fa-question-circle"></i>';
+            indicator.title = 'No bucket configured';
+            messageEl.classList.add('status-missing');
+            messageEl.textContent = 'No S3 bucket configured for this account.';
+            provisionContainer.style.display = 'none';
+        } else {
+            // Other errors
+            indicator.classList.add('status-warning');
+            indicator.innerHTML = '<i class="fas fa-exclamation-triangle"></i>';
+            indicator.title = 'Validation error';
+            messageEl.classList.add('status-warning');
+            const errorText = data.errors && data.errors.length > 0 ? data.errors.join('; ') : 'Unknown error';
+            messageEl.textContent = 'Validation issue: ' + errorText;
+            provisionContainer.style.display = 'none';
+        }
+    } catch (error) {
+        console.error('Bucket status check failed:', error);
+        indicator.className = 'bucket-status-icon status-warning';
+        indicator.innerHTML = '<i class="fas fa-exclamation-triangle"></i>';
+        indicator.title = 'Status check failed';
+        messageEl.className = 'form-help bucket-status-message status-warning';
+        messageEl.textContent = 'Failed to check bucket status.';
+    }
+}
+
+async function provisionBucket() {
+    const btn = document.getElementById('provision-bucket-btn');
+    const originalHtml = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Provisioning...';
+
+    try {
+        const response = await fetch('/api/v1/account/provision-bucket', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+            if (data.provisioned) {
+                showToast('success', 'Success', 'S3 bucket created successfully!');
+            } else {
+                showToast('info', 'Info', data.message || 'Bucket already exists.');
+            }
+            // Re-check bucket status
+            await checkBucketStatus();
+        } else {
+            const detail = data.detail || 'Failed to provision bucket';
+            showToast('error', 'Error', detail);
+        }
+    } catch (error) {
+        console.error('Provision bucket failed:', error);
+        showToast('error', 'Error', 'Failed to provision bucket. Please try again.');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = originalHtml;
+    }
+}
+
+// Check bucket status on page load
+document.addEventListener('DOMContentLoaded', function() {
+    checkBucketStatus();
+});
+
 // Tab switching function for environment variables
 function switchTab(event, tabId) {
     // Remove active class from all buttons and content

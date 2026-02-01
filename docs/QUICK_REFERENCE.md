@@ -16,7 +16,7 @@ pip install -e .
 
 ```bash
 # Using the ursa CLI (recommended)
-ursa server start --foreground
+ursa gui start --foreground
 
 # Using the packaged console script
 daylily-workset-api --host 0.0.0.0 --port 8001
@@ -268,19 +268,13 @@ print(f"Storage: {usage['storage_gb']} GB")
 export AWS_PROFILE=my-profile
 export AWS_REGION=us-west-2
 
-# DynamoDB table names
-export WORKSET_TABLE_NAME=daylily-worksets
-export CUSTOMER_TABLE_NAME=daylily-customers
-
-# Cognito configuration
-export COGNITO_USER_POOL_ID=us-west-2_XXXXXXXXX
-export COGNITO_APP_CLIENT_ID=XXXXXXXXXXXXXXXXXXXXXXXXXX
-
-# API configuration
-export API_HOST=0.0.0.0
-export API_PORT=8001
-export ENABLE_AUTH=true
+# Optional overrides (values from ~/.config/ursa/ursa-config.yaml are used by default)
+# export AWS_PROFILE=your-profile
+# export COGNITO_USER_POOL_ID=us-west-2_XXXXXXXXX
+# export COGNITO_APP_CLIENT_ID=XXXXXXXXXXXXXXXXXXXXXXXXXX
 ```
+
+See `~/.config/ursa/ursa-config.yaml` for primary configuration.
 
 ## Testing
 

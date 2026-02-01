@@ -196,6 +196,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             or os.getenv("COGNITO_APP_CLIENT_ID")
             or ursa_config.cognito_app_client_id
         )
+        app_client_secret = (
+            os.getenv("COGNITO_APP_CLIENT_SECRET")
+            or ursa_config.cognito_app_client_secret
+        )
         cognito_region = (
             os.getenv("COGNITO_REGION")
             or ursa_config.cognito_region
@@ -226,6 +230,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             region=cognito_region,
             user_pool_id=user_pool_id,
             app_client_id=app_client_id,
+            app_client_secret=app_client_secret,
             profile=args.profile,
             settings=settings,
         )
@@ -298,19 +303,36 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
 
     auth_status = "ENABLED" if enable_auth else "DISABLED"
+
+    # Check for SSL configuration from environment
+    ssl_cert_path = os.environ.get("URSA_SSL_CERT_PATH")
+    ssl_key_path = os.environ.get("URSA_SSL_KEY_PATH")
+    use_ssl = ssl_cert_path and ssl_key_path
+
+    protocol = "https" if use_ssl else "http"
     LOGGER.info(
-        "Starting API server on %s:%d (auth: %s)",
+        "Starting API server on %s://%s:%d (auth: %s)",
+        protocol,
         args.host,
         args.port,
         auth_status,
     )
-    uvicorn.run(
-        app,
-        host=args.host,
-        port=args.port,
-        reload=args.reload,
-        log_level="debug" if args.verbose else "info",
-    )
+
+    # Build uvicorn config
+    uvicorn_kwargs = {
+        "host": args.host,
+        "port": args.port,
+        "reload": args.reload,
+        "log_level": "debug" if args.verbose else "info",
+    }
+
+    # Add SSL configuration if certificates are provided
+    if use_ssl:
+        LOGGER.info("SSL enabled with cert: %s", ssl_cert_path)
+        uvicorn_kwargs["ssl_certfile"] = ssl_cert_path
+        uvicorn_kwargs["ssl_keyfile"] = ssl_key_path
+
+    uvicorn.run(app, **uvicorn_kwargs)
 
     return 0
 

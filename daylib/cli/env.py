@@ -53,12 +53,12 @@ def status():
         except Exception:
             table.add_row("AWS Region", "[yellow]Not configured[/yellow]")
 
-    # .env file
-    env_file = Path.cwd() / ".env"
-    if env_file.exists():
-        table.add_row(".env file", "[green]Found[/green]")
+    # Ursa config file
+    from daylib.ursa_config import DEFAULT_CONFIG_PATH
+    if DEFAULT_CONFIG_PATH.exists():
+        table.add_row("Config file", f"[green]Found[/green] ({DEFAULT_CONFIG_PATH})")
     else:
-        table.add_row(".env file", "[yellow]Not found[/yellow]")
+        table.add_row("Config file", f"[yellow]Not found[/yellow] ({DEFAULT_CONFIG_PATH})")
 
     console.print(table)
 
@@ -76,52 +76,53 @@ def status():
 
 @env_app.command("generate")
 def generate(
-    force: bool = typer.Option(False, "--force", "-f", help="Overwrite existing .env file"),
+    force: bool = typer.Option(False, "--force", "-f", help="Overwrite existing config file"),
 ):
-    """Generate .env file template."""
-    env_file = Path.cwd() / ".env"
+    """Generate ursa-config.yaml template in ~/.config/ursa/."""
+    from daylib.ursa_config import DEFAULT_CONFIG_PATH
 
-    if env_file.exists() and not force:
-        console.print("[yellow]⚠[/yellow]  .env file already exists")
+    if DEFAULT_CONFIG_PATH.exists() and not force:
+        console.print(f"[yellow]⚠[/yellow]  Config file already exists: {DEFAULT_CONFIG_PATH}")
         console.print("   Use --force to overwrite")
         return
 
+    # Ensure parent directory exists
+    DEFAULT_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+
     template = """# Ursa Configuration
 # ==================
-# This file is loaded by 'ursa server start' and other commands.
-# For multi-region configuration, use ~/.config/ursa/ursa-config.yaml instead.
+# This is the single source of configuration for Ursa.
+# Environment variables can override these values.
 
 # ========== AWS Configuration ==========
-# Regions are configured in ~/.config/ursa/ursa-config.yaml
-# Do NOT use AWS_DEFAULT_REGION - regions must be explicit per API call
+aws_profile: lsmc
 
-# Regions to scan for ParallelCluster instances (comma-separated)
-URSA_ALLOWED_REGIONS=us-west-2
+# Regions to scan for ParallelCluster instances
+regions:
+  - us-west-2
+  # - us-east-1
 
-# ========== Server Configuration ==========
-URSA_HOST=0.0.0.0
-URSA_PORT=8001
+# DynamoDB region (for workset state, customers, etc.)
+dynamo_db_region: us-west-2
 
-# ========== Authentication ==========
-# Set to 'true' to enable Cognito authentication
-ENABLE_AUTH=false
-
-# Cognito settings (required if ENABLE_AUTH=true)
-# Run 'ursa cognito setup' to create, or set manually
-# COGNITO_USER_POOL_ID=us-west-2_xxxxxxxxx
-# COGNITO_APP_CLIENT_ID=xxxxxxxxxxxxxxxxxxxxxxxxxx
+# ========== Authentication (Cognito) ==========
+# Run 'ursa cognito setup' to create these, or set manually
+# cognito_user_pool_id: us-west-2_xxxxxxxxx
+# cognito_app_client_id: xxxxxxxxxxxxxxxxxxxxxxxxxx
+# cognito_region: us-west-2
+# cognito_domain: your-domain
 
 # ========== S3 Configuration ==========
 # Default S3 bucket for workset data
-# S3_BUCKET=your-bucket-name
+# s3_bucket: your-bucket-name
 
 # ========== Optional ==========
 # Whitelist domains for user registration (comma-separated)
-# WHITELIST_DOMAINS=example.com,company.org
+# whitelist_domains: example.com,company.org
 """
 
-    env_file.write_text(template)
-    console.print("[green]✓[/green]  Created .env file")
+    DEFAULT_CONFIG_PATH.write_text(template)
+    console.print(f"[green]✓[/green]  Created config file: {DEFAULT_CONFIG_PATH}")
     console.print("   Edit it to configure your settings")
 
 

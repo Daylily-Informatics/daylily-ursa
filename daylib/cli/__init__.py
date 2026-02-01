@@ -8,7 +8,7 @@ from typing import Optional
 import typer
 from rich.console import Console
 
-from daylib.cli.server import server_app
+from daylib.cli.gui import gui_app
 from daylib.cli.monitor import monitor_app
 from daylib.cli.aws import aws_app
 from daylib.cli.cognito import cognito_app
@@ -81,7 +81,7 @@ app = typer.Typer(
 )
 
 # Register subcommand groups
-app.add_typer(server_app, name="server", help="API server management")
+app.add_typer(gui_app, name="gui", help="GUI/Portal management")
 app.add_typer(monitor_app, name="monitor", help="Workset monitor management")
 app.add_typer(aws_app, name="aws", help="AWS resource management")
 app.add_typer(cognito_app, name="cognito", help="Cognito authentication management")

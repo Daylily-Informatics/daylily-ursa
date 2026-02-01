@@ -44,8 +44,9 @@ class Settings(BaseSettings):
     """
 
     model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
+        # Configuration loaded from ~/.config/ursa/ursa-config.yaml via UrsaConfig.load()
+        # Environment variables override YAML values (standard pydantic behavior)
+        # No .env file loading - all config should be in YAML or explicit env vars
         case_sensitive=False,
         extra="ignore",
     )
@@ -104,6 +105,10 @@ class Settings(BaseSettings):
     cognito_app_client_id: Optional[str] = Field(
         default=None,
         description="AWS Cognito App Client ID",
+    )
+    cognito_domain: Optional[str] = Field(
+        default=None,
+        description="AWS Cognito domain (e.g., 'myapp.auth.us-west-2.amazoncognito.com')",
     )
     enable_auth: bool = Field(
         default=False,

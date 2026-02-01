@@ -73,7 +73,7 @@ print("✓ Workset registered successfully")
 
 ```bash
 # Using the ursa CLI (recommended)
-ursa server start --foreground
+ursa gui start --foreground
 
 # Or using the packaged console script directly
 daylily-workset-api \
@@ -234,7 +234,7 @@ Check your AWS credentials and IAM permissions. See [WORKSET_MONITOR_ENHANCEMENT
 lsof -i :8001
 
 # Try a different port
-ursa server start --port 8080 --foreground
+ursa gui start --port 8080 --foreground
 # Or: daylily-workset-api --port 8080
 ```
 

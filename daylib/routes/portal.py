@@ -20,7 +20,7 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlencode
 
 from botocore.exceptions import ClientError
 from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile, status
@@ -555,9 +555,10 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
 
     @router.get("/portal/logout", response_class=RedirectResponse)
     async def portal_logout(request: Request):
-        """Logout and redirect to login page.
+        """Logout and redirect to Cognito logout or login page.
 
-        Thoroughly clears all session data to prevent stale state.
+        Clears all session data and redirects to Cognito logout endpoint
+        if configured, otherwise redirects to local login page.
         """
         user_email = request.session.get("user_email", "unknown")
         LOGGER.info(f"Logging out user: {user_email}")
@@ -570,6 +571,24 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         request.session.clear()
 
         LOGGER.info(f"Session cleared for user: {user_email}")
+
+        # Redirect to Cognito logout if configured
+        cognito_domain = getattr(deps.settings, "cognito_domain", None)
+        cognito_client_id = getattr(deps.settings, "cognito_app_client_id", None)
+        if cognito_domain and cognito_client_id:
+            # Build Cognito logout URL
+            # The logout_uri must be registered in Cognito app client's sign-out URLs
+            logout_redirect = str(request.url_for("portal_login")) + "?success=You+have+been+logged+out"
+            params = {
+                "client_id": cognito_client_id,
+                # Include both for compatibility with different Cognito versions
+                "logout_uri": logout_redirect,
+                "redirect_uri": logout_redirect,
+            }
+            cognito_logout_url = f"https://{cognito_domain}/logout?{urlencode(params)}"
+            LOGGER.info(f"Redirecting to Cognito logout: {cognito_logout_url}")
+            return RedirectResponse(url=cognito_logout_url, status_code=302)
+
         return RedirectResponse(url="/portal/login?success=You+have+been+logged+out", status_code=302)
 
     @router.get("/portal/forgot-password", response_class=HTMLResponse)
@@ -851,6 +870,141 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         if not revoked:
             raise HTTPException(status_code=404, detail="Token not found")
         return {"revoked": True}
+
+    # ========== S3 Bucket Validation & Provisioning ==========
+
+    @router.get("/api/v1/account/bucket-status")
+    async def portal_api_bucket_status(request: Request):
+        """Check the status of the customer's configured S3 bucket.
+
+        Returns:
+            JSON with bucket validation status including exists, accessible, can_read, can_write, can_list
+        """
+        customer_id = _require_portal_api_session(request)
+        if not deps.customer_manager:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Customer management not configured")
+
+        customer = deps.customer_manager.get_customer_config(customer_id)
+        if not customer:
+            raise HTTPException(status_code=404, detail="Customer not found")
+
+        bucket_name = customer.s3_bucket
+        if not bucket_name:
+            return {
+                "bucket": None,
+                "status": "not_configured",
+                "exists": False,
+                "accessible": False,
+                "can_read": False,
+                "can_write": False,
+                "can_list": False,
+                "errors": ["No S3 bucket configured for this customer"],
+                "warnings": [],
+            }
+
+        from daylib.s3_bucket_validator import S3BucketValidator
+
+        try:
+            validator = S3BucketValidator(region=deps.region, profile=deps.profile)
+            result = validator.validate_bucket(bucket_name)
+
+            # Determine overall status
+            if not result.exists:
+                status_str = "missing"
+            elif not result.accessible:
+                status_str = "permission_denied"
+            elif result.is_fully_configured:
+                status_str = "fully_configured"
+            elif result.is_valid:
+                status_str = "valid"
+            else:
+                status_str = "invalid"
+
+            return {
+                "bucket": bucket_name,
+                "status": status_str,
+                "exists": result.exists,
+                "accessible": result.accessible,
+                "can_read": result.can_read,
+                "can_write": result.can_write,
+                "can_list": result.can_list,
+                "region": result.region,
+                "errors": result.errors,
+                "warnings": result.warnings,
+            }
+        except Exception as e:
+            LOGGER.error("Bucket status check failed for %s: %s", bucket_name, str(e))
+            return {
+                "bucket": bucket_name,
+                "status": "error",
+                "exists": False,
+                "accessible": False,
+                "can_read": False,
+                "can_write": False,
+                "can_list": False,
+                "errors": [f"Failed to check bucket status: {str(e)}"],
+                "warnings": [],
+            }
+
+    @router.post("/api/v1/account/provision-bucket")
+    async def portal_api_provision_bucket(request: Request):
+        """Provision the S3 bucket for the current customer if it doesn't exist.
+
+        This uses the same bucket creation logic as new account registration.
+        The bucket name is derived from the customer's configured s3_bucket field.
+        """
+        customer_id = _require_portal_api_session(request)
+        if not deps.customer_manager:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Customer management not configured")
+
+        customer = deps.customer_manager.get_customer_config(customer_id)
+        if not customer:
+            raise HTTPException(status_code=404, detail="Customer not found")
+
+        bucket_name = customer.s3_bucket
+        if not bucket_name:
+            raise HTTPException(status_code=400, detail="No S3 bucket configured for this customer")
+
+        # Check if bucket already exists
+        from daylib.s3_bucket_validator import S3BucketValidator
+
+        validator = S3BucketValidator(region=deps.region, profile=deps.profile)
+        result = validator.validate_bucket(bucket_name)
+
+        if result.exists:
+            return {
+                "provisioned": False,
+                "bucket": bucket_name,
+                "message": "Bucket already exists",
+                "status": "fully_configured" if result.is_fully_configured else "valid" if result.is_valid else "exists_but_issues",
+            }
+
+        # Bucket doesn't exist - create it
+        try:
+            # Use the CustomerManager's internal method to create the bucket
+            # with proper tags and lifecycle policies
+            deps.customer_manager._create_customer_bucket(
+                bucket_name=bucket_name,
+                customer_id=customer_id,
+                cost_center=customer.cost_center,
+                bucket_region=customer.bucket_region or deps.region,
+            )
+
+            # Re-validate after creation
+            result = validator.validate_bucket(bucket_name)
+
+            return {
+                "provisioned": True,
+                "bucket": bucket_name,
+                "message": "Bucket created successfully",
+                "status": "fully_configured" if result.is_fully_configured else "valid",
+            }
+        except Exception as e:
+            LOGGER.error("Failed to provision bucket %s for customer %s: %s", bucket_name, customer_id, str(e))
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to create bucket: {str(e)}"
+            )
 
     # ========== Worksets Routes ==========
 

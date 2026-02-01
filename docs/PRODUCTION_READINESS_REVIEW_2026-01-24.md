@@ -21,10 +21,10 @@ Read-only review of code + docs focused on “what remains” for production rea
 - Guardrails exist in settings (e.g., wildcard CORS forbidden in production; demo mode validation).
 
 ## Production blockers (fix before go-live)
-1. **CLI server launcher is not production-package-safe**
-   - `daylib/cli/server.py` shells out to `bin/daylily-workset-api` relative to repo root.
+1. **CLI GUI launcher is not production-package-safe**
+   - `daylib/cli/gui.py` shells out to `bin/daylily-workset-api` relative to repo root.
    - After `pip install daylily-ursa`, that `bin/` file likely won’t exist.
-   - This will break `ursa server start` in real deployments.
+   - This will break `ursa gui start` in real deployments.
    - TODO: make the executable scripts pip available console scripts instead of only repo-relative paths
 
 2. **No visible CI configuration in-repo**

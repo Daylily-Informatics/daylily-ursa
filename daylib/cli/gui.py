@@ -1,4 +1,4 @@
-"""Server management commands for Ursa CLI."""
+"""GUI/Portal management commands for Ursa CLI."""
 
 import os
 import signal
@@ -11,13 +11,15 @@ from typing import Optional
 
 import typer
 from rich.console import Console
+from rich.table import Table
 
-server_app = typer.Typer(help="API server management commands")
+gui_app = typer.Typer(help="GUI/Portal management commands")
 console = Console()
 
 # PID and log file locations (XDG Base Directory: ~/.config/ursa/)
 CONFIG_DIR = Path.home() / ".config" / "ursa"
 LOG_DIR = CONFIG_DIR / "logs"
+CERTS_DIR = CONFIG_DIR / "certs"
 PID_FILE = CONFIG_DIR / "server.pid"
 
 
@@ -62,36 +64,38 @@ def _get_pid() -> Optional[int]:
     return None
 
 
-def _source_env_file() -> bool:
-    """Source .env file if it exists."""
-    env_file = Path.cwd() / ".env"
-    if env_file.exists():
-        with open(env_file) as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    key, _, value = line.partition("=")
-                    # Remove quotes if present
-                    value = value.strip().strip('"').strip("'")
-                    os.environ[key.strip()] = value
-        return True
-    return False
 
 
-@server_app.command("start")
+
+@gui_app.command("start")
 def start(
     port: int = typer.Option(8001, "--port", "-p", help="Port to run the server on"),
     host: str = typer.Option("0.0.0.0", "--host", "-h", help="Host to bind to"),
     auth: bool = typer.Option(True, "--auth/--no-auth", help="Enable Cognito authentication"),
     reload: bool = typer.Option(False, "--reload", "-r", help="Enable auto-reload (foreground)"),
     background: bool = typer.Option(True, "--background/--foreground", "-b/-f", help="Run in background"),
+    insecure_http: bool = typer.Option(False, "--insecure-http", help="Use HTTP instead of HTTPS (not recommended)"),
+    cert: Optional[str] = typer.Option(None, "--cert", help="Path to SSL certificate file"),
+    key: Optional[str] = typer.Option(None, "--key", help="Path to SSL private key file"),
 ):
-    """Start the Ursa API server."""
+    """Start the Ursa API server with HTTPS (default).
+
+    By default, the server uses HTTPS with auto-generated self-signed certificates.
+    Certificates are stored in ~/.config/ursa/certs/ and created automatically
+    if they don't exist.
+
+    For production, use --cert and --key to specify your own certificates.
+    Use --insecure-http only for debugging (not recommended).
+
+    Examples:
+        ursa gui start                    # HTTPS with auto-generated cert
+        ursa gui start --insecure-http    # HTTP only (shows warning)
+        ursa gui start --cert /path/to/cert.pem --key /path/to/key.pem
+    """
     _ensure_dir()
 
-    # Source .env file
-    if _source_env_file():
-        console.print("[dim]Loaded .env file[/dim]")
+    # Configuration loaded from ~/.config/ursa/ursa-config.yaml via UrsaConfig
+    # Environment variables can override YAML values
 
     # Override with env vars if set
     port = int(os.environ.get("URSA_PORT", port))
@@ -131,6 +135,58 @@ def start(
     else:
         regions = ursa_config.get_allowed_regions()
         console.print(f"[green]✓[/green]  Ursa config loaded: [cyan]{len(regions)} regions[/cyan]")
+
+    # Handle SSL/HTTPS configuration
+    use_https = not insecure_http
+    ssl_cert_path: Optional[str] = None
+    ssl_key_path: Optional[str] = None
+
+    # Check for certificate path environment variable overrides
+    cert = cert or os.environ.get("URSA_SSL_CERT_PATH")
+    key = key or os.environ.get("URSA_SSL_KEY_PATH")
+
+    if use_https:
+        from daylib.cli.certs import (
+            DEFAULT_CERT_PATH,
+            DEFAULT_KEY_PATH,
+            certs_exist,
+            generate_self_signed_cert,
+            get_cert_info,
+        )
+
+        if cert and key:
+            # Custom certificate paths provided
+            ssl_cert_path = cert
+            ssl_key_path = key
+            if not Path(cert).exists():
+                console.print(f"[red]✗[/red]  Certificate not found: {cert}")
+                raise typer.Exit(1)
+            if not Path(key).exists():
+                console.print(f"[red]✗[/red]  Private key not found: {key}")
+                raise typer.Exit(1)
+            console.print(f"[green]✓[/green]  Using custom SSL certificate")
+        else:
+            # Use default certificate location
+            ssl_cert_path = str(DEFAULT_CERT_PATH)
+            ssl_key_path = str(DEFAULT_KEY_PATH)
+
+            if not certs_exist():
+                console.print("[dim]Generating self-signed certificate for HTTPS...[/dim]")
+                generate_self_signed_cert()
+                console.print("[green]✓[/green]  Self-signed certificate generated")
+
+            # Check certificate validity
+            info = get_cert_info()
+            if info and info["is_expired"]:
+                console.print("[yellow]⚠[/yellow]  Certificate expired, regenerating...")
+                generate_self_signed_cert()
+                info = get_cert_info()
+
+            if info:
+                console.print(f"[green]✓[/green]  HTTPS enabled (cert expires in {info['days_until_expiry']} days)")
+    else:
+        console.print("[yellow]⚠[/yellow]  [bold]INSECURE MODE:[/bold] Using HTTP instead of HTTPS")
+        console.print("   [dim]This is not recommended for anything other than debugging[/dim]")
 
     # Build command (package-safe: uses module execution, not repo-relative bin/)
     cmd = [
@@ -179,6 +235,14 @@ def start(
         env["DAYLILY_ENABLE_AUTH"] = "false"
         console.print("[yellow]⚠[/yellow]  Authentication DISABLED")
 
+    # Pass SSL configuration to the API server
+    if use_https and ssl_cert_path and ssl_key_path:
+        env["URSA_SSL_CERT_PATH"] = ssl_cert_path
+        env["URSA_SSL_KEY_PATH"] = ssl_key_path
+
+    # Determine protocol for URL display
+    protocol = "https" if use_https else "http"
+
     if reload:
         cmd.append("--reload")
         background = False  # Reload requires foreground
@@ -213,12 +277,19 @@ def start(
 
         PID_FILE.write_text(str(proc.pid))
         console.print(f"[green]✓[/green]  Server started (PID {proc.pid})")
-        console.print(f"   URL: [cyan]http://{host}:{port}[/cyan]")
-        console.print(f"   Portal: [cyan]http://{host}:{port}/portal[/cyan]")
+        console.print(f"   URL: [cyan]{protocol}://{host}:{port}[/cyan]")
+        console.print(f"   Portal: [cyan]{protocol}://{host}:{port}/portal[/cyan]")
         console.print(f"   Logs: [dim]{log_file}[/dim]")
+        if use_https:
+            console.print("")
+            console.print("[dim]Note: Browsers will show a warning for self-signed certificates.[/dim]")
+            console.print("[dim]      Click 'Advanced' → 'Proceed' to continue.[/dim]")
     else:
-        console.print(f"[green]✓[/green]  Starting server on [cyan]http://{host}:{port}[/cyan]")
-        console.print("   Press Ctrl+C to stop\n")
+        console.print(f"[green]✓[/green]  Starting server on [cyan]{protocol}://{host}:{port}[/cyan]")
+        console.print("   Press Ctrl+C to stop")
+        if use_https:
+            console.print("[dim]   Note: Accept the self-signed certificate warning in your browser[/dim]")
+        console.print("")
         try:
             result = subprocess.run(cmd, cwd=Path.cwd(), env=env)
             if result.returncode != 0:
@@ -227,7 +298,7 @@ def start(
             console.print("\n[yellow]⚠[/yellow]  Server stopped")
 
 
-@server_app.command("stop")
+@gui_app.command("stop")
 def stop():
     """Stop the Ursa API server."""
     pid = _get_pid()
@@ -256,7 +327,7 @@ def stop():
         raise typer.Exit(1)
 
 
-@server_app.command("status")
+@gui_app.command("status")
 def status():
     """Check the status of the Ursa API server."""
     pid = _get_pid()
@@ -264,15 +335,23 @@ def status():
         port = os.environ.get("URSA_PORT", "8001")
         host = os.environ.get("URSA_HOST", "0.0.0.0")
         log_file = _get_latest_log()
+
+        # Determine protocol based on certificate availability
+        from daylib.cli.certs import certs_exist
+        ssl_cert = os.environ.get("URSA_SSL_CERT_PATH")
+        ssl_key = os.environ.get("URSA_SSL_KEY_PATH")
+        use_https = (ssl_cert and ssl_key) or certs_exist()
+        protocol = "https" if use_https else "http"
+
         console.print(f"[green]●[/green]  Server is [green]running[/green] (PID {pid})")
-        console.print(f"   URL: [cyan]http://{host}:{port}[/cyan]")
+        console.print(f"   URL: [cyan]{protocol}://{host}:{port}[/cyan]")
         if log_file:
             console.print(f"   Logs: [dim]{log_file}[/dim]")
     else:
         console.print("[dim]○[/dim]  Server is [dim]not running[/dim]")
 
 
-@server_app.command("logs")
+@gui_app.command("logs")
 def logs(
     lines: int = typer.Option(50, "--lines", "-n", help="Number of lines to show"),
     all_logs: bool = typer.Option(False, "--all", "-a", help="List all log files"),
@@ -301,14 +380,120 @@ def logs(
         console.print("\n")
 
 
-@server_app.command("restart")
+@gui_app.command("restart")
 def restart(
     port: int = typer.Option(8001, "--port", "-p", help="Port to run the server on"),
     host: str = typer.Option("0.0.0.0", "--host", "-h", help="Host to bind to"),
     auth: bool = typer.Option(True, "--auth/--no-auth", help="Enable Cognito authentication"),
+    insecure_http: bool = typer.Option(False, "--insecure-http", help="Use HTTP instead of HTTPS (not recommended)"),
+    cert: Optional[str] = typer.Option(None, "--cert", help="Path to SSL certificate file"),
+    key: Optional[str] = typer.Option(None, "--key", help="Path to SSL private key file"),
 ):
     """Restart the Ursa API server."""
     stop()
     time.sleep(1)
-    start(port=port, host=host, auth=auth, reload=False, background=True)
+    start(
+        port=port,
+        host=host,
+        auth=auth,
+        reload=False,
+        background=True,
+        insecure_http=insecure_http,
+        cert=cert,
+        key=key,
+    )
 
+
+@gui_app.command("generate-cert")
+def generate_cert(
+    force: bool = typer.Option(False, "--force", "-f", help="Overwrite existing certificates"),
+    days: int = typer.Option(365, "--days", "-d", help="Certificate validity in days"),
+    cn: str = typer.Option("localhost", "--cn", help="Common Name for the certificate"),
+):
+    """Generate self-signed SSL certificate for HTTPS.
+
+    Creates a self-signed certificate and private key in ~/.config/ursa/certs/.
+    These are used automatically when starting the server with HTTPS.
+
+    Examples:
+        ursa gui generate-cert
+        ursa gui generate-cert --force --days 730
+        ursa gui generate-cert --cn myhost.local
+    """
+    from daylib.cli.certs import (
+        DEFAULT_CERT_PATH,
+        DEFAULT_KEY_PATH,
+        DEFAULT_SANS,
+        certs_exist,
+        generate_self_signed_cert,
+        get_cert_info,
+    )
+
+    if certs_exist() and not force:
+        console.print("[yellow]⚠[/yellow]  Certificates already exist:")
+        console.print(f"   Certificate: [dim]{DEFAULT_CERT_PATH}[/dim]")
+        console.print(f"   Private key: [dim]{DEFAULT_KEY_PATH}[/dim]")
+        console.print("   Use [cyan]--force[/cyan] to regenerate")
+        return
+
+    console.print("[dim]Generating self-signed certificate...[/dim]")
+    cert_path, key_path = generate_self_signed_cert(
+        cn=cn,
+        days=days,
+        sans=DEFAULT_SANS,
+    )
+
+    info = get_cert_info(cert_path)
+    if info:
+        console.print(f"[green]✓[/green]  Certificate generated successfully")
+        console.print(f"   Certificate: [cyan]{cert_path}[/cyan]")
+        console.print(f"   Private key: [cyan]{key_path}[/cyan]")
+        console.print(f"   Common Name: [dim]{cn}[/dim]")
+        console.print(f"   SANs: [dim]{', '.join(info['sans'])}[/dim]")
+        console.print(f"   Valid until: [dim]{info['not_valid_after'].strftime('%Y-%m-%d')}[/dim] ({info['days_until_expiry']} days)")
+        console.print(f"   Fingerprint: [dim]{info['fingerprint_sha256'][:47]}...[/dim]")
+        console.print("")
+        console.print("[yellow]Note:[/yellow] Browsers will show a warning for self-signed certificates.")
+        console.print("      This is normal for development. Click 'Advanced' → 'Proceed' to continue.")
+
+
+@gui_app.command("cert-info")
+def cert_info(
+    cert_path: Optional[str] = typer.Option(None, "--cert", help="Path to certificate file"),
+):
+    """Display information about the current SSL certificate.
+
+    Shows details about the certificate including expiration date,
+    fingerprint, and Subject Alternative Names (SANs).
+    """
+    from daylib.cli.certs import DEFAULT_CERT_PATH, get_cert_info
+
+    path = Path(cert_path) if cert_path else DEFAULT_CERT_PATH
+    info = get_cert_info(path)
+
+    if not info:
+        console.print(f"[yellow]⚠[/yellow]  No certificate found at: [dim]{path}[/dim]")
+        console.print("   Run [cyan]ursa gui generate-cert[/cyan] to create one")
+        return
+
+    table = Table(title="SSL Certificate Information", show_header=False)
+    table.add_column("Property", style="bold")
+    table.add_column("Value")
+
+    table.add_row("Path", info["path"])
+    table.add_row("Subject", info["subject"])
+    table.add_row("Issuer", info["issuer"])
+    table.add_row("SANs", ", ".join(info["sans"]))
+    table.add_row("Valid From", info["not_valid_before"].strftime("%Y-%m-%d %H:%M:%S UTC"))
+    table.add_row("Valid Until", info["not_valid_after"].strftime("%Y-%m-%d %H:%M:%S UTC"))
+
+    if info["is_expired"]:
+        table.add_row("Status", "[red]EXPIRED[/red]")
+    elif info["days_until_expiry"] < 30:
+        table.add_row("Status", f"[yellow]Expires in {info['days_until_expiry']} days[/yellow]")
+    else:
+        table.add_row("Status", f"[green]Valid[/green] ({info['days_until_expiry']} days remaining)")
+
+    table.add_row("SHA-256 Fingerprint", info["fingerprint_sha256"])
+
+    console.print(table)
