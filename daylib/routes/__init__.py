@@ -1,12 +1,17 @@
 """Daylily API route modules.
 
 This package contains FastAPI routers organized by functionality:
-- worksets: Core workset CRUD operations
-- customers: Customer management and customer-scoped operations
+- worksets: Core workset CRUD, queue stats, scheduling
+- customers: Customer CRUD operations
 - customer_worksets: Customer-scoped workset CRUD (list, create, cancel, retry, archive, etc.)
-- dashboard: Customer dashboard chart data (activity, cost history, cost breakdown)
-- billing: Customer billing summary, invoices, per-workset billing
-- utilities: S3 discovery, cost estimation, and other helper endpoints
+- files: Customer file management (S3 operations)
+- manifests: Customer manifest storage and retrieval
+- s3: S3 utility endpoints (discover, validate, policies)
+- clusters: ParallelCluster management
+- monitoring: Admin monitoring endpoints (command logs)
+- dashboard: Customer dashboard chart data
+- billing: Customer billing summary, invoices
+- utilities: Legacy S3 discovery, cost estimation
 - portal: HTML portal pages and web interface routes
 """
 
@@ -44,6 +49,12 @@ from daylib.routes.customer_worksets import (
 )
 from daylib.routes.dashboard import create_dashboard_router, DashboardDependencies
 from daylib.routes.billing import create_billing_router, BillingDependencies
+from daylib.routes.customers import create_customers_router, CustomerDependencies
+from daylib.routes.files import create_files_router, FileDependencies
+from daylib.routes.manifests import create_manifests_router, ManifestDependencies
+from daylib.routes.s3 import create_s3_router, S3Dependencies
+from daylib.routes.clusters import create_clusters_router, ClusterDependencies
+from daylib.routes.monitoring import create_monitoring_router, MonitoringDependencies
 
 __all__ = [
     # Router factories
@@ -57,6 +68,18 @@ __all__ = [
     "DashboardDependencies",
     "create_billing_router",
     "BillingDependencies",
+    "create_customers_router",
+    "CustomerDependencies",
+    "create_files_router",
+    "FileDependencies",
+    "create_manifests_router",
+    "ManifestDependencies",
+    "create_s3_router",
+    "S3Dependencies",
+    "create_clusters_router",
+    "ClusterDependencies",
+    "create_monitoring_router",
+    "MonitoringDependencies",
     # Pydantic models
     "WorksetCreate",
     "WorksetResponse",
