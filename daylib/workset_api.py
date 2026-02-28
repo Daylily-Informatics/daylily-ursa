@@ -14,7 +14,7 @@ from typing import Any, Dict, Optional, Tuple
 
 import yaml  # type: ignore[import-untyped]
 
-from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request, status
+from fastapi import APIRouter, Body, Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -763,6 +763,46 @@ def create_app(
             LOGGER.warning("Biospecimen endpoints will not be available")
     else:
         LOGGER.info("Biospecimen module not available - biospecimen API endpoints not registered")
+
+    # ========== API Versioning (v1) ==========
+    # Create a versioned router that mirrors all API routes under /v1/
+    # Original routes remain for backward compatibility.
+    v1_router = APIRouter(prefix="/v1", tags=["v1"])
+
+    # Always-available API routers
+    v1_router.include_router(worksets_router)
+    v1_router.include_router(mon_router)
+    v1_router.include_router(s3_router)
+    v1_router.include_router(cluster_router)
+
+    # Customer-dependent API routers
+    if customer_manager:
+        v1_router.include_router(cust_router)
+        v1_router.include_router(files_router)
+        v1_router.include_router(manifest_router)
+
+    # Template-dependent API routers (customer worksets, dashboard, billing)
+    if templates_dir.exists():
+        v1_router.include_router(cw_router)
+        v1_router.include_router(dash_router)
+        v1_router.include_router(billing_router)
+
+    # File management API router (conditional)
+    if file_registry and FILE_MANAGEMENT_AVAILABLE:
+        try:
+            v1_router.include_router(file_router)
+        except NameError:
+            pass  # file_router was not created due to earlier error
+
+    # Biospecimen API router (conditional)
+    if BIOSPECIMEN_AVAILABLE:
+        try:
+            v1_router.include_router(biospecimen_router)
+        except NameError:
+            pass  # biospecimen_router was not created due to earlier error
+
+    app.include_router(v1_router)
+    LOGGER.info("API v1 routes registered under /v1/ prefix")
 
     # Store settings in app state for access in route handlers
     app.state.settings = settings
