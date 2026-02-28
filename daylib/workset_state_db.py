@@ -23,8 +23,6 @@ LOGGER = logging.getLogger("daylily.workset_state_db")
 class WorksetState(str, Enum):
     """Workset lifecycle states."""
     READY = "ready"
-    LOCKED = "locked"  # Deprecated: lock ownership is tracked via lock_owner attributes.
-    QUEUED = "queued"  # Waiting for cluster capacity or scheduling
     IN_PROGRESS = "in_progress"
     COMPLETE = "complete"
     ERROR = "error"
@@ -32,9 +30,6 @@ class WorksetState(str, Enum):
     RETRYING = "retrying"  # Retry logic state
     FAILED = "failed"  # Permanent failure after max retries
     CANCELED = "canceled"  # User-initiated cancellation
-    PAUSED = "paused"  # Temporarily halted (keeps cluster assignment)
-    PENDING_REVIEW = "pending_review"  # QC failed, needs manual approval
-    BILLING_HOLD = "billing_hold"  # Customer quota exceeded
     ARCHIVED = "archived"  # Moved to archive storage
     DELETED = "deleted"  # Hard deleted from S3
 

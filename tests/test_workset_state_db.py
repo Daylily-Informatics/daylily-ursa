@@ -206,7 +206,7 @@ def test_acquire_lock_already_locked(state_db, mock_dynamodb):
     mock_table.get_item.return_value = {
         "Item": {
             "workset_id": "test-workset",
-            "state": WorksetState.LOCKED.value,
+            "state": WorksetState.READY.value,
             "lock_owner": "other-monitor",
             "lock_acquired_at": now.isoformat() + "Z",
         }
