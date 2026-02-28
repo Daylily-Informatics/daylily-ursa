@@ -1164,7 +1164,7 @@ class TestArchiveDeleteAPI:
         }
         mock_state_db.delete_workset.return_value = True
 
-        with patch("daylib.workset_api.boto3") as mock_boto:
+        with patch("daylib.routes.customer_worksets.boto3") as mock_boto:
             mock_s3 = MagicMock()
             mock_boto.client.return_value = mock_s3
             mock_s3.list_objects_v2.return_value = {"Contents": []}
