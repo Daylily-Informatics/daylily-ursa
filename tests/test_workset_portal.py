@@ -2542,7 +2542,7 @@ class TestBucketRegionDetectionAPI:
 
     def test_bucket_region_detection_us_east_1(self, client):
         """Test bucket region detection returns us-east-1 for None location."""
-        with patch("daylib.workset_api.boto3.Session") as mock_session:
+        with patch("daylib.routes.s3.boto3.Session") as mock_session:
             mock_s3 = MagicMock()
             mock_session.return_value.client.return_value = mock_s3
             # S3 returns None for us-east-1 buckets
@@ -2557,7 +2557,7 @@ class TestBucketRegionDetectionAPI:
 
     def test_bucket_region_detection_us_west_2(self, client):
         """Test bucket region detection returns correct region."""
-        with patch("daylib.workset_api.boto3.Session") as mock_session:
+        with patch("daylib.routes.s3.boto3.Session") as mock_session:
             mock_s3 = MagicMock()
             mock_session.return_value.client.return_value = mock_s3
             mock_s3.get_bucket_location.return_value = {"LocationConstraint": "us-west-2"}
@@ -2573,7 +2573,7 @@ class TestBucketRegionDetectionAPI:
         """Test bucket region detection handles non-existent bucket."""
         from botocore.exceptions import ClientError
 
-        with patch("daylib.workset_api.boto3.Session") as mock_session:
+        with patch("daylib.routes.s3.boto3.Session") as mock_session:
             mock_s3 = MagicMock()
             mock_session.return_value.client.return_value = mock_s3
             mock_s3.get_bucket_location.side_effect = ClientError(
@@ -2591,7 +2591,7 @@ class TestBucketRegionDetectionAPI:
         """Test bucket region detection handles access denied."""
         from botocore.exceptions import ClientError
 
-        with patch("daylib.workset_api.boto3.Session") as mock_session:
+        with patch("daylib.routes.s3.boto3.Session") as mock_session:
             mock_s3 = MagicMock()
             mock_session.return_value.client.return_value = mock_s3
             mock_s3.get_bucket_location.side_effect = ClientError(
