@@ -31,13 +31,11 @@
                 <select class="form-control form-select" id="filter-status" onchange="filterWorksets()">
                     <option value="">All Statuses</option>
                     <option value="ready"{% if filter_status == 'ready' %} selected{% endif %}>Ready</option>
-                    <option value="queued"{% if filter_status == 'queued' %} selected{% endif %}>Queued</option>
                     <option value="in_progress"{% if filter_status == 'in_progress' %} selected{% endif %}>In Progress</option>
                     <option value="complete"{% if filter_status == 'complete' %} selected{% endif %}>Complete</option>
                     <option value="error"{% if filter_status == 'error' %} selected{% endif %}>Error</option>
                     <option value="canceled"{% if filter_status == 'canceled' %} selected{% endif %}>Canceled</option>
-                    <option value="paused"{% if filter_status == 'paused' %} selected{% endif %}>Paused</option>
-                    <option value="pending_review"{% if filter_status == 'pending_review' %} selected{% endif %}>Pending Review</option>
+
                 </select>
             </div>
             <div class="form-group mb-0" style="min-width: 150px;">
@@ -188,10 +186,6 @@
                         {% endif %}
                         {% elif ws.state == 'canceled' %}
                         <span class="text-warning"><i class="fas fa-ban"></i> Canceled</span>
-                        {% elif ws.state == 'paused' %}
-                        <span class="text-warning"><i class="fas fa-pause"></i> Paused</span>
-                        {% elif ws.state == 'queued' %}
-                        <span class="text-muted"><i class="fas fa-hourglass-half"></i> Queued</span>
                         {% else %}
                         <span class="text-muted">Pending</span>
                         {% endif %}
