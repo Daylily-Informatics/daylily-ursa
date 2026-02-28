@@ -7,6 +7,11 @@ __pycache__/
 *.so
 .vscode
 
+# Temporary / debug artifacts
+tmp/
+_tmp_*
+*.bak
+
 # Distribution / packaging
 .Python
 build/

@@ -7,52 +7,78 @@ This document visualizes the state transitions in the enhanced workset monitorin
 ```mermaid
 stateDiagram-v2
     [*] --> READY: register_workset()
-    
-    READY --> LOCKED: acquire_lock()
-    LOCKED --> READY: release_lock() / timeout
-    LOCKED --> IN_PROGRESS: update_state()
-    
+
+    READY --> IN_PROGRESS: acquire_lock() + update_state()
+
     IN_PROGRESS --> COMPLETE: success
     IN_PROGRESS --> ERROR: failure
-    IN_PROGRESS --> READY: retry
-    
-    ERROR --> READY: retry
+    IN_PROGRESS --> CANCELED: user cancellation
+
+    ERROR --> RETRYING: auto‑retry (retries remaining)
+    ERROR --> FAILED: max retries exceeded
     ERROR --> IGNORED: mark_ignored()
-    
-    COMPLETE --> [*]
-    IGNORED --> [*]
-    
+
+    RETRYING --> READY: reset_for_retry()
+    RETRYING --> CANCELED: user cancellation
+
+    READY --> CANCELED: user cancellation
+
+    COMPLETE --> ARCHIVED: archive_workset()
+    FAILED --> ARCHIVED: archive_workset()
+    IGNORED --> ARCHIVED: archive_workset()
+    ERROR --> ARCHIVED: archive_workset()
+
+    ARCHIVED --> READY: restore_workset()
+    ARCHIVED --> DELETED: delete_workset()
+
     note right of READY
-        Workset is ready for processing
-        Can be queried by priority
+        Ready for processing
+        Queryable by priority
     end note
-    
-    note right of LOCKED
-        Workset is locked by a monitor
-        Lock has timeout (default 1 hour)
-        Stale locks auto-released
-    end note
-    
+
     note right of IN_PROGRESS
-        Workset is being processed
-        Cluster is assigned
-        Metrics are tracked
+        Actively processing
+        Cluster assigned, metrics tracked
     end note
-    
-    note right of COMPLETE
-        Processing completed successfully
-        Final state
-    end note
-    
+
     note right of ERROR
         Processing failed
-        Error details captured
-        Can be retried
+        Eligible for retry or ignore
     end note
-    
+
+    note right of RETRYING
+        Waiting for retry (exp. backoff)
+        Will reset to READY
+    end note
+
+    note right of COMPLETE
+        Processing succeeded
+        Can be archived
+    end note
+
+    note right of FAILED
+        Permanent failure
+        Max retries exhausted
+    end note
+
+    note right of CANCELED
+        User‑initiated cancellation
+        Terminal state
+    end note
+
     note right of IGNORED
-        Workset marked to skip
-        Final state
+        Marked to skip
+        Terminal state
+    end note
+
+    note right of ARCHIVED
+        Moved to archive storage
+        Can be restored or deleted
+    end note
+
+    note right of DELETED
+        Hard deleted from S3
+        Terminal state
     end note
 ```
 
@@ -60,46 +86,63 @@ stateDiagram-v2
 
 ### READY
 - **Description**: Workset is registered and ready for processing
-- **Entry**: `register_workset()` or retry from ERROR/IN_PROGRESS
-- **Exit**: Lock acquired by monitor
+- **Entry**: `register_workset()`, `reset_for_retry()`, or `restore_workset()`
+- **Exit**: `acquire_lock()` + `update_state(IN_PROGRESS)`, or user cancellation
 - **Queryable**: Yes, by priority (urgent > normal > low)
-- **Notifications**: State change notification
-
-### LOCKED
-- **Description**: Workset is locked by a monitor instance
-- **Entry**: `acquire_lock()` succeeds
-- **Exit**: Lock released or timeout
-- **Lock Timeout**: Configurable (default 1 hour)
-- **Auto-Release**: Stale locks automatically released
-- **Notifications**: Lock timeout notification
 
 ### IN_PROGRESS
 - **Description**: Workset is actively being processed
-- **Entry**: Monitor starts processing
-- **Exit**: Success, failure, or retry
-- **Tracking**: Cluster name, metrics, progress
-- **Notifications**: State change notification
+- **Entry**: Lock acquired and state updated by monitor
+- **Exit**: Success → COMPLETE, failure → ERROR, or user cancellation → CANCELED
+- **Tracking**: Cluster name, metrics, progress substeps
 
 ### COMPLETE
 - **Description**: Processing completed successfully
 - **Entry**: Successful pipeline completion
-- **Exit**: None (final state)
+- **Exit**: `archive_workset()` → ARCHIVED
 - **Tracking**: Final metrics, cost, duration
-- **Notifications**: Completion notification
 
 ### ERROR
-- **Description**: Processing failed
-- **Entry**: Pipeline failure or error
-- **Exit**: Retry or mark as ignored
-- **Tracking**: Error details, stack trace
-- **Notifications**: Error notification (urgent)
+- **Description**: Processing failed (may be retryable)
+- **Entry**: Pipeline failure or error during IN_PROGRESS
+- **Exit**: Auto-retry → RETRYING, max retries → FAILED, manual → IGNORED, or archive
+- **Tracking**: Error details, error category, failed step
+
+### RETRYING
+- **Description**: Awaiting retry with exponential backoff
+- **Entry**: `record_failure()` when retries remain (transient errors)
+- **Exit**: `reset_for_retry()` → READY, or user cancellation → CANCELED
+- **Backoff**: Exponential (base 2s, max 1 hour)
+- **Config**: Default max retries = 3
+
+### FAILED
+- **Description**: Permanent failure after exhausting all retries
+- **Entry**: `record_failure()` when max retries exceeded or permanent error
+- **Exit**: `archive_workset()` → ARCHIVED
+- **Terminal**: Yes (unless archived and restored)
+
+### CANCELED
+- **Description**: User-initiated cancellation
+- **Entry**: `update_state(CANCELED)` from READY, IN_PROGRESS, or RETRYING
+- **Exit**: None (terminal state)
 
 ### IGNORED
 - **Description**: Workset marked to be skipped
-- **Entry**: Manual intervention or policy
-- **Exit**: None (final state)
-- **Tracking**: Reason for ignoring
-- **Notifications**: State change notification
+- **Entry**: Manual intervention or policy decision from ERROR state
+- **Exit**: `archive_workset()` → ARCHIVED
+- **Terminal**: Yes (unless archived and restored)
+
+### ARCHIVED
+- **Description**: Moved to archive storage
+- **Entry**: `archive_workset()` from COMPLETE, ERROR, FAILED, or IGNORED
+- **Exit**: `restore_workset()` → READY, or `delete_workset()` → DELETED
+- **Tracking**: Original state preserved, archival metadata
+
+### DELETED
+- **Description**: Hard deleted from S3 / DynamoDB
+- **Entry**: `delete_workset()` from ARCHIVED (soft or hard delete)
+- **Exit**: None (terminal state)
+- **Note**: Hard delete removes the DynamoDB record entirely
 
 ## Priority Levels
 
@@ -122,32 +165,6 @@ graph LR
 - **NORMAL**: Processed by cost efficiency within normal priority
 - **LOW**: Processed last, optimized for lowest cost
 
-## Lock Mechanism
-
-```mermaid
-sequenceDiagram
-    participant M1 as Monitor 1
-    participant DB as DynamoDB
-    participant M2 as Monitor 2
-    
-    M1->>DB: acquire_lock(ws-001, monitor-1)
-    DB-->>M1: Success (conditional write)
-    
-    M2->>DB: acquire_lock(ws-001, monitor-2)
-    DB-->>M2: Failure (already locked)
-    
-    M1->>DB: update_state(IN_PROGRESS)
-    DB-->>M1: Success
-    
-    Note over M1: Process workset...
-    
-    M1->>DB: release_lock(ws-001, monitor-1)
-    DB-->>M1: Success
-    
-    M2->>DB: acquire_lock(ws-001, monitor-2)
-    DB-->>M2: Success (now available)
-```
-
 ## Audit Trail
 
 Every state transition is recorded in the `state_history` attribute:
@@ -157,36 +174,40 @@ Every state transition is recorded in the `state_history` attribute:
   "state_history": [
     {
       "timestamp": "2024-01-15T10:00:00Z",
-      "from_state": null,
-      "to_state": "ready",
-      "reason": "Workset registered",
-      "actor": "system"
+      "state": "ready",
+      "reason": "Workset registered"
     },
     {
       "timestamp": "2024-01-15T10:05:00Z",
-      "from_state": "ready",
-      "to_state": "locked",
-      "reason": "Lock acquired",
-      "actor": "monitor-1"
-    },
-    {
-      "timestamp": "2024-01-15T10:06:00Z",
-      "from_state": "locked",
-      "to_state": "in_progress",
-      "reason": "Pipeline started",
-      "actor": "monitor-1",
-      "cluster": "cluster-abc123"
+      "state": "in_progress",
+      "reason": "Pipeline started"
     },
     {
       "timestamp": "2024-01-15T12:30:00Z",
-      "from_state": "in_progress",
-      "to_state": "complete",
-      "reason": "Pipeline completed successfully",
-      "actor": "monitor-1",
-      "metrics": {
-        "duration_seconds": 8640,
-        "cost_usd": 45.50
-      }
+      "state": "error",
+      "reason": "Network timeout",
+      "error_category": "transient"
+    },
+    {
+      "timestamp": "2024-01-15T12:30:01Z",
+      "state": "retrying",
+      "reason": "Retry 1/3 after transient error",
+      "error_category": "transient"
+    },
+    {
+      "timestamp": "2024-01-15T12:35:00Z",
+      "state": "ready",
+      "reason": "Reset for retry attempt"
+    },
+    {
+      "timestamp": "2024-01-15T12:36:00Z",
+      "state": "in_progress",
+      "reason": "Pipeline restarted"
+    },
+    {
+      "timestamp": "2024-01-15T14:00:00Z",
+      "state": "complete",
+      "reason": "Pipeline completed successfully"
     }
   ]
 }
@@ -200,34 +221,33 @@ graph TB
     B -->|state_change| C[SNS Topic]
     B -->|error| D[SNS + Linear]
     B -->|completion| E[SNS + Linear]
-    B -->|lock_timeout| F[SNS]
-    
+    B -->|retry| F[SNS]
+
     C --> G[Email/SMS]
     D --> H[Email/SMS + Issue]
     E --> I[Email/SMS + Issue]
     F --> J[Email/SMS]
-    
+
     style D fill:#ff6b6b
     style E fill:#51cf66
 ```
 
 ## Best Practices
 
-1. **Always use locks** when processing worksets
-2. **Set appropriate timeouts** based on expected processing time
-3. **Monitor queue depth** to detect backlogs
-4. **Use priority wisely** - not everything is urgent
-5. **Track metrics** for cost optimization
-6. **Review error states** regularly
-7. **Set up notifications** for critical events
-8. **Maintain audit trail** for compliance
+1. **Monitor queue depth** to detect backlogs
+2. **Use priority wisely** — not everything is urgent
+3. **Track metrics** for cost optimization
+4. **Review ERROR and FAILED states** regularly
+5. **Set up notifications** for critical events
+6. **Archive completed worksets** to keep active tables lean
+7. **Maintain audit trail** for compliance
 
 ## Troubleshooting
 
-### Workset Stuck in LOCKED
-- Check lock timeout
-- Verify monitor is still running
-- Force release if monitor crashed
+### Workset Stuck in RETRYING
+- Check `retry_after` timestamp and backoff configuration
+- Verify monitor is polling for retry-eligible worksets
+- Consider canceling if the root cause is not transient
 
 ### High Queue Depth
 - Check cluster availability
@@ -235,7 +255,7 @@ graph TB
 - Consider adding more clusters
 
 ### Frequent Errors
-- Review error details in state
+- Review `error_category` (transient vs permanent)
 - Check cluster configuration
 - Verify input data quality
 
