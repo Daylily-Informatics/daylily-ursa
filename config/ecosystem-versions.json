@@ -1,0 +1,38 @@
+{
+  "schema_version": "1",
+  "last_updated": "2026-02-28",
+  "components": {
+    "daylily-ursa": {
+      "repo": "Daylily-Informatics/daylily-ursa",
+      "current": "0.1.7"
+    },
+    "daylily-ephemeral-cluster": {
+      "repo": "Daylily-Informatics/daylily-ephemeral-cluster",
+      "current": "0.7.601"
+    },
+    "daylily-omics-analysis": {
+      "repo": "Daylily-Informatics/daylily-omics-analysis",
+      "current": "0.7.602"
+    },
+    "daylily-cognito": {
+      "repo": "Daylily-Informatics/daylily-cognito",
+      "current": "0.1.13"
+    },
+    "daylily-omics-references": {
+      "repo": "Daylily-Informatics/daylily-omics-references",
+      "current": "0.3.1"
+    }
+  },
+  "tested_combinations": [
+    {
+      "date": "2026-02-28",
+      "ursa": "0.1.7",
+      "ephemeral_cluster": "0.7.601",
+      "omics_analysis": "0.7.602",
+      "cognito": "0.1.13",
+      "omics_references": "0.3.1",
+      "notes": "Initial baseline"
+    }
+  ]
+}
+

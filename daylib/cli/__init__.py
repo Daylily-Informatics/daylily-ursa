@@ -90,13 +90,80 @@ app.add_typer(env_app, name="env", help="Environment and configuration")
 
 
 @app.command("version")
-def version():
-    """Show Ursa version."""
+def version(
+    ecosystem: bool = typer.Option(False, "--ecosystem", help="Show cross-repo version compatibility matrix"),
+):
+    """Show Ursa version and optional ecosystem compatibility matrix."""
     try:
         from daylib import __version__
         console.print(f"ursa [cyan]{__version__}[/cyan]")
     except ImportError:
         console.print("ursa [cyan]dev[/cyan]")
+
+    if ecosystem:
+        _show_ecosystem_versions()
+
+
+def _show_ecosystem_versions() -> None:
+    """Display the cross-repo version compatibility matrix."""
+    import json
+    from rich.table import Table
+
+    # Locate ecosystem-versions.json relative to the project root
+    project_root = Path(__file__).resolve().parent.parent.parent
+    versions_path = project_root / "config" / "ecosystem-versions.json"
+
+    if not versions_path.exists():
+        console.print("[red]✗[/red] Ecosystem versions file not found: config/ecosystem-versions.json")
+        return
+
+    try:
+        data = json.loads(versions_path.read_text())
+    except (json.JSONDecodeError, OSError) as exc:
+        console.print(f"[red]✗[/red] Failed to read ecosystem versions: {exc}")
+        return
+
+    console.print()
+
+    # Component table
+    comp_table = Table(title="Ecosystem Components", title_style="bold cyan")
+    comp_table.add_column("Component", style="cyan")
+    comp_table.add_column("Repository", style="dim")
+    comp_table.add_column("Current Version", style="green")
+
+    for name, info in data.get("components", {}).items():
+        comp_table.add_row(name, info.get("repo", ""), info.get("current", "unknown"))
+
+    console.print(comp_table)
+    console.print()
+
+    # Tested combinations table
+    combos = data.get("tested_combinations", [])
+    if combos:
+        combo_table = Table(title="Tested Combinations", title_style="bold cyan")
+        combo_table.add_column("Date", style="dim")
+        combo_table.add_column("Ursa")
+        combo_table.add_column("Ephemeral Cluster")
+        combo_table.add_column("Omics Analysis")
+        combo_table.add_column("Cognito")
+        combo_table.add_column("Omics Refs")
+        combo_table.add_column("Notes", style="dim")
+
+        for combo in combos:
+            combo_table.add_row(
+                combo.get("date", ""),
+                combo.get("ursa", ""),
+                combo.get("ephemeral_cluster", ""),
+                combo.get("omics_analysis", ""),
+                combo.get("cognito", ""),
+                combo.get("omics_references", ""),
+                combo.get("notes", ""),
+            )
+
+        console.print(combo_table)
+
+    console.print()
+    console.print(f"[dim]Schema v{data.get('schema_version', '?')} · Last updated: {data.get('last_updated', '?')}[/dim]")
 
 
 def _format_value_with_source(value: Optional[str], source: str) -> str:
