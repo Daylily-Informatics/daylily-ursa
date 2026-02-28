@@ -200,13 +200,13 @@ class TestCustomerBillingCalculation:
                 "workset_id": "ws-001",
                 "customer_id": "cust-001",
                 "state": "complete",
-                "completed_at": "2026-01-20T10:00:00Z",
+                "completed_at": "2026-02-20T10:00:00Z",
             },
             {
                 "workset_id": "ws-002",
                 "customer_id": "cust-001",
                 "state": "complete",
-                "completed_at": "2026-01-21T10:00:00Z",
+                "completed_at": "2026-02-21T10:00:00Z",
             },
         ]
 
@@ -293,7 +293,7 @@ class TestInvoiceGeneration:
                 "workset_id": "ws-001",
                 "customer_id": "cust-001",
                 "state": "complete",
-                "completed_at": "2026-01-20T10:00:00Z",
+                "completed_at": "2026-02-20T10:00:00Z",
             },
         ]
         mock_state_db.get_cost_report.return_value = {
