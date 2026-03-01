@@ -126,7 +126,7 @@ Run API and monitor on the same instance:
 # Start API server
 python -m uvicorn daylib.workset_api:app \
     --host 0.0.0.0 \
-    --port 8001
+    --port 8914
 
 # Start monitor (separate process)
 daylily-workset-monitor \
@@ -149,7 +149,7 @@ containerDefinitions:
       - name: S3_BUCKET
         value: daylily-worksets-bucket
     portMappings:
-      - containerPort: 8001
+      - containerPort: 8914
 ```
 
 **Monitor (EC2/Lambda)**
@@ -320,7 +320,7 @@ integration.sync_all_pending_to_s3()
 Ensure the `/api/estimate-cost` endpoint is reachable:
 
 ```bash
-curl -X POST http://localhost:8001/api/estimate-cost \
+curl -X POST http://localhost:8914/api/estimate-cost \
     -H "Content-Type: application/json" \
     -d '{
         "pipeline_type": "germline",
@@ -335,4 +335,3 @@ curl -X POST http://localhost:8001/api/estimate-cost \
 - [AUTHENTICATION_SETUP.md](AUTHENTICATION_SETUP.md) - Cognito setup
 - [CUSTOMER_PORTAL.md](CUSTOMER_PORTAL.md) - Portal deployment
 - [WORKSET_MONITOR_README.md](WORKSET_MONITOR_README.md) - Monitor details
-

@@ -288,6 +288,16 @@
                                 <td>{% if env_vars.COGNITO_APP_CLIENT_ID %}<span class="env-value set">{{ env_vars.COGNITO_APP_CLIENT_ID }}</span>{% else %}<span class="env-value not-set">Not set</span>{% endif %}</td>
                                 <td>Cognito App Client ID for authentication</td>
                             </tr>
+                            <tr>
+                                <td><code>COGNITO_APP_CLIENT_SECRET</code></td>
+                                <td>{% if env_vars.COGNITO_APP_CLIENT_SECRET %}<span class="env-value set">{{ env_vars.COGNITO_APP_CLIENT_SECRET }}</span>{% else %}<span class="env-value not-set">Not set</span>{% endif %}</td>
+                                <td>Optional app client secret (required if client is configured with GenerateSecret=true)</td>
+                            </tr>
+                            <tr>
+                                <td><code>COGNITO_DOMAIN</code></td>
+                                <td>{% if env_vars.COGNITO_DOMAIN %}<span class="env-value set">{{ env_vars.COGNITO_DOMAIN }}</span>{% else %}<span class="env-value not-set">Not set</span>{% endif %}</td>
+                                <td>Optional Cognito Hosted UI domain for SSO/OAuth flows</td>
+                            </tr>
                         </tbody>
                     </table>
                 </div>
@@ -313,7 +323,7 @@
                             </tr>
                             <tr>
                                 <td><code>API_PORT</code></td>
-                                <td>{% if env_vars.API_PORT %}<span class="env-value set">{{ env_vars.API_PORT }}</span>{% else %}<span class="env-value not-set">8000 (default)</span>{% endif %}</td>
+                                <td>{% if env_vars.API_PORT %}<span class="env-value set">{{ env_vars.API_PORT }}</span>{% else %}<span class="env-value not-set">8914 (default)</span>{% endif %}</td>
                                 <td>API server port</td>
                             </tr>
                             <tr>
@@ -835,4 +845,3 @@ function confirmDeleteAccount() {
 }
 </script>
 {% endblock %}
-

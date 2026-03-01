@@ -100,7 +100,7 @@ Created `config/ecosystem-versions.json` and `ursa version --ecosystem` CLI comm
 | daylily-ursa | 0.1.7 | Daylily-Informatics/daylily-ursa |
 | daylily-ephemeral-cluster | 0.7.601 | Daylily-Informatics/daylily-ephemeral-cluster |
 | daylily-omics-analysis | 0.7.602 | Daylily-Informatics/daylily-omics-analysis |
-| daylily-cognito | 0.1.13 | Daylily-Informatics/daylily-cognito |
+| daylily-cognito | 0.1.22 | Daylily-Informatics/daylily-cognito |
 | daylily-omics-references | 0.3.1 | Daylily-Informatics/daylily-omics-references |
 
 ---
@@ -147,4 +147,3 @@ Three environments exist across the ecosystem:
 
 *Report generated during architectural survey session on 2026-02-28.*
 *6 PRs merged. 785 tests passing. Zero failures.*
-

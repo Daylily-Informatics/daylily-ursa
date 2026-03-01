@@ -52,28 +52,24 @@
                 </div>
                 
                 <div class="form-group">
+                    {% if auth_enabled %}
+                    <label for="session_email" class="form-label required">Authenticated Email</label>
+                    <input
+                        type="email"
+                        id="session_email"
+                        class="form-control"
+                        value="{{ pending_signup_email or '' }}"
+                        readonly
+                        disabled
+                    >
+                    <p class="form-text">Email is sourced from your Cognito sign-in session.</p>
+                    {% else %}
                     <label for="email" class="form-label required">Email Address</label>
                     <input type="email" id="email" name="email" class="form-control" 
                            placeholder="admin@company.com" required autocomplete="email">
+                    {% endif %}
                 </div>
             </div>
-            
-            {% if auth_enabled %}
-            <div class="grid grid-2">
-                <div class="form-group">
-                    <label for="password" class="form-label required">Password</label>
-                    <input type="password" id="password" name="password" class="form-control" 
-                           placeholder="Min 8 characters" required minlength="8">
-                    <p class="form-text">At least 8 characters with uppercase, lowercase, and number</p>
-                </div>
-                
-                <div class="form-group">
-                    <label for="password_confirm" class="form-label required">Confirm Password</label>
-                    <input type="password" id="password_confirm" name="password_confirm" class="form-control" 
-                           placeholder="Confirm password" required minlength="8">
-                </div>
-            </div>
-            {% endif %}
             
             <hr style="margin: var(--spacing-lg) 0; border-color: var(--color-gray-200);">
             
@@ -141,7 +137,7 @@
                 <div class="form-group">
                     <label for="bucket_region" class="form-label">Bucket Region</label>
                     <select id="bucket_region" name="bucket_region" class="form-control form-select">
-                        {% for region in allowed_regions | default(['us-west-2', 'us-east-1', 'eu-west-1']) %}
+                        {% for region in allowed_regions | default(['us-west-2', 'us-east-1', 'ap-south-1', 'eu-central-1']) %}
                         <option value="{{ region }}" {% if region == default_region %}selected{% endif %}>
                             {{ region }}
                         </option>
@@ -369,4 +365,3 @@ async function validateBucket() {
 }
 </script>
 {% endblock %}
-

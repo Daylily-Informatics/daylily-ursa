@@ -83,16 +83,10 @@ manager.create_customer_table_if_not_exists()
 
 ### 2. Setup Cognito Authentication
 
-```python
-
-from daylib.workset_auth import CognitoAuth
-
-# This creates both the user pool and app client automatically
-auth = CognitoAuth.create_with_new_pool(region="us-west-2")
-
-print(f"Pool ID: {auth.user_pool_id}")
-print(f"Client ID: {auth.app_client_id}")
-
+```bash
+source ../daylily-cognito/daycog_activate
+daycog setup --name daylily-workset-users --port 8914 --profile <aws-profile> --region us-west-2
+daycog add-user user@acme.com --password 'password123'
 ```
 
 ### 3. Start API with Authentication
@@ -100,7 +94,7 @@ print(f"Client ID: {auth.app_client_id}")
 ```python
 from daylib.workset_api import create_app
 from daylib.workset_state_db import WorksetStateDB
-from daylib.workset_auth import CognitoAuth
+from daylily_cognito.auth import CognitoAuth
 from daylib.workset_customer import CustomerManager
 
 # Initialize components
@@ -219,7 +213,7 @@ Response:
 ### Create Customer User
 
 ```python
-from daylib.workset_auth import CognitoAuth
+from daylily_cognito.auth import CognitoAuth
 
 auth = CognitoAuth(
     region="us-west-2",
@@ -236,14 +230,20 @@ user = auth.create_customer_user(
 
 ### Authenticate User
 
-Users authenticate using AWS Cognito:
+Users authenticate using the shared `daylily-cognito` library:
 
 ```bash
-# Using AWS CLI
-aws cognito-idp initiate-auth \
-  --auth-flow USER_PASSWORD_AUTH \
-  --client-id XXXXXXXXXXXXXXXXXXXXXXXXXX \
-  --auth-parameters USERNAME=user@acme.com,PASSWORD=password123
+python - <<'PY'
+import os
+from daylily_cognito.auth import CognitoAuth
+
+auth = CognitoAuth(
+    region=os.environ["COGNITO_REGION"],
+    user_pool_id=os.environ["COGNITO_USER_POOL_ID"],
+    app_client_id=os.environ.get("COGNITO_CLIENT_ID") or os.environ["COGNITO_APP_CLIENT_ID"],
+)
+print(auth.authenticate("user@acme.com", "password123")["id_token"])
+PY
 ```
 
 ### Use JWT Token
@@ -300,4 +300,3 @@ print(f"Utilization: {usage['storage_utilization_percent']}%")
 
 - [Authentication Setup](AUTHENTICATION_SETUP.md)
 - [Billing Integration](BILLING_INTEGRATION.md)
-

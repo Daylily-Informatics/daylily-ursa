@@ -100,16 +100,22 @@ URSA_ALLOWED_REGIONS=us-west-2
 
 # ========== Server Configuration ==========
 URSA_HOST=0.0.0.0
-URSA_PORT=8001
+URSA_PORT=8914
+# HTTPS is required for GUI/API startup.
+# If unset, `ursa server start` auto-generates localhost certs with mkcert.
+# URSA_SSL_CERT_FILE=/absolute/path/to/cert.pem
+# URSA_SSL_KEY_FILE=/absolute/path/to/key.pem
 
 # ========== Authentication ==========
 # Set to 'true' to enable Cognito authentication
 ENABLE_AUTH=false
 
 # Cognito settings (required if ENABLE_AUTH=true)
-# Run 'ursa cognito setup' to create, or set manually
+# Run 'daycog setup' from daylily-cognito to create, or set manually
 # COGNITO_USER_POOL_ID=us-west-2_xxxxxxxxx
 # COGNITO_APP_CLIENT_ID=xxxxxxxxxxxxxxxxxxxxxxxxxx
+# COGNITO_APP_CLIENT_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxxx
+# COGNITO_DOMAIN=your-domain-prefix.auth.us-west-2.amazoncognito.com
 
 # ========== S3 Configuration ==========
 # Default S3 bucket for workset data
@@ -159,4 +165,3 @@ def clean():
         console.print(f"\n[green]✓[/green]  Cleaned {removed} items")
     else:
         console.print("[dim]Nothing to clean[/dim]")
-

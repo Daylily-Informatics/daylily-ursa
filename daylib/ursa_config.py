@@ -61,6 +61,9 @@ VALID_FIELDS = {
     "cognito_region": (str, "AWS region for Cognito"),
     "cognito_user_pool_id": (str, "Cognito User Pool ID"),
     "cognito_app_client_id": (str, "Cognito App Client ID"),
+    "cognito_app_client_secret": (str, "Cognito App Client Secret"),
+    "cognito_domain": (str, "Cognito Hosted UI domain"),
+    "whitelist_domains": (str, "Allowed email domains for registration/login"),
 }
 
 
@@ -126,7 +129,16 @@ def validate_config_file(path: Path) -> Tuple[bool, List[str], List[str]]:
             errors.append(f"'regions' must be a list, got {type(regions).__name__}")
 
     # Validate string fields
-    for field_name in ["aws_profile", "dynamo_db_region", "cognito_region", "cognito_user_pool_id", "cognito_app_client_id"]:
+    for field_name in [
+        "aws_profile",
+        "dynamo_db_region",
+        "cognito_region",
+        "cognito_user_pool_id",
+        "cognito_app_client_id",
+        "cognito_app_client_secret",
+        "cognito_domain",
+        "whitelist_domains",
+    ]:
         if field_name in data and data[field_name] is not None:
             if not isinstance(data[field_name], str):
                 errors.append(f"'{field_name}' must be a string, got {type(data[field_name]).__name__}")
@@ -168,8 +180,17 @@ class UrsaConfig:
     cognito_app_client_id: Optional[str] = None
     """Cognito App Client ID (overridden by COGNITO_APP_CLIENT_ID env var)."""
 
+    cognito_app_client_secret: Optional[str] = None
+    """Cognito App Client Secret (overridden by COGNITO_APP_CLIENT_SECRET env var)."""
+
+    cognito_domain: Optional[str] = None
+    """Cognito Hosted UI domain (overridden by COGNITO_DOMAIN env var)."""
+
     cognito_region: Optional[str] = None
     """AWS region where Cognito User Pool is deployed (overridden by COGNITO_REGION env var)."""
+
+    whitelist_domains: Optional[str] = None
+    """Allowed registration/login email domains (overridden by WHITELIST_DOMAINS env var)."""
 
     _config_path: Optional[Path] = None
     """Path where config was loaded from."""
@@ -188,7 +209,10 @@ class UrsaConfig:
         - AWS_PROFILE overrides aws_profile
         - COGNITO_USER_POOL_ID overrides cognito_user_pool_id
         - COGNITO_APP_CLIENT_ID overrides cognito_app_client_id
+        - COGNITO_APP_CLIENT_SECRET overrides cognito_app_client_secret
+        - COGNITO_DOMAIN overrides cognito_domain
         - COGNITO_REGION overrides cognito_region
+        - WHITELIST_DOMAINS overrides whitelist_domains
 
         Args:
             config_path: Path to config file. If not provided, looks for
@@ -283,7 +307,10 @@ class UrsaConfig:
         dynamo_db_region = os.environ.get("DYNAMO_DB_REGION") or data.get("dynamo_db_region")
         cognito_user_pool_id = os.environ.get("COGNITO_USER_POOL_ID") or data.get("cognito_user_pool_id")
         cognito_app_client_id = os.environ.get("COGNITO_APP_CLIENT_ID") or data.get("cognito_app_client_id")
+        cognito_app_client_secret = os.environ.get("COGNITO_APP_CLIENT_SECRET") or data.get("cognito_app_client_secret")
+        cognito_domain = os.environ.get("COGNITO_DOMAIN") or data.get("cognito_domain")
         cognito_region = os.environ.get("COGNITO_REGION") or data.get("cognito_region")
+        whitelist_domains = os.environ.get("WHITELIST_DOMAINS") or data.get("whitelist_domains")
 
         config = cls(
             regions=region_configs,
@@ -291,7 +318,10 @@ class UrsaConfig:
             dynamo_db_region=dynamo_db_region,
             cognito_user_pool_id=cognito_user_pool_id,
             cognito_app_client_id=cognito_app_client_id,
+            cognito_app_client_secret=cognito_app_client_secret,
+            cognito_domain=cognito_domain,
             cognito_region=cognito_region,
+            whitelist_domains=whitelist_domains,
             _config_path=path,
             _from_legacy_path=from_legacy,
             _region_map=region_map,
@@ -360,6 +390,10 @@ class UrsaConfig:
         """
         return os.environ.get("COGNITO_REGION") or self.cognito_region
 
+    def get_effective_cognito_domain(self) -> Optional[str]:
+        """Get the effective Cognito Hosted UI domain (env var or config)."""
+        return os.environ.get("COGNITO_DOMAIN") or self.cognito_domain
+
     def get_effective_dynamo_db_region(self) -> str:
         """Get the effective DynamoDB region (env var, config, or default).
 
@@ -392,6 +426,9 @@ class UrsaConfig:
             "cognito_region": "COGNITO_REGION",
             "cognito_user_pool_id": "COGNITO_USER_POOL_ID",
             "cognito_app_client_id": "COGNITO_APP_CLIENT_ID",
+            "cognito_app_client_secret": "COGNITO_APP_CLIENT_SECRET",
+            "cognito_domain": "COGNITO_DOMAIN",
+            "whitelist_domains": "WHITELIST_DOMAINS",
         }
 
         env_var = env_map.get(field)
@@ -422,4 +459,3 @@ def get_ursa_config(reload: bool = False) -> UrsaConfig:
     if _global_config is None or reload:
         _global_config = UrsaConfig.load()
     return _global_config
-

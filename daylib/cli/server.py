@@ -5,6 +5,7 @@ import signal
 import subprocess
 import sys
 import time
+import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -19,6 +20,9 @@ console = Console()
 CONFIG_DIR = Path.home() / ".config" / "ursa"
 LOG_DIR = CONFIG_DIR / "logs"
 PID_FILE = CONFIG_DIR / "server.pid"
+CERT_DIR = CONFIG_DIR / "certs"
+DEFAULT_SSL_CERT_FILE = CERT_DIR / "ursa-localhost.pem"
+DEFAULT_SSL_KEY_FILE = CERT_DIR / "ursa-localhost-key.pem"
 
 
 def _require_auth_dependencies() -> None:
@@ -36,6 +40,71 @@ def _ensure_dir():
     """Ensure ~/.config/ursa directories exist."""
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     LOG_DIR.mkdir(parents=True, exist_ok=True)
+    CERT_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _resolve_https_cert_paths(host: str) -> tuple[str, str]:
+    """Resolve or generate HTTPS certificate/key paths.
+
+    Prefers explicit env vars:
+    - URSA_SSL_CERT_FILE
+    - URSA_SSL_KEY_FILE
+
+    If not provided, auto-generates localhost certs via mkcert.
+    """
+    cert_from_env = os.environ.get("URSA_SSL_CERT_FILE")
+    key_from_env = os.environ.get("URSA_SSL_KEY_FILE")
+
+    if cert_from_env or key_from_env:
+        if not cert_from_env or not key_from_env:
+            console.print("[red]✗[/red]  Both URSA_SSL_CERT_FILE and URSA_SSL_KEY_FILE must be set")
+            raise typer.Exit(1)
+        cert_path = Path(cert_from_env).expanduser()
+        key_path = Path(key_from_env).expanduser()
+        if not cert_path.exists() or not key_path.exists():
+            console.print("[red]✗[/red]  HTTPS certificate file(s) not found")
+            console.print(f"   cert: [dim]{cert_path}[/dim]")
+            console.print(f"   key:  [dim]{key_path}[/dim]")
+            raise typer.Exit(1)
+        return str(cert_path), str(key_path)
+
+    cert_path = DEFAULT_SSL_CERT_FILE
+    key_path = DEFAULT_SSL_KEY_FILE
+    if cert_path.exists() and key_path.exists():
+        return str(cert_path), str(key_path)
+
+    mkcert_bin = shutil.which("mkcert")
+    if not mkcert_bin:
+        console.print("[red]✗[/red]  HTTPS is required but mkcert is not installed")
+        console.print("   Install mkcert and retry, or set URSA_SSL_CERT_FILE / URSA_SSL_KEY_FILE")
+        raise typer.Exit(1)
+
+    # Install local root CA (idempotent), then generate a localhost cert.
+    subprocess.run([mkcert_bin, "-install"], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    san_hosts = ["localhost", "127.0.0.1", "::1"]
+    if host not in ("0.0.0.0", "::", "127.0.0.1", "localhost"):
+        san_hosts.insert(0, host)
+
+    try:
+        subprocess.run(
+            [
+                mkcert_bin,
+                "-cert-file",
+                str(cert_path),
+                "-key-file",
+                str(key_path),
+                *san_hosts,
+            ],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except subprocess.CalledProcessError:
+        console.print("[red]✗[/red]  Failed to generate HTTPS certs with mkcert")
+        raise typer.Exit(1)
+
+    return str(cert_path), str(key_path)
 
 
 def _get_log_file() -> Path:
@@ -56,8 +125,15 @@ def _get_pid() -> Optional[int]:
         try:
             pid = int(PID_FILE.read_text().strip())
             os.kill(pid, 0)
+            cmdline = subprocess.check_output(
+                ["ps", "-p", str(pid), "-o", "command="],
+                text=True,
+            ).strip()
+            if "daylib.workset_api_cli" not in cmdline:
+                PID_FILE.unlink(missing_ok=True)
+                return None
             return pid
-        except (ValueError, ProcessLookupError, PermissionError):
+        except (ValueError, ProcessLookupError, PermissionError, subprocess.SubprocessError):
             PID_FILE.unlink(missing_ok=True)
     return None
 
@@ -80,7 +156,7 @@ def _source_env_file() -> bool:
 
 @server_app.command("start")
 def start(
-    port: int = typer.Option(8001, "--port", "-p", help="Port to run the server on"),
+    port: int = typer.Option(8914, "--port", "-p", help="Port to run the server on"),
     host: str = typer.Option("0.0.0.0", "--host", "-h", help="Host to bind to"),
     auth: bool = typer.Option(True, "--auth/--no-auth", help="Enable Cognito authentication"),
     reload: bool = typer.Option(False, "--reload", "-r", help="Enable auto-reload (foreground)"),
@@ -101,7 +177,7 @@ def start(
     pid = _get_pid()
     if pid:
         console.print(f"[yellow]⚠[/yellow]  Server already running (PID {pid})")
-        console.print(f"   URL: [cyan]http://{host}:{port}[/cyan]")
+        console.print(f"   URL: [cyan]https://{host}:{port}[/cyan]")
         return
 
     # Check AWS_PROFILE (from env or config file)
@@ -118,6 +194,14 @@ def start(
     # Set in environment for subprocess and boto3
     if not os.environ.get("AWS_PROFILE"):
         os.environ["AWS_PROFILE"] = aws_profile
+
+    aws_region = (
+        os.environ.get("AWS_REGION")
+        or os.environ.get("AWS_DEFAULT_REGION")
+        or ursa_config.get_effective_dynamo_db_region()
+    )
+
+    ssl_certfile, ssl_keyfile = _resolve_https_cert_paths(host)
 
     # Check config file for region configuration
     if not ursa_config.is_configured:
@@ -143,7 +227,13 @@ def start(
         str(port),
         "--profile",
         aws_profile,
+        "--region",
+        aws_region,
         "--create-table",
+        "--ssl-certfile",
+        ssl_certfile,
+        "--ssl-keyfile",
+        ssl_keyfile,
     ]
 
     # Set up environment
@@ -155,12 +245,16 @@ def start(
         _require_auth_dependencies()
         env["DAYLILY_ENABLE_AUTH"] = "true"
         # Pass Cognito config from ursa config to environment if not already set
-        if ursa_config.cognito_user_pool_id and not os.environ.get("COGNITO_USER_POOL_ID"):
-            env["COGNITO_USER_POOL_ID"] = ursa_config.cognito_user_pool_id
-        if ursa_config.cognito_app_client_id and not os.environ.get("COGNITO_APP_CLIENT_ID"):
-            env["COGNITO_APP_CLIENT_ID"] = ursa_config.cognito_app_client_id
-        if ursa_config.cognito_region and not os.environ.get("COGNITO_REGION"):
-            env["COGNITO_REGION"] = ursa_config.cognito_region
+        if getattr(ursa_config, "cognito_user_pool_id", None) and not os.environ.get("COGNITO_USER_POOL_ID"):
+            env["COGNITO_USER_POOL_ID"] = str(ursa_config.cognito_user_pool_id)
+        if getattr(ursa_config, "cognito_app_client_id", None) and not os.environ.get("COGNITO_APP_CLIENT_ID"):
+            env["COGNITO_APP_CLIENT_ID"] = str(ursa_config.cognito_app_client_id)
+        if getattr(ursa_config, "cognito_app_client_secret", None) and not os.environ.get("COGNITO_APP_CLIENT_SECRET"):
+            env["COGNITO_APP_CLIENT_SECRET"] = str(ursa_config.cognito_app_client_secret)
+        if getattr(ursa_config, "cognito_domain", None) and not os.environ.get("COGNITO_DOMAIN"):
+            env["COGNITO_DOMAIN"] = str(ursa_config.cognito_domain)
+        if getattr(ursa_config, "cognito_region", None) and not os.environ.get("COGNITO_REGION"):
+            env["COGNITO_REGION"] = str(ursa_config.cognito_region)
 
         missing: list[str] = []
         if not env.get("COGNITO_USER_POOL_ID"):
@@ -213,11 +307,11 @@ def start(
 
         PID_FILE.write_text(str(proc.pid))
         console.print(f"[green]✓[/green]  Server started (PID {proc.pid})")
-        console.print(f"   URL: [cyan]http://{host}:{port}[/cyan]")
-        console.print(f"   Portal: [cyan]http://{host}:{port}/portal[/cyan]")
+        console.print(f"   URL: [cyan]https://{host}:{port}[/cyan]")
+        console.print(f"   Portal: [cyan]https://{host}:{port}/portal[/cyan]")
         console.print(f"   Logs: [dim]{log_file}[/dim]")
     else:
-        console.print(f"[green]✓[/green]  Starting server on [cyan]http://{host}:{port}[/cyan]")
+        console.print(f"[green]✓[/green]  Starting server on [cyan]https://{host}:{port}[/cyan]")
         console.print("   Press Ctrl+C to stop\n")
         try:
             result = subprocess.run(cmd, cwd=Path.cwd(), env=env)
@@ -261,11 +355,11 @@ def status():
     """Check the status of the Ursa API server."""
     pid = _get_pid()
     if pid:
-        port = os.environ.get("URSA_PORT", "8001")
+        port = os.environ.get("URSA_PORT", "8914")
         host = os.environ.get("URSA_HOST", "0.0.0.0")
         log_file = _get_latest_log()
         console.print(f"[green]●[/green]  Server is [green]running[/green] (PID {pid})")
-        console.print(f"   URL: [cyan]http://{host}:{port}[/cyan]")
+        console.print(f"   URL: [cyan]https://{host}:{port}[/cyan]")
         if log_file:
             console.print(f"   Logs: [dim]{log_file}[/dim]")
     else:
@@ -303,7 +397,7 @@ def logs(
 
 @server_app.command("restart")
 def restart(
-    port: int = typer.Option(8001, "--port", "-p", help="Port to run the server on"),
+    port: int = typer.Option(8914, "--port", "-p", help="Port to run the server on"),
     host: str = typer.Option("0.0.0.0", "--host", "-h", help="Host to bind to"),
     auth: bool = typer.Option(True, "--auth/--no-auth", help="Enable Cognito authentication"),
 ):
@@ -311,4 +405,3 @@ def restart(
     stop()
     time.sleep(1)
     start(port=port, host=host, auth=auth, reload=False, background=True)
-

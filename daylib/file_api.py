@@ -50,7 +50,7 @@ def _get_authenticated_customer_id(current_user: Optional[Dict]) -> Optional[str
     """Extract customer_id for the authenticated user from auth context.
 
     Supports both an explicit ``customer_id`` field and the Cognito
-    ``custom:customer_id`` claim used by :class:`~daylib.workset_auth.CognitoAuth`.
+    ``custom:customer_id`` claim used by :class:`~daylily_cognito.auth.CognitoAuth`.
 
     Returns ``None`` when no customer_id information is available so that
     callers can decide whether to enforce ownership checks or operate in
@@ -3094,4 +3094,3 @@ def create_file_api_router(
             )
 
     return router
-

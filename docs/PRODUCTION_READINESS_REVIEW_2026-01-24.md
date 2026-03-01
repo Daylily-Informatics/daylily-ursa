@@ -56,7 +56,7 @@ Read-only review of code + docs focused on “what remains” for production rea
     - TODO: add to new document 'FUTURE_DEVELOPMENT_PLAN.md`
 
 ## Documentation correctness (quick wins)
-- `docs/QUICKSTART_WORKSET_MONITOR.md` appears inconsistent about ports (example uses `--port 8000` but references `http://localhost:8001`).
+- `docs/QUICKSTART_WORKSET_MONITOR.md` should consistently use the default GUI/API port `8914`.
 - Ensure docs reflect the packaged entry points in `pyproject.toml` (avoid referencing repo-relative scripts).
 - TODO: review all documentation vs the actual state of the database and update accordingly
 
@@ -77,24 +77,24 @@ Read-only review of code + docs focused on “what remains” for production rea
 # Manual Notes From UI Debugging (to be digested in to clear prompt actions)
 Modifications
 
-http://localhost:8001/portal/usage
+http://localhost:8914/portal/usage
 billing info card should have edit button.
 
-http://localhost:8001/portal/register
+http://localhost:8914/portal/register
 
 Change the title page name to Ursa and change the flower to the constellationConfirm the Resource Limits specified are captured int he database. Make them visible on the account page if not already.If an aws account ID is entered, make sure we can see it… if we can not, propose to the user what fixes need to be in place to see the s3 resources .?What is cost center here for?  Is it same as budget?Please add a legal, very basic TOS and Privacy document which is modified for the company LSMC.Admin users should see an ‘admin’ tab, with features like:
 - Add user
 - Set/remove admin privileges
 - Change user password
 
-Only admin users should see the monitor page and cost details on the cluster page. All costs presented to non-admin users should only be for the budgets they have visibility to.On http://localhost:8001/portal/files/bucketsThe link buttons card should be moved above the linked buckets list, and styled to be as wide as the linked buckets list.
+Only admin users should see the monitor page and cost details on the cluster page. All costs presented to non-admin users should only be for the budgets they have visibility to.On http://localhost:8914/portal/files/bucketsThe link buttons card should be moved above the linked buckets list, and styled to be as wide as the linked buckets list.
 
 Remove discover files card and simply have a button that redirects to the auot-discover files page.
-Edit bucket should just be a button on the listed linked bucket that opens a dialog to edit the bucket properties.http://localhost:8001/portal/biospecimen
-Should be named ‘add new biospecimen’, subjects should have their own http://localhost:8001/portal/subjectsmove the Add New card above the list and style it so it is as wide as the list card.
-http://localhost:8001/portal/clustersAdmin users should be provided a button to delete cluster, which should have 2 acknowledgement prompts. It should run AWS_PROFILE=<profile> pcluster delete-cluster -n <cluster-name> —region <region>Logs
+Edit bucket should just be a button on the listed linked bucket that opens a dialog to edit the bucket properties.http://localhost:8914/portal/biospecimen
+Should be named ‘add new biospecimen’, subjects should have their own http://localhost:8914/portal/subjectsmove the Add New card above the list and style it so it is as wide as the list card.
+http://localhost:8914/portal/clustersAdmin users should be provided a button to delete cluster, which should have 2 acknowledgement prompts. It should run AWS_PROFILE=<profile> pcluster delete-cluster -n <cluster-name> —region <region>Logs
 
-http://localhost:8001/portal/files/uploadFails when trying to upload files to the provisioned and linked bucket
+http://localhost:8914/portal/files/uploadFails when trying to upload files to the provisioned and linked bucket
 INFO:     127.0.0.1:57432 - "GET /static/css/main.css?v=1769239044 HTTP/1.1" 200 OK
 INFO:     127.0.0.1:57430 - "GET /static/js/main.js?v=1769239044 HTTP/1.1" 200 OK
 2026-01-23 23:17:54,824 - daylily.routes.portal - INFO - Upload request from johnm@lsmc.life: RIH0_ANA0-HG002_DBC0_0.R1.fastq.gz to bucket lb-33db76e4e0f0948a
@@ -116,15 +116,15 @@ INFO:     127.0.0.1:57447 - "GET /api/monitor/status HTTP/1.1" 200 OK
 - If worksets are retried, the selected worksets to retry should not be edited, but left in their current status,… a new workset with the same name prefix, but new date time suffix should be cloned from it and registered as ready.
 
 
-http://localhost:8001/portal/worksets
-The footer should not be forced to always be visible , but truly only appear at the bottom of the page (this applies to all pages)# User link upper right (when hovering, the text displayed is off the visible page)http://localhost:8001/portal- The Samples column in Recent Worksets is always zero and this is incorrect.
-The rename button for account details does not work, should be renamed to ‘edit’ and allow editing fieldshttp://localhost:8001/portal/files/register- bulk import does not work. Fix and add tests
+http://localhost:8914/portal/worksets
+The footer should not be forced to always be visible , but truly only appear at the bottom of the page (this applies to all pages)# User link upper right (when hovering, the text displayed is off the visible page)http://localhost:8914/portal- The Samples column in Recent Worksets is always zero and this is incorrect.
+The rename button for account details does not work, should be renamed to ‘edit’ and allow editing fieldshttp://localhost:8914/portal/files/register- bulk import does not work. Fix and add tests
 Password min length:  set to minimum EIGHT chars.Generate API token does not work
 
 
 
 # For pipeline page
-http://localhost:8001/portal/clusters
+http://localhost:8914/portal/clusters
 run every 20 minutes the ssh commands on each headnode to gather info about the compute fleet:
 ## Best single sinfo
 sinfo -N -o "%.20N %.9P %.6t %.10c %.10m %.10G %.20R" | head -n 5
@@ -202,7 +202,7 @@ NodeName=i128-dy-c6gb256-1 CoresPerSocket=1
 The cost calculation per-workset should be triggered after the fst->s3 export completes, so it populates the cost info per sample and workset properly.
 
 # Usage page
-in http://localhost:8001/portal/usage, the card cost numbers do not match the circle pie chart cost numbers. These should draw from the same chart.
+in http://localhost:8914/portal/usage, the card cost numbers do not match the circle pie chart cost numbers. These should draw from the same chart.
 
 - export report button not working
 

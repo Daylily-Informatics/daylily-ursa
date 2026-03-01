@@ -32,7 +32,7 @@ pip install -e .
 python examples/run_api_without_auth.py
 
 # Or using uvicorn directly
-uvicorn daylib.workset_api:app --host 0.0.0.0 --port 8001
+uvicorn daylib.workset_api:app --host 0.0.0.0 --port 8914
 ```
 
 ### Python Code Example
@@ -52,16 +52,16 @@ app = create_app(
 
 # Run with uvicorn
 import uvicorn
-uvicorn.run(app, host="0.0.0.0", port=8000)
+uvicorn.run(app, host="0.0.0.0", port=8914)
 ```
 
 ### Testing Without Authentication
 
 ```bash
 # All endpoints work without authentication
-curl http://localhost:8001/worksets
-curl http://localhost:8001/queue/stats
-curl -X POST http://localhost:8001/customers \
+curl http://localhost:8914/worksets
+curl http://localhost:8914/queue/stats
+curl -X POST http://localhost:8914/customers \
   -H "Content-Type: application/json" \
   -d '{"customer_name": "Test", "email": "test@example.com"}'
 ```
@@ -78,40 +78,24 @@ pip install -e ".[auth]"
 pip install 'python-jose[cryptography]'
 ```
 
-### AWS Cognito Setup
+### Cognito Setup via `daycog` (Required)
 
-#### 1. Create User Pool
+Use the `daylily-cognito` operational CLI rather than direct AWS commands:
 
 ```bash
-aws cognito-idp create-user-pool \
-  --pool-name daylily-workset-users \
-  --policies "PasswordPolicy={MinimumLength=8,RequireUppercase=true,RequireLowercase=true,RequireNumbers=true}" \
-  --auto-verified-attributes email \
-  --username-attributes email
+source ../daylily-cognito/daycog_activate
+daycog setup --name daylily-workset-users --port 8914 --profile <aws-profile> --region us-west-2
 ```
 
-Save the `UserPoolId` from the response.
+This writes/updates `~/.config/daycog/default.env` with:
+- `COGNITO_REGION`
+- `COGNITO_USER_POOL_ID`
+- `COGNITO_APP_CLIENT_ID`
 
-#### 2. Create App Client
-
-```bash
-aws cognito-idp create-user-pool-client \
-  --user-pool-id us-west-2_XXXXXXXXX \
-  --client-name daylily-workset-api \
-  --explicit-auth-flows ALLOW_USER_PASSWORD_AUTH ALLOW_REFRESH_TOKEN_AUTH \
-  --generate-secret false
-```
-
-Save the `ClientId` from the response.
-
-#### 3. Create Test User
+Create a test user:
 
 ```bash
-aws cognito-idp admin-create-user \
-  --user-pool-id us-west-2_XXXXXXXXX \
-  --username test@example.com \
-  --user-attributes Name=email,Value=test@example.com \
-  --temporary-password TempPass123!
+daycog add-user test@example.com --password 'YourPassword123!'
 ```
 
 ### Running the Server
@@ -130,7 +114,7 @@ python examples/run_api_with_auth.py
 ```python
 from daylib.workset_api import create_app
 from daylib.workset_state_db import WorksetStateDB
-from daylib.workset_auth import CognitoAuth
+from daylily_cognito.auth import CognitoAuth
 
 # Initialize components
 state_db = WorksetStateDB("daylily-worksets", "us-west-2")
@@ -151,19 +135,25 @@ app = create_app(
 
 # Run with uvicorn
 import uvicorn
-uvicorn.run(app, host="0.0.0.0", port=8000)
+uvicorn.run(app, host="0.0.0.0", port=8914)
 ```
 
 ### Getting a JWT Token
 
 ```bash
-# Authenticate and get token
-aws cognito-idp initiate-auth \
-  --auth-flow USER_PASSWORD_AUTH \
-  --client-id XXXXXXXXXXXXXXXXXXXXXXXXXX \
-  --auth-parameters USERNAME=test@example.com,PASSWORD=YourPassword123! \
-  --query 'AuthenticationResult.IdToken' \
-  --output text
+# Authenticate via daylily-cognito library and print an ID token
+python - <<'PY'
+import os
+from daylily_cognito.auth import CognitoAuth
+
+auth = CognitoAuth(
+    region=os.environ["COGNITO_REGION"],
+    user_pool_id=os.environ["COGNITO_USER_POOL_ID"],
+    app_client_id=os.environ.get("COGNITO_CLIENT_ID") or os.environ["COGNITO_APP_CLIENT_ID"],
+)
+tokens = auth.authenticate("test@example.com", "YourPassword123!")
+print(tokens["id_token"])
+PY
 ```
 
 Save the token for API requests.
@@ -175,10 +165,10 @@ Save the token for API requests.
 TOKEN="eyJraWQiOiJ..."
 
 # Make authenticated requests
-curl http://localhost:8001/worksets \
+curl http://localhost:8914/worksets \
   -H "Authorization: Bearer $TOKEN"
 
-curl -X POST http://localhost:8001/customers \
+curl -X POST http://localhost:8914/customers \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"customer_name": "Test", "email": "test@example.com"}'
@@ -306,21 +296,29 @@ app = create_app(state_db=state_db, enable_auth=False)
 
 **Problem:** JWT token is expired or invalid.
 
-**Solution:** Get a new token:
+**Solution:** Get a new token via the shared library:
 ```bash
-aws cognito-idp initiate-auth \
-  --auth-flow USER_PASSWORD_AUTH \
-  --client-id XXXXXXXXXXXXXXXXXXXXXXXXXX \
-  --auth-parameters USERNAME=user@example.com,PASSWORD=password
+python - <<'PY'
+import os
+from daylily_cognito.auth import CognitoAuth
+
+auth = CognitoAuth(
+    region=os.environ["COGNITO_REGION"],
+    user_pool_id=os.environ["COGNITO_USER_POOL_ID"],
+    app_client_id=os.environ.get("COGNITO_CLIENT_ID") or os.environ["COGNITO_APP_CLIENT_ID"],
+)
+print(auth.authenticate("user@example.com", "password")["id_token"])
+PY
 ```
 
 ### "User pool not found" Error
 
 **Problem:** Cognito User Pool ID is incorrect.
 
-**Solution:** Verify the User Pool ID:
+**Solution:** Verify pool/app status using daycog:
 ```bash
-aws cognito-idp list-user-pools --max-results 10
+daycog status
+daycog list-pools --profile <aws-profile> --region us-west-2
 ```
 
 ## Environment Variables
@@ -340,7 +338,7 @@ export COGNITO_APP_CLIENT_ID=XXXXXXXXXXXXXXXXXXXXXXXXXX
 
 # API Configuration
 export API_HOST=0.0.0.0
-export API_PORT=8000
+export API_PORT=8914
 export ENABLE_AUTH=false  # or true
 ```
 
@@ -348,4 +346,3 @@ export ENABLE_AUTH=false  # or true
 
 - [Customer Portal Guide](CUSTOMER_PORTAL.md)
 - [Quick Reference](QUICK_REFERENCE.md)
-

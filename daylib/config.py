@@ -105,6 +105,14 @@ class Settings(BaseSettings):
         default=None,
         description="AWS Cognito App Client ID",
     )
+    cognito_app_client_secret: Optional[str] = Field(
+        default=None,
+        description="AWS Cognito App Client Secret (optional, required for secret-enabled app clients)",
+    )
+    cognito_domain: Optional[str] = Field(
+        default=None,
+        description="AWS Cognito Hosted UI domain (optional, used for SSO/OAuth flows)",
+    )
     enable_auth: bool = Field(
         default=False,
         description="Enable authentication (requires Cognito configuration)",
@@ -144,7 +152,7 @@ class Settings(BaseSettings):
         description="API server host",
     )
     api_port: int = Field(
-        default=8001,
+        default=8914,
         description="API server port",
     )
 
@@ -450,4 +458,3 @@ def get_settings_for_testing(**overrides) -> Settings:
     This bypasses the cache, allowing tests to use custom configuration.
     """
     return Settings(**overrides)
-

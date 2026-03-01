@@ -12,9 +12,9 @@ Usage:
     python examples/run_api_without_auth.py
 
 Then access the API at:
-    http://localhost:8001
-    http://localhost:8001/docs  (Swagger UI)
-    http://localhost:8001/redoc (ReDoc)
+    http://localhost:8914
+    http://localhost:8914/docs  (Swagger UI)
+    http://localhost:8914/redoc (ReDoc)
 """
 
 import logging
@@ -121,9 +121,9 @@ def main():
     LOGGER.info("Region: %s", REGION)
     LOGGER.info("DynamoDB Table: %s", WORKSET_TABLE)
     LOGGER.info("")
-    LOGGER.info("Starting server on http://0.0.0.0:8001")
-    LOGGER.info("API Documentation: http://localhost:8001/docs")
-    LOGGER.info("Alternative Docs: http://localhost:8001/redoc")
+    LOGGER.info("Starting server on http://0.0.0.0:8914")
+    LOGGER.info("API Documentation: http://localhost:8914/docs")
+    LOGGER.info("Alternative Docs: http://localhost:8914/redoc")
     LOGGER.info("=" * 60)
     
     # Run the server
@@ -131,7 +131,7 @@ def main():
     uvicorn.run(
         app,
         host="0.0.0.0",
-        port=8000,
+        port=8914,
         log_level="info",
     )
 
@@ -144,4 +144,3 @@ if __name__ == "__main__":
     except Exception as e:
         LOGGER.error("Failed to start server: %s", e, exc_info=True)
         sys.exit(1)
-

@@ -16,7 +16,7 @@
     },
     "daylily-cognito": {
       "repo": "Daylily-Informatics/daylily-cognito",
-      "current": "0.1.13"
+      "current": "0.1.22"
     },
     "daylily-omics-references": {
       "repo": "Daylily-Informatics/daylily-omics-references",
@@ -29,10 +29,9 @@
       "ursa": "0.1.7",
       "ephemeral_cluster": "0.7.601",
       "omics_analysis": "0.7.602",
-      "cognito": "0.1.13",
+      "cognito": "0.1.22",
       "omics_references": "0.3.1",
       "notes": "Initial baseline"
     }
   ]
 }
-

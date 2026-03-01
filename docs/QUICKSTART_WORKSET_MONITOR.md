@@ -81,24 +81,24 @@ daylily-workset-api \
     --region us-west-2 \
     --verbose
 
-# The API will be available at http://localhost:8001 (default port)
-# API docs at http://localhost:8001/docs
+# The API will be available at http://localhost:8914 (default port)
+# API docs at http://localhost:8914/docs
 ```
 
 ### 4. Test the API
 
 ```bash
 # Check health
-curl http://localhost:8001/
+curl http://localhost:8914/
 
 # Get workset details
-curl http://localhost:8001/worksets/my-first-workset
+curl http://localhost:8914/worksets/my-first-workset
 
 # List all worksets
-curl http://localhost:8001/worksets
+curl http://localhost:8914/worksets
 
 # Get queue statistics
-curl http://localhost:8001/queue/stats
+curl http://localhost:8914/queue/stats
 ```
 
 ## Basic Usage Examples
@@ -196,19 +196,19 @@ manager.notify(event)
 ### Check Queue Status
 
 ```bash
-curl http://localhost:8001/queue/stats | jq
+curl http://localhost:8914/queue/stats | jq
 ```
 
 ### Get Next Workset to Process
 
 ```bash
-curl http://localhost:8001/worksets/next | jq
+curl http://localhost:8914/worksets/next | jq
 ```
 
 ### Update Workset State via API
 
 ```bash
-curl -X PUT http://localhost:8001/worksets/my-first-workset/state \
+curl -X PUT http://localhost:8914/worksets/my-first-workset/state \
   -H "Content-Type: application/json" \
   -d '{
     "state": "complete",
@@ -231,7 +231,7 @@ Check your AWS credentials and IAM permissions. See [WORKSET_MONITOR_ENHANCEMENT
 ### API won't start
 ```bash
 # Check if port is in use
-lsof -i :8001
+lsof -i :8914
 
 # Try a different port
 ursa server start --port 8080 --foreground
@@ -243,4 +243,3 @@ ursa server start --port 8080 --foreground
 For issues and questions:
 - GitHub Issues: https://github.com/Daylily-Informatics/daylily-ursa/issues
 - Documentation: [docs/](../docs/)
-

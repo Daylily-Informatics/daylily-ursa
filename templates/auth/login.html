@@ -55,6 +55,24 @@
             Continue to Dashboard
         </a>
         {% else %}
+        {% if hosted_ui_enabled %}
+        <div class="alert alert-info">
+            <i class="fas fa-shield-alt"></i>
+            <div>
+                <strong>Single Sign-On Enabled</strong>
+                <p class="mb-0" style="font-size: 0.875rem;">
+                    Use Cognito Hosted UI to sign in.
+                </p>
+            </div>
+        </div>
+        <a href="{{ sso_login_url }}" class="btn btn-primary btn-block btn-lg">
+            <i class="fas fa-right-to-bracket"></i>
+            Continue to Sign In
+        </a>
+        <div class="auth-footer" style="margin-top: var(--spacing-md);">
+            <p>Having trouble? <a href="{{ reset_login_url }}">Reset login session</a></p>
+        </div>
+        {% else %}
         <form method="POST" action="/portal/login" id="login-form">
             <div class="form-group">
                 <label for="email" class="form-label required">Email Address</label>
@@ -87,9 +105,14 @@
             </button>
         </form>
         {% endif %}
+        {% endif %}
         
         <div class="auth-footer">
+            {% if hosted_ui_enabled %}
+            <p>Don't have an account? <a href="{{ sso_signup_url }}">Create one now</a></p>
+            {% else %}
             <p>Don't have an account? <a href="/portal/register">Create one now</a></p>
+            {% endif %}
         </div>
     </div>
 </div>
@@ -132,4 +155,3 @@ function togglePassword(inputId) {
 }
 </script>
 {% endblock %}
-

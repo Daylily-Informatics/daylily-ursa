@@ -66,7 +66,7 @@ ursa <group> <command> [args]
 | `ursa server` | API server management (start, stop, status, logs) |
 | `ursa monitor` | Workset monitor daemon (start, stop, status, logs) |
 | `ursa aws` | AWS resource management (setup, status, teardown) |
-| `ursa cognito` | Cognito authentication (setup, status, set-admin, set-password) |
+| `daycog` | Cognito/SSO management via `daylily-cognito` (setup, status, users, apps) |
 | `ursa test` | Testing and code quality (run, cov, lint, format, typecheck) |
 | `ursa env` | Environment and configuration (status, generate, clean) |
 
@@ -97,9 +97,10 @@ ursa aws status                # Check resource status
 ursa aws teardown              # Delete all resources (destructive)
 
 # Cognito authentication
-ursa cognito setup             # Create Cognito User Pool
-ursa cognito status            # Check Cognito configuration
-ursa cognito set-admin         # Grant/revoke admin status
+daycog setup             # Create Cognito User Pool + app client
+daycog status            # Check Cognito configuration
+daycog list-users        # List users in the configured pool
+daycog set-password --email user@example.com --password 'NewPass123!'
 ```
 
 ## Installation (Production)
@@ -118,7 +119,7 @@ pip install daylily-ursa[dev]
 
 ```bash
 # Start the API server directly
-daylily-workset-api --host 0.0.0.0 --port 8001
+daylily-workset-api --host 0.0.0.0 --port 8914
 
 # Start the workset monitor
 daylily-workset-monitor config/workset-monitor-config.yaml
@@ -134,7 +135,6 @@ daylib/
 ├── workset_integration.py  # DynamoDB/S3 integration layer
 ├── workset_metrics.py      # Storage and performance metrics
 ├── workset_customer.py     # Customer/tenant management
-├── workset_auth.py         # Authentication utilities
 ├── workset_multi_region.py # Multi-region coordination
 ├── file_registry.py        # File tracking and validation
 ├── biospecimen.py          # Sample/manifest management
@@ -144,7 +144,6 @@ daylib/
 │   ├── server.py           # Server commands
 │   ├── monitor.py          # Monitor commands
 │   ├── aws.py              # AWS resource commands
-│   ├── cognito.py          # Cognito commands
 │   ├── test.py             # Test commands
 │   └── env.py              # Environment commands
 └── routes/                 # FastAPI route modules
@@ -191,7 +190,7 @@ WHITELIST_DOMAINS=all  # or comma-separated: company.com,partner.org
 
 # Server
 URSA_HOST=0.0.0.0
-URSA_PORT=8001
+URSA_PORT=8914
 
 # Multi-Region (optional)
 DAYLILY_MULTI_REGION=false

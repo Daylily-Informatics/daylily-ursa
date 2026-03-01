@@ -17,17 +17,24 @@ import logging
 import csv
 import io
 import os
+import secrets
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlencode
 
 from botocore.exceptions import ClientError
 from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.security import HTTPAuthorizationCredentials
 from fastapi.templating import Jinja2Templates
 
 from daylib.config import Settings
+from daylily_cognito.oauth import (
+    build_authorization_url,
+    build_logout_url,
+    exchange_authorization_code,
+)
 from daylib.security import sanitize_for_log
 from daylib.s3_utils import RegionAwareS3Client
 from daylib.file_registry import detect_file_format as _detect_file_format
@@ -43,13 +50,19 @@ from daylib.routes.dependencies import (
 from daylib.workset_state_db import WorksetStateDB, WorksetState
 
 if TYPE_CHECKING:
-    from daylib.workset_auth import CognitoAuth
+    from daylily_cognito.auth import CognitoAuth
     from daylib.workset_customer import CustomerManager
 
 LOGGER = logging.getLogger("daylily.routes.portal")
 
 
 PASSWORD_MIN_LENGTH = 8
+PORTAL_REGISTRATION_REGIONS = [
+    "us-west-2",
+    "us-east-1",
+    "ap-south-1",
+    "eu-central-1",
+]
 
 
 class PortalDependencies:
@@ -174,6 +187,71 @@ def _require_portal_api_session(request: Request) -> str:
     if not user_email or not customer_id:
         raise HTTPException(status_code=401, detail="Not authenticated")
     return str(customer_id)
+
+
+def _clear_portal_auth_session(request: Request) -> None:
+    """Clear portal auth/session keys to avoid stale SSO/login loops."""
+    if not hasattr(request, "session"):
+        return
+    for key in [
+        "oauth_state",
+        "access_token",
+        "id_token",
+        "refresh_token",
+        "user_email",
+        "user_authenticated",
+        "customer_id",
+        "is_admin",
+        "challenge_session",
+        "challenge_email",
+        "pending_signup_email",
+        "pending_signup_access_token",
+        "pending_signup_id_token",
+        "pending_signup_refresh_token",
+    ]:
+        request.session.pop(key, None)
+
+
+def _get_effective_cognito_domain(deps: PortalDependencies) -> Optional[str]:
+    """Get Cognito Hosted UI domain from env or settings."""
+    return os.getenv("COGNITO_DOMAIN") or deps.settings.cognito_domain
+
+
+def _get_effective_callback_url(request: Request) -> str:
+    """Get OAuth callback URL from env or request context."""
+    configured = os.getenv("COGNITO_CALLBACK_URL")
+    if configured:
+        return configured
+    return str(request.url_for("portal_auth_callback"))
+
+
+def _get_effective_logout_url(request: Request) -> str:
+    """Get OAuth logout return URL from env or request context."""
+    configured = os.getenv("COGNITO_LOGOUT_URL")
+    if configured:
+        return configured
+    return str(request.base_url)
+
+
+def _build_signup_url(
+    *,
+    domain: str,
+    client_id: str,
+    redirect_uri: str,
+    state: str,
+    scope: str = "openid email profile",
+) -> str:
+    """Build Cognito Hosted UI signup URL."""
+    query = urlencode(
+        {
+            "client_id": client_id,
+            "response_type": "code",
+            "scope": scope,
+            "redirect_uri": redirect_uri,
+            "state": state,
+        }
+    )
+    return f"https://{domain}/signup?{query}"
 
 
 def _get_first_customer_converted(deps: PortalDependencies):
@@ -482,13 +560,206 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
     # ========== Authentication Routes ==========
 
     @router.get("/portal/login", response_class=HTMLResponse)
-    async def portal_login(request: Request, error: Optional[str] = None, success: Optional[str] = None):
-        """Login page."""
+    async def portal_login(
+        request: Request,
+        error: Optional[str] = None,
+        success: Optional[str] = None,
+        sso: bool = False,
+        reset: bool = False,
+        signup: bool = False,
+    ):
+        """Login page (or Hosted UI redirect when configured)."""
+        if request.session.get("user_email") and request.session.get("customer_id"):
+            return RedirectResponse(url="/portal/", status_code=302)
+
+        if reset:
+            _clear_portal_auth_session(request)
+            success = success or "Session cleared. Please try signing in again."
+
+        domain = _get_effective_cognito_domain(deps)
+        client_id = deps.settings.cognito_app_client_id
+        hosted_ui_enabled = bool(deps.enable_auth and deps.cognito_auth and domain and client_id)
+
+        if hosted_ui_enabled and not error and not success:
+            if sso or signup or not request.query_params:
+                _clear_portal_auth_session(request)
+                callback_url = _get_effective_callback_url(request)
+                state_token = secrets.token_urlsafe(24)
+                request.session["oauth_state"] = state_token
+
+                auth_url = (
+                    _build_signup_url(
+                        domain=domain,
+                        client_id=client_id,
+                        redirect_uri=callback_url,
+                        state=state_token,
+                    )
+                    if signup
+                    else build_authorization_url(
+                        domain=domain,
+                        client_id=client_id,
+                        redirect_uri=callback_url,
+                        state=state_token,
+                    )
+                )
+                return RedirectResponse(url=auth_url, status_code=302)
+
+        if hosted_ui_enabled and (error or success):
+            # Ensure failures don't leave sticky OAuth/session state.
+            _clear_portal_auth_session(request)
+
+        if hosted_ui_enabled and (sso or signup):
+            _clear_portal_auth_session(request)
+            callback_url = _get_effective_callback_url(request)
+            state_token = secrets.token_urlsafe(24)
+            request.session["oauth_state"] = state_token
+
+            auth_url = (
+                _build_signup_url(
+                    domain=domain,
+                    client_id=client_id,
+                    redirect_uri=callback_url,
+                    state=state_token,
+                )
+                if signup
+                else build_authorization_url(
+                    domain=domain,
+                    client_id=client_id,
+                    redirect_uri=callback_url,
+                    state=state_token,
+                )
+            )
+            return RedirectResponse(url=auth_url, status_code=302)
+
         return deps.templates.TemplateResponse(
             request,
             "auth/login.html",
-            _get_template_context(request, deps, error=error, success=success),
+            _get_template_context(
+                request,
+                deps,
+                error=error,
+                success=success,
+                hosted_ui_enabled=hosted_ui_enabled,
+                sso_login_url="/portal/login?sso=1",
+                sso_signup_url="/portal/login?signup=1",
+                reset_login_url="/portal/login?reset=1",
+            ),
         )
+
+    @router.get("/auth/callback", response_class=RedirectResponse)
+    async def portal_auth_callback(
+        request: Request,
+        code: Optional[str] = None,
+        state: Optional[str] = None,
+        error: Optional[str] = None,
+        error_description: Optional[str] = None,
+    ):
+        """Handle Cognito Hosted UI callback and establish a portal session."""
+        if not deps.enable_auth or not deps.cognito_auth:
+            _clear_portal_auth_session(request)
+            return RedirectResponse(url="/portal/login?error=Authentication+not+configured", status_code=302)
+
+        if error:
+            detail = error_description or error
+            _clear_portal_auth_session(request)
+            return RedirectResponse(url=f"/portal/login?error={quote_plus(detail)}", status_code=302)
+
+        expected_state = request.session.pop("oauth_state", None)
+        if not expected_state or state != expected_state:
+            LOGGER.warning("OAuth callback state mismatch")
+            _clear_portal_auth_session(request)
+            return RedirectResponse(url="/portal/login?error=Invalid+login+state", status_code=302)
+
+        domain = _get_effective_cognito_domain(deps)
+        client_id = deps.settings.cognito_app_client_id
+        callback_url = _get_effective_callback_url(request)
+        if not domain or not client_id:
+            _clear_portal_auth_session(request)
+            return RedirectResponse(url="/portal/login?error=Cognito+OAuth+not+configured", status_code=302)
+        if not code:
+            _clear_portal_auth_session(request)
+            return RedirectResponse(url="/portal/login?error=Missing+authorization+code", status_code=302)
+
+        try:
+            token_result = exchange_authorization_code(
+                domain=domain,
+                client_id=client_id,
+                code=code,
+                redirect_uri=callback_url,
+                client_secret=deps.settings.cognito_app_client_secret,
+            )
+        except Exception as e:
+            LOGGER.error("OAuth code exchange failed: %s", e)
+            _clear_portal_auth_session(request)
+            return RedirectResponse(url="/portal/login?error=Token+exchange+failed", status_code=302)
+
+        access_token = token_result.get("access_token")
+        id_token = token_result.get("id_token")
+        if not access_token or not id_token:
+            LOGGER.error("OAuth callback missing required tokens")
+            _clear_portal_auth_session(request)
+            return RedirectResponse(url="/portal/login?error=Invalid+token+response", status_code=302)
+
+        try:
+            # Validate access token against Cognito JWKS + app client audience.
+            access_claims = deps.cognito_auth.get_current_user(
+                HTTPAuthorizationCredentials(scheme="Bearer", credentials=access_token)
+            )
+        except Exception as e:
+            LOGGER.error("Failed to validate access_token from callback: %s", e)
+            _clear_portal_auth_session(request)
+            return RedirectResponse(url="/portal/login?error=Invalid+access+token", status_code=302)
+
+        # Hosted UI returns the most reliable user identity in id_token claims.
+        email: Optional[str] = None
+        token_customer_id: Optional[str] = None
+        try:
+            from jose import jwt as jose_jwt
+
+            id_claims = jose_jwt.get_unverified_claims(str(id_token))
+            email_claim = id_claims.get("email")
+            if isinstance(email_claim, str) and email_claim:
+                email = email_claim
+            customer_claim = id_claims.get("custom:customer_id") or id_claims.get("customer_id")
+            if isinstance(customer_claim, str) and customer_claim:
+                token_customer_id = customer_claim
+        except Exception as e:
+            LOGGER.warning("Failed to decode id_token claims: %s", e)
+
+        # Fallback claims from access token if id_token claims are unavailable.
+        if not email:
+            email = access_claims.get("email") or access_claims.get("username") or access_claims.get("cognito:username")
+        if not token_customer_id:
+            token_customer_id = access_claims.get("custom:customer_id") or access_claims.get("customer_id")
+
+        if not email:
+            _clear_portal_auth_session(request)
+            return RedirectResponse(url="/portal/login?error=Email+claim+missing", status_code=302)
+
+        customer = deps.customer_manager.get_customer_by_email(email) if deps.customer_manager else None
+        if not customer and deps.customer_manager and token_customer_id:
+            customer = deps.customer_manager.get_customer_config(str(token_customer_id))
+
+        if deps.customer_manager and not customer:
+            LOGGER.warning("OAuth login for %s did not map to a customer", sanitize_for_log(email))
+            request.session["pending_signup_email"] = email
+            return RedirectResponse(
+                url="/portal/register?success=Authenticated+email+verified.+Complete+account+setup",
+                status_code=302,
+            )
+        if not customer and not token_customer_id:
+            LOGGER.warning("OAuth login for %s missing customer_id claim", sanitize_for_log(email))
+            _clear_portal_auth_session(request)
+            return RedirectResponse(url="/portal/login?error=Missing+customer+mapping", status_code=302)
+
+        request.session["access_token"] = access_token
+        request.session["user_email"] = email
+        request.session["user_authenticated"] = True
+        request.session["customer_id"] = customer.customer_id if customer else str(token_customer_id)
+        request.session["is_admin"] = bool(customer.is_admin) if customer else False
+
+        LOGGER.info("OAuth login successful for %s", sanitize_for_log(email))
+        return RedirectResponse(url="/portal/", status_code=302)
 
     @router.post("/portal/login")
     async def portal_login_submit(request: Request, email: str = Form(...), password: str = Form(...)):
@@ -534,7 +805,6 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                         return RedirectResponse(url=f"/portal/login?error=Authentication+challenge+required:+{challenge_name}", status_code=302)
 
                 request.session["access_token"] = auth_result["access_token"]
-                request.session["id_token"] = auth_result["id_token"]
                 LOGGER.info(f"portal_login_submit: Cognito authentication successful for: {email}")
             except ValueError as e:
                 LOGGER.warning(f"portal_login_submit: Cognito authentication failed for {email}: {e}")
@@ -570,6 +840,17 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         request.session.clear()
 
         LOGGER.info(f"Session cleared for user: {user_email}")
+
+        domain = _get_effective_cognito_domain(deps)
+        client_id = deps.settings.cognito_app_client_id
+        if deps.enable_auth and domain and client_id:
+            logout_url = build_logout_url(
+                domain=domain,
+                client_id=client_id,
+                logout_uri=_get_effective_logout_url(request),
+            )
+            return RedirectResponse(url=logout_url, status_code=302)
+
         return RedirectResponse(url="/portal/login?success=You+have+been+logged+out", status_code=302)
 
     @router.get("/portal/forgot-password", response_class=HTMLResponse)
@@ -668,7 +949,6 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                 LOGGER.error(f"Customer not found for {email} after password change")
                 return RedirectResponse(url="/portal/login?error=Account+not+found", status_code=302)
             request.session["access_token"] = tokens["access_token"]
-            request.session["id_token"] = tokens["id_token"]
             request.session["user_email"] = email
             request.session["user_authenticated"] = True
             request.session["customer_id"] = customer.customer_id
@@ -685,9 +965,13 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
     @router.get("/portal/register", response_class=HTMLResponse)
     async def portal_register(request: Request, error: Optional[str] = None, success: Optional[str] = None):
         """Registration page."""
-        # Get allowed regions for bucket provisioning
-        allowed_regions = deps.settings.get_allowed_regions() if deps.settings else ["us-west-2"]
-        default_region = deps.settings.get_effective_region() if deps.settings else "us-west-2"
+        # Registration region selection is intentionally limited to a curated set.
+        allowed_regions = PORTAL_REGISTRATION_REGIONS
+        configured_region = deps.settings.get_effective_region() if deps.settings else allowed_regions[0]
+        default_region = configured_region if configured_region in allowed_regions else allowed_regions[0]
+        pending_signup_email = request.session.get("pending_signup_email")
+        if deps.enable_auth and deps.cognito_auth and not pending_signup_email:
+            return RedirectResponse(url="/portal/login?error=Please+sign+in+first", status_code=302)
         return deps.templates.TemplateResponse(
             request,
             "auth/register.html",
@@ -697,6 +981,7 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                 success=success,
                 allowed_regions=allowed_regions,
                 default_region=default_region,
+                pending_signup_email=pending_signup_email,
             ),
         )
 
@@ -704,7 +989,7 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
     async def portal_register_submit(
         request: Request,
         customer_name: str = Form(...),
-        email: str = Form(...),
+        email: Optional[str] = Form(None),
         max_concurrent_worksets: int = Form(10),
         max_storage_gb: int = Form(500),
         billing_account_id: Optional[str] = Form(None),
@@ -720,18 +1005,57 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                 _get_template_context(request, deps, error="Customer management not configured"),
             )
 
+        resolved_email = (email or "").strip()
+        if deps.enable_auth and deps.cognito_auth:
+            resolved_email = str(request.session.get("pending_signup_email") or "").strip()
+            if not resolved_email:
+                return RedirectResponse(url="/portal/login?error=Please+sign+in+first", status_code=302)
+        if not resolved_email:
+            return deps.templates.TemplateResponse(
+                request,
+                "auth/register.html",
+                _get_template_context(
+                    request,
+                    deps,
+                    error="Email is required",
+                    allowed_regions=PORTAL_REGISTRATION_REGIONS,
+                    default_region=PORTAL_REGISTRATION_REGIONS[0],
+                    pending_signup_email=request.session.get("pending_signup_email"),
+                ),
+            )
+
         # Validate email domain against whitelist
-        domain_valid, domain_error = deps.settings.validate_email_domain(email)
+        domain_valid, domain_error = deps.settings.validate_email_domain(resolved_email)
         if not domain_valid:
-            LOGGER.warning(f"Registration blocked for {email}: {domain_error}")
+            LOGGER.warning(f"Registration blocked for {resolved_email}: {domain_error}")
             return deps.templates.TemplateResponse(
                 request, "auth/register.html",
-                _get_template_context(request, deps, error=domain_error),
+                _get_template_context(
+                    request,
+                    deps,
+                    error=domain_error,
+                    allowed_regions=PORTAL_REGISTRATION_REGIONS,
+                    default_region=PORTAL_REGISTRATION_REGIONS[0],
+                    pending_signup_email=request.session.get("pending_signup_email"),
+                ),
             )
 
         try:
             custom_bucket = None
             effective_bucket_region = bucket_region if s3_option == "auto" else None
+            if effective_bucket_region and effective_bucket_region not in PORTAL_REGISTRATION_REGIONS:
+                return deps.templates.TemplateResponse(
+                    request,
+                    "auth/register.html",
+                    _get_template_context(
+                        request,
+                        deps,
+                        error="Invalid bucket region selected",
+                        allowed_regions=PORTAL_REGISTRATION_REGIONS,
+                        default_region=PORTAL_REGISTRATION_REGIONS[0],
+                        pending_signup_email=request.session.get("pending_signup_email"),
+                    ),
+                )
             if s3_option == "byob" and custom_s3_bucket:
                 custom_bucket = custom_s3_bucket.strip()
                 if custom_bucket:
@@ -746,7 +1070,7 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                         )
             config = deps.customer_manager.onboard_customer(
                 customer_name=customer_name,
-                email=email,
+                email=resolved_email,
                 max_concurrent_worksets=max_concurrent_worksets,
                 max_storage_gb=max_storage_gb,
                 billing_account_id=billing_account_id,
@@ -756,39 +1080,38 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
             )
             LOGGER.info(f"Registration: enable_auth={deps.enable_auth}, cognito_auth={'SET' if deps.cognito_auth else 'NONE'}")
             if deps.enable_auth and deps.cognito_auth:
-                try:
-                    LOGGER.info(f"Creating Cognito user for {email} (customer_id: {config.customer_id})")
-                    deps.cognito_auth.create_customer_user(email=email, customer_id=config.customer_id, temporary_password=None)
-                    LOGGER.info(f"Cognito user created successfully for {email}")
-                except ValueError as e:
-                    LOGGER.warning(f"Cognito user creation skipped: {e}")
-                except Exception as e:
-                    LOGGER.error(f"Failed to create Cognito user for {email}: {e}")
-                    import traceback
-                    LOGGER.error(f"Traceback: {traceback.format_exc()}")
+                LOGGER.info("Registration: Cognito account already exists for %s; skipping user creation", resolved_email)
             else:
                 LOGGER.warning(f"Skipping Cognito user creation: enable_auth={deps.enable_auth}, cognito_auth={'SET' if deps.cognito_auth else 'NONE'}")
             bucket_info = f" Your S3 bucket: {config.s3_bucket}." if config.s3_bucket else ""
             if not deps.enable_auth:
-                LOGGER.info(f"Auto-logging in new customer {config.customer_id} ({email}) in no-auth mode")
-                request.session["user_email"] = email
+                LOGGER.info(f"Auto-logging in new customer {config.customer_id} ({resolved_email}) in no-auth mode")
+                request.session["user_email"] = resolved_email
                 request.session["user_authenticated"] = True
                 request.session["customer_id"] = config.customer_id
                 request.session["is_admin"] = False
                 success_msg = f"✅ Account created! Customer ID: {config.customer_id}.{bucket_info} Welcome!"
                 return RedirectResponse(url=f"/portal/?success={success_msg}", status_code=302)
             else:
-                success_msg = (
-                    f"✅ Account created! Customer ID: {config.customer_id}.{bucket_info} "
-                    f"📧 CHECK YOUR EMAIL (including spam folder) for your temporary password from no-reply@verificationemail.com. "
-                    f"Use it to log in below."
-                )
-                return RedirectResponse(url=f"/portal/login?success={success_msg}", status_code=302)
+                request.session.pop("pending_signup_email", None)
+                request.session.pop("pending_signup_access_token", None)
+                request.session.pop("pending_signup_id_token", None)
+                request.session.pop("pending_signup_refresh_token", None)
+                # Re-enter Hosted UI login so Cognito session can issue fresh tokens
+                # and map into the newly created customer account.
+                return RedirectResponse(url="/portal/login?sso=1", status_code=302)
         except Exception as e:
-            LOGGER.error(f"Registration failed for {email}: {e}")
+            LOGGER.error(f"Registration failed for {resolved_email}: {e}")
             return deps.templates.TemplateResponse(
                 request, "auth/register.html",
-                _get_template_context(request, deps, error=str(e)),
+                _get_template_context(
+                    request,
+                    deps,
+                    error=str(e),
+                    allowed_regions=PORTAL_REGISTRATION_REGIONS,
+                    default_region=PORTAL_REGISTRATION_REGIONS[0],
+                    pending_signup_email=request.session.get("pending_signup_email"),
+                ),
             )
 
     # ========== Portal JSON Auth Endpoints (used by /portal/account UI) ==========
@@ -2386,6 +2709,8 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
             "CUSTOMER_TABLE_NAME": app_settings.customer_table_name,
             "COGNITO_USER_POOL_ID": app_settings.cognito_user_pool_id,
             "COGNITO_APP_CLIENT_ID": app_settings.cognito_app_client_id,
+            "COGNITO_APP_CLIENT_SECRET": "***" if app_settings.cognito_app_client_secret else None,
+            "COGNITO_DOMAIN": app_settings.cognito_domain,
             "DAYLILY_PRIMARY_REGION": os.getenv("DAYLILY_PRIMARY_REGION"),
             "DAYLILY_MULTI_REGION": os.getenv("DAYLILY_MULTI_REGION"),
             "APPTAINER_HOME": os.getenv("APPTAINER_HOME"),
@@ -3038,4 +3363,3 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         }
 
     return router
-

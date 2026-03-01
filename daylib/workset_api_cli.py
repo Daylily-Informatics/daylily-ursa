@@ -55,7 +55,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--port",
         type=int,
-        default=8001,
+        default=8914,
         help="Port to bind to",
     )
     parser.add_argument(
@@ -79,6 +79,16 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         "--reload",
         action="store_true",
         help="Enable auto-reload for development",
+    )
+    parser.add_argument(
+        "--ssl-certfile",
+        default=None,
+        help="Path to TLS certificate file (PEM)",
+    )
+    parser.add_argument(
+        "--ssl-keyfile",
+        default=None,
+        help="Path to TLS private key file (PEM)",
     )
     parser.add_argument(
         "--verbose",
@@ -181,7 +191,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     if enable_auth:
         try:
-            from daylib.workset_auth import CognitoAuth
+            from daylily_cognito.auth import CognitoAuth
         except ImportError:
             LOGGER.error(
                 "Authentication enabled but python-jose not installed. "
@@ -196,6 +206,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             or os.getenv("COGNITO_APP_CLIENT_ID")
             or ursa_config.cognito_app_client_id
         )
+        app_client_secret = (
+            os.getenv("COGNITO_APP_CLIENT_SECRET")
+            or getattr(ursa_config, "cognito_app_client_secret", None)
+        )
         cognito_region = (
             os.getenv("COGNITO_REGION")
             or ursa_config.cognito_region
@@ -206,7 +220,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             LOGGER.error(
                 "Authentication enabled but Cognito not configured. "
                 "Set COGNITO_USER_POOL_ID and COGNITO_APP_CLIENT_ID in environment "
-                "or ~/.ursa/ursa-config.yaml"
+                "or daycog-managed env files (for example ~/.config/daycog/default.env)"
             )
             return 1
 
@@ -226,6 +240,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             region=cognito_region,
             user_pool_id=user_pool_id,
             app_client_id=app_client_id,
+            app_client_secret=app_client_secret,
             profile=args.profile,
             settings=settings,
         )
@@ -309,6 +324,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         host=args.host,
         port=args.port,
         reload=args.reload,
+        ssl_certfile=args.ssl_certfile,
+        ssl_keyfile=args.ssl_keyfile,
         log_level="debug" if args.verbose else "info",
     )
 

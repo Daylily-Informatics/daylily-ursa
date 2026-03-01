@@ -16,6 +16,7 @@ import yaml  # type: ignore[import-untyped]
 
 from fastapi import APIRouter, Body, Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
@@ -34,7 +35,8 @@ from daylib.routes.dependencies import (
 
 # Optional imports for authentication
 try:
-    from daylib.workset_auth import CognitoAuth, create_auth_dependency
+    from daylily_cognito.auth import CognitoAuth
+    from daylily_cognito.fastapi import create_auth_dependency
     AUTH_AVAILABLE = True
 except ImportError:
     AUTH_AVAILABLE = False
@@ -419,8 +421,11 @@ def create_app(
         return None
 
     @app.get("/", tags=["health"])
-    async def root():
+    async def root(request: Request):
         """Health check endpoint."""
+        accept = request.headers.get("accept", "")
+        if "text/html" in accept:
+            return RedirectResponse(url="/portal/login" if enable_auth else "/portal", status_code=302)
         return {
             "status": "healthy",
             "service": "daylily-workset-monitor",

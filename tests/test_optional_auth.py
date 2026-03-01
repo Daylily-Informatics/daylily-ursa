@@ -84,8 +84,8 @@ def test_auth_warning_logged_when_missing():
         # Remove modules from cache
         if "jose" in sys.modules:
             del sys.modules["jose"]
-        if "daylib.workset_auth" in sys.modules:
-            del sys.modules["daylib.workset_auth"]
+        if "daylily_cognito.auth" in sys.modules:
+            del sys.modules["daylily_cognito.auth"]
         
         # Capture log output
         with patch("logging.Logger.warning"):
@@ -116,4 +116,3 @@ def test_authentication_docs_exist():
     
     # Check for documentation
     assert (docs_dir / "AUTHENTICATION_SETUP.md").exists()
-

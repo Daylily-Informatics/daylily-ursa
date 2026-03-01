@@ -19,10 +19,10 @@ pip install -e .
 ursa server start --foreground
 
 # Using the packaged console script
-daylily-workset-api --host 0.0.0.0 --port 8001
+daylily-workset-api --host 0.0.0.0 --port 8914
 
 # With uvicorn directly (development)
-uvicorn daylib.workset_api:app --host 0.0.0.0 --port 8001 --reload
+uvicorn daylib.workset_api:app --host 0.0.0.0 --port 8914 --reload
 ```
 
 ## Common API Calls
@@ -31,34 +31,34 @@ uvicorn daylib.workset_api:app --host 0.0.0.0 --port 8001 --reload
 
 ```bash
 # Get queue statistics
-curl http://localhost:8001/queue/stats
+curl http://localhost:8914/queue/stats
 
 # Get scheduler statistics
-curl http://localhost:8001/scheduler/stats
+curl http://localhost:8914/scheduler/stats
 
 # Get next workset to execute
-curl http://localhost:8001/worksets/next
+curl http://localhost:8914/worksets/next
 ```
 
 ### Workset Operations
 
 ```bash
 # List all worksets
-curl http://localhost:8001/worksets
+curl http://localhost:8914/worksets
 
 # List worksets by state
-curl "http://localhost:8001/worksets?state=ready&limit=10"
+curl "http://localhost:8914/worksets?state=ready&limit=10"
 
 # Get specific workset
-curl http://localhost:8001/worksets/ws-001
+curl http://localhost:8914/worksets/ws-001
 
 # Update workset state
-curl -X PUT http://localhost:8001/worksets/ws-001/state \
+curl -X PUT http://localhost:8914/worksets/ws-001/state \
   -H "Content-Type: application/json" \
   -d '{"state": "in_progress"}'
 
 # Update workset priority
-curl -X PUT http://localhost:8001/worksets/ws-001/priority \
+curl -X PUT http://localhost:8914/worksets/ws-001/priority \
   -H "Content-Type: application/json" \
   -d '{"priority": "high"}'
 ```
@@ -67,17 +67,17 @@ curl -X PUT http://localhost:8001/worksets/ws-001/priority \
 
 ```bash
 # Validate workset configuration
-curl -X POST "http://localhost:8001/worksets/validate?bucket=my-bucket&prefix=worksets/ws-001/"
+curl -X POST "http://localhost:8914/worksets/validate?bucket=my-bucket&prefix=worksets/ws-001/"
 
 # Validate in dry-run mode (skip file checks)
-curl -X POST "http://localhost:8001/worksets/validate?bucket=my-bucket&prefix=worksets/ws-001/&dry_run=true"
+curl -X POST "http://localhost:8914/worksets/validate?bucket=my-bucket&prefix=worksets/ws-001/&dry_run=true"
 ```
 
 ### Customer Management
 
 ```bash
 # Create customer
-curl -X POST http://localhost:8001/customers \
+curl -X POST http://localhost:8914/customers \
   -H "Content-Type: application/json" \
   -d '{
     "customer_name": "Acme Genomics",
@@ -88,20 +88,20 @@ curl -X POST http://localhost:8001/customers \
   }'
 
 # Get customer details
-curl http://localhost:8001/customers/acme-genomics-a1b2c3d4
+curl http://localhost:8914/customers/acme-genomics-a1b2c3d4
 
 # List all customers
-curl http://localhost:8001/customers
+curl http://localhost:8914/customers
 
 # Get customer usage
-curl http://localhost:8001/customers/acme-genomics-a1b2c3d4/usage
+curl http://localhost:8914/customers/acme-genomics-a1b2c3d4/usage
 ```
 
 ### YAML Generator
 
 ```bash
 # Generate daylily_work.yaml
-curl -X POST http://localhost:8001/worksets/generate-yaml \
+curl -X POST http://localhost:8914/worksets/generate-yaml \
   -H "Content-Type: application/json" \
   -d '{
     "samples": [
@@ -278,7 +278,7 @@ export COGNITO_APP_CLIENT_ID=XXXXXXXXXXXXXXXXXXXXXXXXXX
 
 # API configuration
 export API_HOST=0.0.0.0
-export API_PORT=8001
+export API_PORT=8914
 export ENABLE_AUTH=true
 ```
 
@@ -315,7 +315,7 @@ result = validator.validate_workset("my-bucket", "worksets/test/", dry_run=True)
 
 ### Check Cognito Configuration
 ```python
-from daylib.workset_auth import CognitoAuth
+from daylily_cognito.auth import CognitoAuth
 
 auth = CognitoAuth(
     region="us-west-2",

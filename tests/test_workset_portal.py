@@ -4,6 +4,7 @@ import csv
 import io
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 from botocore.exceptions import ClientError
@@ -565,6 +566,11 @@ class TestPortalRoutes:
         # Legal links exist (checkbox text)
         assert b"/terms" in response.content
         assert b"/privacy" in response.content
+        # Region options are constrained for account provisioning
+        assert b'value="us-west-2"' in response.content
+        assert b'value="us-east-1"' in response.content
+        assert b'value="ap-south-1"' in response.content
+        assert b'value="eu-central-1"' in response.content
 
     def test_terms_page(self, client):
         """Terms page renders without authentication."""
@@ -1925,6 +1931,116 @@ class TestPortalFileRegistration:
         # This test verifies the 403 response path for cross-customer access
         # Full testing requires session mocking
         pass  # Placeholder for future session-mocked tests
+
+
+def test_auth_registration_uses_session_email_and_ignores_form_email(mock_state_db):
+    """Authenticated registration should use Cognito session email, not form input."""
+    settings = get_settings_for_testing(
+        enable_auth=True,
+        cognito_app_client_id="test-client-id",
+        cognito_domain="example.auth.us-west-2.amazoncognito.com",
+    )
+
+    mock_cognito_auth = MagicMock()
+    mock_cognito_auth.get_current_user.return_value = {
+        "client_id": "test-client-id",
+        "username": "johnm+t@lsmc.com",
+    }
+    mock_cognito_auth.cognito.get_user.return_value = {
+        "UserAttributes": [
+            {"Name": "email", "Value": "johnm+t@lsmc.com"},
+            {"Name": "custom:customer_id", "Value": "cust-new"},
+        ]
+    }
+
+    mock_customer_manager = MagicMock()
+    mock_customer_manager.get_customer_by_email.return_value = None
+    mock_customer_manager.get_customer_config.return_value = None
+    onboarded = SimpleNamespace(customer_id="cust-new", s3_bucket="daylily-cust-new", is_admin=False)
+    mock_customer_manager.onboard_customer.return_value = onboarded
+
+    app = create_app(
+        state_db=mock_state_db,
+        enable_auth=True,
+        cognito_auth=mock_cognito_auth,
+        customer_manager=mock_customer_manager,
+        settings=settings,
+    )
+    client = TestClient(app)
+
+    login_response = client.get("/portal/login?sso=1", follow_redirects=False)
+    assert login_response.status_code == 302
+    auth_redirect = login_response.headers["location"]
+    parsed_auth = urlparse(auth_redirect)
+    oauth_state = parse_qs(parsed_auth.query)["state"][0]
+
+    with patch(
+        "daylib.routes.portal.exchange_authorization_code",
+        return_value={
+            "access_token": "access-token",
+            "id_token": "id-token",
+            "refresh_token": "refresh-token",
+        },
+    ):
+        callback_response = client.get(
+            f"/auth/callback?code=auth-code&state={oauth_state}",
+            follow_redirects=False,
+        )
+    assert callback_response.status_code == 302
+    assert callback_response.headers["location"].startswith("/portal/register")
+
+    register_page = client.get("/portal/register")
+    assert register_page.status_code == 200
+    assert b"Authenticated Email" in register_page.content
+    assert b"johnm+t@lsmc.com" in register_page.content
+    assert b'name=\"email\"' not in register_page.content
+
+    response = client.post(
+        "/portal/register",
+        data={
+            "customer_name": "John Team",
+            "email": "ignored@example.com",
+            "max_concurrent_worksets": "10",
+            "max_storage_gb": "500",
+            "s3_option": "auto",
+            "bucket_region": "us-east-1",
+            "terms": "on",
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code == 302
+    assert response.headers["location"] == "/portal/login?sso=1"
+    mock_customer_manager.onboard_customer.assert_called_once()
+    assert mock_customer_manager.onboard_customer.call_args.kwargs["email"] == "johnm+t@lsmc.com"
+
+
+def test_hosted_ui_signup_link_and_redirect(mock_state_db):
+    """Hosted UI login page should expose Cognito signup flow and redirect to /signup."""
+    settings = get_settings_for_testing(
+        enable_auth=True,
+        cognito_app_client_id="test-client-id",
+        cognito_domain="example.auth.us-west-2.amazoncognito.com",
+    )
+    mock_cognito_auth = MagicMock()
+    mock_customer_manager = MagicMock()
+
+    app = create_app(
+        state_db=mock_state_db,
+        enable_auth=True,
+        cognito_auth=mock_cognito_auth,
+        customer_manager=mock_customer_manager,
+        settings=settings,
+    )
+    client = TestClient(app)
+
+    page = client.get("/portal/login?error=x")
+    assert page.status_code == 200
+    assert b"/portal/login?signup=1" in page.content
+
+    response = client.get("/portal/login?signup=1", follow_redirects=False)
+    assert response.status_code == 302
+    location = response.headers["location"]
+    assert location.startswith("https://example.auth.us-west-2.amazoncognito.com/signup?")
 
 
 class TestPortalFileUpload:

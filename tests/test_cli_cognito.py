@@ -1,4 +1,4 @@
-"""Tests for the Cognito CLI commands (ursa cognito *)."""
+"""Tests for the daylily-cognito CLI commands."""
 
 import os
 from datetime import datetime
@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from typer.testing import CliRunner
 
-from daylib.cli.cognito import cognito_app
+from daylily_cognito.cli import cognito_app
 
 
 runner = CliRunner()
@@ -29,7 +29,7 @@ def mock_cognito_client():
 
 
 class TestCognitoStatus:
-    """Tests for ursa cognito status command."""
+    """Tests for daycog status command."""
 
     def test_status_requires_aws_profile(self):
         """Test that status fails without AWS_PROFILE set."""
@@ -41,7 +41,7 @@ class TestCognitoStatus:
 
 
 class TestCognitoListUsers:
-    """Tests for ursa cognito list-users command."""
+    """Tests for daycog list-users command."""
 
     def test_list_users_requires_aws_profile(self):
         """Test that list-users fails without AWS_PROFILE set."""
@@ -94,7 +94,7 @@ class TestCognitoListUsers:
 
 
 class TestCognitoExport:
-    """Tests for ursa cognito export command."""
+    """Tests for daycog export command."""
 
     def test_export_requires_aws_profile(self):
         """Test that export fails without AWS_PROFILE set."""
@@ -118,7 +118,7 @@ class TestCognitoExport:
 
 
 class TestCognitoDeleteUser:
-    """Tests for ursa cognito delete-user command."""
+    """Tests for daycog delete-user command."""
 
     def test_delete_user_requires_aws_profile(self):
         """Test that delete-user fails without AWS_PROFILE set."""
@@ -138,7 +138,7 @@ class TestCognitoDeleteUser:
 
 
 class TestCognitoDeleteAllUsers:
-    """Tests for ursa cognito delete-all-users command."""
+    """Tests for daycog delete-all-users command."""
 
     def test_delete_all_users_requires_aws_profile(self):
         """Test that delete-all-users fails without AWS_PROFILE set."""
@@ -156,7 +156,7 @@ class TestCognitoDeleteAllUsers:
 
 
 class TestCognitoTeardown:
-    """Tests for ursa cognito teardown command."""
+    """Tests for daycog teardown command."""
 
     def test_teardown_requires_aws_profile(self):
         """Test that teardown fails without AWS_PROFILE set."""
@@ -165,4 +165,3 @@ class TestCognitoTeardown:
             result = runner.invoke(cognito_app, ["teardown", "--force"])
             assert result.exit_code == 1
             assert "AWS_PROFILE" in result.output
-

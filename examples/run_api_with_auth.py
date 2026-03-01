@@ -27,8 +27,8 @@ Usage:
     python examples/run_api_with_auth.py --https --port 8443 --cert cert.pem --key key.pem
 
 Then access the API at:
-    http://localhost:8001  (or https:// if --https is used)
-    http://localhost:8001/docs  (Swagger UI with authentication)
+    http://localhost:8914  (or https:// if --https is used)
+    http://localhost:8914/docs  (Swagger UI with authentication)
 """
 
 import argparse
@@ -48,7 +48,7 @@ from daylib.workset_customer import CustomerManager
 
 # Try to import authentication (requires python-jose)
 try:
-    from daylib.workset_auth import CognitoAuth
+    from daylily_cognito.auth import CognitoAuth
     AUTH_AVAILABLE = True
 except ImportError:
     AUTH_AVAILABLE = False
@@ -80,7 +80,7 @@ def parse_args():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-    # Run on default port (8001) with HTTP
+    # Run on default port (8914) with HTTP
     python run_api_with_auth.py
 
     # Run on custom port
@@ -99,8 +99,8 @@ Examples:
     parser.add_argument(
         "--port", "-p",
         type=int,
-        default=8001,
-        help="Port to run the server on (default: 8001)",
+        default=8914,
+        help="Port to run the server on (default: 8914)",
     )
     parser.add_argument(
         "--https",
@@ -270,4 +270,3 @@ if __name__ == "__main__":
     except Exception as e:
         LOGGER.error("Failed to start server: %s", e, exc_info=True)
         sys.exit(1)
-

@@ -11,7 +11,6 @@ from rich.console import Console
 from daylib.cli.server import server_app
 from daylib.cli.monitor import monitor_app
 from daylib.cli.aws import aws_app
-from daylib.cli.cognito import cognito_app
 from daylib.cli.test import test_app
 from daylib.cli.env import env_app
 
@@ -84,7 +83,6 @@ app = typer.Typer(
 app.add_typer(server_app, name="server", help="API server management")
 app.add_typer(monitor_app, name="monitor", help="Workset monitor management")
 app.add_typer(aws_app, name="aws", help="AWS resource management")
-app.add_typer(cognito_app, name="cognito", help="Cognito authentication management")
 app.add_typer(test_app, name="test", help="Testing and code quality")
 app.add_typer(env_app, name="env", help="Environment and configuration")
 
@@ -216,21 +214,6 @@ def info():
     profile_source = ursa_config.get_value_source("aws_profile")
     table.add_row("AWS Profile", _format_value_with_source(aws_profile, profile_source))
 
-    # Cognito Region (show source)
-    cognito_region = ursa_config.get_effective_cognito_region()
-    cognito_source = ursa_config.get_value_source("cognito_region")
-    table.add_row("Cognito Region", _format_value_with_source(cognito_region, cognito_source))
-
-    # Cognito User Pool ID (show source)
-    pool_id = os.environ.get("COGNITO_USER_POOL_ID") or ursa_config.cognito_user_pool_id
-    pool_source = ursa_config.get_value_source("cognito_user_pool_id")
-    if pool_id:
-        # Truncate for display
-        display_pool = pool_id[:20] + "..." if len(pool_id) > 20 else pool_id
-        table.add_row("Cognito Pool ID", _format_value_with_source(display_pool, pool_source))
-    else:
-        table.add_row("Cognito Pool ID", "[dim]not set[/dim]")
-
     # Regions config
     if ursa_config.is_configured:
         regions = ursa_config.get_allowed_regions()
@@ -282,4 +265,3 @@ def main():
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
