@@ -111,7 +111,7 @@ URSA_PORT=8914
 ENABLE_AUTH=false
 
 # Cognito settings (required if ENABLE_AUTH=true)
-# Run 'daycog setup' from daylily-cognito to create, or set manually
+# Run 'daycog setup --client-name ursa' from daylily-cognito to create, or set manually
 # COGNITO_USER_POOL_ID=us-west-2_xxxxxxxxx
 # COGNITO_APP_CLIENT_ID=xxxxxxxxxxxxxxxxxxxxxxxxxx
 # COGNITO_APP_CLIENT_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxxx

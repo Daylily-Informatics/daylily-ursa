@@ -9,8 +9,11 @@ import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlparse
 
 import typer
+import boto3
+from botocore.exceptions import BotoCoreError, ClientError
 from rich.console import Console
 
 server_app = typer.Typer(help="API server management commands")
@@ -23,6 +26,8 @@ PID_FILE = CONFIG_DIR / "server.pid"
 CERT_DIR = CONFIG_DIR / "certs"
 DEFAULT_SSL_CERT_FILE = CERT_DIR / "ursa-localhost.pem"
 DEFAULT_SSL_KEY_FILE = CERT_DIR / "ursa-localhost-key.pem"
+_LOCAL_OAUTH_HOSTS = {"localhost", "127.0.0.1", "::1"}
+REQUIRED_COGNITO_APP_CLIENT_NAME = "ursa"
 
 
 def _require_auth_dependencies() -> None:
@@ -105,6 +110,181 @@ def _resolve_https_cert_paths(host: str) -> tuple[str, str]:
         raise typer.Exit(1)
 
     return str(cert_path), str(key_path)
+
+
+def _runtime_oauth_host(host: str) -> str:
+    """Resolve runtime callback host for browser-facing URLs."""
+    if host in ("0.0.0.0", "::"):
+        return "localhost"
+    return host
+
+
+def _default_port_for_scheme(scheme: str) -> Optional[int]:
+    """Return implicit port for known URI schemes."""
+    if scheme == "https":
+        return 443
+    if scheme == "http":
+        return 80
+    return None
+
+
+def _normalize_uri(uri: str) -> str:
+    """Normalize URI for reliable comparison."""
+    parsed = urlparse(uri.strip())
+    path = parsed.path or "/"
+    if path != "/":
+        path = path.rstrip("/")
+    normalized = parsed._replace(path=path, params="", query="", fragment="")
+    return normalized.geturl()
+
+
+def _uri_port(uri: str) -> Optional[int]:
+    """Resolve explicit or implicit URI port."""
+    parsed = urlparse(uri.strip())
+    if not parsed.scheme or not parsed.netloc:
+        return None
+    return parsed.port or _default_port_for_scheme(parsed.scheme.lower())
+
+
+def _is_local_oauth_uri(uri: str, runtime_host: str) -> bool:
+    """Return True when URI points to local runtime host."""
+    parsed = urlparse(uri.strip())
+    hostname = (parsed.hostname or "").lower()
+    return hostname in _LOCAL_OAUTH_HOSTS or hostname == runtime_host.lower()
+
+
+def _validate_uri_list_ports(
+    *,
+    uris: list[str],
+    label: str,
+    expected_port: int,
+    runtime_host: str,
+) -> list[str]:
+    """Validate URI structure and port alignment for local endpoints."""
+    errors: list[str] = []
+    for raw_uri in uris:
+        uri = raw_uri.strip()
+        parsed = urlparse(uri)
+        if not parsed.scheme or not parsed.netloc:
+            errors.append(f"{label} contains invalid URI: {uri}")
+            continue
+        if parsed.scheme not in {"http", "https"}:
+            errors.append(f"{label} contains unsupported URI scheme: {uri}")
+            continue
+        if _is_local_oauth_uri(uri, runtime_host):
+            uri_port = _uri_port(uri)
+            if uri_port != expected_port:
+                errors.append(
+                    f"{label} URI port mismatch for local endpoint: {uri} "
+                    f"(expected port {expected_port})"
+                )
+    return errors
+
+
+def _validate_cognito_oauth_uris(
+    *,
+    app_client: dict,
+    expected_callback_url: str,
+    expected_logout_url: str,
+    expected_port: int,
+    runtime_host: str,
+    expected_client_name: str = REQUIRED_COGNITO_APP_CLIENT_NAME,
+) -> list[str]:
+    """Validate Cognito app-client OAuth URLs against runtime expectations."""
+    errors: list[str] = []
+    actual_client_name = str(app_client.get("ClientName") or "").strip()
+    callback_urls = [str(u) for u in (app_client.get("CallbackURLs") or []) if u]
+    logout_urls = [str(u) for u in (app_client.get("LogoutURLs") or []) if u]
+    default_redirect_uri = str(app_client.get("DefaultRedirectURI") or "").strip()
+
+    if not actual_client_name:
+        errors.append("Cognito app client has no ClientName configured")
+    elif actual_client_name != expected_client_name:
+        errors.append(
+            "Cognito app client name mismatch: "
+            f"found '{actual_client_name}', expected '{expected_client_name}'"
+        )
+    if not app_client.get("AllowedOAuthFlowsUserPoolClient", False):
+        errors.append("Cognito app client does not have OAuth2 flows enabled")
+    if not callback_urls:
+        errors.append("Cognito app client has no CallbackURLs configured")
+    if not logout_urls:
+        errors.append("Cognito app client has no LogoutURLs configured")
+
+    errors.extend(
+        _validate_uri_list_ports(
+            uris=callback_urls,
+            label="CallbackURLs",
+            expected_port=expected_port,
+            runtime_host=runtime_host,
+        )
+    )
+    errors.extend(
+        _validate_uri_list_ports(
+            uris=logout_urls,
+            label="LogoutURLs",
+            expected_port=expected_port,
+            runtime_host=runtime_host,
+        )
+    )
+    if default_redirect_uri:
+        errors.extend(
+            _validate_uri_list_ports(
+                uris=[default_redirect_uri],
+                label="DefaultRedirectURI",
+                expected_port=expected_port,
+                runtime_host=runtime_host,
+            )
+        )
+
+    normalized_callbacks = {_normalize_uri(u) for u in callback_urls}
+    normalized_logouts = {_normalize_uri(u) for u in logout_urls}
+    normalized_expected_callback = _normalize_uri(expected_callback_url)
+    normalized_expected_logout = _normalize_uri(expected_logout_url)
+    normalized_default_redirect = _normalize_uri(default_redirect_uri) if default_redirect_uri else ""
+
+    if normalized_expected_callback not in normalized_callbacks:
+        errors.append(
+            "Expected callback URI is not configured in Cognito app client: "
+            f"{expected_callback_url}"
+        )
+    if normalized_expected_logout not in normalized_logouts:
+        errors.append(
+            "Expected logout URI is not configured in Cognito app client: "
+            f"{expected_logout_url}"
+        )
+    if default_redirect_uri and normalized_default_redirect not in normalized_callbacks:
+        errors.append(
+            "Cognito app client DefaultRedirectURI is not in CallbackURLs: "
+            f"{default_redirect_uri}"
+        )
+
+    errors.extend(
+        _validate_uri_list_ports(
+            uris=[expected_callback_url, expected_logout_url],
+            label="Configured OAuth URI",
+            expected_port=expected_port,
+            runtime_host=runtime_host,
+        )
+    )
+    return errors
+
+
+def _describe_cognito_app_client(
+    *,
+    profile: str,
+    region: str,
+    user_pool_id: str,
+    app_client_id: str,
+) -> dict:
+    """Fetch Cognito app-client configuration."""
+    session = boto3.Session(profile_name=profile, region_name=region)
+    cognito = session.client("cognito-idp")
+    response = cognito.describe_user_pool_client(
+        UserPoolId=user_pool_id,
+        ClientId=app_client_id,
+    )
+    return dict(response.get("UserPoolClient") or {})
 
 
 def _get_log_file() -> Path:
@@ -268,6 +448,47 @@ def start(
             console.print("   Missing: [cyan]" + ", ".join(missing) + "[/cyan]")
             console.print("   Set via environment variables or in your Ursa config file")
             raise typer.Exit(1)
+
+        oauth_host = _runtime_oauth_host(host)
+        expected_callback_url = env.get("COGNITO_CALLBACK_URL") or f"https://{oauth_host}:{port}/auth/callback"
+        expected_logout_url = env.get("COGNITO_LOGOUT_URL") or f"https://{oauth_host}:{port}/"
+
+        user_pool_id = str(env["COGNITO_USER_POOL_ID"])
+        app_client_id = str(env.get("COGNITO_APP_CLIENT_ID") or env.get("COGNITO_CLIENT_ID") or "")
+        cognito_region = str(env["COGNITO_REGION"])
+
+        try:
+            app_client = _describe_cognito_app_client(
+                profile=aws_profile,
+                region=cognito_region,
+                user_pool_id=user_pool_id,
+                app_client_id=app_client_id,
+            )
+        except (ClientError, BotoCoreError, ValueError) as exc:
+            console.print("[red]✗[/red]  Failed Cognito OAuth preflight check")
+            console.print(f"   Could not describe app client [cyan]{app_client_id}[/cyan] in pool [cyan]{user_pool_id}[/cyan]")
+            console.print(f"   Error: {exc}")
+            raise typer.Exit(1)
+
+        oauth_errors = _validate_cognito_oauth_uris(
+            app_client=app_client,
+            expected_callback_url=expected_callback_url,
+            expected_logout_url=expected_logout_url,
+            expected_port=port,
+            runtime_host=oauth_host,
+            expected_client_name=REQUIRED_COGNITO_APP_CLIENT_NAME,
+        )
+        if oauth_errors:
+            console.print("[red]✗[/red]  Cognito OAuth URI validation failed")
+            for err in oauth_errors:
+                console.print(f"   - {err}")
+            raise typer.Exit(1)
+
+        console.print(
+            "[green]✓[/green]  Cognito OAuth URIs validated "
+            f"(client [cyan]{REQUIRED_COGNITO_APP_CLIENT_NAME}[/cyan], "
+            f"callback/logouts aligned with port [cyan]{port}[/cyan])"
+        )
         console.print("[green]✓[/green]  Authentication ENABLED")
     else:
         env["DAYLILY_ENABLE_AUTH"] = "false"
