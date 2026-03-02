@@ -38,6 +38,7 @@ from daylily_cognito.oauth import (
 from daylib.security import sanitize_for_log
 from daylib.s3_utils import RegionAwareS3Client
 from daylib.file_registry import detect_file_format as _detect_file_format
+from daylib.search import search_portal
 from daylib.routes.dependencies import (
     convert_customer_for_template,
     format_file_size,
@@ -83,6 +84,7 @@ class PortalDependencies:
         file_registry: Optional[Any] = None,
         linked_bucket_manager: Optional[Any] = None,
         biospecimen_registry: Optional[Any] = None,
+        manifest_registry: Optional[Any] = None,
     ):
         self.state_db = state_db
         self.templates = templates
@@ -93,6 +95,7 @@ class PortalDependencies:
         self.file_registry = file_registry
         self.linked_bucket_manager = linked_bucket_manager
         self.biospecimen_registry = biospecimen_registry
+        self.manifest_registry = manifest_registry
         self.region = settings.get_effective_region()
         self.profile = settings.aws_profile
 
@@ -139,6 +142,8 @@ def _get_template_context(request: Request, deps: PortalDependencies, **kwargs) 
             context["is_admin"] = request.session.get("is_admin", False)
     # Apply kwargs last so explicit values take precedence
     context.update(kwargs)
+    if context.get("user_authenticated") and "search_scope" not in context:
+        context["search_scope"] = "all" if bool(context.get("is_admin", False)) else "mine"
     return context
 
 
@@ -408,6 +413,83 @@ def _extract_workset_storage(workset: Dict[str, Any]) -> Dict[str, Any]:
     return _extract_workset_metrics(workset)
 
 
+SEARCH_TYPE_LABELS: Dict[str, str] = {
+    "workset": "Worksets",
+    "file": "Files",
+    "subject": "Subjects",
+    "biosample": "Biosamples",
+    "library": "Libraries",
+    "manifest": "Manifests",
+    "cluster": "Clusters",
+    "user": "Users",
+    "monitor_log": "Monitor Logs",
+}
+
+
+def _query_list(request: Request, key: str) -> List[str]:
+    """Parse repeatable query params and comma-separated values."""
+    values: List[str] = []
+    for raw_value in request.query_params.getlist(key):
+        raw = str(raw_value or "").strip()
+        if not raw:
+            continue
+        for part in raw.split(","):
+            token = part.strip()
+            if token:
+                values.append(token)
+    return values
+
+
+def _build_portal_search_filters(request: Request, *, is_admin: bool) -> Dict[str, Any]:
+    """Build normalized search filters from request query params."""
+    scope_default = "all" if is_admin else "mine"
+    scope = str(request.query_params.get("scope") or scope_default).strip().lower()
+    limit_raw = str(request.query_params.get("limit_per_type") or "").strip()
+    limit_per_type = 20
+    if limit_raw:
+        try:
+            limit_per_type = int(limit_raw)
+        except ValueError:
+            limit_per_type = 20
+
+    return {
+        "scope": scope,
+        "types": _query_list(request, "type"),
+        "state": str(request.query_params.get("state") or "").strip(),
+        "region": str(request.query_params.get("region") or "").strip(),
+        "customer": str(request.query_params.get("customer") or "").strip(),
+        "tag": _query_list(request, "tag"),
+        "file_format": str(request.query_params.get("file_format") or "").strip(),
+        "sample_type": str(request.query_params.get("sample_type") or "").strip(),
+        "platform": str(request.query_params.get("platform") or "").strip(),
+        "limit_per_type": limit_per_type,
+    }
+
+
+def _execute_portal_search(request: Request, deps: PortalDependencies) -> Dict[str, Any]:
+    """Run global portal search with request/session-derived context."""
+    session_context = {
+        "customer_id": request.session.get("customer_id", ""),
+        "user_email": request.session.get("user_email", ""),
+        "is_admin": bool(request.session.get("is_admin", False)),
+    }
+    filters = _build_portal_search_filters(request, is_admin=bool(session_context["is_admin"]))
+    query = str(request.query_params.get("q") or "").strip()
+    return search_portal(
+        query=query,
+        filters=filters,
+        session_context=session_context,
+        deps={
+            "state_db": deps.state_db,
+            "settings": deps.settings,
+            "customer_manager": deps.customer_manager,
+            "file_registry": deps.file_registry,
+            "biospecimen_registry": deps.biospecimen_registry,
+            "manifest_registry": deps.manifest_registry,
+        },
+    )
+
+
 def create_portal_router(deps: PortalDependencies) -> APIRouter:
     """Create portal router with injected dependencies.
 
@@ -556,6 +638,68 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
             "dashboard.html",
             _get_template_context(request, deps, customer=customer, worksets=worksets, stats=stats, active_page="dashboard"),
         )
+
+    # ========== Global Search Routes ==========
+
+    @router.get("/portal/search", response_class=HTMLResponse)
+    async def portal_search(request: Request):
+        """Global federated search results page."""
+        auth_redirect = _require_portal_auth(request)
+        if auth_redirect:
+            return auth_redirect
+
+        customer, _ = _get_customer_for_session(request, deps)
+        search_data = _execute_portal_search(request, deps)
+
+        displayed_types = list(search_data.get("types", []))
+        selected_types = set(displayed_types)
+        type_facets = [
+            {
+                "key": item_type,
+                "label": SEARCH_TYPE_LABELS.get(item_type, item_type.replace("_", " ").title()),
+                "count": int(search_data.get("returned_counts", {}).get(item_type, 0)),
+                "selected": item_type in selected_types,
+            }
+            for item_type in displayed_types
+        ]
+
+        filters = search_data.get("filters", {})
+        has_query = bool(str(search_data.get("query") or "").strip())
+        has_filters = any(
+            [
+                filters.get("types"),
+                filters.get("state"),
+                filters.get("region"),
+                filters.get("customer"),
+                filters.get("tags"),
+                filters.get("file_format"),
+                filters.get("sample_type"),
+                filters.get("platform"),
+            ]
+        )
+
+        return deps.templates.TemplateResponse(
+            request,
+            "search/results.html",
+            _get_template_context(
+                request,
+                deps,
+                customer=customer,
+                search=search_data,
+                type_facets=type_facets,
+                type_labels=SEARCH_TYPE_LABELS,
+                has_query=has_query,
+                has_filters=has_filters,
+                active_page="search",
+                search_scope=search_data.get("scope", "mine"),
+            ),
+        )
+
+    @router.get("/api/portal/search")
+    async def portal_api_search(request: Request):
+        """JSON global search endpoint used by portal clients."""
+        _require_portal_api_session(request)
+        return JSONResponse(_execute_portal_search(request, deps))
 
     # ========== Authentication Routes ==========
 
@@ -2627,7 +2771,11 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
 
     @router.get("/portal/biospecimen", response_class=HTMLResponse)
     @router.get("/portal/biospecimen/subjects", response_class=HTMLResponse)
-    async def portal_biospecimen_subjects(request: Request):
+    async def portal_biospecimen_subjects(
+        request: Request,
+        q: Optional[str] = None,
+        subject_id: Optional[str] = None,
+    ):
         """Subjects management page."""
         auth_redirect = _require_portal_auth(request)
         if auth_redirect:
@@ -2673,10 +2821,40 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
             except Exception as e:
                 LOGGER.warning(f"Failed to load subjects from biospecimen registry: {e}")
 
+        query_text = str(q or "").strip().lower()
+        subject_id_filter = str(subject_id or "").strip().lower()
+
+        if subject_id_filter:
+            subjects = [
+                subj
+                for subj in subjects
+                if subject_id_filter in str(subj.get("subject_id", "")).lower()
+                or subject_id_filter in str(subj.get("identifier", "")).lower()
+            ]
+        if query_text:
+            subjects = [
+                subj
+                for subj in subjects
+                if query_text in str(subj.get("subject_id", "")).lower()
+                or query_text in str(subj.get("identifier", "")).lower()
+                or query_text in str(subj.get("display_name", "")).lower()
+                or query_text in str(subj.get("cohort", "")).lower()
+                or query_text in str(subj.get("sex", "")).lower()
+            ]
+
         return deps.templates.TemplateResponse(
             request,
             "biospecimen/subjects.html",
-            _get_template_context(request, deps, customer=customer, subjects=subjects, stats=stats, active_page="biospecimen"),
+            _get_template_context(
+                request,
+                deps,
+                customer=customer,
+                subjects=subjects,
+                stats=stats,
+                subject_query=q or "",
+                subject_id_filter=subject_id or "",
+                active_page="biospecimen",
+            ),
         )
 
     # ========== Account Routes ==========
@@ -3004,6 +3182,7 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         request: Request,
         error: Optional[str] = None,
         success: Optional[str] = None,
+        q: Optional[str] = None,
     ):
         """Admin: manage portal users (customers)."""
         auth_redirect = _require_portal_auth(request)
@@ -3022,6 +3201,16 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                 LOGGER.error("Failed to list customers: %s", e)
                 error = error or "Failed to list customers"
 
+        query_text = str(q or "").strip().lower()
+        if query_text:
+            customers = [
+                customer_item
+                for customer_item in customers
+                if query_text in str(getattr(customer_item, "email", "")).lower()
+                or query_text in str(getattr(customer_item, "customer_id", "")).lower()
+                or query_text in str(getattr(customer_item, "customer_name", "")).lower()
+            ]
+
         return deps.templates.TemplateResponse(
             request,
             "admin/users.html",
@@ -3032,6 +3221,7 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                 customers=customers,
                 error=error,
                 success=success,
+                user_query=q or "",
                 active_page="admin_users",
             ),
         )

@@ -65,6 +65,25 @@
                         <li><a href="/portal/monitor" class="nav-link {% if active_page == 'monitor' %}active{% endif %}">Monitor</a></li>
                         <li><a href="/portal/usage" class="nav-link {% if active_page == 'usage' %}active{% endif %}">Usage</a></li>
                     </ul>
+
+                    {% if user_authenticated %}
+                    <form class="global-search-form" method="get" action="/portal/search" data-global-search-form role="search">
+                        <label for="global-search-input" class="sr-only">Global search</label>
+                        <input
+                            id="global-search-input"
+                            type="text"
+                            name="q"
+                            class="global-search-input"
+                            value="{{ search.query if search is defined else '' }}"
+                            placeholder="Search all data (/)"
+                            autocomplete="off"
+                        >
+                        <input type="hidden" name="scope" value="{{ search_scope | default('all' if is_admin else 'mine') }}">
+                        <button type="submit" class="global-search-submit" aria-label="Submit search">
+                            <i class="fas fa-search"></i>
+                        </button>
+                    </form>
+                    {% endif %}
                     
                     <div class="nav-user">
                         {% if auth_enabled %}
@@ -171,8 +190,8 @@
     </script>
     <script src="/static/js/api.js?v={{ cache_bust | default('1') }}"></script>
     <script src="/static/js/main.js?v={{ cache_bust | default('1') }}"></script>
+    <script src="/static/js/global-search.js?v={{ cache_bust | default('1') }}"></script>
     <script src="/static/js/table-utils.js?v={{ cache_bust | default('1') }}"></script>
     {% block extra_js %}{% endblock %}
 </body>
 </html>
-

@@ -78,6 +78,22 @@
         <div class="card" style="grid-column: 1 / -1;">
             <h3 class="card-title"><i class="fas fa-users"></i> Existing Users</h3>
 
+            <form method="get" action="/portal/admin/users" class="mb-md d-flex gap-sm">
+                <input
+                    type="text"
+                    name="q"
+                    class="form-control"
+                    value="{{ user_query | default('') }}"
+                    placeholder="Filter by email, customer name, or customer ID"
+                >
+                <button type="submit" class="btn btn-outline">
+                    <i class="fas fa-search"></i> Filter
+                </button>
+                {% if user_query %}
+                <a href="/portal/admin/users" class="btn btn-outline">Clear</a>
+                {% endif %}
+            </form>
+
             {% if customers and customers|length > 0 %}
             <table class="job-table" style="width: 100%;">
                 <thead>

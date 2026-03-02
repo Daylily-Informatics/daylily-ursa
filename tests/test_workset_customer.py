@@ -73,6 +73,30 @@ def test_onboard_customer(customer_manager, mock_aws):
     mock_table.put_item.assert_called_once()
 
 
+def test_onboard_customer_us_east_1_uses_east_client_without_location_constraint(customer_manager, mock_aws):
+    """Creating a us-east-1 bucket must use a us-east-1 client and omit LocationConstraint."""
+    session_instance = mock_aws["session"].return_value
+    default_s3 = mock_aws["s3"]
+    east_s3 = MagicMock()
+
+    def _client_side_effect(service_name, **kwargs):
+        if service_name == "s3" and kwargs.get("region_name") == "us-east-1":
+            return east_s3
+        return default_s3
+
+    session_instance.client.side_effect = _client_side_effect
+
+    config = customer_manager.onboard_customer(
+        customer_name="East Region Customer",
+        email="east@example.com",
+        bucket_region="us-east-1",
+    )
+
+    assert config.bucket_region == "us-east-1"
+    east_s3.create_bucket.assert_called_once_with(Bucket=config.s3_bucket)
+    default_s3.create_bucket.assert_not_called()
+
+
 def test_save_customer_config(customer_manager, mock_aws):
     """Test saving customer configuration."""
     mock_table = mock_aws["table"]
@@ -445,4 +469,3 @@ class TestBillingAccountIdIsMetadataOnly:
             "not routed to external billing accounts. If this test fails, the "
             "architecture has changed and this test should be updated."
         )
-
