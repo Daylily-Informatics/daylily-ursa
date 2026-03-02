@@ -97,7 +97,7 @@ ursa aws status                # Check resource status
 ursa aws teardown              # Delete all resources (destructive)
 
 # Cognito authentication
-daycog setup             # Create Cognito User Pool + app client
+daycog setup --client-name ursa  # Create Cognito User Pool + app client named "ursa"
 daycog status            # Check Cognito configuration
 daycog list-users        # List users in the configured pool
 daycog set-password --email user@example.com --password 'NewPass123!'

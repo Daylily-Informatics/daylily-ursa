@@ -84,7 +84,7 @@ Use the `daylily-cognito` operational CLI rather than direct AWS commands:
 
 ```bash
 source ../daylily-cognito/daycog_activate
-daycog setup --name daylily-workset-users --port 8914 --profile <aws-profile> --region us-west-2
+daycog setup --name daylily-workset-users --client-name ursa --port 8914 --profile <aws-profile> --region us-west-2
 ```
 
 This writes/updates `~/.config/daycog/default.env` with:
