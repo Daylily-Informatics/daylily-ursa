@@ -51,12 +51,13 @@ let currentBrowserPrefix = '';
 let bucketsLoaded = false;
 
 // Initialize on load
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
     addAnalysisInput(); // Start with one empty input
     updateManifestPreview();
 
     // Load saved manifests list for this customer (if in portal context)
-    refreshSavedManifests?.();
+    await refreshSavedManifests?.();
+    await loadManifestFromQueryParam();
 });
 
 function getCustomerId() {
@@ -97,6 +98,31 @@ async function refreshSavedManifests() {
         console.error('Failed to refresh saved manifests:', err);
         // Non-fatal; portal may not have manifest storage configured
     }
+}
+
+function getManifestIdFromQueryParam() {
+    const params = new URLSearchParams(window.location.search);
+    return (params.get('manifest_id') || '').trim();
+}
+
+async function loadManifestFromQueryParam() {
+    const manifestId = getManifestIdFromQueryParam();
+    if (!manifestId) {
+        return;
+    }
+
+    const select = document.getElementById('saved-manifest-select');
+    if (!select) {
+        return;
+    }
+
+    select.value = manifestId;
+    if (select.value !== manifestId) {
+        showToast?.('error', 'Manifest not found', `Saved manifest not found: ${manifestId}`);
+        return;
+    }
+
+    await loadSelectedManifest();
 }
 
 /**
@@ -923,4 +949,3 @@ function escapeHtml(str) {
               .replace(/>/g, '&gt;')
               .replace(/"/g, '&quot;');
 }
-

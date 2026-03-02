@@ -54,6 +54,34 @@
         </div>
     </div>
 
+    <!-- Subject Filters -->
+    <div class="card mb-xl" id="subjects-filter-card">
+        <form method="get" action="/portal/biospecimen/subjects" class="d-flex gap-sm flex-wrap">
+            <input
+                type="text"
+                name="q"
+                class="form-control"
+                value="{{ subject_query | default('') }}"
+                placeholder="Search subject ID, name, cohort, sex"
+                style="min-width: 260px; flex: 1;"
+            >
+            <input
+                type="text"
+                name="subject_id"
+                class="form-control"
+                value="{{ subject_id_filter | default('') }}"
+                placeholder="Filter by exact subject identifier"
+                style="min-width: 220px;"
+            >
+            <button type="submit" class="btn btn-outline">
+                <i class="fas fa-search"></i> Filter
+            </button>
+            {% if subject_query or subject_id_filter %}
+            <a href="/portal/biospecimen/subjects" class="btn btn-outline">Clear</a>
+            {% endif %}
+        </form>
+    </div>
+
     <!-- Subjects Table -->
     <div class="card" id="subjects-table-card">
         <h3 class="card-title"><i class="fas fa-users"></i> All Subjects</h3>
@@ -233,4 +261,3 @@ function addBiosample(subjectId) {
 }
 </script>
 {% endblock %}
-

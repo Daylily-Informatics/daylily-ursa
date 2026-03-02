@@ -160,6 +160,67 @@ class TestGetManifestAndTsv:
         assert result is None
 
 
+class TestPkOnlyManifestSchema:
+    """Compatibility tests for environments where manifest table uses pk-only schema."""
+
+    def test_save_list_get_with_pk_only_schema(self, manifest_registry):
+        # Simulate pre-detected pk-only table schema
+        manifest_registry._schema_loaded = True
+        manifest_registry._hash_key_name = "pk"
+        manifest_registry._range_key_name = None
+
+        # Save should include pk key and pk-based condition expression
+        manifest_registry.table.put_item.return_value = {}
+        saved = manifest_registry.save_manifest(
+            customer_id="cust-001",
+            tsv_content="RUN_ID\tSAMPLE_ID\nR0\tHG002\n",
+            name="Compat",
+        )
+        put_kwargs = manifest_registry.table.put_item.call_args.kwargs
+        assert put_kwargs["Item"]["pk"] == f"manifest#cust-001#{saved.manifest_id}"
+        assert put_kwargs["ConditionExpression"] == "attribute_not_exists(pk)"
+
+        # List should use scan fallback and still return normalized metadata
+        manifest_registry.table.scan.return_value = {
+            "Items": [
+                {
+                    "pk": f"manifest#cust-001#{saved.manifest_id}",
+                    "entity_type": "manifest",
+                    "customer_id": "cust-001",
+                    "manifest_id": saved.manifest_id,
+                    "created_at": saved.created_at,
+                    "name": "Compat",
+                    "description": "",
+                    "sample_count": 1,
+                    "tsv_sha256": saved.tsv_sha256,
+                    "tsv_gzip_b64": saved.tsv_gzip_b64,
+                }
+            ]
+        }
+        listed = manifest_registry.list_customer_manifests("cust-001")
+        assert len(listed) == 1
+        assert listed[0]["manifest_id"] == saved.manifest_id
+
+        # Get should use pk key for get_item
+        manifest_registry.table.get_item.return_value = {
+            "Item": {
+                "pk": f"manifest#cust-001#{saved.manifest_id}",
+                "entity_type": "manifest",
+                "customer_id": "cust-001",
+                "manifest_id": saved.manifest_id,
+                "created_at": saved.created_at,
+                "name": "Compat",
+                "description": "",
+                "sample_count": 1,
+                "tsv_sha256": saved.tsv_sha256,
+                "tsv_gzip_b64": saved.tsv_gzip_b64,
+            }
+        }
+        _ = manifest_registry.get_manifest(customer_id="cust-001", manifest_id=saved.manifest_id)
+        get_kwargs = manifest_registry.table.get_item.call_args.kwargs
+        assert get_kwargs["Key"]["pk"] == f"manifest#cust-001#{saved.manifest_id}"
+
+
 class TestCreateTableIfNotExists:
     """Tests for ManifestRegistry.create_table_if_not_exists behavior."""
 

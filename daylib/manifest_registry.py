@@ -22,7 +22,7 @@ from typing import Any, Dict, List, Optional
 
 import boto3
 from botocore.exceptions import ClientError
-from boto3.dynamodb.conditions import Key
+from boto3.dynamodb.conditions import Attr, Key
 
 
 LOGGER = logging.getLogger("daylily.manifest_registry")
@@ -161,14 +161,78 @@ class ManifestRegistry:
         self.dynamodb = session.resource("dynamodb")
         self.table_name = table_name
         self.table = self.dynamodb.Table(table_name)
+        self._hash_key_name = "customer_id"
+        self._range_key_name: Optional[str] = "manifest_id"
+        self._schema_loaded = False
 
         LOGGER.info("ManifestRegistry bound to table: %s", self.table.table_name)
         assert hasattr(self.table, "table_name")
+
+    def _detect_table_schema(self) -> None:
+        """Detect key schema from DynamoDB and cache result.
+
+        Supports both legacy schema (customer_id + manifest_id) and pk-style tables.
+        Falls back to legacy schema when table metadata is unavailable.
+        """
+        if self._schema_loaded:
+            return
+
+        hash_key = "customer_id"
+        range_key: Optional[str] = "manifest_id"
+
+        try:
+            desc = self.dynamodb.meta.client.describe_table(TableName=self.table_name)
+            table_desc = desc.get("Table", {}) if isinstance(desc, dict) else {}
+            key_schema = table_desc.get("KeySchema", []) if isinstance(table_desc, dict) else []
+            if isinstance(key_schema, list):
+                for element in key_schema:
+                    if not isinstance(element, dict):
+                        continue
+                    attr_name = str(element.get("AttributeName") or "").strip()
+                    key_type = str(element.get("KeyType") or "").strip().upper()
+                    if key_type == "HASH" and attr_name:
+                        hash_key = attr_name
+                    elif key_type == "RANGE" and attr_name:
+                        range_key = attr_name
+                if not any(
+                    isinstance(element, dict) and str(element.get("KeyType", "")).upper() == "RANGE"
+                    for element in key_schema
+                ):
+                    range_key = None
+        except ClientError as e:
+            if e.response.get("Error", {}).get("Code") != "ResourceNotFoundException":
+                LOGGER.warning("Failed to inspect manifest table schema, using legacy defaults: %s", e)
+        except Exception as e:  # pragma: no cover - defensive
+            LOGGER.warning("Unexpected error inspecting manifest table schema, using legacy defaults: %s", e)
+
+        self._hash_key_name = hash_key
+        self._range_key_name = range_key
+        self._schema_loaded = True
+        LOGGER.info(
+            "Manifest table schema detected: hash=%s range=%s",
+            self._hash_key_name,
+            self._range_key_name or "(none)",
+        )
+
+    def _build_primary_key(self, customer_id: str, manifest_id: str) -> Dict[str, str]:
+        self._detect_table_schema()
+        if self._hash_key_name == "customer_id" and self._range_key_name == "manifest_id":
+            return {"customer_id": customer_id, "manifest_id": manifest_id}
+        if self._hash_key_name == "pk" and self._range_key_name == "sk":
+            return {"pk": f"manifest#{customer_id}", "sk": manifest_id}
+        if self._hash_key_name == "pk" and self._range_key_name is None:
+            return {"pk": f"manifest#{customer_id}#{manifest_id}"}
+        key = {self._hash_key_name: customer_id}
+        if self._range_key_name:
+            key[self._range_key_name] = manifest_id
+        return key
 
     def create_table_if_not_exists(self) -> None:
         try:
             self.table.load()
             LOGGER.info("Manifest table %s already exists", self.table_name)
+            self._schema_loaded = False
+            self._detect_table_schema()
             return
         except ClientError as e:
             if e.response["Error"]["Code"] != "ResourceNotFoundException":
@@ -189,6 +253,8 @@ class ManifestRegistry:
         )
         table.wait_until_exists()
         LOGGER.info("Manifest table %s created successfully", self.table_name)
+        self._schema_loaded = False
+        self._detect_table_schema()
 
     def save_manifest(
         self,
@@ -217,7 +283,7 @@ class ManifestRegistry:
                 "Consider splitting into multiple manifests."
             )
 
-        item = {
+        item: Dict[str, Any] = {
             "customer_id": customer_id,
             "manifest_id": manifest_id,
             "created_at": created_at,
@@ -227,12 +293,23 @@ class ManifestRegistry:
             "tsv_sha256": tsv_sha256,
             "tsv_gzip_b64": tsv_gzip_b64,
             "schema_version": 1,
+            "entity_type": "manifest",
         }
+        item.update(self._build_primary_key(customer_id, manifest_id))
+
+        self._detect_table_schema()
+        if self._range_key_name:
+            condition_expr = (
+                f"attribute_not_exists({self._hash_key_name}) AND "
+                f"attribute_not_exists({self._range_key_name})"
+            )
+        else:
+            condition_expr = f"attribute_not_exists({self._hash_key_name})"
 
         try:
             self.table.put_item(
                 Item=item,
-                ConditionExpression="attribute_not_exists(customer_id) AND attribute_not_exists(manifest_id)",
+                ConditionExpression=condition_expr,
             )
         except ClientError as e:
             if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
@@ -263,17 +340,51 @@ class ManifestRegistry:
         if not customer_id or not customer_id.strip():
             raise ValueError("customer_id is required")
 
+        self._detect_table_schema()
+        items: List[Dict[str, Any]] = []
+
         try:
-            resp = self.table.query(
-                KeyConditionExpression=Key("customer_id").eq(customer_id),
-                Limit=limit,
-                ScanIndexForward=False,  # newest-first due to time-sortable manifest_id
-            )
+            if self._hash_key_name == "customer_id":
+                resp = self.table.query(
+                    KeyConditionExpression=Key("customer_id").eq(customer_id),
+                    Limit=limit,
+                    ScanIndexForward=False,  # newest-first due to time-sortable manifest_id
+                )
+                items = resp.get("Items", [])
+            elif self._hash_key_name == "pk" and self._range_key_name == "sk":
+                resp = self.table.query(
+                    KeyConditionExpression=Key("pk").eq(f"manifest#{customer_id}"),
+                    Limit=limit,
+                    ScanIndexForward=False,
+                )
+                items = resp.get("Items", [])
+            else:
+                # Fallback for pk-only and other schemas without customer queryability.
+                # Filter by stored customer_id attribute and manifest entity type.
+                scan_kwargs: Dict[str, Any] = {
+                    "FilterExpression": Attr("customer_id").eq(customer_id)
+                    & Attr("entity_type").eq("manifest"),
+                }
+                last_evaluated_key = None
+                while len(items) < limit:
+                    if last_evaluated_key:
+                        scan_kwargs["ExclusiveStartKey"] = last_evaluated_key
+                    resp = self.table.scan(**scan_kwargs)
+                    page_items = resp.get("Items", [])
+                    items.extend(page_items)
+                    last_evaluated_key = resp.get("LastEvaluatedKey")
+                    if not last_evaluated_key:
+                        break
+                items = items[:limit]
         except ClientError as e:
             LOGGER.error("Failed to list manifests for customer %s: %s", customer_id, str(e))
             raise
 
-        items = resp.get("Items", [])
+        items = sorted(
+            items,
+            key=lambda it: str(it.get("created_at") or it.get("manifest_id") or ""),
+            reverse=True,
+        )
         result = []
         for it in items:
             result.append(
@@ -294,10 +405,9 @@ class ManifestRegistry:
         if not manifest_id or not manifest_id.strip():
             raise ValueError("manifest_id is required")
 
+        key = self._build_primary_key(customer_id, manifest_id)
         try:
-            resp = self.table.get_item(
-                Key={"customer_id": customer_id, "manifest_id": manifest_id}
-            )
+            resp = self.table.get_item(Key=key)
         except ClientError as e:
             LOGGER.error(
                 "Failed to get manifest %s for customer %s: %s",

@@ -769,6 +769,130 @@ class TestPortalRoutes:
         assert "text/html" in follow.headers["content-type"]
 
 
+class TestPortalGlobalSearch:
+    """Tests for global portal search routes and authz scope behavior."""
+
+    def _make_admin_search_client(self, mock_state_db):
+        mock_customer_manager = MagicMock()
+
+        admin = MagicMock()
+        admin.customer_id = "cust-admin"
+        admin.is_admin = True
+        admin.email = "admin@example.com"
+        admin.customer_name = "Admin Customer"
+
+        other = MagicMock()
+        other.customer_id = "cust-other"
+        other.is_admin = False
+        other.email = "other@example.com"
+        other.customer_name = "Other Customer"
+
+        def _get_customer_by_email(email: str):
+            if email == admin.email:
+                return admin
+            if email == other.email:
+                return other
+            return None
+
+        mock_customer_manager.get_customer_by_email.side_effect = _get_customer_by_email
+        mock_customer_manager.list_customers.return_value = [admin, other]
+
+        app = create_app(
+            state_db=mock_state_db,
+            enable_auth=False,
+            customer_manager=mock_customer_manager,
+        )
+        client = TestClient(app)
+        client.post("/portal/login", data={"email": admin.email, "password": "testpass"})
+        return client
+
+    def test_portal_search_unauthenticated_redirects_to_login(self, mock_state_db):
+        app = create_app(state_db=mock_state_db, enable_auth=False)
+        client = TestClient(app)
+
+        response = client.get("/portal/search", follow_redirects=False)
+        assert response.status_code == 302
+        assert "/portal/login" in response.headers["location"]
+
+    def test_portal_search_header_form_is_rendered_for_authenticated_pages(self, authenticated_client):
+        response = authenticated_client.get("/portal")
+        assert response.status_code == 200
+        assert 'id="global-search-input"' in response.text
+
+    def test_portal_search_page_renders_for_authenticated_user(self, authenticated_client):
+        response = authenticated_client.get("/portal/search?q=example")
+        assert response.status_code == 200
+        assert "Global Search" in response.text
+        assert "id=\"portal-search-facets\"" in response.text
+
+    def test_api_portal_search_non_admin_cannot_query_admin_types(self, mock_state_db):
+        client = _make_authenticated_client(
+            mock_state_db,
+            customer_id="cust-001",
+            is_admin=False,
+            email="user@example.com",
+        )
+
+        response = client.get(
+            "/api/portal/search",
+            params={
+                "q": "type:user",
+                "type": "user",
+                "scope": "all",
+            },
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["scope"] == "mine"
+        assert "user" not in data["types"]
+        assert "monitor_log" not in data["types"]
+
+    def test_api_portal_search_admin_scope_all_returns_cross_customer_user_hits(self, mock_state_db):
+        client = self._make_admin_search_client(mock_state_db)
+        response = client.get(
+            "/api/portal/search",
+            params={"q": "example.com", "type": "user", "scope": "all"},
+        )
+        assert response.status_code == 200
+
+        payload = response.json()
+        user_hits = payload["results"].get("user", [])
+        hit_customer_ids = {hit["customer_id"] for hit in user_hits}
+        assert "cust-admin" in hit_customer_ids
+        assert "cust-other" in hit_customer_ids
+
+    def test_api_portal_search_admin_scope_mine_excludes_other_customers(self, mock_state_db):
+        client = self._make_admin_search_client(mock_state_db)
+        response = client.get(
+            "/api/portal/search",
+            params={"q": "example.com", "type": "user", "scope": "mine"},
+        )
+        assert response.status_code == 200
+
+        payload = response.json()
+        user_hits = payload["results"].get("user", [])
+        hit_customer_ids = {hit["customer_id"] for hit in user_hits}
+        assert hit_customer_ids == {"cust-admin"}
+
+    def test_api_portal_search_operator_parsing_from_query(self, mock_state_db):
+        client = _make_authenticated_client(
+            mock_state_db,
+            customer_id="cust-001",
+            is_admin=False,
+            email="user@example.com",
+        )
+
+        response = client.get(
+            "/api/portal/search",
+            params={"q": "type:file tag:germline"},
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["operators"]["type"] == ["file"]
+        assert payload["operators"]["tag"] == ["germline"]
+        assert payload["types"] == ["file"]
+
+
 class TestPortalBucketsEditDialog:
     """Regression tests for per-bucket Edit button + modal on /portal/files/buckets."""
 

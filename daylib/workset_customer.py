@@ -10,7 +10,7 @@ import logging
 import secrets
 import datetime as dt
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import boto3
 from botocore.exceptions import ClientError
@@ -61,6 +61,7 @@ class CustomerManager:
             session_kwargs["profile_name"] = profile
 
         session = boto3.Session(**session_kwargs)
+        self._session = session
         self.s3 = session.client("s3")
         self.dynamodb = session.resource("dynamodb")
         self.region = region
@@ -69,6 +70,7 @@ class CustomerManager:
         # Customer table for tracking
         self.customer_table_name = "daylily-customers"
         self.customer_table = self.dynamodb.Table(self.customer_table_name)
+        self._regional_s3_clients: Dict[str, Any] = {}
 
         # Sanity logging/guards so mis-bound DynamoDB resources surface immediately
         LOGGER.info(
@@ -208,19 +210,20 @@ class CustomerManager:
         """
         # Use provided region or default to CustomerManager's region
         target_region = bucket_region or self.region
+        s3_client = self._get_s3_client_for_region(target_region)
 
         try:
             # Create bucket - us-east-1 has special handling (no LocationConstraint)
             if target_region == "us-east-1":
-                self.s3.create_bucket(Bucket=bucket_name)
+                s3_client.create_bucket(Bucket=bucket_name)
             else:
-                self.s3.create_bucket(
+                s3_client.create_bucket(
                     Bucket=bucket_name,
                     CreateBucketConfiguration={"LocationConstraint": target_region},
                 )
 
             # Enable versioning
-            self.s3.put_bucket_versioning(
+            s3_client.put_bucket_versioning(
                 Bucket=bucket_name,
                 VersioningConfiguration={"Status": "Enabled"},
             )
@@ -235,7 +238,7 @@ class CustomerManager:
             if cost_center:
                 tags.append({"Key": "CostCenter", "Value": cost_center})
 
-            self.s3.put_bucket_tagging(
+            s3_client.put_bucket_tagging(
                 Bucket=bucket_name,
                 Tagging={"TagSet": tags},
             )
@@ -261,7 +264,7 @@ class CustomerManager:
                 ]
             }
 
-            self.s3.put_bucket_lifecycle_configuration(
+            s3_client.put_bucket_lifecycle_configuration(
                 Bucket=bucket_name,
                 LifecycleConfiguration=lifecycle_policy,
             )
@@ -274,6 +277,14 @@ class CustomerManager:
             else:
                 LOGGER.error("Failed to create bucket %s: %s", bucket_name, str(e))
                 raise
+
+    def _get_s3_client_for_region(self, region: str):
+        """Return an S3 client scoped to the requested region."""
+        if region == self.region:
+            return self.s3
+        if region not in self._regional_s3_clients:
+            self._regional_s3_clients[region] = self._session.client("s3", region_name=region)
+        return self._regional_s3_clients[region]
 
     def _save_customer_config(self, config: CustomerConfig) -> None:
         """Save customer configuration to DynamoDB.

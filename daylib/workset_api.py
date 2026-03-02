@@ -627,6 +627,7 @@ def create_app(
             file_registry=file_registry,
             linked_bucket_manager=linked_bucket_manager,
             biospecimen_registry=biospecimen_registry_for_portal,
+            manifest_registry=manifest_registry,
         )
         portal_router = create_portal_router(portal_deps)
         app.include_router(portal_router)
