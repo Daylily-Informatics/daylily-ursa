@@ -85,7 +85,7 @@ manager.create_customer_table_if_not_exists()
 
 ```bash
 source ../daylily-cognito/daycog_activate
-daycog setup --name daylily-workset-users --client-name ursa --port 8914 --profile <aws-profile> --region us-west-2
+./scripts/setup_cognito_google_default.sh
 daycog add-user user@acme.com --password 'password123'
 ```
 

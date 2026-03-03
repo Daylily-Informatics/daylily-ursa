@@ -84,13 +84,18 @@ Use the `daylily-cognito` operational CLI rather than direct AWS commands:
 
 ```bash
 source ../daylily-cognito/daycog_activate
-daycog setup --name daylily-workset-users --client-name ursa --port 8914 --profile <aws-profile> --region us-west-2
+./scripts/setup_cognito_google_default.sh
 ```
 
 This writes/updates `~/.config/daycog/default.env` with:
 - `COGNITO_REGION`
 - `COGNITO_USER_POOL_ID`
 - `COGNITO_APP_CLIENT_ID`
+
+By default, `./scripts/setup_cognito_google_default.sh` uses:
+- Google OAuth client JSON: `~/.config/google_oauth/client_secret_2_95843944781-d1831sfs0ic2ggmp6t404b958v1nqn40.apps.googleusercontent.com.json`
+- Pool/client: `daylily-ursa-users` / `ursa`
+- Port/region/profile: `8914` / `us-west-2` / `lsmc` (unless `AWS_PROFILE`/`AWS_REGION` are set)
 
 Create a test user:
 
