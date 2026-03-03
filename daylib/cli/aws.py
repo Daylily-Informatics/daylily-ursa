@@ -1,187 +1,142 @@
-"""AWS resource management commands for Ursa CLI."""
+"""Infrastructure readiness commands for Ursa TapDB-backed services."""
+
+from __future__ import annotations
 
 import os
-from typing import List, Tuple
+from typing import List
 
 import typer
 from rich.console import Console
 from rich.table import Table
 
-aws_app = typer.Typer(help="AWS resource management commands")
+aws_app = typer.Typer(help="Infrastructure readiness commands")
 console = Console()
 
-# Biospecimen tables (hardcoded defaults not in settings)
-BIOSPECIMEN_TABLES = [
-    "daylily-subjects",
-    "daylily-biospecimens",
-    "daylily-biosamples",
-    "daylily-libraries",
-]
 
-# FileRegistry tables (hardcoded defaults in daylib/file_registry.py)
-FILE_REGISTRY_TABLES = [
-    "daylily-files",
-    "daylily-filesets",
-    "daylily-file-workset-usage",
-]
+def _effective_profile() -> str | None:
+    return os.environ.get("AWS_PROFILE") or None
 
 
-def _check_aws_profile():
-    """Check if AWS_PROFILE is set."""
-    if not os.environ.get("AWS_PROFILE"):
-        console.print("[red]✗[/red]  AWS_PROFILE not set")
-        console.print("   Set it with: [cyan]export AWS_PROFILE=your-profile[/cyan]")
-        raise typer.Exit(1)
-
-
-def _get_all_table_names() -> List[str]:
-    """Get all DynamoDB table names used by the system."""
+def _effective_region() -> str:
     from daylib.config import get_settings
 
     settings = get_settings()
-    return [
-        settings.workset_table_name,
-        settings.customer_table_name,
-        settings.daylily_manifest_table,
-        settings.daylily_linked_buckets_table,
-    ] + FILE_REGISTRY_TABLES + BIOSPECIMEN_TABLES
-
-
-def _get_core_tables_with_keys() -> List[Tuple[str, str]]:
-    """Get core tables with their primary key names (for setup).
-
-    Note: FileRegistry and BiospecimenRegistry tables have complex schemas
-    and should be created via their respective create_table_if_not_exists() methods.
-    This only creates simple single-key tables.
-    """
-    from daylib.config import get_settings
-
-    settings = get_settings()
-    return [
-        (settings.workset_table_name, "workset_id"),
-        (settings.customer_table_name, "customer_id"),
-        (settings.daylily_linked_buckets_table, "bucket_id"),
-    ]
+    return settings.get_effective_region()
 
 
 @aws_app.command("setup")
-def setup():
-    """Create required AWS resources (DynamoDB tables)."""
-    _check_aws_profile()
+def setup() -> None:
+    """Bootstrap TapDB templates and Ursa registries."""
+    from daylib.biospecimen import BiospecimenRegistry
+    from daylib.file_registry import FileRegistry
+    from daylib.manifest_registry import ManifestRegistry
+    from daylib.s3_bucket_validator import LinkedBucketManager
+    from daylib.workset_customer import CustomerManager
+    from daylib.workset_state_db import WorksetStateDB
 
-    console.print("[cyan]Creating AWS resources...[/cyan]")
+    region = _effective_region()
+    profile = _effective_profile()
+    errors: List[str] = []
 
-    try:
-        import boto3
-        from daylib.config import get_settings
+    console.print("[cyan]Bootstrapping Ursa TapDB resources...[/cyan]")
 
-        settings = get_settings()
-        region = settings.get_effective_region()
-        dynamodb = boto3.resource("dynamodb", region_name=region)
+    components = [
+        (
+            "worksets",
+            lambda: WorksetStateDB(
+                table_name="tapdb-worksets",
+                region=region,
+                profile=profile,
+            ).create_table_if_not_exists(),
+        ),
+        (
+            "customers",
+            lambda: CustomerManager(
+                region=region,
+                profile=profile,
+            ).create_customer_table_if_not_exists(),
+        ),
+        (
+            "files",
+            lambda: FileRegistry(
+                region=region,
+                profile=profile,
+            ).create_tables_if_not_exist(),
+        ),
+        (
+            "manifests",
+            lambda: ManifestRegistry(
+                region=region,
+                profile=profile,
+            ).create_table_if_not_exists(),
+        ),
+        (
+            "biospecimen",
+            lambda: BiospecimenRegistry(
+                region=region,
+                profile=profile,
+            ).create_tables_if_not_exist(),
+        ),
+        (
+            "linked-buckets",
+            lambda: LinkedBucketManager(
+                region=region,
+                profile=profile,
+            ).create_table_if_not_exists(),
+        ),
+    ]
 
-        tables_to_create = _get_core_tables_with_keys()
+    for label, fn in components:
+        try:
+            fn()
+            console.print(f"[green]✓[/green] {label}")
+        except Exception as exc:  # pragma: no cover - operational path
+            errors.append(f"{label}: {exc}")
+            console.print(f"[red]✗[/red] {label}: {exc}")
 
-        for table_name, key_name in tables_to_create:
-            try:
-                table = dynamodb.Table(table_name)
-                table.load()
-                console.print(f"[green]✓[/green]  Table exists: {table_name}")
-            except dynamodb.meta.client.exceptions.ResourceNotFoundException:
-                console.print(f"[cyan]►[/cyan]  Creating table: {table_name}")
-                dynamodb.create_table(
-                    TableName=table_name,
-                    KeySchema=[{"AttributeName": key_name, "KeyType": "HASH"}],
-                    AttributeDefinitions=[{"AttributeName": key_name, "AttributeType": "S"}],
-                    BillingMode="PAY_PER_REQUEST",
-                )
-                console.print(f"[green]✓[/green]  Created table: {table_name}")
-
-        console.print("\n[green]✓[/green]  AWS setup complete")
-
-    except Exception as e:
-        console.print(f"[red]✗[/red]  Error: {e}")
+    if errors:
         raise typer.Exit(1)
+
+    console.print("\n[green]✓[/green] TapDB bootstrap complete")
 
 
 @aws_app.command("status")
-def status():
-    """Check status of AWS resources."""
-    _check_aws_profile()
+def status() -> None:
+    """Show TapDB template readiness status."""
+    from daylib.tapdb_graph.backend import TEMPLATE_DEFINITIONS, TapDBBackend
 
-    console.print("[cyan]Checking AWS resources...[/cyan]\n")
+    backend = TapDBBackend(app_username="ursa-status")
+    table = Table(title="TapDB Template Status")
+    table.add_column("Template", style="cyan")
+    table.add_column("Status")
 
     try:
-        import boto3
-        from daylib.config import get_settings
-
-        settings = get_settings()
-        region = settings.get_effective_region()
-        dynamodb = boto3.resource("dynamodb", region_name=region)
-
-        table = Table(title="DynamoDB Tables")
-        table.add_column("Table", style="cyan")
-        table.add_column("Status")
-        table.add_column("Items")
-
-        tables_to_check = _get_all_table_names()
-
-        for table_name in tables_to_check:
-            try:
-                tbl = dynamodb.Table(table_name)
-                tbl.load()
-                item_count = tbl.item_count
-                table.add_row(table_name, "[green]Active[/green]", str(item_count))
-            except dynamodb.meta.client.exceptions.ResourceNotFoundException:
-                table.add_row(table_name, "[red]Not Found[/red]", "-")
-
-        console.print(table)
-
-    except Exception as e:
-        console.print(f"[red]✗[/red]  Error: {e}")
+        with backend.session_scope() as session:
+            for spec in TEMPLATE_DEFINITIONS:
+                template = backend.templates.get_template(session, spec.template_code)
+                if template is None:
+                    table.add_row(spec.template_code, "[red]missing[/red]")
+                else:
+                    table.add_row(spec.template_code, "[green]ready[/green]")
+    except Exception as exc:  # pragma: no cover - operational path
+        console.print(f"[red]✗[/red] Unable to check TapDB status: {exc}")
         raise typer.Exit(1)
+
+    console.print(table)
 
 
 @aws_app.command("teardown")
 def teardown(
-    force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation"),
-):
-    """Delete all DynamoDB tables created by the project."""
-    _check_aws_profile()
-
-    tables_to_delete = _get_all_table_names()
-
+    force: bool = typer.Option(False, "--force", "-f", help="Acknowledge this non-reversible step"),
+) -> None:
+    """TapDB teardown is intentionally not automated from Ursa CLI."""
     if not force:
-        console.print("[yellow]⚠[/yellow]  This will delete ALL DynamoDB tables:")
-        for tbl in tables_to_delete:
-            console.print(f"   • {tbl}")
-        confirm = typer.confirm("\nAre you sure?")
-        if not confirm:
-            console.print("[dim]Cancelled[/dim]")
-            return
-
-    try:
-        import boto3
-        from daylib.config import get_settings
-
-        settings = get_settings()
-        region = settings.get_effective_region()
-        dynamodb = boto3.resource("dynamodb", region_name=region)
-
-        deleted = 0
-        not_found = 0
-        for table_name in tables_to_delete:
-            try:
-                tbl = dynamodb.Table(table_name)
-                tbl.delete()
-                console.print(f"[green]✓[/green]  Deleted table: {table_name}")
-                deleted += 1
-            except dynamodb.meta.client.exceptions.ResourceNotFoundException:
-                console.print(f"[dim]○[/dim]  Table not found: {table_name}")
-                not_found += 1
-
-        console.print(f"\n[green]✓[/green]  AWS teardown complete (deleted: {deleted}, not found: {not_found})")
-
-    except Exception as e:
-        console.print(f"[red]✗[/red]  Error: {e}")
+        console.print("[yellow]Teardown is disabled by default.[/yellow]")
+        console.print("Use --force to print manual teardown instructions.")
         raise typer.Exit(1)
 
+    console.print("[yellow]Manual teardown required.[/yellow]")
+    console.print("1. Stop API/worker/monitor processes.")
+    console.print("2. Snapshot database before changes.")
+    console.print("3. Use DBA-managed SQL migration tooling to prune Ursa rows/templates.")
+    console.print("4. Re-run `ursa aws setup` to re-bootstrap templates.")

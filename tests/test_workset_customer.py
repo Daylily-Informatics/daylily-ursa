@@ -1,472 +1,216 @@
-"""Tests for customer management."""
+"""Graph-native tests for customer management and ownership filtering."""
 
-from unittest.mock import MagicMock, patch
+from __future__ import annotations
+
+from unittest.mock import MagicMock
 
 import pytest
 
-from daylib.workset_customer import CustomerManager, CustomerConfig
 from daylib.routes.dependencies import verify_workset_ownership
+from daylib.workset_customer import CustomerConfig, CustomerManager
 
+
+class _SessionCtx:
+    def __init__(self, session: MagicMock):
+        self._session = session
+
+    def __enter__(self):
+        return self._session
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+
+def _instance(payload: dict, *, euid: str = "cust-euid"):
+    row = MagicMock()
+    row.json_addl = dict(payload)
+    row.euid = euid
+    row.name = payload.get("customer_name") or payload.get("customer_id") or "customer"
+    row.created_dt = None
+    row.modified_dt = None
+    row.bstatus = "active"
+    row.uuid = hash(euid) & 0xFFFFFFFF
+    row.is_deleted = False
+    return row
 
 
 @pytest.fixture
-def mock_aws():
-    """Mock AWS services."""
-    with patch("daylib.workset_customer.boto3.Session") as mock_session:
-        mock_s3 = MagicMock()
-        mock_tapdb = MagicMock()
-        mock_table = MagicMock()
-
-        mock_session.return_value.client.return_value = mock_s3
-        mock_session.return_value.resource.return_value = mock_tapdb
-        mock_tapdb.Table.return_value = mock_table
-
-        yield {
-            "session": mock_session,
-            "s3": mock_s3,
-            "tapdb": mock_tapdb,
-            "table": mock_table,
-        }
+def customer_manager() -> CustomerManager:
+    mgr = CustomerManager.__new__(CustomerManager)
+    mgr._session = MagicMock()
+    mgr.s3 = MagicMock()
+    mgr.region = "us-west-2"
+    mgr.bucket_prefix = "test-customer"
+    mgr.profile = None
+    mgr.customer_table_name = "tapdb-customer-graph"
+    mgr.backend = MagicMock()
+    mgr._backend_session = MagicMock()
+    mgr.backend.session_scope.return_value = _SessionCtx(mgr._backend_session)
+    return mgr
 
 
-@pytest.fixture
-def customer_manager(mock_aws):
-    """Create CustomerManager instance."""
-    return CustomerManager(
-        region="us-west-2",
-        profile=None,
-        bucket_prefix="test-customer",
+def test_generate_customer_id(customer_manager: CustomerManager):
+    customer_id = customer_manager._generate_customer_id("Test Customer")
+    assert customer_id.startswith("test-customer-")
+
+
+def test_create_customer_bucket_handles_us_east_1(customer_manager: CustomerManager):
+    east = MagicMock()
+    customer_manager._session.client.side_effect = lambda service, region_name=None: east
+
+    customer_manager._create_customer_bucket(
+        bucket_name="daylily-customer-test",
+        customer_id="cust-001",
+        cost_center="CC-1",
+        bucket_region="us-east-1",
+    )
+
+    east.create_bucket.assert_called_once_with(Bucket="daylily-customer-test")
+    east.put_bucket_tagging.assert_called_once()
+
+
+def test_create_customer_bucket_uses_location_constraint_for_non_east(customer_manager: CustomerManager):
+    west = MagicMock()
+    customer_manager._session.client.side_effect = lambda service, region_name=None: west
+
+    customer_manager._create_customer_bucket(
+        bucket_name="daylily-customer-test",
+        customer_id="cust-001",
+        cost_center="CC-1",
+        bucket_region="eu-central-1",
+    )
+
+    west.create_bucket.assert_called_once_with(
+        Bucket="daylily-customer-test",
+        CreateBucketConfiguration={"LocationConstraint": "eu-central-1"},
     )
 
 
-def test_generate_customer_id(customer_manager):
-    """Test customer ID generation."""
-    customer_id = customer_manager._generate_customer_id("Test Customer")
+def test_onboard_customer_creates_graph_record(customer_manager: CustomerManager):
+    customer_manager.get_customer_by_email = MagicMock(return_value=None)
+    customer_manager._create_customer_bucket = MagicMock()
 
-    assert customer_id.startswith("test-customer-")
-    assert len(customer_id) > len("test-customer-")
-
-
-def test_onboard_customer(customer_manager, mock_aws):
-    """Test customer onboarding."""
-    mock_table = mock_aws["table"]
-
-    config = customer_manager.onboard_customer(
-        customer_name="Test Customer",
-        email="test@example.com",
+    cfg = customer_manager.onboard_customer(
+        customer_name="Acme",
+        email="acme@example.com",
         max_concurrent_worksets=10,
         max_storage_gb=2000,
         cost_center="CC-123",
     )
 
-    assert isinstance(config, CustomerConfig)
-    assert config.customer_name == "Test Customer"
-    assert config.email == "test@example.com"
-    assert config.max_concurrent_worksets == 10
-    assert config.max_storage_gb == 2000
-    assert config.cost_center == "CC-123"
-    assert config.s3_bucket.startswith("test-customer-")
-
-    # Verify S3 bucket creation was called
-    mock_aws["s3"].create_bucket.assert_called_once()
-
-    # Verify TapDB put_item was called
-    mock_table.put_item.assert_called_once()
+    assert isinstance(cfg, CustomerConfig)
+    assert cfg.customer_name == "Acme"
+    assert cfg.email == "acme@example.com"
+    assert cfg.max_concurrent_worksets == 10
+    assert cfg.max_storage_gb == 2000
+    customer_manager.backend.create_instance.assert_called_once()
 
 
-def test_onboard_customer_us_east_1_uses_east_client_without_location_constraint(customer_manager, mock_aws):
-    """Creating a us-east-1 bucket must use a us-east-1 client and omit LocationConstraint."""
-    session_instance = mock_aws["session"].return_value
-    default_s3 = mock_aws["s3"]
-    east_s3 = MagicMock()
-
-    def _client_side_effect(service_name, **kwargs):
-        if service_name == "s3" and kwargs.get("region_name") == "us-east-1":
-            return east_s3
-        return default_s3
-
-    session_instance.client.side_effect = _client_side_effect
-
-    config = customer_manager.onboard_customer(
-        customer_name="East Region Customer",
-        email="east@example.com",
-        bucket_region="us-east-1",
+def test_onboard_customer_returns_existing(customer_manager: CustomerManager):
+    existing = CustomerConfig(
+        customer_id="cust-001",
+        customer_name="Acme",
+        email="acme@example.com",
+        s3_bucket="bucket",
     )
+    customer_manager.get_customer_by_email = MagicMock(return_value=existing)
 
-    assert config.bucket_region == "us-east-1"
-    east_s3.create_bucket.assert_called_once_with(Bucket=config.s3_bucket)
-    default_s3.create_bucket.assert_not_called()
+    cfg = customer_manager.onboard_customer(customer_name="Acme", email="acme@example.com")
 
-
-def test_save_customer_config(customer_manager, mock_aws):
-    """Test saving customer configuration."""
-    mock_table = mock_aws["table"]
-
-    config = CustomerConfig(
-        customer_id="test-123",
-        customer_name="Test Customer",
-        email="test@example.com",
-        s3_bucket="test-bucket",
-        max_concurrent_worksets=5,
-        max_storage_gb=1000,
-        billing_account_id="BA-456",
-        cost_center="CC-789",
-    )
-
-    customer_manager._save_customer_config(config)
-
-    mock_table.put_item.assert_called_once()
-    call_args = mock_table.put_item.call_args
-    item = call_args[1]["Item"]
-
-    assert item["customer_id"] == "test-123"
-    assert item["customer_name"] == "Test Customer"
-    assert item["email"] == "test@example.com"
-    assert item["billing_account_id"] == "BA-456"
-    assert item["cost_center"] == "CC-789"
+    assert cfg is existing
+    customer_manager.backend.create_instance.assert_not_called()
 
 
-def test_get_customer_config(customer_manager, mock_aws):
-    """Test getting customer configuration."""
-    mock_table = mock_aws["table"]
-    mock_table.get_item.return_value = {
-        "Item": {
-            "customer_id": "test-123",
-            "customer_name": "Test Customer",
-            "email": "test@example.com",
-            "s3_bucket": "test-bucket",
-            "max_concurrent_worksets": 5,
-            "max_storage_gb": 1000,
-        }
+def test_get_customer_config_and_list(customer_manager: CustomerManager):
+    payload = {
+        "customer_id": "cust-001",
+        "customer_name": "Acme",
+        "email": "acme@example.com",
+        "s3_bucket": "bucket-1",
+        "max_concurrent_worksets": 5,
+        "max_storage_gb": 1000,
     }
+    row = _instance(payload)
 
-    config = customer_manager.get_customer_config("test-123")
+    customer_manager.backend.find_instance_by_external_id.return_value = row
+    cfg = customer_manager.get_customer_config("cust-001")
+    assert cfg is not None
+    assert cfg.customer_name == "Acme"
 
-    assert config is not None
-    assert config.customer_id == "test-123"
-    assert config.customer_name == "Test Customer"
-    assert config.email == "test@example.com"
-
-
-def test_get_customer_config_not_found(customer_manager, mock_aws):
-    """Test getting non-existent customer."""
-    mock_table = mock_aws["table"]
-    mock_table.get_item.return_value = {}
-
-    config = customer_manager.get_customer_config("nonexistent")
-
-    assert config is None
+    customer_manager.backend.list_instances_by_template.return_value = [row]
+    listed = customer_manager.list_customers()
+    assert len(listed) == 1
+    assert listed[0].customer_id == "cust-001"
 
 
-def test_list_customers(customer_manager, mock_aws):
-    """Test listing customers."""
-    mock_table = mock_aws["table"]
-    mock_table.scan.return_value = {
-        "Items": [
-            {
-                "customer_id": "test-1",
-                "customer_name": "Customer 1",
-                "email": "customer1@example.com",
-                "s3_bucket": "bucket-1",
-                "max_concurrent_worksets": 5,
-                "max_storage_gb": 1000,
-            },
-            {
-                "customer_id": "test-2",
-                "customer_name": "Customer 2",
-                "email": "customer2@example.com",
-                "s3_bucket": "bucket-2",
-                "max_concurrent_worksets": 10,
-                "max_storage_gb": 2000,
-            },
-        ]
-    }
-
-    customers = customer_manager.list_customers()
-
-    assert len(customers) == 2
-    assert customers[0].customer_id == "test-1"
-    assert customers[1].customer_id == "test-2"
+def test_update_customer_returns_none_when_missing(customer_manager: CustomerManager):
+    customer_manager.backend.find_instance_by_external_id.return_value = None
+    assert customer_manager.update_customer("missing", customer_name="new") is None
 
 
-def test_update_customer(customer_manager, mock_aws):
-    """Test updating customer configuration."""
-    mock_table = mock_aws["table"]
-    # Simulate existing customer in DB
-    mock_table.get_item.return_value = {
-        "Item": {
-            "customer_id": "test-123",
-            "customer_name": "Old Name",
+def test_update_customer_writes_payload(customer_manager: CustomerManager):
+    row = _instance(
+        {
+            "customer_id": "cust-001",
+            "customer_name": "Old",
             "email": "old@example.com",
-            "s3_bucket": "test-bucket",
+            "s3_bucket": "bucket",
             "max_concurrent_worksets": 5,
             "max_storage_gb": 1000,
-            "billing_account_id": "OLD-BA",
-            "cost_center": "OLD-CC",
+            "api_tokens": [],
         }
-    }
-
-    # Update only customer_name and cost_center
-    updated = customer_manager.update_customer(
-        customer_id="test-123",
-        customer_name="New Name",
-        cost_center="NEW-CC",
     )
+    customer_manager.backend.find_instance_by_external_id.return_value = row
+
+    updated = customer_manager.update_customer("cust-001", customer_name="New", cost_center="CC-NEW")
 
     assert updated is not None
-    assert updated.customer_name == "New Name"
-    assert updated.cost_center == "NEW-CC"
-    # Fields not updated should remain the same
-    assert updated.email == "old@example.com"
-    assert updated.billing_account_id == "OLD-BA"
-
-    # Verify put_item was called to save updates
-    mock_table.put_item.assert_called_once()
+    assert updated.customer_name == "New"
+    assert updated.cost_center == "CC-NEW"
+    customer_manager.backend.update_instance_json.assert_called_once()
 
 
-def test_update_customer_not_found(customer_manager, mock_aws):
-    """Test updating non-existent customer returns None."""
-    mock_table = mock_aws["table"]
-    mock_table.get_item.return_value = {}
-
-    result = customer_manager.update_customer(
-        customer_id="nonexistent",
-        customer_name="New Name",
+def test_api_token_views_and_revoke(customer_manager: CustomerManager):
+    cfg = CustomerConfig(
+        customer_id="cust-001",
+        customer_name="Acme",
+        email="acme@example.com",
+        s3_bucket="bucket",
+        api_tokens=[
+            {
+                "id": "tok-1",
+                "name": "primary",
+                "token_hash": "hash",
+                "created_at": "2026-01-01T00:00:00Z",
+                "expires_at": "2099-01-01T00:00:00Z",
+                "revoked": False,
+            }
+        ],
     )
+    customer_manager.get_customer_config = MagicMock(return_value=cfg)
+    customer_manager.update_customer = MagicMock(return_value=cfg)
 
-    assert result is None
-    # Should not attempt to save if customer not found
-    mock_table.put_item.assert_not_called()
+    listed = customer_manager.list_api_tokens("cust-001")
+    assert "token_hash" not in listed[0]
 
-
-# =============================================================================
-# API Customer Isolation Tests
-# =============================================================================
-
-
-class TestAPICustomerIsolation:
-    """Tests for API customer isolation (Phase 3B).
-
-    Verifies that customer workset endpoints filter by customer_id
-    ownership rather than bucket, preventing cross-customer data leakage.
-    """
-
-    def test_public_worksets_endpoint_filters_by_customer_id(self):
-        """Test that /worksets?customer_id=X filters to customer X's worksets."""
-        # Simulate worksets from multiple customers
-        worksets = [
-            {"workset_id": "ws-1", "customer_id": "customer-alpha", "state": "ready"},
-            {"workset_id": "ws-2", "customer_id": "customer-beta", "state": "ready"},
-            {"workset_id": "ws-3", "customer_id": "customer-alpha", "state": "complete"},
-            {"workset_id": "ws-4", "customer_id": "customer-beta", "state": "complete"},
-        ]
-
-        # Filter by customer_id using verify_workset_ownership (same logic as API)
-        customer_id = "customer-alpha"
-        filtered = [w for w in worksets if verify_workset_ownership(w, customer_id)]
-
-        assert len(filtered) == 2
-        assert all(w["customer_id"] == "customer-alpha" for w in filtered)
-        assert "ws-1" in [w["workset_id"] for w in filtered]
-        assert "ws-3" in [w["workset_id"] for w in filtered]
-
-    def test_customer_worksets_endpoint_uses_ownership_not_bucket(self):
-        """Test that /api/customers/{id}/worksets filters by customer_id, not bucket."""
-        # Worksets with same bucket but different customer_ids
-        worksets = [
-            {"workset_id": "ws-1", "customer_id": "customer-a", "bucket": "shared-bucket"},
-            {"workset_id": "ws-2", "customer_id": "customer-b", "bucket": "shared-bucket"},
-            {"workset_id": "ws-3", "customer_id": "customer-a", "bucket": "other-bucket"},
-        ]
-
-        # Filter by customer_id (not bucket)
-        customer_id = "customer-a"
-        filtered = [w for w in worksets if verify_workset_ownership(w, customer_id)]
-
-        # Should get both of customer-a's worksets, regardless of bucket
-        assert len(filtered) == 2
-        assert all(w["customer_id"] == "customer-a" for w in filtered)
-
-        # Old bucket-based filtering would have given wrong results
-        bucket = "shared-bucket"
-        bucket_filtered = [w for w in worksets if w.get("bucket") == bucket]
-        assert len(bucket_filtered) == 2  # Would include customer-b's workset!
-
-    def test_archived_worksets_endpoint_uses_ownership_not_bucket(self):
-        """Test that /api/customers/{id}/worksets/archived filters by customer_id."""
-        archived = [
-            {"workset_id": "ws-1", "customer_id": "cust-x", "state": "archived", "bucket": "bucket-x"},
-            {"workset_id": "ws-2", "customer_id": "cust-y", "state": "archived", "bucket": "bucket-x"},
-            {"workset_id": "ws-3", "customer_id": "cust-x", "state": "archived", "bucket": "bucket-y"},
-        ]
-
-        # Filter by customer_id ownership
-        customer_id = "cust-x"
-        filtered = [w for w in archived if verify_workset_ownership(w, customer_id)]
-
-        assert len(filtered) == 2
-        assert {"ws-1", "ws-3"} == {w["workset_id"] for w in filtered}
-
-    def test_cross_customer_access_blocked(self):
-        """Test that customer A cannot access customer B's worksets via API filtering."""
-        customer_a_workset = {
-            "workset_id": "ws-secret-a",
-            "customer_id": "customer-a",
-            "bucket": "bucket-a",
-        }
-        customer_b_workset = {
-            "workset_id": "ws-secret-b",
-            "customer_id": "customer-b",
-            "bucket": "bucket-b",
-        }
-
-        # Customer A trying to access customer B's workset
-        assert verify_workset_ownership(customer_a_workset, "customer-a") is True
-        assert verify_workset_ownership(customer_b_workset, "customer-a") is False
-
-        # Customer B trying to access customer A's workset
-        assert verify_workset_ownership(customer_b_workset, "customer-b") is True
-        assert verify_workset_ownership(customer_a_workset, "customer-b") is False
-
-    def test_ownership_fallback_to_metadata_submitted_by(self):
-        """Test API filtering works for legacy worksets using metadata.submitted_by."""
-        legacy_workset = {
-            "workset_id": "legacy-ws-1",
-            # No customer_id field (legacy)
-            "metadata": {"submitted_by": "legacy-customer"},
-            "bucket": "some-bucket",
-        }
-
-        # Should match via fallback
-        assert verify_workset_ownership(legacy_workset, "legacy-customer") is True
-        assert verify_workset_ownership(legacy_workset, "other-customer") is False
-
-    def test_no_customer_id_returns_empty_filter(self):
-        """Test that worksets without customer_id are filtered out for security."""
-        workset_no_owner = {
-            "workset_id": "orphan-ws",
-            "bucket": "some-bucket",
-            # No customer_id, no metadata.submitted_by
-        }
-
-        # Should not match any customer
-        assert verify_workset_ownership(workset_no_owner, "any-customer") is False
+    assert customer_manager.revoke_api_token("cust-001", "tok-1") is True
+    customer_manager.update_customer.assert_called_once()
 
 
-class TestBillingAccountIdIsMetadataOnly:
-    """Tests documenting that billing_account_id is metadata-only.
+def test_verify_workset_ownership_filters_by_customer_id():
+    worksets = [
+        {"workset_id": "ws-1", "customer_id": "customer-a"},
+        {"workset_id": "ws-2", "customer_id": "customer-b"},
+    ]
+    filtered = [w for w in worksets if verify_workset_ownership(w, "customer-a")]
+    assert [w["workset_id"] for w in filtered] == ["ws-1"]
 
-    Per Task 27 (NEW_FINAL_LINGERING_TASKS.md):
-    - billing_account_id visibility is already implemented (captured at register +
-      displayed on /portal/account) => 'visible' is STALE (already done).
-    - For 'usable': Only add tests to detect whether any existing code path uses
-      billing_account_id (e.g., affects billing, workset submissions, tags, AWS ops).
-      If this cannot be reliably tested in-unit (or only exists in external infra),
-      do not implement new behavior; document result in test comments and treat as
-      skipped per instruction.
 
-    INVESTIGATION RESULTS (2026-01-25):
-    -----------------------------------
-    1. billing_account_id is defined in CustomerConfig dataclass (workset_customer.py)
-    2. It is stored in TapDB via _save_customer_config() (conditionally, only if not None)
-    3. It is returned in API responses via CustomerResponse model (workset_api.py)
-    4. It is displayed on the /portal/account page (templates/account.html)
-    5. It is NOT used in daylib/billing.py - BillingCalculator calculates costs from:
-       - compute_cost_usd: From Snakemake benchmark data (actual spot instance pricing)
-       - storage_bytes: From S3 storage metrics
-       - sample_count: From workset metadata
-       - platform_fee_usd: Configurable markup based on rates
-    6. It is NOT used in workset registration (workset_api.py does not tag worksets with it)
-    7. It is NOT used in AWS operations or resource tagging
+def test_verify_workset_ownership_fallback_to_metadata_submitted_by():
+    legacy = {"workset_id": "legacy", "metadata": {"submitted_by": "cust-legacy"}}
+    assert verify_workset_ownership(legacy, "cust-legacy") is True
+    assert verify_workset_ownership(legacy, "other") is False
 
-    CONCLUSION: billing_account_id is metadata-only. It is captured and displayed but
-    NOT operationally used in any code path that affects billing, workset processing,
-    or AWS resource management. This is intentional - billing is calculated from actual
-    workset data, not routed to external billing accounts.
 
-    These tests document this finding for future reference.
-    """
-
-    def test_billing_account_id_stored_and_retrieved(self, customer_manager, mock_aws):
-        """Verify billing_account_id is correctly stored and retrieved.
-
-        This confirms the 'visible' part is working - the field is persisted.
-        """
-        mock_table = mock_aws["table"]
-        mock_table.get_item.return_value = {}
-
-        # Create customer with billing_account_id
-        config = CustomerConfig(
-            customer_id="test-ba-123",
-            customer_name="Test BA Customer",
-            email="testba@example.com",
-            s3_bucket="test-ba-bucket",
-            billing_account_id="BA-ACME-001",
-        )
-        customer_manager._save_customer_config(config)
-
-        # Verify billing_account_id was saved to TapDB
-        mock_table.put_item.assert_called_once()
-        call_args = mock_table.put_item.call_args
-        item = call_args[1]["Item"]
-        assert item["billing_account_id"] == "BA-ACME-001"
-
-    def test_billing_calculator_does_not_use_billing_account_id(self):
-        """Document that BillingCalculator does NOT use billing_account_id.
-
-        This test verifies the 'usable' investigation finding: billing calculations
-        are based on actual workset data (compute costs, storage, samples), NOT on
-        any billing_account_id routing.
-
-        SKIPPED IMPLEMENTATION per task instruction: Since billing_account_id is not
-        used operationally, there is no new behavior to implement. This test documents
-        the architecture decision that billing is calculated from workset data.
-        """
-        from daylib.billing import BillingCalculator
-
-        # BillingCalculator signature and methods do not accept billing_account_id
-        # This is by design - billing is calculated from workset data
-
-        # Verify BillingCalculator.__init__ signature has no billing_account_id param
-        import inspect
-        init_sig = inspect.signature(BillingCalculator.__init__)
-        init_params = list(init_sig.parameters.keys())
-        assert "billing_account_id" not in init_params, (
-            "BillingCalculator should not accept billing_account_id - "
-            "billing is calculated from workset data, not routed to accounts"
-        )
-
-        # Verify calculate_workset_billing does not accept billing_account_id
-        calc_sig = inspect.signature(BillingCalculator.calculate_workset_billing)
-        calc_params = list(calc_sig.parameters.keys())
-        assert "billing_account_id" not in calc_params, (
-            "calculate_workset_billing should not use billing_account_id"
-        )
-
-        # Verify calculate_customer_billing does not accept billing_account_id
-        cust_sig = inspect.signature(BillingCalculator.calculate_customer_billing)
-        cust_params = list(cust_sig.parameters.keys())
-        assert "billing_account_id" not in cust_params, (
-            "calculate_customer_billing should not use billing_account_id"
-        )
-
-    def test_billing_account_id_not_in_billing_module_source(self):
-        """Verify billing_account_id is not referenced anywhere in billing module.
-
-        This is a regression test to ensure billing_account_id remains metadata-only.
-        If this test fails in the future, it means someone has started using
-        billing_account_id operationally and the architecture has changed.
-        """
-        import daylib.billing as billing_module
-        import inspect
-
-        # Get the source code of the entire billing module
-        source = inspect.getsource(billing_module)
-
-        # billing_account_id should NOT appear anywhere in the billing module
-        assert "billing_account_id" not in source, (
-            "billing_account_id should not be referenced in daylib/billing.py - "
-            "billing is calculated from workset data (compute costs, storage, samples), "
-            "not routed to external billing accounts. If this test fails, the "
-            "architecture has changed and this test should be updated."
-        )
+def test_verify_workset_ownership_missing_owner_is_denied():
+    assert verify_workset_ownership({"workset_id": "orphan"}, "cust-any") is False

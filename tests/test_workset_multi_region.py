@@ -20,7 +20,6 @@ from daylib.workset_state_db import WorksetPriority
 def mock_state_db():
     """Create mock WorksetStateDB."""
     mock_db = MagicMock()
-    mock_db.table = MagicMock()
     mock_db.get_workset.return_value = {
         "workset_id": "test-ws-001",
         "state": "ready",
@@ -120,9 +119,9 @@ class TestHealthMonitoring:
 
     def test_check_region_health_failure(self, multi_region_db, mock_state_db):
         """Test failed health check updates status."""
-        mock_state_db.table.load.side_effect = ClientError(
+        mock_state_db.list_worksets_by_state.side_effect = ClientError(
             {"Error": {"Code": "ServiceUnavailable", "Message": "test"}},
-            "DescribeTable",
+            "Query",
         )
         
         multi_region_db._check_region_health("us-west-2")
@@ -133,9 +132,9 @@ class TestHealthMonitoring:
 
     def test_consecutive_failures_mark_unhealthy(self, multi_region_db, mock_state_db):
         """Test consecutive failures mark region unhealthy."""
-        mock_state_db.table.load.side_effect = ClientError(
+        mock_state_db.list_worksets_by_state.side_effect = ClientError(
             {"Error": {"Code": "ServiceUnavailable", "Message": "test"}},
-            "DescribeTable",
+            "Query",
         )
 
         # Fail enough times to trigger unhealthy status
@@ -292,79 +291,77 @@ class TestRegionStatus:
 class TestPreferredClusterInWorksetRegistration:
     """Test preferred_cluster field in workset registration."""
 
-    def test_register_workset_with_preferred_cluster(self, mock_state_db):
+    @staticmethod
+    def _build_db():
+        from daylib.workset_state_db import WorksetStateDB
+
+        db = WorksetStateDB.__new__(WorksetStateDB)
+        db.table_name = "test-worksets"
+        db.region = "us-west-2"
+        db.profile = None
+        db.lock_timeout_seconds = 300
+        db.backend = MagicMock()
+        db.cloudwatch = MagicMock()
+        db._cloudwatch = None
+        db._emit_metric = MagicMock()
+        db._find_workset = MagicMock(return_value=None)
+        db._find_customer = MagicMock(return_value=None)
+        db._write_state_event = MagicMock()
+        session = MagicMock()
+        payload = {}
+
+        class _Ctx:
+            def __enter__(self):
+                return session
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        db.backend.session_scope.return_value = _Ctx()
+        db.backend.ensure_templates.return_value = None
+
+        def _create_instance(*args, **kwargs):
+            payload.clear()
+            payload.update(kwargs.get("json_addl") or {})
+            return MagicMock(name="instance")
+
+        db.backend.create_instance.side_effect = _create_instance
+        return db, payload
+
+    def test_register_workset_with_preferred_cluster(self):
         """Test registering workset with preferred_cluster stores it."""
-        mock_state_db.table.put_item.return_value = {}
+        db, payload = self._build_db()
 
-        # Simulate the register_workset call with preferred_cluster
-        from daylib.workset_state_db import WorksetStateDB
+        result = db.register_workset(
+            workset_id="test-ws-region",
+            bucket="test-bucket",
+            prefix="worksets/test/",
+            priority=WorksetPriority.NORMAL,
+            metadata={"samples": [{"sample_id": "S1"}]},
+            customer_id="test-customer",
+            preferred_cluster="daylily-us-west-2-001",
+        )
 
-        with patch("daylib.workset_state_db.boto3.Session") as mock_session:
-            mock_resource = MagicMock()
-            mock_table = MagicMock()
-            mock_table.put_item.return_value = {}
-            mock_session.return_value.resource.return_value = mock_resource
-            mock_session.return_value.client.return_value = MagicMock()
-            mock_resource.Table.return_value = mock_table
+        assert result is True
+        assert payload["preferred_cluster"] == "daylily-us-west-2-001"
+        assert payload["affinity_reason"] == "user_selected"
 
-            db = WorksetStateDB(
-                table_name="test-worksets",
-                region="us-west-2",
-                profile=None,
-            )
-
-            result = db.register_workset(
-                workset_id="test-ws-region",
-                bucket="test-bucket",
-                prefix="worksets/test/",
-                priority=WorksetPriority.NORMAL,
-                metadata={"samples": [{"sample_id": "S1"}]},
-                customer_id="test-customer",
-                preferred_cluster="daylily-us-west-2-001",
-            )
-
-            assert result is True
-            mock_table.put_item.assert_called_once()
-
-            call_args = mock_table.put_item.call_args
-            item = call_args.kwargs["Item"]
-
-            assert item["preferred_cluster"] == "daylily-us-west-2-001"
-            assert item["affinity_reason"] == "user_selected"
-
-    def test_register_workset_without_preferred_cluster(self, mock_state_db):
+    def test_register_workset_without_preferred_cluster(self):
         """Test registering workset without preferred_cluster doesn't add field."""
-        from daylib.workset_state_db import WorksetStateDB
+        db, payload = self._build_db()
 
-        with patch("daylib.workset_state_db.boto3.Session") as mock_session:
-            mock_resource = MagicMock()
-            mock_table = MagicMock()
-            mock_table.put_item.return_value = {}
-            mock_session.return_value.resource.return_value = mock_resource
-            mock_session.return_value.client.return_value = MagicMock()
-            mock_resource.Table.return_value = mock_table
+        result = db.register_workset(
+            workset_id="test-ws-no-cluster",
+            bucket="test-bucket",
+            prefix="worksets/test/",
+            priority=WorksetPriority.NORMAL,
+            metadata={"samples": [{"sample_id": "S1"}]},
+            customer_id="test-customer",
+        )
 
-            db = WorksetStateDB(
-                table_name="test-worksets",
-                region="us-west-2",
-                profile=None,
-            )
-
-            result = db.register_workset(
-                workset_id="test-ws-no-cluster",
-                bucket="test-bucket",
-                prefix="worksets/test/",
-                priority=WorksetPriority.NORMAL,
-                metadata={"samples": [{"sample_id": "S1"}]},
-                customer_id="test-customer",
-            )
-
-            assert result is True
-            call_args = mock_table.put_item.call_args
-            item = call_args.kwargs["Item"]
-
-            assert "preferred_cluster" not in item
-            assert "affinity_reason" not in item
+        assert result is True
+        assert "preferred_cluster" not in payload
+        assert "affinity_reason" not in payload
 
 
 class TestCustomerConfigBucketRegion:
@@ -475,114 +472,98 @@ class TestWorksetCreateModel:
 class TestClusterRegionPersistence:
     """Test cluster_region field persistence in workset registration."""
 
-    def test_register_workset_with_cluster_region(self, mock_state_db):
+    @staticmethod
+    def _build_db():
+        from daylib.workset_state_db import WorksetStateDB
+
+        db = WorksetStateDB.__new__(WorksetStateDB)
+        db.table_name = "test-worksets"
+        db.region = "us-west-2"
+        db.profile = None
+        db.lock_timeout_seconds = 300
+        db.backend = MagicMock()
+        db.cloudwatch = MagicMock()
+        db._cloudwatch = None
+        db._emit_metric = MagicMock()
+        db._find_workset = MagicMock(return_value=None)
+        db._find_customer = MagicMock(return_value=None)
+        db._write_state_event = MagicMock()
+        session = MagicMock()
+        payload = {}
+
+        class _Ctx:
+            def __enter__(self):
+                return session
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        db.backend.session_scope.return_value = _Ctx()
+        db.backend.ensure_templates.return_value = None
+
+        def _create_instance(*args, **kwargs):
+            payload.clear()
+            payload.update(kwargs.get("json_addl") or {})
+            return MagicMock(name="instance")
+
+        db.backend.create_instance.side_effect = _create_instance
+        return db, payload
+
+    def test_register_workset_with_cluster_region(self):
         """Test registering workset with cluster_region stores it."""
-        from daylib.workset_state_db import WorksetStateDB
+        db, payload = self._build_db()
 
-        with patch("daylib.workset_state_db.boto3.Session") as mock_session:
-            mock_resource = MagicMock()
-            mock_table = MagicMock()
-            mock_table.put_item.return_value = {}
-            mock_session.return_value.resource.return_value = mock_resource
-            mock_session.return_value.client.return_value = MagicMock()
-            mock_resource.Table.return_value = mock_table
+        result = db.register_workset(
+            workset_id="test-ws-region",
+            bucket="test-bucket",
+            prefix="worksets/test/",
+            priority=WorksetPriority.NORMAL,
+            metadata={"samples": [{"sample_id": "S1"}]},
+            customer_id="test-customer",
+            preferred_cluster="daylily-us-west-2-001",
+            cluster_region="us-west-2",
+        )
 
-            db = WorksetStateDB(
-                table_name="test-worksets",
-                region="us-west-2",
-                profile=None,
-            )
+        assert result is True
+        assert payload["preferred_cluster"] == "daylily-us-west-2-001"
+        assert payload["cluster_region"] == "us-west-2"
+        assert payload["affinity_reason"] == "user_selected"
 
-            result = db.register_workset(
-                workset_id="test-ws-region",
-                bucket="test-bucket",
-                prefix="worksets/test/",
-                priority=WorksetPriority.NORMAL,
-                metadata={"samples": [{"sample_id": "S1"}]},
-                customer_id="test-customer",
-                preferred_cluster="daylily-us-west-2-001",
-                cluster_region="us-west-2",
-            )
-
-            assert result is True
-            mock_table.put_item.assert_called_once()
-
-            call_args = mock_table.put_item.call_args
-            item = call_args.kwargs["Item"]
-
-            assert item["preferred_cluster"] == "daylily-us-west-2-001"
-            assert item["cluster_region"] == "us-west-2"
-            assert item["affinity_reason"] == "user_selected"
-
-    def test_register_workset_with_preferred_cluster_no_region(self, mock_state_db):
+    def test_register_workset_with_preferred_cluster_no_region(self):
         """Test registering workset with preferred_cluster but no region."""
-        from daylib.workset_state_db import WorksetStateDB
+        db, payload = self._build_db()
 
-        with patch("daylib.workset_state_db.boto3.Session") as mock_session:
-            mock_resource = MagicMock()
-            mock_table = MagicMock()
-            mock_table.put_item.return_value = {}
-            mock_session.return_value.resource.return_value = mock_resource
-            mock_session.return_value.client.return_value = MagicMock()
-            mock_resource.Table.return_value = mock_table
+        result = db.register_workset(
+            workset_id="test-ws-no-region",
+            bucket="test-bucket",
+            prefix="worksets/test/",
+            priority=WorksetPriority.NORMAL,
+            metadata={"samples": [{"sample_id": "S1"}]},
+            customer_id="test-customer",
+            preferred_cluster="daylily-us-west-2-001",
+        )
 
-            db = WorksetStateDB(
-                table_name="test-worksets",
-                region="us-west-2",
-                profile=None,
-            )
+        assert result is True
+        assert payload["preferred_cluster"] == "daylily-us-west-2-001"
+        assert "cluster_region" not in payload
 
-            result = db.register_workset(
-                workset_id="test-ws-no-region",
-                bucket="test-bucket",
-                prefix="worksets/test/",
-                priority=WorksetPriority.NORMAL,
-                metadata={"samples": [{"sample_id": "S1"}]},
-                customer_id="test-customer",
-                preferred_cluster="daylily-us-west-2-001",
-            )
-
-            assert result is True
-            call_args = mock_table.put_item.call_args
-            item = call_args.kwargs["Item"]
-
-            assert item["preferred_cluster"] == "daylily-us-west-2-001"
-            assert "cluster_region" not in item  # Should not be present
-
-    def test_register_workset_without_cluster_fields(self, mock_state_db):
+    def test_register_workset_without_cluster_fields(self):
         """Test registering workset without preferred_cluster or cluster_region."""
-        from daylib.workset_state_db import WorksetStateDB
+        db, payload = self._build_db()
 
-        with patch("daylib.workset_state_db.boto3.Session") as mock_session:
-            mock_resource = MagicMock()
-            mock_table = MagicMock()
-            mock_table.put_item.return_value = {}
-            mock_session.return_value.resource.return_value = mock_resource
-            mock_session.return_value.client.return_value = MagicMock()
-            mock_resource.Table.return_value = mock_table
+        result = db.register_workset(
+            workset_id="test-ws-basic",
+            bucket="test-bucket",
+            prefix="worksets/test/",
+            priority=WorksetPriority.NORMAL,
+            metadata={"samples": [{"sample_id": "S1"}]},
+            customer_id="test-customer",
+        )
 
-            db = WorksetStateDB(
-                table_name="test-worksets",
-                region="us-west-2",
-                profile=None,
-            )
-
-            result = db.register_workset(
-                workset_id="test-ws-basic",
-                bucket="test-bucket",
-                prefix="worksets/test/",
-                priority=WorksetPriority.NORMAL,
-                metadata={"samples": [{"sample_id": "S1"}]},
-                customer_id="test-customer",
-            )
-
-            assert result is True
-            call_args = mock_table.put_item.call_args
-            item = call_args.kwargs["Item"]
-
-            assert "preferred_cluster" not in item
-            assert "cluster_region" not in item
-            assert "affinity_reason" not in item
+        assert result is True
+        assert "preferred_cluster" not in payload
+        assert "cluster_region" not in payload
+        assert "affinity_reason" not in payload
 
 
 class TestWorksetIntegrationClusterRegion:

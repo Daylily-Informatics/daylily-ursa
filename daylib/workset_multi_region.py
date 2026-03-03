@@ -99,11 +99,7 @@ class WorksetMultiRegionDB:
 
         start = time.monotonic()
         try:
-            table = getattr(conn, "table", None)
-            if table is not None and hasattr(table, "load"):
-                table.load()
-            else:
-                conn.list_worksets_by_state(WorksetState.READY, limit=1)
+            conn.list_worksets_by_state(WorksetState.READY, limit=1)
             latency = (time.monotonic() - start) * 1000
             health.latency_ms = latency
             health.last_check = dt.datetime.now(dt.timezone.utc)

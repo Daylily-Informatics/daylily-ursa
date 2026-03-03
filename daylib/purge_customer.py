@@ -30,23 +30,12 @@ LOGGER = logging.getLogger(__name__)
 
 
 def get_all_worksets(state_db: WorksetStateDB) -> list:
-    """Scan and retrieve all worksets from the database."""
-    all_worksets = []
+    """Retrieve all worksets from the graph-backed state store."""
     try:
-        # TapDB scan with pagination
-        response = state_db.table.scan()
-        all_worksets.extend(response.get("Items", []))
-        
-        while "LastEvaluatedKey" in response:
-            response = state_db.table.scan(
-                ExclusiveStartKey=response["LastEvaluatedKey"]
-            )
-            all_worksets.extend(response.get("Items", []))
+        return state_db._list_all_worksets(limit=100000)
     except ClientError as e:
-        LOGGER.error("Failed to scan worksets: %s", e)
+        LOGGER.error("Failed to list worksets: %s", e)
         raise
-    
-    return all_worksets
 
 
 def filter_worksets_by_customer(worksets: list, customer_id: str, include_unknown: bool = False) -> list:
@@ -260,4 +249,3 @@ Examples:
 
 if __name__ == "__main__":
     main()
-

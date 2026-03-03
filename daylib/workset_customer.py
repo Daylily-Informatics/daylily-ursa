@@ -56,44 +56,7 @@ class CustomerManager:
         self.bucket_prefix = bucket_prefix
         self.profile = profile
         self.customer_table_name = "tapdb-customer-graph"
-        self._compat_impl = None
-        try:
-            self.backend = TapDBBackend(app_username="ursa-customer")
-        except Exception:  # pragma: no cover - exercised by legacy tests
-            import daylib.workset_customer_table_compat as compat_mod
-
-            compat_mod.CustomerConfig = CustomerConfig
-            self._compat_impl = compat_mod.TableCompatCustomerManager(
-                region=region,
-                profile=profile,
-                bucket_prefix=bucket_prefix,
-            )
-
-    def __getattribute__(self, name: str):  # pragma: no cover - delegation is behavior-only
-        if name not in {
-            "_compat_impl",
-            "__class__",
-            "__dict__",
-            "__slots__",
-            "__getattribute__",
-            "__setattr__",
-            "__delattr__",
-        }:
-            try:
-                compat_impl = object.__getattribute__(self, "_compat_impl")
-            except AttributeError:
-                compat_impl = None
-            if compat_impl is not None and hasattr(compat_impl, name):
-                return getattr(compat_impl, name)
-        return object.__getattribute__(self, name)
-
-    def __setattr__(self, name: str, value: Any) -> None:  # pragma: no cover - delegation is behavior-only
-        if name != "_compat_impl":
-            compat_impl = self.__dict__.get("_compat_impl")
-            if compat_impl is not None and hasattr(compat_impl, name):
-                setattr(compat_impl, name, value)
-                return
-        object.__setattr__(self, name, value)
+        self.backend = TapDBBackend(app_username="ursa-customer")
 
     def create_customer_table_if_not_exists(self) -> None:
         """Compatibility hook. Ensures TapDB templates exist."""

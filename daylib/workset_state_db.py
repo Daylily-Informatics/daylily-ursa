@@ -7,7 +7,7 @@ import logging
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-import boto3  # compatibility: existing tests patch daylib.workset_state_db.boto3
+import boto3  # test compatibility: legacy fixtures patch this symbol
 from sqlalchemy import and_
 
 from daylib.config import normalize_bucket_name
@@ -98,18 +98,6 @@ class _NoopMetrics:
         return None
 
 
-class _WorksetTableShim:
-    """Compatibility shim for legacy callers that still access `state_db.table.scan()`."""
-
-    def __init__(self, state_db: "WorksetStateDB") -> None:
-        self._state_db = state_db
-
-    def scan(self, **kwargs: Any) -> Dict[str, Any]:
-        limit = int(kwargs.get("Limit", 1000))
-        items = self._state_db._list_all_worksets(limit=limit)
-        return {"Items": items}
-
-
 class WorksetStateDB:
     """TapDB-backed workset state manager with transactional lock semantics."""
 
@@ -129,61 +117,9 @@ class WorksetStateDB:
         self.region = region
         self.profile = profile
         self.lock_timeout_seconds = lock_timeout_seconds
-        self._compat_impl = None
-        try:
-            self.backend = TapDBBackend(app_username="ursa")
-            self.table = _WorksetTableShim(self)
-            self.cloudwatch = _NoopMetrics()
-            self._cloudwatch = None
-        except Exception as exc:  # pragma: no cover - exercised via legacy unit tests
-            LOGGER.warning(
-                "TapDB backend unavailable; using table compatibility mode for WorksetStateDB: %s",
-                exc,
-            )
-            from daylib.workset_state_table_compat import TableCompatWorksetStateDB
-
-            self._compat_impl = TableCompatWorksetStateDB(
-                table_name=table_name,
-                region=region,
-                profile=profile,
-                lock_timeout_seconds=lock_timeout_seconds,
-            )
-
-    def __getattribute__(self, name: str):  # pragma: no cover - delegation is behavior-only
-        if name not in {
-            "_compat_impl",
-            "__class__",
-            "__dict__",
-            "__slots__",
-            "__getattribute__",
-            "__setattr__",
-            "__delattr__",
-        }:
-            try:
-                compat_impl = object.__getattribute__(self, "_compat_impl")
-            except AttributeError:
-                compat_impl = None
-            if compat_impl is not None and hasattr(compat_impl, name):
-                return getattr(compat_impl, name)
-            if compat_impl is None:
-                try:
-                    object.__getattribute__(self, "backend")
-                    has_backend = True
-                except AttributeError:
-                    has_backend = False
-                if not has_backend:
-                    try:
-                        instance_dict = object.__getattribute__(self, "__dict__")
-                    except AttributeError:
-                        instance_dict = {}
-                    if name in instance_dict:
-                        return instance_dict[name]
-                    from daylib.workset_state_table_compat import TableCompatWorksetStateDB
-
-                    compat_attr = getattr(TableCompatWorksetStateDB, name, None)
-                    if callable(compat_attr):
-                        return compat_attr.__get__(self, self.__class__)
-        return object.__getattribute__(self, name)
+        self.backend = TapDBBackend(app_username="ursa")
+        self.cloudwatch = _NoopMetrics()
+        self._cloudwatch = None
 
     def create_table_if_not_exists(self) -> None:
         with self.backend.session_scope(commit=True) as session:

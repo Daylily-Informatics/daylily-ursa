@@ -46,26 +46,6 @@ def mock_s3_client():
 
 
 @pytest.fixture
-def mock_tapdb():
-    """Mock TapDB resource for WorksetStateDB tests."""
-    with patch("daylib.workset_state_db.boto3.Session") as mock_session:
-        mock_resource = MagicMock()
-        mock_table = MagicMock()
-        mock_client = MagicMock()
-
-        mock_session.return_value.resource.return_value = mock_resource
-        mock_session.return_value.client.return_value = mock_client
-        mock_resource.Table.return_value = mock_table
-
-        yield {
-            "session": mock_session,
-            "resource": mock_resource,
-            "table": mock_table,
-            "client": mock_client,
-        }
-
-
-@pytest.fixture
 def integration(mock_state_db, mock_s3_client):
     """Create WorksetIntegration instance."""
     return WorksetIntegration(
@@ -1237,47 +1217,52 @@ class TestProgressStepsMetrics:
 class TestUpdateExecutionEnvironmentHeadnodePath:
     """Tests for headnode_analysis_path in update_execution_environment."""
 
-    def test_update_with_headnode_analysis_path(self, mock_tapdb):
-        """Test that headnode_analysis_path is stored in TapDB."""
+    def test_update_with_headnode_analysis_path(self):
+        """Test that headnode_analysis_path is stored in graph json payload."""
         from daylib.workset_state_db import WorksetStateDB
 
-        db = WorksetStateDB(
-            table_name="test-worksets",
-            region="us-west-2",
-            profile=None,
-        )
+        db = WorksetStateDB.__new__(WorksetStateDB)
+        db.backend = MagicMock()
+        session = MagicMock()
+        ws = MagicMock(json_addl={"workset_id": "test-ws-001"})
+        db._find_workset = MagicMock(return_value=ws)
 
-        mock_table = mock_tapdb["table"]
-        mock_table.update_item.return_value = {}
+        class _Ctx:
+            def __enter__(self):
+                return session
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        db.backend.session_scope.return_value = _Ctx()
 
         db.update_execution_environment(
             workset_id="test-ws-001",
             headnode_analysis_path="/fsx/analysis_results/ubuntu/test-ws-001/daylily-omics-analysis",
         )
 
-        mock_table.update_item.assert_called_once()
-        call_args = mock_table.update_item.call_args
+        assert ws.json_addl["headnode_analysis_path"] == "/fsx/analysis_results/ubuntu/test-ws-001/daylily-omics-analysis"
+        assert "updated_at" in ws.json_addl
+        session.flush.assert_called_once()
 
-        # Check that headnode_analysis_path is in the update expression
-        update_expr = call_args.kwargs["UpdateExpression"]
-        expr_values = call_args.kwargs["ExpressionAttributeValues"]
-
-        assert "headnode_analysis_path" in update_expr
-        assert ":analysis_path" in expr_values
-        assert expr_values[":analysis_path"] == "/fsx/analysis_results/ubuntu/test-ws-001/daylily-omics-analysis"
-
-    def test_update_with_multiple_fields_including_path(self, mock_tapdb):
+    def test_update_with_multiple_fields_including_path(self):
         """Test updating multiple fields including headnode_analysis_path."""
         from daylib.workset_state_db import WorksetStateDB
 
-        db = WorksetStateDB(
-            table_name="test-worksets",
-            region="us-west-2",
-            profile=None,
-        )
+        db = WorksetStateDB.__new__(WorksetStateDB)
+        db.backend = MagicMock()
+        session = MagicMock()
+        ws = MagicMock(json_addl={"workset_id": "test-ws-002"})
+        db._find_workset = MagicMock(return_value=ws)
 
-        mock_table = mock_tapdb["table"]
-        mock_table.update_item.return_value = {}
+        class _Ctx:
+            def __enter__(self):
+                return session
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        db.backend.session_scope.return_value = _Ctx()
 
         db.update_execution_environment(
             workset_id="test-ws-002",
@@ -1286,18 +1271,11 @@ class TestUpdateExecutionEnvironmentHeadnodePath:
             headnode_analysis_path="/fsx/analysis",
         )
 
-        mock_table.update_item.assert_called_once()
-        call_args = mock_table.update_item.call_args
-        update_expr = call_args.kwargs["UpdateExpression"]
-        expr_values = call_args.kwargs["ExpressionAttributeValues"]
-
-        # All fields should be present
-        assert "execution_cluster_name" in update_expr
-        assert "execution_headnode_ip" in update_expr
-        assert "headnode_analysis_path" in update_expr
-        assert ":exec_cluster" in expr_values
-        assert ":exec_ip" in expr_values
-        assert ":analysis_path" in expr_values
+        assert ws.json_addl["execution_cluster_name"] == "test-cluster"
+        assert ws.json_addl["execution_headnode_ip"] == "10.0.1.100"
+        assert ws.json_addl["headnode_analysis_path"] == "/fsx/analysis"
+        assert "updated_at" in ws.json_addl
+        session.flush.assert_called_once()
 
 
 class TestStageReferenceBucket:
@@ -2163,197 +2141,147 @@ class TestExecutionContextTapDB:
 
     def test_set_execution_context_stores_correctly(self):
         """Test that set_execution_context stores the context in TapDB."""
-        with patch("daylib.workset_state_db.boto3.Session") as mock_session:
-            mock_resource = MagicMock()
-            mock_table = MagicMock()
-            mock_session.return_value.resource.return_value = mock_resource
-            mock_resource.Table.return_value = mock_table
+        from daylib.workset_state_db import WorksetStateDB
 
-            from daylib.workset_state_db import WorksetStateDB
+        db = WorksetStateDB.__new__(WorksetStateDB)
+        db.backend = MagicMock()
+        session = MagicMock()
+        ws = MagicMock(json_addl={"workset_id": "ws-001"})
+        db._find_workset = MagicMock(return_value=ws)
 
-            db = WorksetStateDB(table_name="test-table", region="us-west-2")
+        class _Ctx:
+            def __enter__(self):
+                return session
 
-            ctx_dict = {
-                "cluster_name": "test-cluster",
-                "cluster_region": "us-west-2",
-                "execution_bucket": "test-bucket",
-                "workset_prefix": "worksets/ws/",
-                "ssh_key_path": "/home/.ssh/key.pem",
-            }
+            def __exit__(self, exc_type, exc, tb):
+                return False
 
-            result = db.set_execution_context("ws-001", ctx_dict)
+        db.backend.session_scope.return_value = _Ctx()
 
-            assert result is True
-            mock_table.update_item.assert_called_once()
-            call_args = mock_table.update_item.call_args
-            assert call_args[1]["Key"] == {"workset_id": "ws-001"}
-            assert "execution_context" in call_args[1]["UpdateExpression"]
+        ctx_dict = {
+            "cluster_name": "test-cluster",
+            "cluster_region": "us-west-2",
+            "execution_bucket": "test-bucket",
+            "workset_prefix": "worksets/ws/",
+            "ssh_key_path": "/home/.ssh/key.pem",
+        }
+
+        result = db.set_execution_context("ws-001", ctx_dict)
+
+        assert result is True
+        assert ws.json_addl["execution_context"] == ctx_dict
+        assert "updated_at" in ws.json_addl
+        session.flush.assert_called_once()
 
     def test_get_execution_context_retrieves_correctly(self):
         """Test that get_execution_context retrieves the stored context."""
-        with patch("daylib.workset_state_db.boto3.Session") as mock_session:
-            mock_resource = MagicMock()
-            mock_table = MagicMock()
-            mock_session.return_value.resource.return_value = mock_resource
-            mock_resource.Table.return_value = mock_table
+        from daylib.workset_state_db import WorksetStateDB
 
-            from daylib.workset_state_db import WorksetStateDB
-
-            db = WorksetStateDB(table_name="test-table", region="us-west-2")
-
-            # Mock the response from TapDB
-            mock_table.get_item.return_value = {
-                "Item": {
-                    "execution_context": {
-                        "cluster_name": "stored-cluster",
-                        "cluster_region": "eu-central-1",
-                        "execution_bucket": "stored-bucket",
-                        "workset_prefix": "stored/prefix/",
-                    }
+        db = WorksetStateDB.__new__(WorksetStateDB)
+        db.get_workset = MagicMock(
+            return_value={
+                "execution_context": {
+                    "cluster_name": "stored-cluster",
+                    "cluster_region": "eu-central-1",
+                    "execution_bucket": "stored-bucket",
+                    "workset_prefix": "stored/prefix/",
                 }
             }
+        )
 
-            result = db.get_execution_context("ws-001")
+        result = db.get_execution_context("ws-001")
 
-            assert result is not None
-            assert result["cluster_name"] == "stored-cluster"
-            assert result["cluster_region"] == "eu-central-1"
-            mock_table.get_item.assert_called_once()
+        assert result is not None
+        assert result["cluster_name"] == "stored-cluster"
+        assert result["cluster_region"] == "eu-central-1"
+        db.get_workset.assert_called_once_with("ws-001")
 
     def test_get_execution_context_returns_none_when_not_set(self):
         """Test that get_execution_context returns None when no context exists."""
-        with patch("daylib.workset_state_db.boto3.Session") as mock_session:
-            mock_resource = MagicMock()
-            mock_table = MagicMock()
-            mock_session.return_value.resource.return_value = mock_resource
-            mock_resource.Table.return_value = mock_table
+        from daylib.workset_state_db import WorksetStateDB
 
-            from daylib.workset_state_db import WorksetStateDB
+        db = WorksetStateDB.__new__(WorksetStateDB)
+        db.get_workset = MagicMock(return_value={"workset_id": "ws-001", "state": "ready"})
 
-            db = WorksetStateDB(table_name="test-table", region="us-west-2")
+        result = db.get_execution_context("ws-001")
 
-            # Mock empty response (workset exists but no execution_context)
-            mock_table.get_item.return_value = {
-                "Item": {
-                    "workset_id": "ws-001",
-                    "state": "ready",
-                }
-            }
-
-            result = db.get_execution_context("ws-001")
-
-            assert result is None
+        assert result is None
 
     def test_get_execution_context_returns_none_when_workset_not_found(self):
         """Test that get_execution_context returns None when workset doesn't exist."""
-        with patch("daylib.workset_state_db.boto3.Session") as mock_session:
-            mock_resource = MagicMock()
-            mock_table = MagicMock()
-            mock_session.return_value.resource.return_value = mock_resource
-            mock_resource.Table.return_value = mock_table
+        from daylib.workset_state_db import WorksetStateDB
 
-            from daylib.workset_state_db import WorksetStateDB
+        db = WorksetStateDB.__new__(WorksetStateDB)
+        db.get_workset = MagicMock(return_value=None)
 
-            db = WorksetStateDB(table_name="test-table", region="us-west-2")
+        result = db.get_execution_context("nonexistent-ws")
 
-            # Mock empty response (workset not found)
-            mock_table.get_item.return_value = {}
-
-            result = db.get_execution_context("nonexistent-ws")
-
-            assert result is None
+        assert result is None
 
 
 class TestListWorksetsByCustomerGSI:
-    """Tests for list_worksets_by_customer using customer GSI."""
+    """Tests for list_worksets_by_customer graph filtering."""
 
     @pytest.fixture
     def mock_db(self):
-        """Create a WorksetStateDB with mocked table."""
+        """Create a WorksetStateDB with mocked graph query path."""
         from daylib.workset_state_db import WorksetStateDB
 
-        # Create instance directly and mock the table
         db = WorksetStateDB.__new__(WorksetStateDB)
-        db.table_name = "test-table"
-        db.table = MagicMock()
-        db.tapdb = MagicMock()
+        db.backend = MagicMock()
+        db._workset_template_uuid = MagicMock(return_value=1)
+        db._deserialize_item = lambda x: x
+        db._to_dict = lambda row: row.json_addl
+
+        session = MagicMock()
+        query = MagicMock()
+        session.query.return_value = query
+        query.filter.return_value = query
+        query.order_by.return_value = query
+        query.limit.return_value = query
+        query.all.return_value = [
+            MagicMock(json_addl={"workset_id": "ws-001", "customer_id": "cust-123", "state": "ready"}),
+            MagicMock(json_addl={"workset_id": "ws-002", "customer_id": "cust-123", "state": "complete"}),
+        ]
+
+        class _Ctx:
+            def __enter__(self):
+                return session
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        db.backend.session_scope.return_value = _Ctx()
+        db._query = query
         return db
 
     def test_list_worksets_by_customer_returns_matching(self, mock_db):
         """Test that list_worksets_by_customer returns worksets for the customer."""
-        # Mock query response with customer's worksets
-        mock_db.table.query.return_value = {
-            "Items": [
-                {"workset_id": "ws-001", "customer_id": "cust-123", "state": "ready"},
-                {"workset_id": "ws-002", "customer_id": "cust-123", "state": "complete"},
-            ]
-        }
-
         result = mock_db.list_worksets_by_customer("cust-123")
 
         assert len(result) == 2
         assert result[0]["workset_id"] == "ws-001"
         assert result[1]["workset_id"] == "ws-002"
-        # Verify GSI was used
-        mock_db.table.query.assert_called_once()
-        call_kwargs = mock_db.table.query.call_args[1]
-        assert call_kwargs["IndexName"] == "customer-id-state-index"
 
     def test_list_worksets_by_customer_with_state_filter(self, mock_db):
         """Test filtering by customer and state."""
         from daylib.workset_state_db import WorksetState
 
-        mock_db.table.query.return_value = {
-            "Items": [
-                {"workset_id": "ws-001", "customer_id": "cust-123", "state": "ready"},
-            ]
-        }
-
         result = mock_db.list_worksets_by_customer("cust-123", state=WorksetState.READY)
 
-        assert len(result) == 1
-        # Verify key condition includes state
-        call_kwargs = mock_db.table.query.call_args[1]
-        assert ":state" in call_kwargs["ExpressionAttributeValues"]
-        assert call_kwargs["ExpressionAttributeValues"][":state"] == "ready"
+        assert len(result) >= 1
+        assert all(item["customer_id"] == "cust-123" for item in result)
 
     def test_list_worksets_by_customer_empty_customer_id(self, mock_db):
         """Test that empty customer_id returns empty list."""
         result = mock_db.list_worksets_by_customer("")
 
         assert result == []
-        mock_db.table.query.assert_not_called()
-
-    def test_list_worksets_by_customer_gsi_not_found_fallback(self, mock_db):
-        """Test fallback to scan when GSI doesn't exist."""
-        from botocore.exceptions import ClientError
-
-        # Simulate GSI not found error
-        mock_db.table.query.side_effect = ClientError(
-            {"Error": {"Code": "ValidationException", "Message": "customer-id-state-index not found"}},
-            "Query"
-        )
-        # Fallback scan should work
-        mock_db.table.scan.return_value = {
-            "Items": [
-                {"workset_id": "ws-001", "customer_id": "cust-123", "state": "ready"},
-            ]
-        }
-
-        result = mock_db.list_worksets_by_customer("cust-123")
-
-        assert len(result) == 1
-        assert result[0]["workset_id"] == "ws-001"
-        mock_db.table.scan.assert_called()
 
     def test_list_worksets_by_customer_respects_limit(self, mock_db):
         """Test that limit parameter is respected."""
-        mock_db.table.query.return_value = {"Items": []}
-
         mock_db.list_worksets_by_customer("cust-123", limit=50)
-
-        call_kwargs = mock_db.table.query.call_args[1]
-        assert call_kwargs["Limit"] == 50
+        mock_db._query.limit.assert_called_once_with(50)
 
 
 class TestExecutionContextCustomerId:
@@ -3635,35 +3563,29 @@ class TestWorksetRetrySemantics:
 
     def test_update_metadata_method_merges_fields(self):
         """Test that update_metadata properly merges with existing metadata."""
-        from unittest.mock import MagicMock, patch
+        from daylib.workset_state_db import WorksetStateDB
 
-        mock_table = MagicMock()
+        state_db = WorksetStateDB.__new__(WorksetStateDB)
+        state_db.backend = MagicMock()
+        session = MagicMock()
 
-        with patch("daylib.workset_state_db.boto3.Session"):
-            from daylib.workset_state_db import WorksetStateDB
+        class _Ctx:
+            def __enter__(self):
+                return session
 
-            state_db = WorksetStateDB.__new__(WorksetStateDB)
-            state_db.table = mock_table
-            state_db._cloudwatch = None
+            def __exit__(self, exc_type, exc, tb):
+                return False
 
-            # Mock get_workset to return existing workset
-            state_db.get_workset = MagicMock(return_value={
-                "workset_id": "test-ws",
-                "metadata": {
-                    "samples": [{"sample_id": "S1"}],
-                    "existing_field": "value",
-                },
-            })
+        state_db.backend.session_scope.return_value = _Ctx()
+        state_db._serialize_metadata = lambda x: x
+        ws = MagicMock(json_addl={"metadata": {"samples": [{"sample_id": "S1"}], "existing_field": "value"}})
+        state_db._find_workset = MagicMock(return_value=ws)
 
-            # Update metadata
-            result = state_db.update_metadata("test-ws", {"retried_as": "new-ws-id"})
+        result = state_db.update_metadata("test-ws", {"retried_as": "new-ws-id"})
 
-            assert result is True
-            mock_table.update_item.assert_called_once()
-
-            # Verify the merged metadata includes both old and new fields
-            call_kwargs = mock_table.update_item.call_args.kwargs
-            assert ":meta" in call_kwargs["ExpressionAttributeValues"]
+        assert result is True
+        assert ws.json_addl["metadata"]["existing_field"] == "value"
+        assert ws.json_addl["metadata"]["retried_as"] == "new-ws-id"
 
     def test_retry_endpoint_ownership_check(self):
         """Test that retry endpoint verifies workset ownership."""

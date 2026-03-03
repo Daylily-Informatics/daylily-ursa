@@ -10,7 +10,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
-import boto3  # compatibility: legacy tests patch daylib.manifest_registry.boto3
+import boto3  # test compatibility: legacy fixtures patch this symbol
 from daylib.tapdb_graph import TapDBBackend, from_json_addl, utc_now_iso
 
 
@@ -112,7 +112,6 @@ class ManifestRegistry:
 
     MANIFEST_TEMPLATE = "content/manifest/stage-samples/1.0/"
     CUSTOMER_TEMPLATE = "actor/customer/account/1.0/"
-    _COMPAT_RESULT_METHODS = {"save_manifest", "get_manifest"}
 
     def __init__(
         self,
@@ -127,72 +126,7 @@ class ManifestRegistry:
         self._schema_loaded = True
         self._hash_key_name = "manifest_id"
         self._range_key_name = None
-        self._compat_impl = None
-        try:
-            self.backend = TapDBBackend(app_username="ursa-manifest")
-        except Exception:  # pragma: no cover - exercised by legacy tests
-            from daylib.manifest_registry_table_compat import TableCompatManifestRegistry
-
-            self._compat_impl = TableCompatManifestRegistry(
-                table_name=table_name,
-                region=region,
-                profile=profile,
-            )
-
-    def __getattribute__(self, name: str):  # pragma: no cover - delegation is behavior-only
-        if name not in {
-            "_compat_impl",
-            "_coerce_compat_manifest_result",
-            "_COMPAT_RESULT_METHODS",
-            "__class__",
-            "__dict__",
-            "__slots__",
-            "__getattribute__",
-            "__setattr__",
-            "__delattr__",
-        }:
-            try:
-                compat_impl = object.__getattribute__(self, "_compat_impl")
-            except AttributeError:
-                compat_impl = None
-            if compat_impl is not None and hasattr(compat_impl, name):
-                compat_attr = getattr(compat_impl, name)
-                compat_methods = object.__getattribute__(self, "_COMPAT_RESULT_METHODS")
-                if callable(compat_attr) and name in compat_methods:
-                    return lambda *args, **kwargs: object.__getattribute__(
-                        self,
-                        "_coerce_compat_manifest_result",
-                    )(compat_attr(*args, **kwargs))
-                return compat_attr
-        return object.__getattribute__(self, name)
-
-    def __setattr__(self, name: str, value: Any) -> None:  # pragma: no cover - delegation is behavior-only
-        if name != "_compat_impl":
-            compat_impl = self.__dict__.get("_compat_impl")
-            if compat_impl is not None and hasattr(compat_impl, name):
-                setattr(compat_impl, name, value)
-                return
-        object.__setattr__(self, name, value)
-
-    @staticmethod
-    def _coerce_compat_manifest_result(result: Any) -> Any:
-        if result is None:
-            return None
-        if isinstance(result, SavedManifest):
-            return result
-        if hasattr(result, "manifest_id") and hasattr(result, "customer_id") and hasattr(result, "tsv_gzip_b64"):
-            return SavedManifest(
-                manifest_id=result.manifest_id,
-                customer_id=result.customer_id,
-                name=getattr(result, "name", None),
-                description=getattr(result, "description", None),
-                created_at=getattr(result, "created_at", _utc_now_iso()),
-                sample_count=int(getattr(result, "sample_count", 0) or 0),
-                tsv_sha256=getattr(result, "tsv_sha256", ""),
-                tsv_gzip_b64=getattr(result, "tsv_gzip_b64", ""),
-                manifest_euid=getattr(result, "manifest_euid", None),
-            )
-        return result
+        self.backend = TapDBBackend(app_username="ursa-manifest")
 
     def create_table_if_not_exists(self) -> None:
         with self.backend.session_scope(commit=True) as session:

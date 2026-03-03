@@ -7,7 +7,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-import boto3  # compatibility: legacy tests patch daylib.biospecimen.boto3
+import boto3  # test compatibility: legacy fixtures patch this symbol
 from daylib.tapdb_graph import TapDBBackend, from_json_addl, utc_now_iso
 
 
@@ -135,50 +135,7 @@ class BiospecimenRegistry:
         self.libraries_table_name = libraries_table_name
         self.region = region
         self.profile = profile
-        self._compat_impl = None
-        try:
-            self.backend = TapDBBackend(app_username="ursa-biospecimen")
-        except Exception:  # pragma: no cover - exercised by legacy tests
-            import daylib.biospecimen_table_compat as compat_mod
-
-            compat_mod.Subject = Subject
-            compat_mod.Biospecimen = Biospecimen
-            compat_mod.Biosample = Biosample
-            compat_mod.Library = Library
-            self._compat_impl = compat_mod.TableCompatBiospecimenRegistry(
-                subjects_table_name=subjects_table_name,
-                biospecimens_table_name=biospecimens_table_name,
-                biosamples_table_name=biosamples_table_name,
-                libraries_table_name=libraries_table_name,
-                region=region,
-                profile=profile,
-            )
-
-    def __getattribute__(self, name: str):  # pragma: no cover - delegation is behavior-only
-        if name not in {
-            "_compat_impl",
-            "__class__",
-            "__dict__",
-            "__slots__",
-            "__getattribute__",
-            "__setattr__",
-            "__delattr__",
-        }:
-            try:
-                compat_impl = object.__getattribute__(self, "_compat_impl")
-            except AttributeError:
-                compat_impl = None
-            if compat_impl is not None and hasattr(compat_impl, name):
-                return getattr(compat_impl, name)
-        return object.__getattribute__(self, name)
-
-    def __setattr__(self, name: str, value: Any) -> None:  # pragma: no cover - delegation is behavior-only
-        if name != "_compat_impl":
-            compat_impl = self.__dict__.get("_compat_impl")
-            if compat_impl is not None and hasattr(compat_impl, name):
-                setattr(compat_impl, name, value)
-                return
-        object.__setattr__(self, name, value)
+        self.backend = TapDBBackend(app_username="ursa-biospecimen")
 
     def create_tables_if_not_exist(self) -> None:
         with self.backend.session_scope(commit=True) as session:

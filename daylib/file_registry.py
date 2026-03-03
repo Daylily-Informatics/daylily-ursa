@@ -286,41 +286,7 @@ class FileRegistry:
         self.file_workset_usage_table = file_workset_usage_table_name
         self.region = region
         self.profile = profile
-        self._compat_impl = None
-        try:
-            self.backend = TapDBBackend(app_username="ursa-file")
-        except Exception as exc:  # pragma: no cover - exercised by legacy tests
-            LOGGER.warning(
-                "TapDB backend unavailable; using table compatibility mode for FileRegistry: %s",
-                exc,
-            )
-            from daylib.file_registry_table_compat import TableCompatFileRegistry
-
-            self._compat_impl = TableCompatFileRegistry(
-                files_table_name=files_table_name,
-                filesets_table_name=filesets_table_name,
-                file_workset_usage_table_name=file_workset_usage_table_name,
-                region=region,
-                profile=profile,
-            )
-
-    def __getattribute__(self, name: str):  # pragma: no cover - delegation is behavior-only
-        if name not in {
-            "_compat_impl",
-            "__class__",
-            "__dict__",
-            "__slots__",
-            "__getattribute__",
-            "__setattr__",
-            "__delattr__",
-        }:
-            try:
-                compat_impl = object.__getattribute__(self, "_compat_impl")
-            except AttributeError:
-                compat_impl = None
-            if compat_impl is not None and hasattr(compat_impl, name):
-                return getattr(compat_impl, name)
-        return object.__getattribute__(self, name)
+        self.backend = TapDBBackend(app_username="ursa-file")
 
     def create_tables_if_not_exist(self) -> None:
         with self.backend.session_scope(commit=True) as session:

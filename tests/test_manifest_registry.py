@@ -1,10 +1,4 @@
-"""Unit tests for daylib.manifest_registry.
-
-These tests exercise TapDB manifest storage helpers including:
-- gzip+base64 encoding/decoding via save_manifest / get_manifest_tsv
-- listing manifests by customer
-- TSV parsing is covered in test_manifest_api.py
-"""
+"""Unit tests for daylib.manifest_registry using TapDB graph semantics."""
 
 from unittest.mock import MagicMock, patch
 
@@ -12,6 +6,7 @@ import pytest
 
 from daylib.manifest_registry import (
     ManifestRegistry,
+    ManifestTooLargeError,
     SavedManifest,
     _estimate_sample_count,
     _gzip_b64_decode,
@@ -20,42 +15,41 @@ from daylib.manifest_registry import (
 )
 
 
+class _SessionCtx:
+    def __init__(self, session: MagicMock):
+        self._session = session
 
-@pytest.fixture
-def mock_tapdb():
-    """Mock boto3 TapDB session/resource used by ManifestRegistry.
+    def __enter__(self):
+        return self._session
 
-    We patch boto3.Session at the module level so __init__ does not talk to AWS.
-    """
-
-    with patch("daylib.manifest_registry.boto3.Session") as mock_session:
-        mock_resource = MagicMock()
-        mock_session.return_value.resource.return_value = mock_resource
-        yield mock_resource
+    def __exit__(self, exc_type, exc, tb):
+        return False
 
 
 @pytest.fixture
-def manifest_registry(mock_tapdb):
-    """Create a ManifestRegistry instance with a mocked TapDB table."""
+def manifest_registry() -> ManifestRegistry:
+    registry = ManifestRegistry.__new__(ManifestRegistry)
+    registry.table_name = "test-manifests"
+    registry.region = "us-west-2"
+    registry.profile = None
+    registry._schema_loaded = True
+    registry._hash_key_name = "manifest_id"
+    registry._range_key_name = None
 
-    registry = ManifestRegistry(table_name="test-manifests")
-    # Replace the real TapDB table handle with a MagicMock for unit testing
-    registry.table = MagicMock()
+    registry.backend = MagicMock()
+    registry._session = MagicMock()
+    registry.backend.session_scope.return_value = _SessionCtx(registry._session)
     return registry
 
 
 class TestSaveManifestEncoding:
-    """Tests for save_manifest() encoding and stored metadata."""
-
-    def test_save_manifest_encodes_tsv_and_stores_metadata(self, manifest_registry):
-        """save_manifest should gzip+base64 encode TSV and persist metadata.
-
-        This indirectly verifies _gzip_b64_encode / _gzip_b64_decode and
-        sample counting / sha256 helpers.
-        """
-
+    def test_save_manifest_encodes_tsv_and_stores_metadata(self, manifest_registry: ManifestRegistry):
         tsv_content = "RUN_ID\tSAMPLE_ID\nR0\tHG002\n"
-        manifest_registry.table.put_item.return_value = {}
+
+        customer = MagicMock(uuid=101, euid="cust-euid")
+        manifest = MagicMock(euid="manifest-euid")
+        manifest_registry.backend.find_instance_by_external_id.return_value = None
+        manifest_registry.backend.create_instance.side_effect = [customer, manifest]
 
         saved = manifest_registry.save_manifest(
             customer_id="cust-001",
@@ -64,46 +58,53 @@ class TestSaveManifestEncoding:
             description="Test manifest",
         )
 
-        # Basic SavedManifest properties
         assert isinstance(saved, SavedManifest)
         assert saved.customer_id == "cust-001"
         assert saved.manifest_id.startswith("m-")
-
-        # Helpers should produce consistent metadata
         assert saved.sample_count == _estimate_sample_count(tsv_content)
         assert saved.tsv_sha256 == _sha256_hex(tsv_content)
         assert _gzip_b64_decode(saved.tsv_gzip_b64) == tsv_content
+        assert saved.manifest_euid == "manifest-euid"
 
-        # Verify what was written to TapDB
-        manifest_registry.table.put_item.assert_called_once()
-        kwargs = manifest_registry.table.put_item.call_args.kwargs
-        item = kwargs["Item"]
+        manifest_payload = manifest_registry.backend.create_instance.call_args_list[1].kwargs["json_addl"]
+        assert manifest_payload["customer_id"] == "cust-001"
+        assert manifest_payload["sample_count"] == saved.sample_count
+        assert manifest_payload["tsv_sha256"] == saved.tsv_sha256
+        assert _gzip_b64_decode(manifest_payload["tsv_gzip_b64"]) == tsv_content
 
-        assert item["customer_id"] == "cust-001"
-        assert item["sample_count"] == saved.sample_count
-        assert item["tsv_sha256"] == saved.tsv_sha256
-        # Stored payload round-trips via gzip+base64
-        assert _gzip_b64_decode(item["tsv_gzip_b64"]) == tsv_content
+        manifest_registry.backend.create_lineage.assert_called_once()
+
+    def test_save_manifest_rejects_oversized_payload(self, manifest_registry: ManifestRegistry):
+        with patch("daylib.manifest_registry._gzip_b64_encode", return_value="x" * 340001):
+            with pytest.raises(ManifestTooLargeError):
+                manifest_registry.save_manifest(
+                    customer_id="cust-001",
+                    tsv_content="RUN_ID\tSAMPLE_ID\nR0\tHG002\n",
+                    name="too-big",
+                )
 
 
 class TestListCustomerManifests:
-    """Tests for listing manifests by customer_id."""
-
-    def test_list_customer_manifests_normalizes_fields(self, manifest_registry):
-        """list_customer_manifests should coerce types and normalize empty strings."""
-
-        manifest_registry.table.query.return_value = {
-            "Items": [
-                {
-                    "manifest_id": "m-1",
-                    "customer_id": "cust-001",
-                    "name": "Run 1",
-                    "description": "",  # should be normalized to None
-                    "created_at": "2026-01-01T00:00:00Z",
-                    "sample_count": "3",  # stored as string in TapDB
-                }
-            ]
-        }
+    def test_list_customer_manifests_normalizes_fields(self, manifest_registry: ManifestRegistry):
+        customer = MagicMock(uuid=101)
+        row = MagicMock(
+            euid="manifest-euid",
+            name="Run 1",
+            created_dt=None,
+            modified_dt=None,
+            bstatus="active",
+            json_addl={
+                "manifest_id": "m-1",
+                "customer_id": "cust-001",
+                "name": "Run 1",
+                "description": "",
+                "created_at": "2026-01-01T00:00:00Z",
+                "sample_count": "3",
+                "tsv_sha256": "abc",
+            },
+        )
+        manifest_registry.backend.find_instance_by_external_id.return_value = customer
+        manifest_registry.backend.get_customer_owned.return_value = [row]
 
         manifests = manifest_registry.list_customer_manifests("cust-001")
 
@@ -112,21 +113,27 @@ class TestListCustomerManifests:
         assert m["manifest_id"] == "m-1"
         assert m["customer_id"] == "cust-001"
         assert m["name"] == "Run 1"
-        assert m["description"] is None  # empty string normalized
-        assert m["sample_count"] == 3  # coerced to int
+        assert m["description"] == ""
+        assert m["sample_count"] == 3
+        assert m["manifest_euid"] == "manifest-euid"
+
+    def test_list_customer_manifests_empty_when_customer_missing(self, manifest_registry: ManifestRegistry):
+        manifest_registry.backend.find_instance_by_external_id.return_value = None
+        assert manifest_registry.list_customer_manifests("cust-404") == []
 
 
 class TestGetManifestAndTsv:
-    """Tests for get_manifest() and get_manifest_tsv()."""
-
-    def test_get_manifest_and_tsv_round_trip(self, manifest_registry):
-        """get_manifest_tsv should decode the stored gzip+base64 payload."""
-
+    def test_get_manifest_and_tsv_round_trip(self, manifest_registry: ManifestRegistry):
         tsv_content = "RUN_ID\tSAMPLE_ID\tR1_FQ\tR2_FQ\nrun1\tsample1\tr1.fq\tr2.fq\n"
         encoded = _gzip_b64_encode(tsv_content)
 
-        manifest_registry.table.get_item.return_value = {
-            "Item": {
+        row = MagicMock(
+            euid="manifest-euid",
+            name="Run 1",
+            created_dt=None,
+            modified_dt=None,
+            bstatus="active",
+            json_addl={
                 "manifest_id": "m-1",
                 "customer_id": "cust-001",
                 "name": "Run 1",
@@ -135,130 +142,44 @@ class TestGetManifestAndTsv:
                 "sample_count": 1,
                 "tsv_sha256": _sha256_hex(tsv_content),
                 "tsv_gzip_b64": encoded,
-            }
-        }
+            },
+        )
+        manifest_registry.backend.find_instance_by_external_id.side_effect = [row, row]
 
         saved = manifest_registry.get_manifest(customer_id="cust-001", manifest_id="m-1")
-
         assert isinstance(saved, SavedManifest)
         assert saved.manifest_id == "m-1"
         assert saved.customer_id == "cust-001"
         assert saved.sample_count == 1
         assert saved.tsv_sha256 == _sha256_hex(tsv_content)
 
-        round_tripped = manifest_registry.get_manifest_tsv(
-            customer_id="cust-001", manifest_id="m-1"
-        )
+        round_tripped = manifest_registry.get_manifest_tsv(customer_id="cust-001", manifest_id="m-1")
         assert round_tripped == tsv_content
 
-
-    def test_get_manifest_returns_none_when_not_found(self, manifest_registry):
-        """If TapDB returns no Item, get_manifest should return None."""
-
-        manifest_registry.table.get_item.return_value = {}
-
+    def test_get_manifest_returns_none_when_not_found(self, manifest_registry: ManifestRegistry):
+        manifest_registry.backend.find_instance_by_external_id.return_value = None
         result = manifest_registry.get_manifest(customer_id="cust-001", manifest_id="m-missing")
         assert result is None
 
-
-class TestPkOnlyManifestSchema:
-    """Compatibility tests for environments where manifest table uses pk-only schema."""
-
-    def test_save_list_get_with_pk_only_schema(self, manifest_registry):
-        # Simulate pre-detected pk-only table schema
-        manifest_registry._schema_loaded = True
-        manifest_registry._hash_key_name = "pk"
-        manifest_registry._range_key_name = None
-
-        # Save should include pk key and pk-based condition expression
-        manifest_registry.table.put_item.return_value = {}
-        saved = manifest_registry.save_manifest(
-            customer_id="cust-001",
-            tsv_content="RUN_ID\tSAMPLE_ID\nR0\tHG002\n",
-            name="Compat",
+    def test_get_manifest_returns_none_for_customer_mismatch(self, manifest_registry: ManifestRegistry):
+        row = MagicMock(
+            euid="manifest-euid",
+            name="Run 1",
+            created_dt=None,
+            modified_dt=None,
+            bstatus="active",
+            json_addl={
+                "manifest_id": "m-1",
+                "customer_id": "other-customer",
+                "name": "Run 1",
+                "tsv_gzip_b64": _gzip_b64_encode("RUN_ID\tSAMPLE_ID\nR0\tHG002\n"),
+            },
         )
-        put_kwargs = manifest_registry.table.put_item.call_args.kwargs
-        assert put_kwargs["Item"]["pk"] == f"manifest#cust-001#{saved.manifest_id}"
-        assert put_kwargs["ConditionExpression"] == "attribute_not_exists(pk)"
-
-        # List should use scan fallback and still return normalized metadata
-        manifest_registry.table.scan.return_value = {
-            "Items": [
-                {
-                    "pk": f"manifest#cust-001#{saved.manifest_id}",
-                    "entity_type": "manifest",
-                    "customer_id": "cust-001",
-                    "manifest_id": saved.manifest_id,
-                    "created_at": saved.created_at,
-                    "name": "Compat",
-                    "description": "",
-                    "sample_count": 1,
-                    "tsv_sha256": saved.tsv_sha256,
-                    "tsv_gzip_b64": saved.tsv_gzip_b64,
-                }
-            ]
-        }
-        listed = manifest_registry.list_customer_manifests("cust-001")
-        assert len(listed) == 1
-        assert listed[0]["manifest_id"] == saved.manifest_id
-
-        # Get should use pk key for get_item
-        manifest_registry.table.get_item.return_value = {
-            "Item": {
-                "pk": f"manifest#cust-001#{saved.manifest_id}",
-                "entity_type": "manifest",
-                "customer_id": "cust-001",
-                "manifest_id": saved.manifest_id,
-                "created_at": saved.created_at,
-                "name": "Compat",
-                "description": "",
-                "sample_count": 1,
-                "tsv_sha256": saved.tsv_sha256,
-                "tsv_gzip_b64": saved.tsv_gzip_b64,
-            }
-        }
-        _ = manifest_registry.get_manifest(customer_id="cust-001", manifest_id=saved.manifest_id)
-        get_kwargs = manifest_registry.table.get_item.call_args.kwargs
-        assert get_kwargs["Key"]["pk"] == f"manifest#cust-001#{saved.manifest_id}"
+        manifest_registry.backend.find_instance_by_external_id.return_value = row
+        assert manifest_registry.get_manifest(customer_id="cust-001", manifest_id="m-1") is None
 
 
 class TestCreateTableIfNotExists:
-    """Tests for ManifestRegistry.create_table_if_not_exists behavior."""
-
-    def test_create_table_if_not_exists_noop_when_table_exists(self, mock_tapdb):
-        """If table.load() succeeds, create_table_if_not_exists should not call create_table."""
-
-        # Bind registry to mocked TapDB; leave table as the default from __init__
-        registry = ManifestRegistry(table_name="test-manifests-existing")
-        registry.tapdb = mock_tapdb
-
-        # Simulate table already existing: .load() does not raise
-        registry.table.load = MagicMock(return_value=None)
-
-        registry.create_table_if_not_exists()
-
-        # When table exists, we must not attempt to create it again
-        assert not mock_tapdb.create_table.called
-
-    def test_create_table_if_not_exists_creates_when_missing(self, mock_tapdb):
-        """If table.load() raises ResourceNotFoundException, create the table and wait."""
-
-        from botocore.exceptions import ClientError
-
-        registry = ManifestRegistry(table_name="test-manifests-missing")
-        registry.tapdb = mock_tapdb
-
-        # Configure table.load() to raise ResourceNotFoundException
-        error_response = {"Error": {"Code": "ResourceNotFoundException", "Message": "Not found"}}
-        registry.table.load = MagicMock(
-            side_effect=ClientError(error_response, "DescribeTable")
-        )
-
-        # Mock create_table to return an object with wait_until_exists()
-        mock_table_obj = MagicMock()
-        mock_tapdb.create_table.return_value = mock_table_obj
-
-        registry.create_table_if_not_exists()
-
-        mock_tapdb.create_table.assert_called_once()
-        mock_table_obj.wait_until_exists.assert_called_once()
+    def test_create_table_if_not_exists_bootstraps_templates(self, manifest_registry: ManifestRegistry):
+        manifest_registry.create_table_if_not_exists()
+        manifest_registry.backend.ensure_templates.assert_called_once_with(manifest_registry._session)

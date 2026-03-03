@@ -1,78 +1,78 @@
-"""Integration tests for workset processing pipeline.
+"""Integration-style tests for graph-backed workset lifecycle behavior."""
 
-Tests end-to-end workflows including state transitions, concurrent processing,
-and error handling.
-"""
+from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from daylib.workset_state_db import (
-    WorksetStateDB,
-    WorksetState,
-    WorksetPriority,
-    ErrorCategory,
-)
-from daylib.workset_validation import WorksetValidator
 from daylib.workset_diagnostics import classify_error
+from daylib.workset_state_db import ErrorCategory, WorksetPriority, WorksetState, WorksetStateDB
+from daylib.workset_validation import WorksetValidator
 
+
+class _SessionCtx:
+    def __init__(self, session: MagicMock):
+        self._session = session
+
+    def __enter__(self):
+        return self._session
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+
+class _Instance:
+    def __init__(self, *, name: str = "ws", bstatus: str = "ready", json_addl: dict | None = None):
+        self.name = name
+        self.bstatus = bstatus
+        self.json_addl = dict(json_addl or {})
+        self.is_deleted = False
 
 
 @pytest.fixture
-def mock_aws():
-    """Mock AWS services for integration tests."""
-    with patch("daylib.workset_state_db.boto3.Session") as mock_session:
-        mock_table = MagicMock()
-        mock_tapdb = MagicMock()
-        mock_cloudwatch = MagicMock()
-        
-        mock_tapdb.Table.return_value = mock_table
-        mock_session.return_value.resource.return_value = mock_tapdb
-        mock_session.return_value.client.return_value = mock_cloudwatch
-        
-        # Set up table responses
-        mock_table.load.return_value = None
-        mock_table.put_item.return_value = {}
-        mock_table.update_item.return_value = {}
-        mock_table.get_item.return_value = {
-            "Item": {
-                "workset_id": "test-ws-001",
+def state_db() -> WorksetStateDB:
+    db = WorksetStateDB.__new__(WorksetStateDB)
+    db.table_name = "test-worksets"
+    db.region = "us-west-2"
+    db.profile = None
+    db.lock_timeout_seconds = 300
+
+    db.backend = MagicMock()
+    db.cloudwatch = MagicMock()
+    db._cloudwatch = None
+
+    db._session = MagicMock()
+    db.backend.session_scope.return_value = _SessionCtx(db._session)
+    db.backend.ensure_templates.return_value = None
+    db.backend.create_lineage.return_value = None
+
+    db._find_customer = MagicMock(return_value=None)
+    db._write_state_event = MagicMock()
+    db._write_lock_event = MagicMock()
+    db._emit_metric = MagicMock()
+    db._find_workset = MagicMock(return_value=None)
+    return db
+
+
+class TestWorksetLifecycle:
+    def test_register_to_complete_workflow(self, state_db: WorksetStateDB):
+        ws = _Instance(
+            name="integration-ws-001",
+            bstatus="ready",
+            json_addl={
+                "workset_id": "integration-ws-001",
                 "state": "ready",
                 "priority": "normal",
                 "bucket": "test-bucket",
                 "prefix": "worksets/test/",
-                "created_at": "2024-01-15T10:00:00Z",
-                "updated_at": "2024-01-15T10:00:00Z",
-            }
-        }
-        
-        yield {
-            "session": mock_session,
-            "table": mock_table,
-            "tapdb": mock_tapdb,
-            "cloudwatch": mock_cloudwatch,
-        }
+                "metadata": {"samples": [{"sample_id": "S0"}]},
+            },
+        )
+        state_db.backend.create_instance.return_value = ws
+        state_db._find_workset.side_effect = [None, ws, ws, ws]
 
-
-@pytest.fixture
-def state_db(mock_aws):
-    """Create WorksetStateDB instance."""
-    return WorksetStateDB(
-        table_name="test-worksets",
-        region="us-west-2",
-    )
-
-
-class TestWorksetLifecycle:
-    """Test complete workset lifecycle."""
-
-    def test_register_to_complete_workflow(self, state_db, mock_aws):
-        """Test workset from registration to completion."""
-        mock_table = mock_aws["table"]
-
-        # Step 1: Register workset
-        result = state_db.register_workset(
+        assert state_db.register_workset(
             workset_id="integration-ws-001",
             bucket="test-bucket",
             prefix="worksets/test/",
@@ -80,106 +80,73 @@ class TestWorksetLifecycle:
             metadata={"samples": [{"sample_id": f"S{i}"} for i in range(5)], "sample_count": 5},
             customer_id="test-customer",
         )
-        assert result is True
-        
-        # Step 2: Acquire lock
-        result = state_db.acquire_lock("integration-ws-001", "processor-1")
-        assert result is True
-        
-        # Step 3: Update to in_progress
+
+        assert state_db.acquire_lock("integration-ws-001", "processor-1") is True
+
         state_db.update_state(
             "integration-ws-001",
             WorksetState.IN_PROGRESS,
             reason="Started processing",
             cluster_name="test-cluster",
         )
-        
-        # Step 4: Complete
         state_db.update_state(
             "integration-ws-001",
             WorksetState.COMPLETE,
             reason="Processing finished",
             metrics={"duration_seconds": 300, "cost_usd": 5.0},
         )
-        
-        # Verify state updates were called
-        assert mock_table.update_item.call_count >= 3
 
-    def test_register_to_error_to_retry_workflow(self, state_db, mock_aws):
-        """Test workset error handling and retry."""
-        mock_table = mock_aws["table"]
-        
-        # Setup mock for retry logic
-        mock_table.get_item.return_value = {
-            "Item": {
-                "workset_id": "error-ws-001",
-                "state": "in_progress",
-                "retry_count": 0,
-                "max_retries": 3,
-            }
-        }
-        
-        # Record a transient failure
+        assert ws.bstatus == WorksetState.COMPLETE.value
+        assert ws.json_addl["state"] == WorksetState.COMPLETE.value
+
+    def test_register_to_error_to_retry_workflow(self, state_db: WorksetStateDB):
+        ws = _Instance(name="error-ws-001", bstatus="in_progress", json_addl={"state": "in_progress", "retry_count": 0, "max_retries": 3})
+        state_db.get_workset = MagicMock(return_value={"retry_count": 0, "max_retries": 3})
+        state_db._find_workset.return_value = ws
+
         should_retry = state_db.record_failure(
             workset_id="error-ws-001",
             error_details="Connection timeout",
             error_category=ErrorCategory.TRANSIENT,
         )
-        
-        assert should_retry is True
 
-    def test_permanent_failure_workflow(self, state_db, mock_aws):
-        """Test permanent failure after max retries."""
-        mock_table = mock_aws["table"]
-        
-        # Setup mock with max retries reached
-        mock_table.get_item.return_value = {
-            "Item": {
-                "workset_id": "perm-error-ws-001",
-                "state": "retrying",
-                "retry_count": 3,
-                "max_retries": 3,
-            }
-        }
-        
-        # Record another failure
+        assert should_retry is True
+        assert ws.json_addl["state"] == WorksetState.RETRYING.value
+
+    def test_permanent_failure_workflow(self, state_db: WorksetStateDB):
+        ws = _Instance(name="perm-error-ws-001", bstatus="retrying", json_addl={"state": "retrying", "retry_count": 3, "max_retries": 3})
+        state_db.get_workset = MagicMock(return_value={"retry_count": 3, "max_retries": 3})
+        state_db._find_workset.return_value = ws
+
         should_retry = state_db.record_failure(
             workset_id="perm-error-ws-001",
             error_details="Persistent error",
             error_category=ErrorCategory.TRANSIENT,
         )
-        
+
         assert should_retry is False
+        assert ws.json_addl["state"] == WorksetState.FAILED.value
 
 
 class TestValidationToProcessing:
-    """Test validation and processing integration."""
-
-    def test_validation_before_registration(self, state_db, mock_aws):
-        """Test validating workset before registration."""
+    def test_validation_before_registration(self, state_db: WorksetStateDB):
         with patch("daylib.workset_validation.boto3.Session"):
             WorksetValidator(region="us-west-2")
 
-            # Valid workset config - use the schema directly
             config = {
                 "workset_id": "validated-ws-001",
-                "samples": [
-                    {"sample_id": "S1", "fastq_r1": "s3://bucket/S1_R1.fq.gz"}
-                ],
+                "samples": [{"sample_id": "S1", "fastq_r1": "s3://bucket/S1_R1.fq.gz"}],
                 "reference_genome": "hg38",
             }
 
-            # Validate using jsonschema directly
             import jsonschema
-            try:
-                jsonschema.validate(config, WorksetValidator.WORK_YAML_SCHEMA)
-                is_valid = True
-            except jsonschema.ValidationError:
-                is_valid = False
 
-            assert is_valid
+            jsonschema.validate(config, WorksetValidator.WORK_YAML_SCHEMA)
 
-            # Register after validation
+            ws = _Instance(name="validated-ws-001", bstatus="ready", json_addl={"workset_id": "validated-ws-001", "state": "ready"})
+            state_db.backend.create_instance.return_value = ws
+            state_db._find_workset.side_effect = [None]
+
             result = state_db.register_workset(
                 workset_id=config["workset_id"],
                 bucket="test-bucket",
@@ -191,110 +158,58 @@ class TestValidationToProcessing:
 
 
 class TestDiagnosticsIntegration:
-    """Test diagnostics integration with state management."""
-
-    def test_error_classification_and_recording(self, state_db, mock_aws):
-        """Test classifying error and recording in state DB."""
-        mock_table = mock_aws["table"]
-
-        # Simulate an error
+    def test_error_classification_and_recording(self, state_db: WorksetStateDB):
         error_text = "Out of memory: Cannot allocate 16GB"
-
-        # Classify the error
         classification = classify_error(error_text)
 
         assert classification["error_code"] == "WS-RES-001"
         assert classification["category"] == "resource"
         assert classification["retryable"] is True
 
-        # Setup mock for retry
-        mock_table.get_item.return_value = {
-            "Item": {
-                "workset_id": "diag-ws-001",
-                "state": "in_progress",
-                "retry_count": 0,
-                "max_retries": 3,
-            }
-        }
+        ws = _Instance(name="diag-ws-001", bstatus="in_progress", json_addl={"state": "in_progress", "retry_count": 0, "max_retries": 3})
+        state_db.get_workset = MagicMock(return_value={"retry_count": 0, "max_retries": 3})
+        state_db._find_workset.return_value = ws
 
-        # Record failure with classification
-        error_category = (
-            ErrorCategory.TRANSIENT if classification["retryable"]
-            else ErrorCategory.PERMANENT
-        )
-
+        error_category = ErrorCategory.TRANSIENT if classification["retryable"] else ErrorCategory.PERMANENT
         should_retry = state_db.record_failure(
             workset_id="diag-ws-001",
             error_details=error_text,
             error_category=error_category,
         )
 
-        # Should retry since it's a transient resource error
         assert should_retry is True
 
-    def test_non_retryable_error_classification(self, state_db, mock_aws):
-        """Test non-retryable error handling."""
-        mock_table = mock_aws["table"]
-
-        # Simulate a data error
+    def test_non_retryable_error_classification(self, state_db: WorksetStateDB):
         error_text = "Invalid FASTQ format: truncated quality string"
-
-        # Classify the error
         classification = classify_error(error_text)
 
         assert classification["error_code"] == "WS-DAT-001"
         assert classification["retryable"] is False
 
-        # Setup mock
-        mock_table.get_item.return_value = {
-            "Item": {
-                "workset_id": "data-error-ws-001",
-                "state": "in_progress",
-                "retry_count": 0,
-                "max_retries": 3,
-            }
-        }
+        ws = _Instance(name="data-error-ws-001", bstatus="in_progress", json_addl={"state": "in_progress", "retry_count": 0, "max_retries": 3})
+        state_db.get_workset = MagicMock(return_value={"retry_count": 0, "max_retries": 3})
+        state_db._find_workset.return_value = ws
 
-        # Record as permanent failure
         should_retry = state_db.record_failure(
             workset_id="data-error-ws-001",
             error_details=error_text,
             error_category=ErrorCategory.PERMANENT,
         )
 
-        # Should not retry data errors
         assert should_retry is False
 
 
 class TestConcurrentProcessingIntegration:
-    """Test concurrent processing integration."""
+    def test_state_db_concurrency_limits(self, state_db: WorksetStateDB):
+        state_db.list_worksets_by_state = MagicMock(return_value=[{"workset_id": f"ws-{i}"} for i in range(5)])
+        state_db.list_locked_worksets = MagicMock(return_value=[{"workset_id": f"l-{i}"} for i in range(5)])
 
-    def test_state_db_concurrency_limits(self, state_db, mock_aws):
-        """Test state DB respects concurrency limits."""
-        mock_table = mock_aws["table"]
-
-        # Setup mock to return worksets at limit for query
-        mock_table.query.return_value = {
-            "Items": [
-                {"workset_id": f"ws-{i}", "state": "in_progress"}
-                for i in range(5)  # 5 concurrent worksets
-            ],
-            "Count": 5,
-        }
-
-        # Check if can start new workset
         can_start = state_db.can_start_new_workset(max_concurrent=5)
-        # The mock returns 5 in_progress + 5 locked = 10, so should be False
-        # But since query is called twice (for in_progress and locked),
-        # we get 10 total which is >= 5
         assert can_start is False
 
-    def test_state_db_cluster_affinity(self, state_db, mock_aws):
-        """Test state DB cluster affinity."""
-        mock_table = mock_aws["table"]
+    def test_state_db_cluster_affinity(self, state_db: WorksetStateDB):
+        ws = _Instance(name="test-ws-001", bstatus="ready", json_addl={"workset_id": "test-ws-001", "state": "ready"})
+        state_db._find_workset.return_value = ws
 
-        # Set cluster affinity
-        state_db.set_cluster_affinity("test-ws-001", "test-cluster")
-
-        # Verify update was called
-        mock_table.update_item.assert_called()
+        assert state_db.set_cluster_affinity("test-ws-001", "test-cluster") is True
+        assert ws.json_addl["preferred_cluster"] == "test-cluster"
