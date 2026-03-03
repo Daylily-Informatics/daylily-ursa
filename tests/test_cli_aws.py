@@ -9,6 +9,7 @@ from typer.testing import CliRunner
 from daylib.cli.aws import aws_app
 
 
+
 runner = CliRunner()
 
 
@@ -25,8 +26,8 @@ def mock_settings():
 
 
 @pytest.fixture
-def mock_dynamodb_resource():
-    """Mock boto3 DynamoDB resource."""
+def mock_tapdb_resource():
+    """Mock boto3 TapDB resource."""
     resource = MagicMock()
     # Create a proper exception class for ResourceNotFoundException
     resource.meta.client.exceptions.ResourceNotFoundException = type(
@@ -47,31 +48,31 @@ class TestAwsSetup:
             assert result.exit_code == 1
             assert "AWS_PROFILE" in result.output
 
-    def test_setup_creates_tables(self, mock_settings, mock_dynamodb_resource):
+    def test_setup_creates_tables(self, mock_settings, mock_tapdb_resource):
         """Test that setup creates tables when they don't exist."""
         mock_table = MagicMock()
-        mock_table.load.side_effect = mock_dynamodb_resource.meta.client.exceptions.ResourceNotFoundException(
+        mock_table.load.side_effect = mock_tapdb_resource.meta.client.exceptions.ResourceNotFoundException(
             "Table not found"
         )
-        mock_dynamodb_resource.Table.return_value = mock_table
-        mock_dynamodb_resource.create_table.return_value = mock_table
+        mock_tapdb_resource.Table.return_value = mock_table
+        mock_tapdb_resource.create_table.return_value = mock_table
 
         with patch.dict(os.environ, {"AWS_PROFILE": "test-profile"}):
             with patch("daylib.config.get_settings", return_value=mock_settings):
-                with patch("boto3.resource", return_value=mock_dynamodb_resource):
+                with patch("boto3.resource", return_value=mock_tapdb_resource):
                     result = runner.invoke(aws_app, ["setup"])
                     assert result.exit_code == 0
                     assert "Creating table" in result.output
 
-    def test_setup_skips_existing_tables(self, mock_settings, mock_dynamodb_resource):
+    def test_setup_skips_existing_tables(self, mock_settings, mock_tapdb_resource):
         """Test that setup skips tables that already exist."""
         mock_table = MagicMock()
         mock_table.load.return_value = None  # Table exists
-        mock_dynamodb_resource.Table.return_value = mock_table
+        mock_tapdb_resource.Table.return_value = mock_table
 
         with patch.dict(os.environ, {"AWS_PROFILE": "test-profile"}):
             with patch("daylib.config.get_settings", return_value=mock_settings):
-                with patch("boto3.resource", return_value=mock_dynamodb_resource):
+                with patch("boto3.resource", return_value=mock_tapdb_resource):
                     result = runner.invoke(aws_app, ["setup"])
                     assert result.exit_code == 0
                     assert "Table exists" in result.output
@@ -88,30 +89,30 @@ class TestAwsStatus:
             assert result.exit_code == 1
             assert "AWS_PROFILE" in result.output
 
-    def test_status_shows_active_tables(self, mock_settings, mock_dynamodb_resource):
+    def test_status_shows_active_tables(self, mock_settings, mock_tapdb_resource):
         """Test that status shows active tables."""
         mock_table = MagicMock()
         mock_table.item_count = 42
-        mock_dynamodb_resource.Table.return_value = mock_table
+        mock_tapdb_resource.Table.return_value = mock_table
 
         with patch.dict(os.environ, {"AWS_PROFILE": "test-profile"}):
             with patch("daylib.config.get_settings", return_value=mock_settings):
-                with patch("boto3.resource", return_value=mock_dynamodb_resource):
+                with patch("boto3.resource", return_value=mock_tapdb_resource):
                     result = runner.invoke(aws_app, ["status"])
                     assert result.exit_code == 0
                     assert "test-worksets" in result.output
 
-    def test_status_shows_missing_tables(self, mock_settings, mock_dynamodb_resource):
+    def test_status_shows_missing_tables(self, mock_settings, mock_tapdb_resource):
         """Test that status shows missing tables."""
         mock_table = MagicMock()
-        mock_table.load.side_effect = mock_dynamodb_resource.meta.client.exceptions.ResourceNotFoundException(
+        mock_table.load.side_effect = mock_tapdb_resource.meta.client.exceptions.ResourceNotFoundException(
             "Table not found"
         )
-        mock_dynamodb_resource.Table.return_value = mock_table
+        mock_tapdb_resource.Table.return_value = mock_table
 
         with patch.dict(os.environ, {"AWS_PROFILE": "test-profile"}):
             with patch("daylib.config.get_settings", return_value=mock_settings):
-                with patch("boto3.resource", return_value=mock_dynamodb_resource):
+                with patch("boto3.resource", return_value=mock_tapdb_resource):
                     result = runner.invoke(aws_app, ["status"])
                     assert result.exit_code == 0
                     assert "Not Found" in result.output
@@ -136,17 +137,16 @@ class TestAwsTeardown:
                 result = runner.invoke(aws_app, ["teardown"], input="n\n")
                 assert "Cancelled" in result.output or result.exit_code == 0
 
-    def test_teardown_deletes_tables_with_force(self, mock_settings, mock_dynamodb_resource):
+    def test_teardown_deletes_tables_with_force(self, mock_settings, mock_tapdb_resource):
         """Test that teardown deletes tables with --force flag."""
         mock_table = MagicMock()
-        mock_dynamodb_resource.Table.return_value = mock_table
+        mock_tapdb_resource.Table.return_value = mock_table
 
         with patch.dict(os.environ, {"AWS_PROFILE": "test-profile"}):
             with patch("daylib.config.get_settings", return_value=mock_settings):
-                with patch("boto3.resource", return_value=mock_dynamodb_resource):
+                with patch("boto3.resource", return_value=mock_tapdb_resource):
                     result = runner.invoke(aws_app, ["teardown", "--force"])
                     assert result.exit_code == 0
                     assert "Deleted table" in result.output or "teardown complete" in result.output
                     # System now has 11 tables: 4 core + 3 FILE_REGISTRY_TABLES + 4 BIOSPECIMEN_TABLES
                     assert mock_table.delete.call_count == 11
-

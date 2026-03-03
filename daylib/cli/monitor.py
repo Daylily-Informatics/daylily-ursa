@@ -85,8 +85,8 @@ def start(
     verbose: bool = typer.Option(True, "--verbose/--quiet", "-v/-q", help="Enable verbose logging (default: on)"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Do not mutate S3 or execute commands"),
     background: bool = typer.Option(True, "--background/--foreground", "-b/-f", help="Run in background"),
-    enable_dynamodb: bool = typer.Option(True, "--enable-dynamodb/--no-dynamodb", help="Enable DynamoDB state tracking (default: on)"),
-    dynamodb_table: str = typer.Option("daylily-worksets", "--dynamodb-table", help="DynamoDB table name"),
+    enable_tapdb: bool = typer.Option(True, "--enable-tapdb/--no-tapdb", help="Enable TapDB state tracking (default: on)"),
+    tapdb_table: str = typer.Option("daylily-worksets", "--tapdb-table", help="TapDB table name"),
     parallel: Optional[int] = typer.Option(None, "--parallel", "-p", help="Maximum number of worksets to run in parallel (overrides config file)"),
 ):
     """Start the workset monitor daemon."""
@@ -135,8 +135,8 @@ def start(
         cmd.append("--verbose")
     if dry_run:
         cmd.append("--dry-run")
-    if enable_dynamodb:
-        cmd.extend(["--enable-dynamodb", "--dynamodb-table", dynamodb_table])
+    if enable_tapdb:
+        cmd.extend(["--enable-tapdb", "--tapdb-table", tapdb_table])
     if parallel is not None:
         cmd.extend(["--parallel", str(parallel)])
 

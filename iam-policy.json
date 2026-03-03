@@ -2,23 +2,23 @@
   "Version": "2012-10-17",
   "Statement": [
     {
-      "Sid": "DynamoDBTableAccess",
+      "Sid": "TapDBTableAccess",
       "Effect": "Allow",
       "Action": [
-        "dynamodb:CreateTable",
-        "dynamodb:DescribeTable",
-        "dynamodb:GetItem",
-        "dynamodb:PutItem",
-        "dynamodb:UpdateItem",
-        "dynamodb:DeleteItem",
-        "dynamodb:Query",
-        "dynamodb:Scan",
-        "dynamodb:BatchGetItem",
-        "dynamodb:BatchWriteItem"
+        "tapdb:CreateTable",
+        "tapdb:DescribeTable",
+        "tapdb:GetItem",
+        "tapdb:PutItem",
+        "tapdb:UpdateItem",
+        "tapdb:DeleteItem",
+        "tapdb:Query",
+        "tapdb:Scan",
+        "tapdb:BatchGetItem",
+        "tapdb:BatchWriteItem"
       ],
       "Resource": [
-        "arn:aws:dynamodb:us-west-2:108782052779:table/daylily-worksets",
-        "arn:aws:dynamodb:us-west-2:108782052779:table/daylily-worksets/index/*"
+        "arn:aws:tapdb:us-west-2:108782052779:table/daylily-worksets",
+        "arn:aws:tapdb:us-west-2:108782052779:table/daylily-worksets/index/*"
       ]
     },
     {

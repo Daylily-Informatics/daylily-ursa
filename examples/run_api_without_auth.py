@@ -69,7 +69,7 @@ def main():
     LOGGER.info("Initializing Workset Monitor API (no authentication)")
     
     # Initialize state database
-    LOGGER.info(f"Connecting to DynamoDB table: {WORKSET_TABLE}")
+    LOGGER.info(f"Connecting to TapDB table: {WORKSET_TABLE}")
     state_db = WorksetStateDB(
         table_name=WORKSET_TABLE,
         region=REGION,
@@ -93,7 +93,7 @@ def main():
         LOGGER.info("Initializing file registry")
         try:
             import boto3
-            dynamodb = boto3.resource('dynamodb', region_name=REGION)
+            tapdb = boto3.resource('tapdb', region_name=REGION)
             file_registry = FileRegistry()
             LOGGER.info("File registry initialized - file management endpoints will be available")
         except Exception as e:
@@ -119,7 +119,7 @@ def main():
     LOGGER.info("=" * 60)
     LOGGER.info("Authentication: DISABLED")
     LOGGER.info("Region: %s", REGION)
-    LOGGER.info("DynamoDB Table: %s", WORKSET_TABLE)
+    LOGGER.info("TapDB Table: %s", WORKSET_TABLE)
     LOGGER.info("")
     LOGGER.info("Starting server on http://0.0.0.0:8914")
     LOGGER.info("API Documentation: http://localhost:8914/docs")

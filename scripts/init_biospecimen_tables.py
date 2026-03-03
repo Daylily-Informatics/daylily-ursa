@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Initialize DynamoDB tables for the biospecimen registry.
+Initialize TapDB tables for the biospecimen registry.
 
 This creates four tables:
   - daylily-subjects: Subject/patient records
@@ -25,7 +25,7 @@ logging.basicConfig(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Initialize Biospecimen DynamoDB tables")
+    parser = argparse.ArgumentParser(description="Initialize Biospecimen TapDB tables")
     parser.add_argument("--region", default="us-west-2", help="AWS region")
     parser.add_argument("--profile", default=None, help="AWS profile")
     args = parser.parse_args()

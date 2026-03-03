@@ -3,7 +3,7 @@
 ## 1. Planning assumptions
 Repo-verified assumptions:
 - Ursa API assembly and route composition are in `daylib/workset_api.py:create_app` with route modules in `daylib/routes/*`.
-- Current workflow persistence is DynamoDB-centric via `daylib/workset_state_db.py:WorksetStateDB`, `daylib/workset_customer.py:CustomerManager`, `daylib/file_registry.py:FileRegistry`, and `daylib/manifest_registry.py:ManifestRegistry`.
+- Current workflow persistence is TapDB-centric via `daylib/workset_state_db.py:WorksetStateDB`, `daylib/workset_customer.py:CustomerManager`, `daylib/file_registry.py:FileRegistry`, and `daylib/manifest_registry.py:ManifestRegistry`.
 - Current worker/scheduler/monitor lifecycle mutation paths are in `daylib/workset_worker.py`, `daylib/workset_concurrent_processor.py`, `daylib/workset_monitor.py`, and `daylib/workset_scheduler.py`.
 - Current auth/session/Cognito startup behavior is in `daylib/routes/portal.py`, `daylib/workset_api.py` combined dependency, and `daylib/cli/server.py` preflight.
 - Atlas local patterns for tenant/RBAC/service auth are available in `app/auth/rbac.py`, `app/auth/dependencies.py`, `app/api/routes/internal.py`.
@@ -18,12 +18,12 @@ Unverified assumptions:
 1. Add migration contract, architecture ADR, and feature-flag scaffold for backend selection.
 2. Introduce Postgres foundation and Ursa-owned workflow schema migration scaffolding.
 3. Add Postgres repositories and transactional state-transition primitives behind flags.
-4. Build DynamoDB semantic parity harness and concurrency/idempotency comparison tests.
+4. Build TapDB semantic parity harness and concurrency/idempotency comparison tests.
 5. Align Ursa auth/RBAC/tenant dependencies to Atlas semantics with bridge mapping.
 6. Rewrite worker/scheduler/monitor claim/state transitions to transactional Postgres primitives.
 7. Add transactional outbox and Atlas `lsmc_work_order` status sync worker with retries/DLQ.
 8. Add Atlas-triggered direct analysis internal endpoint with machine auth and delegated identity.
-9. Deliver backfill/cutover/rollback tooling, rehearsals, and Dynamo de-scope toggles.
+9. Deliver backfill/cutover/rollback tooling, rehearsals, and TapDB de-scope toggles.
 
 ## 3. Detailed PRs
 ### PR 1 - Migration contract and feature flags
@@ -50,14 +50,14 @@ Schema or migration changes:
 - None.
 
 Feature flags:
-- Add `URSA_WORKFLOW_BACKEND` (`dynamo` default, `postgres` disabled by default).
+- Add `URSA_WORKFLOW_BACKEND` (`tapdb` default, `postgres` disabled by default).
 - Add `URSA_PARITY_MODE` (`off` default).
 
 Tests:
 - Add/modify: `tests/test_migration_flags.py`, `tests/test_optional_auth.py` (ensure no auth regression from config changes).
 
 Rollout:
-- Deploy with defaults (`dynamo`, parity off); no runtime path change.
+- Deploy with defaults (`tapdb`, parity off); no runtime path change.
 
 Rollback:
 - Revert PR or unset new env vars; no data-plane impact.
@@ -98,17 +98,17 @@ Schema or migration changes:
 - Introduce indexes/uniques for tenant/state/claim/idempotency paths.
 
 Feature flags:
-- No functional toggle change; still `URSA_WORKFLOW_BACKEND=dynamo` by default.
+- No functional toggle change; still `URSA_WORKFLOW_BACKEND=tapdb` by default.
 
 Tests:
 - Add: `tests/persistence/test_db_bootstrap.py`.
 - Add: `tests/persistence/test_schema_constraints_smoke.py`.
 
 Rollout:
-- Run migrations in non-prod first; production migration can be applied while backend remains Dynamo.
+- Run migrations in non-prod first; production migration can be applied while backend remains TapDB.
 
 Rollback:
-- Roll back migration revision if not yet used by runtime; backend flag remains Dynamo.
+- Roll back migration revision if not yet used by runtime; backend flag remains TapDB.
 
 Dependencies:
 - PR 1.
@@ -119,7 +119,7 @@ Acceptance criteria:
 
 ### PR 3 - Postgres repositories and transactional primitives
 Objective:
-- Implement Postgres repository layer and transactional state/lease APIs equivalent to current Dynamo semantics.
+- Implement Postgres repository layer and transactional state/lease APIs equivalent to current TapDB semantics.
 
 What changes in this PR:
 - Add repository interfaces/implementations.
@@ -154,18 +154,18 @@ Rollout:
 - Enable postgres backend for low-risk read/list endpoints in staging first.
 
 Rollback:
-- Set backend flag back to `dynamo`; repositories stay dormant.
+- Set backend flag back to `tapdb`; repositories stay dormant.
 
 Dependencies:
 - PR 2.
 
 Acceptance criteria:
 - Postgres repository parity for core CRUD/lock/state operations proven in tests.
-- Flag-off path remains Dynamo.
+- Flag-off path remains TapDB.
 
-### PR 4 - Dynamo semantic parity harness and comparison tests
+### PR 4 - TapDB semantic parity harness and comparison tests
 Objective:
-- Provide an explicit semantic comparison harness proving Postgres behavior matches required Dynamo semantics.
+- Provide an explicit semantic comparison harness proving Postgres behavior matches required TapDB semantics.
 
 What changes in this PR:
 - Add dual-backend test harness and scenario matrix (conditional create, lock contention, stale takeover, retry/archive/delete).
@@ -178,10 +178,10 @@ What risk it isolates:
 - Detects silent semantic drift before worker cutover.
 
 Exact files/directories to add or modify:
-- Add: `tests/parity/test_dynamo_vs_postgres_semantics.py`
+- Add: `tests/parity/test_tapdb_vs_postgres_semantics.py`
 - Add: `tests/parity/test_lock_contention.py`
 - Add: `tests/parity/test_retry_archive_delete_semantics.py`
-- Add: `scripts/verify_dynamo_postgres_parity.py`
+- Add: `scripts/verify_tapdb_postgres_parity.py`
 - Modify: `tests/conftest.py`
 
 Schema or migration changes:
@@ -203,7 +203,7 @@ Dependencies:
 - PR 3.
 
 Acceptance criteria:
-- Parity suite passes for required Dynamo semantics.
+- Parity suite passes for required TapDB semantics.
 - Failures produce deterministic diff output tied to scenario IDs.
 
 ### PR 5 - Auth/RBAC alignment with Atlas
@@ -283,7 +283,7 @@ Schema or migration changes:
 - Add/adjust indexes on claim path (`state`, `lock_expires_at`, `priority`) if required by perf tests.
 
 Feature flags:
-- Add `URSA_WORKER_BACKEND` (`dynamo` default, `postgres` opt-in).
+- Add `URSA_WORKER_BACKEND` (`tapdb` default, `postgres` opt-in).
 
 Tests:
 - Concurrency tests for competing workers and stale leases.
@@ -292,7 +292,7 @@ Rollout:
 - Enable postgres worker backend in staging with synthetic load; then canary in production.
 
 Rollback:
-- Flip worker backend flag back to `dynamo`.
+- Flip worker backend flag back to `tapdb`.
 
 Dependencies:
 - PR 3, PR 4.
@@ -392,14 +392,14 @@ Acceptance criteria:
 - Valid machine + delegated requests create exactly one analysis request/workset per idempotency key.
 - Unauthorized or mismatched tenant requests are rejected.
 
-### PR 9 - Backfill, cutover, rollback tooling and Dynamo de-scope
+### PR 9 - Backfill, cutover, rollback tooling and TapDB de-scope
 Objective:
 - Deliver production-grade backfill, cutover, and rollback playbooks/tooling with rehearsals.
 
 What changes in this PR:
 - Add backfill tool, reconciliation/verifier, cutover command runner, rollback command runner.
 - Add operational runbooks and acceptance gates.
-- Narrow Dynamo usage behind explicit kill-switches after cutover success.
+- Narrow TapDB usage behind explicit kill-switches after cutover success.
 
 Why this PR exists:
 - Makes migration executable and reversible with controlled operational risk.
@@ -408,10 +408,10 @@ What risk it isolates:
 - Isolates cutover execution risk and split-brain risk.
 
 Exact files/directories to add or modify:
-- Add: `scripts/backfill_dynamo_to_postgres.py`
-- Add: `scripts/reconcile_postgres_vs_dynamo.py`
+- Add: `scripts/backfill_tapdb_to_postgres.py`
+- Add: `scripts/reconcile_postgres_vs_tapdb.py`
 - Add: `scripts/cutover_rehearsal.py`
-- Add: `scripts/rollback_to_dynamo.py`
+- Add: `scripts/rollback_to_tapdb.py`
 - Add: `docs/runbooks/ursa_postgres_cutover.md`
 - Add: `docs/runbooks/ursa_postgres_rollback.md`
 - Modify: `daylib/config.py`
@@ -425,7 +425,7 @@ Schema or migration changes:
 - Optional migration adjustments discovered during rehearsal (indexes/constraints only).
 
 Feature flags:
-- Add `URSA_DYNAMO_WRITE_ENABLED` (on default pre-cutover), `URSA_DYNAMO_READ_FALLBACK_ENABLED` (off default pre-cutover, on only during bounded rollback window).
+- Add `URSA_TAPDB_WRITE_ENABLED` (on default pre-cutover), `URSA_TAPDB_READ_FALLBACK_ENABLED` (off default pre-cutover, on only during bounded rollback window).
 
 Tests:
 - Backfill determinism, in-flight workset cutover, rollback no-split-brain checks.
@@ -434,7 +434,7 @@ Rollout:
 - Execute rehearsals in staging, then production cutover with approval gates and bounded rollback window.
 
 Rollback:
-- Use rollback script + backend flags to restore Dynamo as sole writer; replay deferred outbox events after stabilization.
+- Use rollback script + backend flags to restore TapDB as sole writer; replay deferred outbox events after stabilization.
 
 Dependencies:
 - PR 1 through PR 8.
@@ -446,7 +446,7 @@ Acceptance criteria:
 ## 4. Cross-PR test strategy
 Overall integration coverage:
 - Maintain existing Ursa suites while adding Postgres parity/concurrency suites.
-- Run both backend modes in CI matrix where practical (`dynamo`, `postgres`, `compare`).
+- Run both backend modes in CI matrix where practical (`tapdb`, `postgres`, `compare`).
 
 Atlas-Ursa contract testing:
 - Add explicit contract tests for internal trigger endpoint auth, tenant scope, role constraints, and status callback payloads.
@@ -459,19 +459,19 @@ Cutover rehearsal:
 - Staging rehearsal includes in-flight worksets, worker restarts, and outbox backlog replay.
 
 Rollback rehearsal:
-- Validate reversion to Dynamo as sole writer with no concurrent Postgres writes and no duplicate external side effects.
+- Validate reversion to TapDB as sole writer with no concurrent Postgres writes and no duplicate external side effects.
 
 ## 5. Cutover sequence
-1. Apply schema migrations in production with backend flags still set to Dynamo.
-2. Run full backfill from Dynamo to Postgres and generate parity report.
+1. Apply schema migrations in production with backend flags still set to TapDB.
+2. Run full backfill from TapDB to Postgres and generate parity report.
 3. Enable `URSA_PARITY_MODE=compare` and execute smoke traffic validation.
 4. Pause/safeguard new workset submissions briefly or queue them behind idempotent intake.
 5. Enable `URSA_WORKFLOW_BACKEND=postgres` for API writes/reads.
 6. Enable `URSA_WORKER_BACKEND=postgres` for workers/monitor.
 7. Enable outbox dispatcher and Atlas status sync.
 8. Verify gates: state transition integrity, outbox lag, Atlas status success rate, tenant isolation checks.
-9. Keep bounded rollback window with `URSA_DYNAMO_READ_FALLBACK_ENABLED` only.
-10. Decommission Dynamo write paths (`URSA_DYNAMO_WRITE_ENABLED=off`) and close rollback window after acceptance period.
+9. Keep bounded rollback window with `URSA_TAPDB_READ_FALLBACK_ENABLED` only.
+10. Decommission TapDB write paths (`URSA_TAPDB_WRITE_ENABLED=off`) and close rollback window after acceptance period.
 
 ## 6. Highest-risk areas
 - Transactional parity for lock/lease/state transitions under high contention.

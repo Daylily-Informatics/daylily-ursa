@@ -84,14 +84,14 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
 
     # Integration layer options
     parser.add_argument(
-        "--enable-dynamodb",
+        "--enable-tapdb",
         action="store_true",
-        help="Enable DynamoDB state tracking integration",
+        help="Enable TapDB state tracking integration",
     )
     parser.add_argument(
-        "--dynamodb-table",
-        default=os.environ.get("DAYLILY_DYNAMODB_TABLE", "daylily-worksets"),
-        help="DynamoDB table name for workset state (default: daylily-worksets)",
+        "--tapdb-table",
+        default=os.environ.get("DAYLILY_TAPDB_TABLE", "daylily-worksets"),
+        help="TapDB table name for workset state (default: daylily-worksets)",
     )
     parser.add_argument(
         "--enable-notifications",
@@ -140,36 +140,36 @@ def setup_integration_components(
         "scheduler": None,
     }
 
-    if args.enable_dynamodb:
+    if args.enable_tapdb:
         try:
             from daylib.workset_state_db import WorksetStateDB
 
             ursa_config = get_ursa_config()
-            dynamo_region = ursa_config.get_effective_dynamo_db_region()
-            source = ursa_config.get_value_source("dynamo_db_region")
+            tapdb_region = ursa_config.get_effective_tapdb_db_region()
+            source = ursa_config.get_value_source("tapdb_db_region")
             LOGGER.info(
-                "Using DynamoDB region from %s: %s",
+                "Using TapDB region from %s: %s",
                 source if source != "not set" else "default",
-                dynamo_region,
+                tapdb_region,
             )
 
             state_db = WorksetStateDB(
-                table_name=args.dynamodb_table,
-                region=dynamo_region,
+                table_name=args.tapdb_table,
+                region=tapdb_region,
                 profile=config.aws.profile if config.aws.profile else None,
             )
             components["state_db"] = state_db
             LOGGER.info(
-                "DynamoDB state tracking enabled (table: %s, region: %s)",
-                args.dynamodb_table,
-                dynamo_region,
+                "TapDB state tracking enabled (table: %s, region: %s)",
+                args.tapdb_table,
+                tapdb_region,
             )
         except ImportError:
             LOGGER.warning(
-                "DynamoDB integration requested but workset_state_db module not available"
+                "TapDB integration requested but workset_state_db module not available"
             )
         except Exception as exc:
-            LOGGER.warning("Failed to initialize DynamoDB state tracking: %s", exc)
+            LOGGER.warning("Failed to initialize TapDB state tracking: %s", exc)
 
     if args.enable_notifications and args.sns_topic_arn:
         try:
@@ -275,7 +275,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     if args.concurrent:
         if not components["scheduler"]:
-            LOGGER.error("Concurrent mode requires --enable-scheduler and --enable-dynamodb")
+            LOGGER.error("Concurrent mode requires --enable-scheduler and --enable-tapdb")
             return 1
         try:
             monitor.run_with_concurrent_processor()

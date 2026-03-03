@@ -17,18 +17,19 @@ from daylib.file_registry import (
 )
 
 
+
 @pytest.fixture
-def mock_dynamodb():
-    """Mock DynamoDB resource."""
+def mock_tapdb():
+    """Mock TapDB resource."""
     with patch("daylib.file_registry.boto3.Session") as mock_session:
-        mock_dynamodb_resource = MagicMock()
-        mock_session.return_value.resource.return_value = mock_dynamodb_resource
-        yield mock_dynamodb_resource
+        mock_tapdb_resource = MagicMock()
+        mock_session.return_value.resource.return_value = mock_tapdb_resource
+        yield mock_tapdb_resource
 
 
 @pytest.fixture
-def file_registry(mock_dynamodb):
-    """Create a FileRegistry instance with mocked DynamoDB."""
+def file_registry(mock_tapdb):
+    """Create a FileRegistry instance with mocked TapDB."""
     registry = FileRegistry(
         files_table_name="test-files",
         filesets_table_name="test-filesets",
@@ -525,7 +526,7 @@ class TestFileRegistryUpdateFileEdgeCases:
 
         assert result is True
         call_args = file_registry.files_table.update_item.call_args
-        # Empty string should still be passed to DynamoDB
+        # Empty string should still be passed to TapDB
         assert call_args[1]["ExpressionAttributeValues"][":paired"] == ""
         assert call_args[1]["ExpressionAttributeValues"][":tags"] == []
 

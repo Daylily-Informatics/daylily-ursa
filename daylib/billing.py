@@ -170,7 +170,7 @@ class BillingCalculator:
         Uses actual cost/storage data when available, estimates otherwise.
 
         Args:
-            workset: Workset record from DynamoDB
+            workset: Workset record from TapDB
 
         Returns:
             WorksetBillingItem with calculated costs

@@ -1,6 +1,6 @@
 """Unit tests for daylib.manifest_registry.
 
-These tests exercise DynamoDB manifest storage helpers including:
+These tests exercise TapDB manifest storage helpers including:
 - gzip+base64 encoding/decoding via save_manifest / get_manifest_tsv
 - listing manifests by customer
 - TSV parsing is covered in test_manifest_api.py
@@ -20,9 +20,10 @@ from daylib.manifest_registry import (
 )
 
 
+
 @pytest.fixture
-def mock_dynamodb():
-    """Mock boto3 DynamoDB session/resource used by ManifestRegistry.
+def mock_tapdb():
+    """Mock boto3 TapDB session/resource used by ManifestRegistry.
 
     We patch boto3.Session at the module level so __init__ does not talk to AWS.
     """
@@ -34,11 +35,11 @@ def mock_dynamodb():
 
 
 @pytest.fixture
-def manifest_registry(mock_dynamodb):
-    """Create a ManifestRegistry instance with a mocked DynamoDB table."""
+def manifest_registry(mock_tapdb):
+    """Create a ManifestRegistry instance with a mocked TapDB table."""
 
     registry = ManifestRegistry(table_name="test-manifests")
-    # Replace the real DynamoDB table handle with a MagicMock for unit testing
+    # Replace the real TapDB table handle with a MagicMock for unit testing
     registry.table = MagicMock()
     return registry
 
@@ -73,7 +74,7 @@ class TestSaveManifestEncoding:
         assert saved.tsv_sha256 == _sha256_hex(tsv_content)
         assert _gzip_b64_decode(saved.tsv_gzip_b64) == tsv_content
 
-        # Verify what was written to DynamoDB
+        # Verify what was written to TapDB
         manifest_registry.table.put_item.assert_called_once()
         kwargs = manifest_registry.table.put_item.call_args.kwargs
         item = kwargs["Item"]
@@ -99,7 +100,7 @@ class TestListCustomerManifests:
                     "name": "Run 1",
                     "description": "",  # should be normalized to None
                     "created_at": "2026-01-01T00:00:00Z",
-                    "sample_count": "3",  # stored as string in DynamoDB
+                    "sample_count": "3",  # stored as string in TapDB
                 }
             ]
         }
@@ -152,7 +153,7 @@ class TestGetManifestAndTsv:
 
 
     def test_get_manifest_returns_none_when_not_found(self, manifest_registry):
-        """If DynamoDB returns no Item, get_manifest should return None."""
+        """If TapDB returns no Item, get_manifest should return None."""
 
         manifest_registry.table.get_item.return_value = {}
 
@@ -224,12 +225,12 @@ class TestPkOnlyManifestSchema:
 class TestCreateTableIfNotExists:
     """Tests for ManifestRegistry.create_table_if_not_exists behavior."""
 
-    def test_create_table_if_not_exists_noop_when_table_exists(self, mock_dynamodb):
+    def test_create_table_if_not_exists_noop_when_table_exists(self, mock_tapdb):
         """If table.load() succeeds, create_table_if_not_exists should not call create_table."""
 
-        # Bind registry to mocked DynamoDB; leave table as the default from __init__
+        # Bind registry to mocked TapDB; leave table as the default from __init__
         registry = ManifestRegistry(table_name="test-manifests-existing")
-        registry.dynamodb = mock_dynamodb
+        registry.tapdb = mock_tapdb
 
         # Simulate table already existing: .load() does not raise
         registry.table.load = MagicMock(return_value=None)
@@ -237,15 +238,15 @@ class TestCreateTableIfNotExists:
         registry.create_table_if_not_exists()
 
         # When table exists, we must not attempt to create it again
-        assert not mock_dynamodb.create_table.called
+        assert not mock_tapdb.create_table.called
 
-    def test_create_table_if_not_exists_creates_when_missing(self, mock_dynamodb):
+    def test_create_table_if_not_exists_creates_when_missing(self, mock_tapdb):
         """If table.load() raises ResourceNotFoundException, create the table and wait."""
 
         from botocore.exceptions import ClientError
 
         registry = ManifestRegistry(table_name="test-manifests-missing")
-        registry.dynamodb = mock_dynamodb
+        registry.tapdb = mock_tapdb
 
         # Configure table.load() to raise ResourceNotFoundException
         error_response = {"Error": {"Code": "ResourceNotFoundException", "Message": "Not found"}}
@@ -255,9 +256,9 @@ class TestCreateTableIfNotExists:
 
         # Mock create_table to return an object with wait_until_exists()
         mock_table_obj = MagicMock()
-        mock_dynamodb.create_table.return_value = mock_table_obj
+        mock_tapdb.create_table.return_value = mock_table_obj
 
         registry.create_table_if_not_exists()
 
-        mock_dynamodb.create_table.assert_called_once()
+        mock_tapdb.create_table.assert_called_once()
         mock_table_obj.wait_until_exists.assert_called_once()

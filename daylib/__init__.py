@@ -2,7 +2,7 @@
 Daylily Ursa - Workset Management API for genomics pipelines.
 
 This package provides a comprehensive workset management system including:
-- DynamoDB-backed state machine for workset lifecycle
+- TapDB-backed state machine for workset lifecycle
 - S3 file registry and validation
 - Customer portal and authentication
 - Multi-region coordination

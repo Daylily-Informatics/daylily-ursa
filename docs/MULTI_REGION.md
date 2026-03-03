@@ -1,6 +1,6 @@
 # Multi-Region Support
 
-The multi-region system enables global deployment with automatic failover and latency-based routing using DynamoDB Global Tables.
+The multi-region system enables global deployment with automatic failover and latency-based routing using TapDB Global Tables.
 
 ## Overview
 
@@ -14,7 +14,7 @@ Multi-region support provides:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                    DynamoDB Global Tables                        │
+│                    TapDB Global Tables                        │
 ├─────────────────┬─────────────────┬─────────────────────────────┤
 │   us-west-2     │   us-east-1     │      eu-west-1              │
 │   (Primary)     │   (Secondary)   │      (Secondary)            │
@@ -138,33 +138,23 @@ db = WorksetMultiRegionDB(
 )
 ```
 
-## DynamoDB Global Tables Setup
+## TapDB Global Tables Setup
 
 ### Prerequisites
 
-1. DynamoDB table must exist in primary region
+1. TapDB table must exist in primary region
 2. Table must have on-demand capacity or provisioned with auto-scaling
 3. Streams must be enabled
 
 ### Create Global Table
 
 ```bash
-# Create table in primary region
-aws dynamodb create-table \
-    --table-name daylily-worksets \
-    --attribute-definitions AttributeName=workset_id,AttributeType=S \
-    --key-schema AttributeName=workset_id,KeyType=HASH \
-    --billing-mode PAY_PER_REQUEST \
-    --stream-specification StreamEnabled=true,StreamViewType=NEW_AND_OLD_IMAGES \
-    --region us-west-2
+# Bootstrap templates and verify readiness
+ursa aws setup
+ursa aws status
 
-# Add replicas
-aws dynamodb update-table \
-    --table-name daylily-worksets \
-    --replica-updates \
-        'Create={RegionName=us-east-1}' \
-        'Create={RegionName=eu-west-1}' \
-    --region us-west-2
+# Region routing is configured in Ursa settings (primary + replicas)
+# and handled by WorksetMultiRegionDB.
 ```
 
 ## Consistency Model
@@ -195,4 +185,3 @@ logging.getLogger("daylily.workset_multi_region").setLevel(logging.DEBUG)
 3. **Monitor replication lag**: Watch for delays
 4. **Test failover**: Regularly verify failover works
 5. **Set appropriate timeouts**: Balance latency vs reliability
-

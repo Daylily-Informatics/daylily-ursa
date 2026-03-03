@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Initialize DynamoDB tables for the file registry.
+Initialize TapDB tables for the file registry.
 
 Run this from the same environment where your server runs (where boto3 is installed).
 
@@ -18,7 +18,7 @@ logging.basicConfig(
 )
 
 def main():
-    parser = argparse.ArgumentParser(description="Initialize FileRegistry DynamoDB tables")
+    parser = argparse.ArgumentParser(description="Initialize FileRegistry TapDB tables")
     parser.add_argument("--region", default="us-west-2", help="AWS region")
     parser.add_argument("--profile", default=None, help="AWS profile")
     args = parser.parse_args()

@@ -234,7 +234,7 @@ class ExecutionContext:
     computed once at workset acquisition and reused throughout execution.
     It eliminates scattered fallbacks and ensures consistent region/bucket usage.
 
-    Persisted to DynamoDB at workset start and retrieved on resume.
+    Persisted to TapDB at workset start and retrieved on resume.
     """
 
     cluster_name: str
@@ -268,7 +268,7 @@ class ExecutionContext:
     """Customer ID for cost attribution and AWS resource tagging via DAYLILY_PROJECT env var."""
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for DynamoDB storage."""
+        """Convert to dictionary for TapDB storage."""
         return {
             "cluster_name": self.cluster_name,
             "cluster_region": self.cluster_region,
@@ -284,7 +284,7 @@ class ExecutionContext:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ExecutionContext":
-        """Create from dictionary (DynamoDB record)."""
+        """Create from dictionary (TapDB record)."""
         return cls(
             cluster_name=data["cluster_name"],
             cluster_region=data["cluster_region"],
@@ -306,7 +306,7 @@ class Workset:
     sentinels: Dict[str, str]
     has_required_files: bool = False
     is_archived: bool = False
-    bucket: Optional[str] = None  # Workset-specific bucket from DynamoDB
+    bucket: Optional[str] = None  # Workset-specific bucket from TapDB
 
     def sentinel_timestamp(self, sentinel: str) -> Optional[str]:
         return self.sentinels.get(sentinel)
@@ -434,7 +434,7 @@ class WorksetMonitor:
             process_directories: Only process specific workset directories
             attempt_restart: Retry failed worksets
             force_recalculate_metrics: Recalculate all metrics
-            state_db: Optional DynamoDB state database for unified state tracking
+            state_db: Optional TapDB state database for unified state tracking
             integration: Optional WorksetIntegration for unified state operations
             notification_manager: Optional notification manager for alerts
             scheduler: Optional WorksetScheduler for priority-based workset selection
@@ -672,7 +672,7 @@ class WorksetMonitor:
             """Execute a workset using the monitor's processing logic.
 
             Args:
-                workset_data: Workset dict from DynamoDB
+                workset_data: Workset dict from TapDB
                 decision: SchedulingDecision from scheduler
 
             Returns:
@@ -728,7 +728,7 @@ class WorksetMonitor:
         if not self.scheduler:
             raise MonitorError("Scheduler is required for concurrent processor mode")
         if not self.state_db:
-            raise MonitorError("DynamoDB state_db is required for concurrent processor mode")
+            raise MonitorError("TapDB state_db is required for concurrent processor mode")
 
         from daylib.workset_concurrent_processor import (
             ConcurrentWorksetProcessor,
@@ -1281,15 +1281,15 @@ class WorksetMonitor:
 
 
     # ------------------------------------------------------------------
-    # Workset discovery (DynamoDB is source of truth)
+    # Workset discovery (TapDB is source of truth)
     # ------------------------------------------------------------------
     def _discover_worksets(
         self, *, include_archive: bool = False
     ) -> Iterable[Workset]:
-        """Discover worksets from DynamoDB and verify S3 folders exist.
+        """Discover worksets from TapDB and verify S3 folders exist.
 
-        DynamoDB is the authoritative source - worksets are created via the UI
-        and registered in DynamoDB. The monitor then verifies the S3 folder
+        TapDB is the authoritative source - worksets are created via the UI
+        and registered in TapDB. The monitor then verifies the S3 folder
         exists before processing.
 
         Returns both:
@@ -1297,14 +1297,14 @@ class WorksetMonitor:
         - ready worksets (to start processing)
         """
         if not self.state_db:
-            LOGGER.warning("No DynamoDB state_db configured - cannot discover worksets")
+            LOGGER.warning("No TapDB state_db configured - cannot discover worksets")
             return
 
         try:
-            # Query DynamoDB for all actionable worksets (in_progress + ready)
+            # Query TapDB for all actionable worksets (in_progress + ready)
             worksets = self.state_db.get_actionable_worksets_prioritized(limit=100)
         except Exception as e:
-            LOGGER.warning("Failed to query DynamoDB for worksets: %s", str(e))
+            LOGGER.warning("Failed to query TapDB for worksets: %s", str(e))
             return
 
         for db_workset in worksets:
@@ -1312,11 +1312,11 @@ class WorksetMonitor:
             if not workset_id:
                 continue
 
-            # Get workset details from DynamoDB
+            # Get workset details from TapDB
             bucket = db_workset.get("bucket")
             if not bucket:
                 LOGGER.error(
-                    "Workset %s has no bucket assigned in DynamoDB. "
+                    "Workset %s has no bucket assigned in TapDB. "
                     "Worksets must be created via the portal with a cluster selection "
                     "to assign a region-specific bucket from ~/.ursa/ursa-config.yaml.",
                     workset_id
@@ -1330,12 +1330,12 @@ class WorksetMonitor:
             # Verify S3 folder exists before yielding
             if not self._s3_folder_exists(bucket, prefix):
                 LOGGER.warning(
-                    "Workset %s registered in DynamoDB but S3 folder not found: s3://%s/%s",
+                    "Workset %s registered in TapDB but S3 folder not found: s3://%s/%s",
                     workset_id, bucket, prefix
                 )
                 continue
 
-            # Build sentinels dict from DynamoDB state
+            # Build sentinels dict from TapDB state
             sentinels: Dict[str, str] = {}
             created_at = db_workset.get("created_at", "")
             if state == "ready":
@@ -1659,10 +1659,10 @@ class WorksetMonitor:
     # Workset state machine
     # ------------------------------------------------------------------
     def _check_workset_state(self, workset: Workset) -> bool:
-        # Reconcile DynamoDB state with S3 sentinels on each check.
+        # Reconcile TapDB state with S3 sentinels on each check.
         # This handles cases where the monitor crashed/restarted after writing
-        # S3 sentinels but before updating DynamoDB.
-        self._reconcile_dynamodb_state(workset)
+        # S3 sentinels but before updating TapDB.
+        self._reconcile_tapdb_state(workset)
 
         if not self._should_process(workset):
             LOGGER.info(
@@ -1750,7 +1750,7 @@ class WorksetMonitor:
             )
             return False
 
-        # For in-progress worksets, use the STORED ExecutionContext from DynamoDB
+        # For in-progress worksets, use the STORED ExecutionContext from TapDB
         # This ensures we use the correct cluster/region where the workset is actually running
         exec_ctx = self._load_execution_context(workset)
         cluster_name: Optional[str] = None
@@ -2002,10 +2002,10 @@ class WorksetMonitor:
         return True
 
     def _release_workset_lock(self, workset: Workset) -> None:
-        """Release both DynamoDB lock and S3 lock sentinel.
+        """Release both TapDB lock and S3 lock sentinel.
 
         This should be called after workset processing completes (success or error).
-        The lock sentinel is always removed; DynamoDB lock is released if state_db is configured.
+        The lock sentinel is always removed; TapDB lock is released if state_db is configured.
         """
         # Delete the S3 lock sentinel
         if SENTINEL_FILES["lock"] in workset.sentinels:
@@ -2013,21 +2013,21 @@ class WorksetMonitor:
             workset.sentinels.pop(SENTINEL_FILES["lock"], None)
             LOGGER.debug("Removed S3 lock sentinel for %s", workset.name)
 
-        # Release DynamoDB lock if configured
+        # Release TapDB lock if configured
         if self.state_db:
             try:
                 released = self.state_db.release_lock(workset.name, self.lock_owner_id)
                 if released:
-                    LOGGER.info("Released DynamoDB lock for %s", workset.name)
+                    LOGGER.info("Released TapDB lock for %s", workset.name)
                 else:
                     LOGGER.warning(
-                        "DynamoDB lock for %s was not held by this owner (%s)",
+                        "TapDB lock for %s was not held by this owner (%s)",
                         workset.name,
                         self.lock_owner_id,
                     )
             except Exception as e:
                 LOGGER.warning(
-                    "Failed to release DynamoDB lock for %s: %s", workset.name, str(e)
+                    "Failed to release TapDB lock for %s: %s", workset.name, str(e)
                 )
 
     def _handle_workset(self, workset: Workset) -> None:
@@ -2124,14 +2124,14 @@ class WorksetMonitor:
                 acquired = self.state_db.acquire_lock(workset.name, self.lock_owner_id)
             except Exception as exc:
                 LOGGER.warning(
-                    "Failed to acquire DynamoDB lock for %s: %s",
+                    "Failed to acquire TapDB lock for %s: %s",
                     workset.name,
                     str(exc),
                 )
                 return False
             if not acquired:
                 LOGGER.info(
-                    "DynamoDB lock already held for %s; skipping S3 lock sentinel",
+                    "TapDB lock already held for %s; skipping S3 lock sentinel",
                     workset.name,
                 )
                 return False
@@ -2396,7 +2396,7 @@ class WorksetMonitor:
                 LOGGER.info(
                     "Skipping export for %s: command already completed", workset.name
                 )
-                # Try to get results_s3_uri from DynamoDB for metrics collection
+                # Try to get results_s3_uri from TapDB for metrics collection
                 if self.state_db:
                     try:
                         env = self.state_db.get_execution_environment(workset.name)
@@ -2457,7 +2457,7 @@ class WorksetMonitor:
         target_export_uri: Optional[str],
         cluster_region: Optional[str] = None,
     ) -> Optional[ExecutionContext]:
-        """Capture execution environment metadata and store in DynamoDB.
+        """Capture execution environment metadata and store in TapDB.
 
         This records where and how the workset is being processed, including
         cluster details and output locations. Also creates and persists an
@@ -2511,7 +2511,7 @@ class WorksetMonitor:
         # Get reference bucket from config
         reference_bucket = self.config.pipeline.reference_bucket
 
-        # Get customer_id from DynamoDB workset record for cost attribution
+        # Get customer_id from TapDB workset record for cost attribution
         customer_id: Optional[str] = None
         try:
             workset_record = self.state_db.get_workset(workset.name)
@@ -2570,7 +2570,7 @@ class WorksetMonitor:
             return None
 
     def _record_execution_ended(self, workset: Workset) -> None:
-        """Record execution end time in DynamoDB."""
+        """Record execution end time in TapDB."""
         if not self.state_db:
             return
 
@@ -2683,7 +2683,7 @@ class WorksetMonitor:
         step: str,
         message: Optional[str] = None,
     ) -> None:
-        """Update workset progress step in DynamoDB.
+        """Update workset progress step in TapDB.
 
         Args:
             workset: The workset being processed
@@ -3209,7 +3209,7 @@ class WorksetMonitor:
         marker.write_text(str(location), encoding="utf-8")
         self._update_metrics(workset, {"pipeline_dir": str(location)})
 
-        # Store headnode analysis path in DynamoDB for UI display
+        # Store headnode analysis path in TapDB for UI display
         if self.state_db:
             try:
                 self.state_db.update_execution_environment(
@@ -3750,7 +3750,7 @@ class WorksetMonitor:
                             "Total compute cost for %s: $%.4f",
                             workset.name, total_cost,
                         )
-                    # Store cost report in dedicated DynamoDB fields (Phase 5B)
+                    # Store cost report in dedicated TapDB fields (Phase 5B)
                     if self.state_db:
                         try:
                             cost_summary = perf_metrics["cost_summary"]
@@ -3769,7 +3769,7 @@ class WorksetMonitor:
         except Exception as exc:
             LOGGER.warning("Failed to fetch performance metrics from S3 for %s: %s", workset.name, exc)
 
-        # Store storage metrics in dedicated DynamoDB fields (Phase 5C)
+        # Store storage metrics in dedicated TapDB fields (Phase 5C)
         if self.state_db and metrics.get("analysis_directory_size_bytes"):
             try:
                 self.state_db.update_storage_metrics(
@@ -3783,7 +3783,7 @@ class WorksetMonitor:
                     workset.name, storage_exc,
                 )
 
-        # Store metrics in DynamoDB (legacy performance_metrics field)
+        # Store metrics in TapDB (legacy performance_metrics field)
         if metrics and self.state_db:
             try:
                 self.state_db.update_performance_metrics(
@@ -3791,7 +3791,7 @@ class WorksetMonitor:
                     {"post_export_metrics": metrics},
                     is_final=False,
                 )
-                LOGGER.info("Stored post-export metrics for %s in DynamoDB", workset.name)
+                LOGGER.info("Stored post-export metrics for %s in TapDB", workset.name)
             except Exception as exc:
                 LOGGER.warning("Failed to store post-export metrics for %s: %s", workset.name, exc)
 
@@ -4632,7 +4632,7 @@ class WorksetMonitor:
             "Export completed for %s; results available at %s", workset.name, s3_uri
         )
 
-        # Update DynamoDB with the final results S3 URI
+        # Update TapDB with the final results S3 URI
         if s3_uri and self.state_db:
             try:
                 self.state_db.update_execution_environment(
@@ -4640,13 +4640,13 @@ class WorksetMonitor:
                     results_s3_uri=s3_uri,
                 )
                 LOGGER.info(
-                    "Updated DynamoDB with results_s3_uri for %s: %s",
+                    "Updated TapDB with results_s3_uri for %s: %s",
                     workset.name,
                     s3_uri,
                 )
             except Exception as exc:
                 LOGGER.warning(
-                    "Failed to update DynamoDB with results_s3_uri for %s: %s",
+                    "Failed to update TapDB with results_s3_uri for %s: %s",
                     workset.name,
                     exc,
                 )
@@ -4866,7 +4866,7 @@ class WorksetMonitor:
         Returns:
             Tuple of (cluster_name, cluster_region) - region may be None if using default config region
         """
-        # 1. Check for user-selected preferred cluster from DynamoDB (highest priority)
+        # 1. Check for user-selected preferred cluster from TapDB (highest priority)
         preferred_cluster = None
         cluster_region: Optional[str] = None
         if workset and self.state_db:
@@ -5180,13 +5180,13 @@ class WorksetMonitor:
         self._s3.put_object(Bucket=workset.bucket, Key=key, Body=body)
         self._record_terminal_metrics(workset, sentinel_name, value)
 
-        # Also update DynamoDB state if integration layer is available
-        self._sync_sentinel_to_dynamodb(workset.name, sentinel_name, value)
+        # Also update TapDB state if integration layer is available
+        self._sync_sentinel_to_tapdb(workset.name, sentinel_name, value)
 
-    def _sync_sentinel_to_dynamodb(
+    def _sync_sentinel_to_tapdb(
         self, workset_id: str, sentinel_name: str, value: str
     ) -> None:
-        """Sync sentinel state change to DynamoDB.
+        """Sync sentinel state change to TapDB.
 
         Args:
             workset_id: Workset identifier
@@ -5196,7 +5196,7 @@ class WorksetMonitor:
         if not self.state_db:
             return
 
-        # Map sentinel names to DynamoDB states
+        # Map sentinel names to TapDB states
         sentinel_to_state = {
             SENTINEL_FILES["ready"]: "ready",
             SENTINEL_FILES["in_progress"]: "in_progress",
@@ -5209,11 +5209,11 @@ class WorksetMonitor:
         if not new_state:
             return
 
-        # Only update state for worksets that already exist in DynamoDB
+        # Only update state for worksets that already exist in TapDB
         # Monitor should NEVER create worksets - that's the UI's job
-        if not self._workset_exists_in_dynamodb(workset_id):
+        if not self._workset_exists_in_tapdb(workset_id):
             LOGGER.debug(
-                "Skipping DynamoDB state sync for %s: workset not registered via UI",
+                "Skipping TapDB state sync for %s: workset not registered via UI",
                 workset_id
             )
             return
@@ -5227,12 +5227,12 @@ class WorksetMonitor:
                 new_state=ws_state,
                 reason=f"Sentinel {sentinel_name} written by monitor",
             )
-            LOGGER.debug("Synced sentinel %s to DynamoDB state %s", sentinel_name, new_state)
+            LOGGER.debug("Synced sentinel %s to TapDB state %s", sentinel_name, new_state)
         except Exception as e:
-            LOGGER.warning("Failed to sync sentinel to DynamoDB for %s: %s", workset_id, str(e))
+            LOGGER.warning("Failed to sync sentinel to TapDB for %s: %s", workset_id, str(e))
 
-    def _workset_exists_in_dynamodb(self, workset_id: str) -> bool:
-        """Check if workset exists in DynamoDB.
+    def _workset_exists_in_tapdb(self, workset_id: str) -> bool:
+        """Check if workset exists in TapDB.
 
         The monitor should NEVER create worksets - only the UI creates worksets.
         This method checks if a workset exists before attempting to update its state.
@@ -5241,7 +5241,7 @@ class WorksetMonitor:
             workset_id: The workset ID to check
 
         Returns:
-            True if workset exists in DynamoDB, False otherwise
+            True if workset exists in TapDB, False otherwise
         """
         if not self.state_db:
             return False
@@ -5251,7 +5251,7 @@ class WorksetMonitor:
             return True
 
         LOGGER.debug(
-            "Workset %s not found in DynamoDB - monitor will skip state updates. "
+            "Workset %s not found in TapDB - monitor will skip state updates. "
             "Worksets must be created via the UI, not discovered by monitor.",
             workset_id
         )
@@ -5272,18 +5272,18 @@ class WorksetMonitor:
         self._s3.delete_object(Bucket=workset.bucket, Key=key)
 
     # ------------------------------------------------------------------
-    # DynamoDB state reconciliation
+    # TapDB state reconciliation
     # ------------------------------------------------------------------
-    def _reconcile_dynamodb_state(self, workset: Workset) -> None:
-        """Reconcile DynamoDB state with S3 sentinel files.
+    def _reconcile_tapdb_state(self, workset: Workset) -> None:
+        """Reconcile TapDB state with S3 sentinel files.
 
-        If DynamoDB has a stale state (ready/in_progress) but S3 shows a
-        terminal state (complete/error), update DynamoDB to match S3.
+        If TapDB has a stale state (ready/in_progress) but S3 shows a
+        terminal state (complete/error), update TapDB to match S3.
         This handles cases where the monitor crashed or restarted after
-        writing sentinels but before updating DynamoDB.
+        writing sentinels but before updating TapDB.
 
         NOTE: The monitor does NOT create worksets - only the UI creates worksets.
-        If a workset doesn't exist in DynamoDB, we skip reconciliation.
+        If a workset doesn't exist in TapDB, we skip reconciliation.
 
         Args:
             workset: The workset to reconcile
@@ -5296,13 +5296,13 @@ class WorksetMonitor:
         if not s3_state:
             return
 
-        # Get DynamoDB state - monitor should NEVER create worksets
+        # Get TapDB state - monitor should NEVER create worksets
         db_record = self.state_db.get_workset(workset.name)
 
         if not db_record:
-            # Workset not in DynamoDB - skip it. Only the UI creates worksets.
+            # Workset not in TapDB - skip it. Only the UI creates worksets.
             LOGGER.debug(
-                "Skipping reconciliation for %s: workset not in DynamoDB (S3 state=%s). "
+                "Skipping reconciliation for %s: workset not in TapDB (S3 state=%s). "
                 "Worksets must be created via UI.",
                 workset.name,
                 s3_state,
@@ -5314,11 +5314,11 @@ class WorksetMonitor:
         # Define which states are terminal (shouldn't be overwritten)
         terminal_states = {"complete", "error", "failed", "archived", "deleted"}
 
-        # If DynamoDB is already terminal, don't overwrite
+        # If TapDB is already terminal, don't overwrite
         if db_state in terminal_states:
             return
 
-        # If S3 is terminal but DynamoDB isn't, update DynamoDB
+        # If S3 is terminal but TapDB isn't, update TapDB
         if s3_state in terminal_states and db_state not in terminal_states:
             try:
                 from daylib.workset_state_db import WorksetState
@@ -5329,7 +5329,7 @@ class WorksetMonitor:
                     reason=f"Reconciled from S3 sentinel (was {db_state})",
                 )
                 LOGGER.info(
-                    "Reconciled stale workset %s: DynamoDB %s -> %s from S3 sentinel",
+                    "Reconciled stale workset %s: TapDB %s -> %s from S3 sentinel",
                     workset.name,
                     db_state,
                     s3_state,
@@ -5342,7 +5342,7 @@ class WorksetMonitor:
                 )
             return
 
-        # If S3 shows in_progress but DynamoDB shows ready, update DynamoDB
+        # If S3 shows in_progress but TapDB shows ready, update TapDB
         if s3_state == "in_progress" and db_state == "ready":
             try:
                 from daylib.workset_state_db import WorksetState
@@ -5352,7 +5352,7 @@ class WorksetMonitor:
                     reason="Reconciled from S3 in_progress sentinel",
                 )
                 LOGGER.info(
-                    "Reconciled workset %s: DynamoDB ready -> in_progress from S3 sentinel",
+                    "Reconciled workset %s: TapDB ready -> in_progress from S3 sentinel",
                     workset.name,
                 )
             except Exception as e:

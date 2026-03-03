@@ -5,7 +5,7 @@ This guide explains how to set up IAM permissions for the Daylily Workset Monito
 ## Overview
 
 The workset monitor requires permissions to:
-- **DynamoDB**: Read/write workset state
+- **TapDB**: Read/write workset state
 - **CloudWatch**: Publish metrics and logs
 - **SNS**: Send notifications (optional)
 - **S3**: Read workset data
@@ -52,14 +52,14 @@ aws iam attach-user-policy \
 
 ## Customizing the Policy
 
-### 1. Update DynamoDB Table Name
+### 1. Update TapDB Table Name
 
 If your table name is different from `daylily-worksets`, update:
 
 ```json
 "Resource": [
-  "arn:aws:dynamodb:*:*:table/YOUR_TABLE_NAME",
-  "arn:aws:dynamodb:*:*:table/YOUR_TABLE_NAME/index/*"
+  "arn:aws:tapdb:*:*:table/YOUR_TABLE_NAME",
+  "arn:aws:tapdb:*:*:table/YOUR_TABLE_NAME/index/*"
 ]
 ```
 
@@ -88,8 +88,8 @@ To limit to a specific region (e.g., us-west-2):
 
 ```json
 "Resource": [
-  "arn:aws:dynamodb:us-west-2:YOUR_ACCOUNT_ID:table/daylily-worksets",
-  "arn:aws:dynamodb:us-west-2:YOUR_ACCOUNT_ID:table/daylily-worksets/index/*"
+  "arn:aws:tapdb:us-west-2:YOUR_ACCOUNT_ID:table/daylily-worksets",
+  "arn:aws:tapdb:us-west-2:YOUR_ACCOUNT_ID:table/daylily-worksets/index/*"
 ]
 ```
 
@@ -104,14 +104,14 @@ If you only need core functionality without notifications:
     {
       "Effect": "Allow",
       "Action": [
-        "dynamodb:GetItem",
-        "dynamodb:PutItem",
-        "dynamodb:UpdateItem",
-        "dynamodb:Query"
+        "tapdb:GetItem",
+        "tapdb:PutItem",
+        "tapdb:UpdateItem",
+        "tapdb:Query"
       ],
       "Resource": [
-        "arn:aws:dynamodb:*:*:table/daylily-worksets",
-        "arn:aws:dynamodb:*:*:table/daylily-worksets/index/*"
+        "arn:aws:tapdb:*:*:table/daylily-worksets",
+        "arn:aws:tapdb:*:*:table/daylily-worksets/index/*"
       ]
     }
   ]
@@ -123,10 +123,8 @@ If you only need core functionality without notifications:
 After setting up IAM, test the permissions:
 
 ```bash
-# Test DynamoDB access
-aws dynamodb describe-table \
-    --table-name daylily-worksets \
-    --region us-west-2
+# Test TapDB readiness from Ursa
+ursa aws status
 
 # Test CloudWatch metrics
 aws cloudwatch list-metrics \
@@ -141,7 +139,7 @@ aws sns list-topics --region us-west-2
 
 ### Error: AccessDeniedException
 
-**Problem**: Missing DynamoDB permissions
+**Problem**: Missing TapDB permissions
 
 **Solution**: Verify the policy is attached and the table ARN is correct
 
@@ -209,9 +207,8 @@ If using IAM users, rotate access keys every 90 days.
 Tag resources for better access control:
 
 ```bash
-aws dynamodb tag-resource \
-    --resource-arn arn:aws:dynamodb:us-west-2:ACCOUNT:table/daylily-worksets \
-    --tags Key=Project,Value=Daylily Key=Component,Value=WorksetMonitor
+# For TapDB-backed deployments, apply tagging/governance in your DB or platform layer.
+ursa aws status
 ```
 
 ## Example: EC2 Instance Role
@@ -254,10 +251,9 @@ aws iam add-role-to-instance-profile \
 ## Next Steps
 
 After setting up IAM:
-1. ✅ Create DynamoDB table
+1. ✅ Create TapDB table
 2. ✅ Configure SNS topics (optional)
 3. ✅ Start the API server
 4. ✅ Test with sample workset
 
 See [Integration Guide](INTEGRATION_GUIDE.md) for complete deployment steps.
-

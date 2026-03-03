@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Purge workset records from DynamoDB for a specified customer.
+"""Purge workset records from TapDB for a specified customer.
 
 Usage:
     daylily-purge-customer-data <customer_id>    # Purge worksets for a specific customer
@@ -35,7 +35,7 @@ def get_all_worksets(state_db: WorksetStateDB) -> list:
     """Scan and retrieve all worksets from the database."""
     all_worksets = []
     try:
-        # DynamoDB scan with pagination
+        # TapDB scan with pagination
         response = state_db.table.scan()
         all_worksets.extend(response.get("Items", []))
         
@@ -115,7 +115,7 @@ def confirm_deletion(count: int, target_description: str) -> bool:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Purge workset records from DynamoDB for a specified customer",
+        description="Purge workset records from TapDB for a specified customer",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -148,7 +148,7 @@ Examples:
     parser.add_argument(
         "--table",
         default=os.environ.get("DAYLILY_WORKSET_TABLE", "daylily-worksets"),
-        help="DynamoDB table name (default: daylily-worksets or DAYLILY_WORKSET_TABLE env var)",
+        help="TapDB table name (default: daylily-worksets or DAYLILY_WORKSET_TABLE env var)",
     )
     parser.add_argument(
         "--region",
@@ -182,9 +182,9 @@ Examples:
             region=args.region,
             profile=args.profile,
         )
-        LOGGER.info("Connected to DynamoDB table: %s in %s", args.table, args.region)
+        LOGGER.info("Connected to TapDB table: %s in %s", args.table, args.region)
     except Exception as e:
-        print(f"Error: Failed to connect to DynamoDB: {e}", file=sys.stderr)
+        print(f"Error: Failed to connect to TapDB: {e}", file=sys.stderr)
         sys.exit(1)
 
     # Scan all worksets
@@ -239,7 +239,7 @@ Examples:
             continue
 
         try:
-            # Use hard delete to completely remove from DynamoDB
+            # Use hard delete to completely remove from TapDB
             success = state_db.delete_workset(workset_id, deleted_by="purge-script", hard_delete=True)
             if success:
                 deleted_count += 1

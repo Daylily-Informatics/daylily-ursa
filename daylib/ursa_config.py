@@ -57,7 +57,7 @@ LEGACY_CONFIG_PATHS = [
 VALID_FIELDS = {
     "regions": (list, "List of AWS regions to scan"),
     "aws_profile": (str, "AWS profile name"),
-    "dynamo_db_region": (str, "AWS region for DynamoDB tables (single source of truth)"),
+    "tapdb_db_region": (str, "AWS region for TapDB tables (single source of truth)"),
     "cognito_region": (str, "AWS region for Cognito"),
     "cognito_user_pool_id": (str, "Cognito User Pool ID"),
     "cognito_app_client_id": (str, "Cognito App Client ID"),
@@ -101,8 +101,12 @@ def validate_config_file(path: Path) -> Tuple[bool, List[str], List[str]]:
     # Check for unknown fields
     known_fields = set(VALID_FIELDS.keys())
     for key in data.keys():
-        if key not in known_fields:
-            warnings.append(f"Unknown field '{key}' (will be ignored)")
+        if key in known_fields:
+            continue
+        # Tolerate legacy region key aliases from older deployments.
+        if str(key).endswith("_db_region"):
+            continue
+        warnings.append(f"Unknown field '{key}' (will be ignored)")
 
     # Validate regions field - accepts multiple formats:
     # 1. Simple list of strings: ["us-west-2", "eu-central-1"]
@@ -131,7 +135,7 @@ def validate_config_file(path: Path) -> Tuple[bool, List[str], List[str]]:
     # Validate string fields
     for field_name in [
         "aws_profile",
-        "dynamo_db_region",
+        "tapdb_db_region",
         "cognito_region",
         "cognito_user_pool_id",
         "cognito_app_client_id",
@@ -164,14 +168,14 @@ class UrsaConfig:
     aws_profile: Optional[str] = None
     """AWS profile to use (overridden by AWS_PROFILE env var)."""
 
-    dynamo_db_region: Optional[str] = None
-    """AWS region for DynamoDB tables - single source of truth for all worksets.
+    tapdb_db_region: Optional[str] = None
+    """AWS region for TapDB tables - single source of truth for all worksets.
 
     In a multi-region architecture, worksets may have S3 data and compute clusters
-    in different regions, but all workset state is stored in a single DynamoDB table
+    in different regions, but all workset state is stored in a single TapDB table
     in this region. This ensures the API server and monitor see the same worksets.
 
-    Overridden by DYNAMO_DB_REGION env var. Defaults to 'us-west-2' if not set.
+    Overridden by TAPDB_DB_REGION env var. Defaults to 'us-west-2' if not set.
     """
 
     cognito_user_pool_id: Optional[str] = None
@@ -304,7 +308,7 @@ class UrsaConfig:
 
         # Environment variables take precedence over config file
         aws_profile = os.environ.get("AWS_PROFILE") or data.get("aws_profile")
-        dynamo_db_region = os.environ.get("DYNAMO_DB_REGION") or data.get("dynamo_db_region")
+        tapdb_db_region = os.environ.get("TAPDB_DB_REGION") or data.get("tapdb_db_region")
         cognito_user_pool_id = os.environ.get("COGNITO_USER_POOL_ID") or data.get("cognito_user_pool_id")
         cognito_app_client_id = os.environ.get("COGNITO_APP_CLIENT_ID") or data.get("cognito_app_client_id")
         cognito_app_client_secret = os.environ.get("COGNITO_APP_CLIENT_SECRET") or data.get("cognito_app_client_secret")
@@ -315,7 +319,7 @@ class UrsaConfig:
         config = cls(
             regions=region_configs,
             aws_profile=aws_profile,
-            dynamo_db_region=dynamo_db_region,
+            tapdb_db_region=tapdb_db_region,
             cognito_user_pool_id=cognito_user_pool_id,
             cognito_app_client_id=cognito_app_client_id,
             cognito_app_client_secret=cognito_app_client_secret,
@@ -394,35 +398,35 @@ class UrsaConfig:
         """Get the effective Cognito Hosted UI domain (env var or config)."""
         return os.environ.get("COGNITO_DOMAIN") or self.cognito_domain
 
-    def get_effective_dynamo_db_region(self) -> str:
-        """Get the effective DynamoDB region (env var, config, or default).
+    def get_effective_tapdb_db_region(self) -> str:
+        """Get the effective TapDB region (env var, config, or default).
 
-        This is the single region where all DynamoDB tables (worksets, customers,
+        This is the single region where all TapDB tables (worksets, customers,
         manifests, etc.) are stored, regardless of which AWS regions worksets
         execute in.
 
         Priority:
-            1. DYNAMO_DB_REGION environment variable
-            2. dynamo_db_region from config file
+            1. TAPDB_DB_REGION environment variable
+            2. tapdb_db_region from config file
             3. Default: 'us-west-2'
 
         Returns:
-            DynamoDB region string.
+            TapDB region string.
         """
-        return os.environ.get("DYNAMO_DB_REGION") or self.dynamo_db_region or "us-west-2"
+        return os.environ.get("TAPDB_DB_REGION") or self.tapdb_db_region or "us-west-2"
 
     def get_value_source(self, field: str) -> str:
         """Get the source of a configuration value.
 
         Args:
-            field: Field name (aws_profile, cognito_region, dynamo_db_region, etc.)
+            field: Field name (aws_profile, cognito_region, tapdb_db_region, etc.)
 
         Returns:
             Source description: 'env', 'config', or 'not set'
         """
         env_map = {
             "aws_profile": "AWS_PROFILE",
-            "dynamo_db_region": "DYNAMO_DB_REGION",
+            "tapdb_db_region": "TAPDB_DB_REGION",
             "cognito_region": "COGNITO_REGION",
             "cognito_user_pool_id": "COGNITO_USER_POOL_ID",
             "cognito_app_client_id": "COGNITO_APP_CLIENT_ID",

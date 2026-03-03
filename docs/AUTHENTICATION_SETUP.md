@@ -333,9 +333,9 @@ daycog list-pools --profile <aws-profile> --region us-west-2
 export AWS_REGION=us-west-2
 export AWS_PROFILE=my-profile
 
-# DynamoDB Tables
-export WORKSET_TABLE_NAME=daylily-worksets
-export CUSTOMER_TABLE_NAME=daylily-customers
+# TapDB Tables
+export TAPDB_WORKSET_NAMESPACE=tapdb-worksets
+export TAPDB_CUSTOMER_NAMESPACE=tapdb-customers
 
 # Cognito Configuration (only if using authentication)
 export COGNITO_USER_POOL_ID=us-west-2_XXXXXXXXX

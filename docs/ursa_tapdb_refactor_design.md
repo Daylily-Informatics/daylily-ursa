@@ -2,7 +2,7 @@
 
 ## 1. Scope and decision summary
 Recommended path (single endorsed option):
-- Migrate Ursa workflow state from DynamoDB to a dedicated Ursa-owned Postgres database, using domain-specific relational workflow tables, with TapDB conventions (EUID, audit discipline, explicit transaction ownership), and a finite phased cutover (no indefinite dual-write).
+- Migrate Ursa workflow state from TapDB to a dedicated Ursa-owned Postgres database, using domain-specific relational workflow tables, with TapDB conventions (EUID, audit discipline, explicit transaction ownership), and a finite phased cutover (no indefinite dual-write).
 
 Explicit assumptions:
 - Ursa keeps an independent Postgres instance and does not share tables or database instances with Atlas or Bloom.
@@ -14,7 +14,7 @@ Explicit assumptions:
 Explicit non-goals:
 - Do not force Ursa runtime workflow state into TapDB generic tables (`generic_template`, `generic_instance`, `generic_instance_lineage`).
 - Do not implement semantic/vector search or unrelated feature work in this migration.
-- Do not introduce indefinite dual-write between DynamoDB and Postgres.
+- Do not introduce indefinite dual-write between TapDB and Postgres.
 - Do not introduce direct DB-table sharing between Ursa and Atlas/Bloom.
 
 ## 2. Evidence and repo inspection
@@ -75,11 +75,11 @@ Blocked/unverified areas:
 - Versioned mirror route assembly under `/v1` in `daylib/workset_api.py:create_app`.
 
 ### Current persistence model
-- Primary workflow state in DynamoDB via `daylib/workset_state_db.py:WorksetStateDB`.
-- Customer records in DynamoDB via `daylib/workset_customer.py:CustomerManager` (`daylily-customers`).
-- File registry and filesets in DynamoDB via `daylib/file_registry.py:FileRegistry`.
-- Manifests in DynamoDB via `daylib/manifest_registry.py:ManifestRegistry`.
-- Current config surface still describes DynamoDB-first tables in `daylib/config.py:Settings` (`workset_table_name`, `customer_table_name`, `daylily_manifest_table`, `daylily_linked_buckets_table`).
+- Primary workflow state in TapDB via `daylib/workset_state_db.py:WorksetStateDB`.
+- Customer records in TapDB via `daylib/workset_customer.py:CustomerManager` (`daylily-customers`).
+- File registry and filesets in TapDB via `daylib/file_registry.py:FileRegistry`.
+- Manifests in TapDB via `daylib/manifest_registry.py:ManifestRegistry`.
+- Current config surface still describes TapDB-first tables in `daylib/config.py:Settings` (`workset_table_name`, `customer_table_name`, `daylily_manifest_table`, `daylily_linked_buckets_table`).
 
 ### State machine and lifecycle model
 - State enum includes `ready`, `in_progress`, `error`, `complete`, `retrying`, `failed`, `canceled`, `archived`, `deleted` in `daylib/workset_state_db.py:WorksetState`.
@@ -92,7 +92,7 @@ Blocked/unverified areas:
 - Scheduler (`daylib/workset_scheduler.py:WorksetScheduler`) pulls ready queue from `state_db`, chooses a workset/cluster, and reports queue stats.
 - Worker loop (`daylib/workset_worker.py:main`) claims ready worksets, calls `process_workset`, updates state, and releases locks.
 - Concurrent processor (`daylib/workset_concurrent_processor.py:_process_single_workset`) acquires lock, updates state, executes, records failure/complete, then releases lock.
-- Monitor daemon (`daylib/workset_monitor.py:WorksetMonitor.run`) uses S3 sentinel files plus DynamoDB locking/state updates and performs side effects (pipeline invocation, S3 exports, optional notifications).
+- Monitor daemon (`daylib/workset_monitor.py:WorksetMonitor.run`) uses S3 sentinel files plus TapDB locking/state updates and performs side effects (pipeline invocation, S3 exports, optional notifications).
 
 ### Auth model
 - Ursa uses optional Cognito auth via daylily-cognito imports and combined auth dependency in `daylib/workset_api.py:create_app` (`get_current_user` supports session, JWT bearer, API key).
@@ -207,7 +207,7 @@ Proposed core tables and semantics:
 - External references: links to Atlas work order identifier where applicable.
 
 ### `workset`
-- Purpose: canonical workflow entity formerly represented by DynamoDB workset item.
+- Purpose: canonical workflow entity formerly represented by TapDB workset item.
 - Tenant ownership: `tenant_id` required.
 - Key uniqueness rules: unique `workset_id` (stable external id), unique internal `id` (UUID/EUID).
 - Mutability: mutable current fields (state, lock, progress, pointers).
@@ -231,7 +231,7 @@ Proposed core tables and semantics:
 - External references: cluster/run metadata, tmux session id, results URI.
 
 ### `workset_event`
-- Purpose: immutable event history replacing inline DynamoDB `state_history` append lists.
+- Purpose: immutable event history replacing inline TapDB `state_history` append lists.
 - Tenant ownership: `tenant_id` required.
 - Key uniqueness rules: unique event id; monotonic sequence per workset (`workset_event_seq`).
 - Mutability: append-only immutable.
@@ -270,8 +270,8 @@ Proposed core tables and semantics:
 - Likely indexes: `(tenant_id, actor_type)`, `(external_subject_id)`.
 - External references: referenced by `workset_event`, `analysis_request`, `outbox_event`.
 
-## 8. DynamoDB to Postgres semantic mapping
-| DynamoDB behavior/semantic | Where it exists today | Why it is risky | Proposed Postgres mapping | Required constraints/locks/indexes | Test cases needed |
+## 8. TapDB to Postgres semantic mapping
+| TapDB behavior/semantic | Where it exists today | Why it is risky | Proposed Postgres mapping | Required constraints/locks/indexes | Test cases needed |
 |---|---|---|---|---|---|
 | Conditional create (`attribute_not_exists`) | `WorksetStateDB.register_workset`, `FileRegistry.register_file`, `ManifestRegistry.save_manifest` | Duplicate creates under concurrency can split workflow identity | `INSERT ... ON CONFLICT DO NOTHING` with deterministic business keys | Unique index on external ids (`workset_id`, `file_id`, manifest id/upstream id) | Create race with N concurrent requests, assert single row + deterministic response |
 | Conditional lock acquisition | `WorksetStateDB.acquire_lock` conditional `update_item` | Current state and lock updates are multi-call and not transactionally coupled to subsequent state transition | Single transaction: claim candidate row with `FOR UPDATE SKIP LOCKED`, set lease owner/expiry and state atomically | Index on `(state, lock_expires_at)`, check constraints for valid lease fields | Competing workers claim same workset; only one succeeds |
@@ -380,7 +380,7 @@ Cutover vs dual write decision:
 - Choose cutover (with temporary validation reads), not dual-write.
 
 Backfill approach:
-- Snapshot DynamoDB tables (`worksets`, `customers`, files/manifests as needed).
+- Snapshot TapDB tables (`worksets`, `customers`, files/manifests as needed).
 - Transform to relational model with deterministic id mapping and event-history reconstruction.
 - Validate counts, key uniqueness, and sampled record equivalence.
 
@@ -391,13 +391,13 @@ Cutover sequencing:
 1. Deploy schema + repositories + feature flags off.
 2. Run backfill and verification.
 3. Enable Postgres writes for non-critical paths in staging; run parity suite.
-4. Freeze Dynamo mutating paths briefly for production cutover window.
+4. Freeze TapDB mutating paths briefly for production cutover window.
 5. Enable Postgres primary writes and reads.
-6. Keep Dynamo read-only fallback toggle for bounded rollback window.
-7. De-scope Dynamo access after acceptance gates.
+6. Keep TapDB read-only fallback toggle for bounded rollback window.
+7. De-scope TapDB access after acceptance gates.
 
 Rollback approach:
-- Feature-flag route back to Dynamo primary within bounded window.
+- Feature-flag route back to TapDB primary within bounded window.
 - Preserve outbox/event records for replay after rollback.
 - Avoid bidirectional dual-write during rollback; use one store as source of truth at a time.
 
@@ -411,9 +411,9 @@ Handling in-flight worksets at cutover:
 ## 14. Environment and infrastructure changes
 Environment variables (new/changed likely):
 - New DB connectivity: `URSA_DB_URL` (or split host/port/db/user/password), `URSA_DB_POOL_SIZE`, `URSA_DB_MAX_OVERFLOW`.
-- New migration/runtime toggles: `URSA_WORKFLOW_BACKEND` (`dynamo|postgres`), `URSA_PARITY_MODE`, `URSA_OUTBOX_ENABLED`.
+- New migration/runtime toggles: `URSA_WORKFLOW_BACKEND` (`tapdb|postgres`), `URSA_PARITY_MODE`, `URSA_OUTBOX_ENABLED`.
 - New Atlas integration: `URSA_ATLAS_BASE_URL`, `URSA_ATLAS_SERVICE_TOKEN` (or API key), `URSA_ATLAS_TIMEOUT_SECONDS`.
-- Existing settings likely retained temporarily: Dynamo table names and auth/cognito settings in `daylib/config.py:Settings`.
+- Existing settings likely retained temporarily: TapDB table names and auth/cognito settings in `daylib/config.py:Settings`.
 
 Secrets:
 - Postgres credentials/DSN.
@@ -436,8 +436,8 @@ Background workers:
 Monitoring/alerts:
 - Add DB lock contention, outbox lag, dead-letter count, status-sync failure metrics.
 
-Decommissioning/narrowing Dynamo usage:
-- Phase to read-only fallback then remove runtime writes and finally remove Dynamo dependencies from primary workflow path.
+Decommissioning/narrowing TapDB usage:
+- Phase to read-only fallback then remove runtime writes and finally remove TapDB dependencies from primary workflow path.
 
 S3/SNS changes:
 - Keep S3 pipeline/result side effects.
@@ -458,7 +458,7 @@ Persistence tests needed:
 - Event append ordering and projection updates in one transaction.
 
 Migration/backfill tests needed:
-- Deterministic mapping from Dynamo items to relational rows/events.
+- Deterministic mapping from TapDB items to relational rows/events.
 - Checksum/count parity per tenant/state.
 - Backfill restartability/idempotency.
 
@@ -477,7 +477,7 @@ Atlas-Ursa integration tests needed:
 
 Cutover/rollback tests needed:
 - Feature-flag flip safety.
-- Rollback to Dynamo without split-brain ownership.
+- Rollback to TapDB without split-brain ownership.
 
 Current gaps (repo-observed):
 - No existing Ursa tests for Atlas service-auth contract or Atlas status outbox flows.
@@ -485,8 +485,8 @@ Current gaps (repo-observed):
 
 ## 16. Risks, open questions, and explicit non-assumptions
 Top risks:
-- Concurrency regressions when replacing Dynamo conditional semantics with SQL transactions.
-- Split-brain ownership during cutover if Dynamo and Postgres both mutate workflow state.
+- Concurrency regressions when replacing TapDB conditional semantics with SQL transactions.
+- Split-brain ownership during cutover if TapDB and Postgres both mutate workflow state.
 - Tenant/RBAC drift if customer-centric checks are only partially replaced.
 - External side-effect duplication without strict outbox + idempotency controls.
 - In-flight workset migration complexity (locks, retries, sentinel reconciliation).
@@ -540,8 +540,8 @@ Likely new files/directories:
 - `daylib/routes/internal_atlas.py`
 - `daylib/workers/outbox_dispatcher.py`
 - `daylib/migrations/` (migration framework + revisions)
-- `scripts/backfill_dynamo_to_postgres.py`
-- `scripts/verify_dynamo_postgres_parity.py`
+- `scripts/backfill_tapdb_to_postgres.py`
+- `scripts/verify_tapdb_postgres_parity.py`
 - `scripts/cutover_rehearsal.py`
 - `tests/persistence/test_postgres_workset_repository.py`
 - `tests/concurrency/test_worker_claims.py`

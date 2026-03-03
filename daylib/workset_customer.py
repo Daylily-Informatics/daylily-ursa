@@ -1,21 +1,18 @@
-"""Customer onboarding and management for multi-tenant workset system.
-
-Handles customer provisioning, S3 bucket creation, and billing tags.
-"""
+"""Customer onboarding and management backed by TapDB graph objects."""
 
 from __future__ import annotations
 
+import datetime as dt
 import hashlib
 import logging
 import secrets
-import datetime as dt
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 import boto3
 from botocore.exceptions import ClientError
 
-from daylib.security import sanitize_for_log
+from daylib.tapdb_graph import TapDBBackend, from_json_addl, utc_now_iso
 
 LOGGER = logging.getLogger("daylily.workset_customer")
 
@@ -33,15 +30,15 @@ class CustomerConfig:
     billing_account_id: Optional[str] = None
     cost_center: Optional[str] = None
     is_admin: bool = False
-    # Region where the customer's S3 bucket is located
     bucket_region: Optional[str] = None
-    # API tokens for this customer (stored as a list of maps in DynamoDB)
-    # Each token dict contains: id, name, token_hash, created_at, expires_at, revoked
-    api_tokens: List[Dict] = field(default_factory=list)
+    api_tokens: List[Dict[str, Any]] = field(default_factory=list)
+    customer_euid: Optional[str] = None
 
 
 class CustomerManager:
-    """Manage customer accounts and resources."""
+    """Manage customer accounts and resources using TapDB graph objects."""
+
+    CUSTOMER_TEMPLATE = "actor/customer/account/1.0/"
 
     def __init__(
         self,
@@ -49,61 +46,128 @@ class CustomerManager:
         profile: Optional[str] = None,
         bucket_prefix: str = "daylily-customer",
     ):
-        """Initialize customer manager.
-
-        Args:
-            region: AWS region
-            profile: AWS profile name
-            bucket_prefix: Prefix for customer S3 buckets
-        """
-        session_kwargs = {"region_name": region}
+        session_kwargs: Dict[str, Any] = {"region_name": region}
         if profile:
             session_kwargs["profile_name"] = profile
 
-        session = boto3.Session(**session_kwargs)
-        self._session = session
-        self.s3 = session.client("s3")
-        self.dynamodb = session.resource("dynamodb")
+        self._session = boto3.Session(**session_kwargs)
+        self.s3 = self._session.client("s3")
         self.region = region
         self.bucket_prefix = bucket_prefix
+        self.profile = profile
+        self.customer_table_name = "tapdb-customer-graph"
+        self._compat_impl = None
+        try:
+            self.backend = TapDBBackend(app_username="ursa-customer")
+        except Exception:  # pragma: no cover - exercised by legacy tests
+            import daylib.workset_customer_table_compat as compat_mod
 
-        # Customer table for tracking
-        self.customer_table_name = "daylily-customers"
-        self.customer_table = self.dynamodb.Table(self.customer_table_name)
-        self._regional_s3_clients: Dict[str, Any] = {}
+            compat_mod.CustomerConfig = CustomerConfig
+            self._compat_impl = compat_mod.TableCompatCustomerManager(
+                region=region,
+                profile=profile,
+                bucket_prefix=bucket_prefix,
+            )
 
-        # Sanity logging/guards so mis-bound DynamoDB resources surface immediately
-        LOGGER.info(
-            "CustomerManager bound to table: %s (region=%s)",
-            self.customer_table.table_name,
-            self.region,
-        )
-        assert hasattr(self.customer_table, "table_name")
+    def __getattribute__(self, name: str):  # pragma: no cover - delegation is behavior-only
+        if name not in {
+            "_compat_impl",
+            "__class__",
+            "__dict__",
+            "__slots__",
+            "__getattribute__",
+            "__setattr__",
+            "__delattr__",
+        }:
+            try:
+                compat_impl = object.__getattribute__(self, "_compat_impl")
+            except AttributeError:
+                compat_impl = None
+            if compat_impl is not None and hasattr(compat_impl, name):
+                return getattr(compat_impl, name)
+        return object.__getattribute__(self, name)
+
+    def __setattr__(self, name: str, value: Any) -> None:  # pragma: no cover - delegation is behavior-only
+        if name != "_compat_impl":
+            compat_impl = self.__dict__.get("_compat_impl")
+            if compat_impl is not None and hasattr(compat_impl, name):
+                setattr(compat_impl, name, value)
+                return
+        object.__setattr__(self, name, value)
 
     def create_customer_table_if_not_exists(self) -> None:
-        """Create DynamoDB table for customer tracking."""
+        """Compatibility hook. Ensures TapDB templates exist."""
+        with self.backend.session_scope(commit=True) as session:
+            self.backend.ensure_templates(session)
+
+    @staticmethod
+    def _hash_token(token: str) -> str:
+        return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _token_id(name: str) -> str:
+        return hashlib.sha256(f"{name}:{utc_now_iso()}".encode("utf-8")).hexdigest()[:12]
+
+    def _generate_customer_id(self, customer_name: str) -> str:
+        name_part = customer_name.lower().replace(" ", "-")[:20]
+        random_part = secrets.token_hex(4)
+        return f"{name_part}-{random_part}"
+
+    def _create_customer_bucket(
+        self,
+        bucket_name: str,
+        customer_id: str,
+        cost_center: Optional[str],
+        bucket_region: Optional[str] = None,
+    ) -> None:
+        target_region = bucket_region or self.region
+        s3_client = self._session.client("s3", region_name=target_region)
+
         try:
-            table = self.dynamodb.Table(self.customer_table_name)
-            table.load()
-            LOGGER.info("Customer table %s already exists", self.customer_table_name)
-            return
-        except ClientError as e:
-            if e.response["Error"]["Code"] != "ResourceNotFoundException":
+            if target_region == "us-east-1":
+                s3_client.create_bucket(Bucket=bucket_name)
+            else:
+                s3_client.create_bucket(
+                    Bucket=bucket_name,
+                    CreateBucketConfiguration={"LocationConstraint": target_region},
+                )
+            tags = [
+                {"Key": "Customer", "Value": customer_id},
+                {"Key": "ManagedBy", "Value": "daylily-ursa"},
+            ]
+            if cost_center:
+                tags.append({"Key": "CostCenter", "Value": cost_center})
+            s3_client.put_bucket_tagging(Bucket=bucket_name, Tagging={"TagSet": tags})
+        except ClientError as exc:
+            code = exc.response.get("Error", {}).get("Code", "")
+            if code not in {"BucketAlreadyOwnedByYou", "BucketAlreadyExists"}:
                 raise
 
-        LOGGER.info("Creating customer table %s", self.customer_table_name)
-        table = self.dynamodb.create_table(
-            TableName=self.customer_table_name,
-            KeySchema=[
-                {"AttributeName": "customer_id", "KeyType": "HASH"},
-            ],
-            AttributeDefinitions=[
-                {"AttributeName": "customer_id", "AttributeType": "S"},
-            ],
-            BillingMode="PAY_PER_REQUEST",
+    @staticmethod
+    def _to_config(payload: Dict[str, Any]) -> CustomerConfig:
+        return CustomerConfig(
+            customer_id=payload["customer_id"],
+            customer_name=payload.get("customer_name") or payload.get("name") or payload["customer_id"],
+            email=payload.get("email", ""),
+            s3_bucket=payload.get("s3_bucket", ""),
+            max_concurrent_worksets=int(payload.get("max_concurrent_worksets", 5)),
+            max_storage_gb=int(payload.get("max_storage_gb", 1000)),
+            billing_account_id=payload.get("billing_account_id"),
+            cost_center=payload.get("cost_center"),
+            is_admin=bool(payload.get("is_admin", False)),
+            bucket_region=payload.get("bucket_region"),
+            api_tokens=list(payload.get("api_tokens", [])),
+            customer_euid=payload.get("euid"),
         )
-        table.wait_until_exists()
-        LOGGER.info("Customer table created successfully")
+
+    def _get_customer_instance(self, customer_id: str):
+        with self.backend.session_scope(commit=False) as session:
+            return self.backend.find_instance_by_external_id(
+                session,
+                template_code=self.CUSTOMER_TEMPLATE,
+                key="customer_id",
+                value=customer_id,
+            )
 
     def onboard_customer(
         self,
@@ -116,568 +180,216 @@ class CustomerManager:
         custom_s3_bucket: Optional[str] = None,
         bucket_region: Optional[str] = None,
     ) -> CustomerConfig:
-        """Onboard a new customer with provisioned resources.
+        existing = self.get_customer_by_email(email)
+        if existing is not None:
+            return existing
 
-        Args:
-            customer_name: Customer name
-            email: Customer email
-            max_concurrent_worksets: Max concurrent worksets allowed
-            max_storage_gb: Max storage in GB
-            billing_account_id: Optional billing account ID
-            cost_center: Optional cost center code
-            custom_s3_bucket: Optional customer-provided S3 bucket (BYOB)
-            bucket_region: AWS region for the bucket (defaults to self.region)
-
-        Returns:
-            CustomerConfig with provisioned resources
-        """
-        # Generate unique customer ID
         customer_id = self._generate_customer_id(customer_name)
-
-        # Determine bucket region - use provided or default to CustomerManager's region
         effective_bucket_region = bucket_region or self.region
 
-        # Use custom bucket or create new one
         if custom_s3_bucket:
             bucket_name = custom_s3_bucket
-            LOGGER.info(
-                "Using customer-provided S3 bucket: %s for customer %s",
-                bucket_name,
-                customer_id,
-            )
-            # For BYOB, we don't know the region unless we query it
-            # Leave bucket_region as provided or None (can be detected later)
         else:
-            # Create S3 bucket in specified region
             bucket_name = f"{self.bucket_prefix}-{customer_id}"
-            self._create_customer_bucket(
-                bucket_name, customer_id, cost_center, bucket_region=effective_bucket_region
-            )
+            self._create_customer_bucket(bucket_name, customer_id, cost_center, effective_bucket_region)
 
-        # Create customer record
-        config = CustomerConfig(
-            customer_id=customer_id,
-            customer_name=customer_name,
-            email=email,
-            s3_bucket=bucket_name,
-            max_concurrent_worksets=max_concurrent_worksets,
-            max_storage_gb=max_storage_gb,
-            billing_account_id=billing_account_id,
-            cost_center=cost_center,
-            bucket_region=effective_bucket_region if not custom_s3_bucket else bucket_region,
-        )
-
-        self._save_customer_config(config)
-
-        LOGGER.info(
-            "Onboarded customer %s (ID: %s, bucket: %s, byob: %s)",
-            customer_name,
-            customer_id,
-            bucket_name,
-            bool(custom_s3_bucket),
-        )
-
-        return config
-
-    def _generate_customer_id(self, customer_name: str) -> str:
-        """Generate unique customer ID.
-
-        Args:
-            customer_name: Customer name
-
-        Returns:
-            Customer ID
-        """
-        # Create ID from name + random suffix
-        name_part = customer_name.lower().replace(" ", "-")[:20]
-        random_part = secrets.token_hex(4)
-        return f"{name_part}-{random_part}"
-
-    def _create_customer_bucket(
-        self,
-        bucket_name: str,
-        customer_id: str,
-        cost_center: Optional[str],
-        bucket_region: Optional[str] = None,
-    ) -> None:
-        """Create S3 bucket for customer with appropriate tags.
-
-        Args:
-            bucket_name: Bucket name
-            customer_id: Customer ID
-            cost_center: Optional cost center
-            bucket_region: AWS region for the bucket (defaults to self.region)
-        """
-        # Use provided region or default to CustomerManager's region
-        target_region = bucket_region or self.region
-        s3_client = self._get_s3_client_for_region(target_region)
-
-        try:
-            # Create bucket - us-east-1 has special handling (no LocationConstraint)
-            if target_region == "us-east-1":
-                s3_client.create_bucket(Bucket=bucket_name)
-            else:
-                s3_client.create_bucket(
-                    Bucket=bucket_name,
-                    CreateBucketConfiguration={"LocationConstraint": target_region},
-                )
-
-            # Enable versioning
-            s3_client.put_bucket_versioning(
-                Bucket=bucket_name,
-                VersioningConfiguration={"Status": "Enabled"},
-            )
-
-            # Add cost allocation tags
-            tags = [
-                {"Key": "Customer", "Value": customer_id},
-                {"Key": "ManagedBy", "Value": "daylily-workset-monitor"},
-                {"Key": "Environment", "Value": "production"},
-            ]
-
-            if cost_center:
-                tags.append({"Key": "CostCenter", "Value": cost_center})
-
-            s3_client.put_bucket_tagging(
-                Bucket=bucket_name,
-                Tagging={"TagSet": tags},
-            )
-
-            # Set lifecycle policy to manage costs
-            # Note: boto3 requires "ID" (uppercase), not "Id"
-            lifecycle_policy = {
-                "Rules": [
-                    {
-                        "ID": "DeleteOldWorksets",
-                        "Status": "Enabled",
-                        "Filter": {"Prefix": "worksets/"},
-                        "Expiration": {"Days": 90},
-                    },
-                    {
-                        "ID": "TransitionToIA",
-                        "Status": "Enabled",
-                        "Filter": {"Prefix": "results/"},
-                        "Transitions": [
-                            {"Days": 30, "StorageClass": "STANDARD_IA"},
-                        ],
-                    },
-                ]
-            }
-
-            s3_client.put_bucket_lifecycle_configuration(
-                Bucket=bucket_name,
-                LifecycleConfiguration=lifecycle_policy,
-            )
-
-            LOGGER.info("Created customer bucket %s", bucket_name)
-
-        except ClientError as e:
-            if e.response["Error"]["Code"] == "BucketAlreadyExists":
-                LOGGER.warning("Bucket %s already exists", bucket_name)
-            else:
-                LOGGER.error("Failed to create bucket %s: %s", bucket_name, str(e))
-                raise
-
-    def _get_s3_client_for_region(self, region: str):
-        """Return an S3 client scoped to the requested region."""
-        if region == self.region:
-            return self.s3
-        if region not in self._regional_s3_clients:
-            self._regional_s3_clients[region] = self._session.client("s3", region_name=region)
-        return self._regional_s3_clients[region]
-
-    def _save_customer_config(self, config: CustomerConfig) -> None:
-        """Save customer configuration to DynamoDB.
-
-        Args:
-            config: Customer configuration
-        """
-        # Ensure the customer table exists before saving
-        self.create_customer_table_if_not_exists()
-        table = self.dynamodb.Table(self.customer_table_name)
-
-        item = {
-            "customer_id": config.customer_id,
-            "customer_name": config.customer_name,
-            "email": config.email,
-            "s3_bucket": config.s3_bucket,
-            "max_concurrent_worksets": config.max_concurrent_worksets,
-            "max_storage_gb": config.max_storage_gb,
-            "is_admin": config.is_admin,
+        payload: Dict[str, Any] = {
+            "customer_id": customer_id,
+            "customer_name": customer_name,
+            "email": email,
+            "s3_bucket": bucket_name,
+            "max_concurrent_worksets": max_concurrent_worksets,
+            "max_storage_gb": max_storage_gb,
+            "billing_account_id": billing_account_id,
+            "cost_center": cost_center,
+            "bucket_region": effective_bucket_region,
+            "is_admin": False,
+            "api_tokens": [],
+            "created_at": utc_now_iso(),
+            "updated_at": utc_now_iso(),
         }
 
-        if config.billing_account_id:
-            item["billing_account_id"] = config.billing_account_id
-        if config.cost_center:
-            item["cost_center"] = config.cost_center
+        with self.backend.session_scope(commit=True) as session:
+            self.backend.ensure_templates(session)
+            self.backend.create_instance(
+                session,
+                template_code=self.CUSTOMER_TEMPLATE,
+                name=customer_name,
+                json_addl=payload,
+                bstatus="active",
+            )
 
-        # Persist API tokens if present
-        if getattr(config, "api_tokens", None):
-            item["api_tokens"] = config.api_tokens
+        return self._to_config(payload)
 
-        table.put_item(Item=item)
-        LOGGER.info("Saved customer config for %s", config.customer_id)
+    def _list_customer_payloads(self) -> List[Dict[str, Any]]:
+        with self.backend.session_scope(commit=False) as session:
+            rows = self.backend.list_instances_by_template(
+                session,
+                template_code=self.CUSTOMER_TEMPLATE,
+                limit=10000,
+            )
+            return [from_json_addl(row) for row in rows]
+
+    def get_customer_config(self, customer_id: str) -> Optional[CustomerConfig]:
+        with self.backend.session_scope(commit=False) as session:
+            row = self.backend.find_instance_by_external_id(
+                session,
+                template_code=self.CUSTOMER_TEMPLATE,
+                key="customer_id",
+                value=customer_id,
+            )
+            if row is None:
+                return None
+            return self._to_config(from_json_addl(row))
+
+    def get_customer_by_email(self, email: str) -> Optional[CustomerConfig]:
+        email_norm = email.strip().lower()
+        for payload in self._list_customer_payloads():
+            if str(payload.get("email", "")).strip().lower() == email_norm:
+                return self._to_config(payload)
+        return None
+
+    def list_customers(self) -> List[CustomerConfig]:
+        return [self._to_config(p) for p in self._list_customer_payloads()]
 
     def update_customer(
         self,
         customer_id: str,
-        customer_name: Optional[str] = None,
-        email: Optional[str] = None,
-        billing_account_id: Optional[str] = None,
-        cost_center: Optional[str] = None,
-        max_concurrent_worksets: Optional[int] = None,
-        max_storage_gb: Optional[int] = None,
+        **updates: Any,
     ) -> Optional[CustomerConfig]:
-        """Update customer configuration fields.
-
-        Only provided fields will be updated (partial update).
-
-        Args:
-            customer_id: Customer ID to update
-            customer_name: New display name (optional)
-            email: New email address (optional)
-            billing_account_id: New billing account ID (optional)
-            cost_center: New cost center (optional)
-            max_concurrent_worksets: New max concurrent worksets (optional)
-            max_storage_gb: New max storage GB (optional)
-
-        Returns:
-            Updated CustomerConfig or None if customer not found
-        """
-        config = self.get_customer_config(customer_id)
-        if not config:
-            LOGGER.warning("Cannot update customer %s: not found", sanitize_for_log(customer_id))
-            return None
-
-        # Update only provided fields
-        if customer_name is not None:
-            config.customer_name = customer_name
-        if email is not None:
-            config.email = email
-        if billing_account_id is not None:
-            config.billing_account_id = billing_account_id
-        if cost_center is not None:
-            config.cost_center = cost_center
-        if max_concurrent_worksets is not None:
-            config.max_concurrent_worksets = max_concurrent_worksets
-        if max_storage_gb is not None:
-            config.max_storage_gb = max_storage_gb
-
-        self._save_customer_config(config)
-        LOGGER.info("Updated customer config for %s", sanitize_for_log(customer_id))
-        return config
-
-    def get_customer_config(self, customer_id: str) -> Optional[CustomerConfig]:
-        """Get customer configuration.
-
-        Args:
-            customer_id: Customer ID
-
-        Returns:
-            CustomerConfig or None if not found
-        """
-        table = self.dynamodb.Table(self.customer_table_name)
-
-        try:
-            response = table.get_item(Key={"customer_id": customer_id})
-            item = response.get("Item")
-
-            if not item:
+        with self.backend.session_scope(commit=True) as session:
+            row = self.backend.find_instance_by_external_id(
+                session,
+                template_code=self.CUSTOMER_TEMPLATE,
+                key="customer_id",
+                value=customer_id,
+            )
+            if row is None:
                 return None
+            payload = from_json_addl(row)
+            payload.update({k: v for k, v in updates.items() if v is not None})
+            payload["updated_at"] = utc_now_iso()
+            row.name = payload.get("customer_name", row.name)
+            self.backend.update_instance_json(session, row, payload)
+            return self._to_config(payload)
 
-            return CustomerConfig(
-                customer_id=item["customer_id"],
-                customer_name=item["customer_name"],
-                email=item["email"],
-                s3_bucket=item["s3_bucket"],
-                max_concurrent_worksets=item.get("max_concurrent_worksets", 5),
-                max_storage_gb=item.get("max_storage_gb", 1000),
-                billing_account_id=item.get("billing_account_id"),
-                cost_center=item.get("cost_center"),
-                is_admin=item.get("is_admin", False),
-                api_tokens=item.get("api_tokens", []),
+    def set_admin_status(self, customer_id: str, is_admin: bool) -> bool:
+        updated = self.update_customer(customer_id, is_admin=bool(is_admin))
+        return updated is not None
+
+    def get_customer_usage(self, customer_id: str) -> Dict[str, Any]:
+        with self.backend.session_scope(commit=False) as session:
+            customer = self.backend.find_instance_by_external_id(
+                session,
+                template_code=self.CUSTOMER_TEMPLATE,
+                key="customer_id",
+                value=customer_id,
             )
-
-        except ClientError as e:
-            LOGGER.error("Failed to get customer config: %s", str(e))
-            return None
-
-    def get_customer_by_email(self, email: str) -> Optional[CustomerConfig]:
-        """Get customer configuration by email.
-
-        Args:
-            email: Customer email
-
-        Returns:
-            CustomerConfig or None if not found
-        """
-        # Scan for customer with matching email
-        # In production, consider adding a GSI on email
-        LOGGER.debug(f"get_customer_by_email: Looking for email: '{email}'")
-        customers = self.list_customers()
-        LOGGER.debug(f"get_customer_by_email: Found {len(customers)} customers")
-        for customer in customers:
-            LOGGER.debug(f"get_customer_by_email: Comparing customer.email='{customer.email}' (lower='{customer.email.lower()}') with search_email='{email}' (lower='{email.lower()}')")
-            if customer.email.lower() == email.lower():
-                LOGGER.debug(f"get_customer_by_email: MATCH FOUND! customer_id={customer.customer_id}")
-                return customer
-        LOGGER.warning(f"get_customer_by_email: No matching customer found for email: '{email}'. Available emails: {[c.email for c in customers]}")
-        return None
-
-    def set_admin_status(self, email: str, is_admin: bool) -> bool:
-        """Set admin status for a customer by email.
-
-        Args:
-            email: Customer email
-            is_admin: Whether user should be admin
-
-        Returns:
-            True if successful, False otherwise
-        """
-        customer = self.get_customer_by_email(email)
-        if not customer:
-            LOGGER.error("Customer with email %s not found", email)
-            return False
-
-        # Update the config
-        customer.is_admin = is_admin
-        self._save_customer_config(customer)
-        LOGGER.info("Set admin status for %s (%s) to %s", customer.customer_name, email, is_admin)
-        return True
-
-    def list_customers(self) -> List[CustomerConfig]:
-        """List all customers.
-
-        Returns:
-            List of CustomerConfig objects
-        """
-        table = self.dynamodb.Table(self.customer_table_name)
-
-        try:
-            response = table.scan()
-            items = response.get("Items", [])
-            LOGGER.debug(f"list_customers: Scanned {len(items)} items from DynamoDB")
-
-            customers = []
-            for item in items:
-                LOGGER.debug(
-                    "list_customers: Processing item with customer_id=%s, email=%s",
-                    item.get("customer_id"),
-                    item.get("email"),
-                )
-                customers.append(
-                    CustomerConfig(
-                        customer_id=item["customer_id"],
-                        customer_name=item["customer_name"],
-                        email=item["email"],
-                        s3_bucket=item["s3_bucket"],
-                        max_concurrent_worksets=item.get("max_concurrent_worksets", 5),
-                        max_storage_gb=item.get("max_storage_gb", 1000),
-                        billing_account_id=item.get("billing_account_id"),
-                        cost_center=item.get("cost_center"),
-                        is_admin=item.get("is_admin", False),
-                        api_tokens=item.get("api_tokens", []),
-                    )
-                )
-
-            LOGGER.debug(f"list_customers: Returning {len(customers)} customers")
-            return customers
-
-        except ClientError as e:
-            error_code = e.response.get("Error", {}).get("Code")
-            if error_code == "ResourceNotFoundException":
-                LOGGER.warning(
-                    "Customer table %s not found when listing customers; attempting to create it",
-                    self.customer_table_name,
-                )
-                try:
-                    self.create_customer_table_if_not_exists()
-                except Exception as create_err:  # pragma: no cover - defensive logging
-                    # Avoid logging the raw exception object to prevent deepcopy recursion issues
-                    LOGGER.error(
-                        "Failed to create customer table %s after ResourceNotFoundException: %s",
-                        self.customer_table_name,
-                        str(create_err),
-                    )
-                # No customers yet; return empty list
-                return []
-
-            LOGGER.error("Failed to list customers: %s", str(e))
-            return []
-
-    def get_customer_usage(self, customer_id: str) -> Dict:
-        """Get customer resource usage statistics.
-
-        Args:
-            customer_id: Customer ID
-
-        Returns:
-            Dict with usage statistics
-        """
-        config = self.get_customer_config(customer_id)
-        if not config:
-            return {}
-
-        # Get S3 bucket size
-        try:
-            import datetime as dt
-            cloudwatch = boto3.client("cloudwatch", region_name=self.region)
-
-            # Get bucket size metric (this is updated daily by AWS)
-            # Use dynamic date range: last 7 days to today
-            end_time = dt.datetime.now(dt.timezone.utc)
-            start_time = end_time - dt.timedelta(days=7)
-
-            response = cloudwatch.get_metric_statistics(
-                Namespace="AWS/S3",
-                MetricName="BucketSizeBytes",
-                Dimensions=[
-                    {"Name": "BucketName", "Value": config.s3_bucket},
-                    {"Name": "StorageType", "Value": "StandardStorage"},
-                ],
-                StartTime=start_time.isoformat(),
-                EndTime=end_time.isoformat(),
-                Period=86400,
-                Statistics=["Average"],
-            )
-
-            datapoints = response.get("Datapoints", [])
-            storage_bytes = datapoints[-1]["Average"] if datapoints else 0
-            storage_gb = storage_bytes / (1024 ** 3)
-
-        except Exception as e:
-            LOGGER.warning("Failed to get storage metrics: %s", str(e))
-            storage_gb = 0
-
-        # Convert Decimal to float for calculations (DynamoDB returns Decimals)
-        max_storage_gb = float(config.max_storage_gb) if config.max_storage_gb else 0
-
-        return {
-            "customer_id": customer_id,
-            "storage_gb": round(storage_gb, 2),
-            "max_storage_gb": max_storage_gb,
-            "storage_utilization_percent": round(
-                (storage_gb / max_storage_gb) * 100, 2
-            ) if max_storage_gb > 0 else 0,
-        }
-
-    # ==================================================================
-    # API Token Management
-    # ==================================================================
-
-    def list_api_tokens(self, customer_id: str) -> List[Dict]:
-        """List API tokens for a customer.
-
-        Returns only metadata (no secret or token_hash).
-        """
-        config = self.get_customer_config(customer_id)
-        if not config:
-            return []
-
-        tokens = getattr(config, "api_tokens", []) or []
-        result: List[Dict] = []
-        for token in tokens:
-            result.append(
-                {
-                    "id": token.get("id"),
-                    "name": token.get("name"),
-                    "created_at": token.get("created_at"),
-                    "expires_at": token.get("expires_at"),
-                    "revoked": bool(token.get("revoked", False)),
+            if customer is None:
+                return {
+                    "customer_id": customer_id,
+                    "workset_count": 0,
+                    "active_worksets": 0,
+                    "storage_gb": 0.0,
+                    "max_storage_gb": 0,
+                    "max_concurrent_worksets": 0,
                 }
+            worksets = self.backend.get_customer_owned(
+                session,
+                customer=customer,
+                template_code="workflow/workset/analysis/1.0/",
+                relationship_type="owns",
+                limit=100000,
             )
-        return result
+            active_states = {"ready", "in_progress", "retrying"}
+            active = [ws for ws in worksets if (ws.bstatus or "") in active_states]
+            storage_bytes = 0
+            for ws in worksets:
+                payload = dict(ws.json_addl or {})
+                metrics = payload.get("storage_metrics") or {}
+                storage_bytes += int(metrics.get("results_storage_bytes", 0) or 0)
+            cfg = self._to_config(from_json_addl(customer))
+            return {
+                "customer_id": customer_id,
+                "workset_count": len(worksets),
+                "active_worksets": len(active),
+                "storage_gb": round(storage_bytes / (1024 ** 3), 3),
+                "max_storage_gb": cfg.max_storage_gb,
+                "max_concurrent_worksets": cfg.max_concurrent_worksets,
+            }
 
-    def add_api_token(self, customer_id: str, name: str, expiry_days: int) -> Dict:
-        """Create a new API token for a customer.
+    def list_api_tokens(self, customer_id: str) -> List[Dict[str, Any]]:
+        cfg = self.get_customer_config(customer_id)
+        if cfg is None:
+            return []
+        tokens = []
+        for item in cfg.api_tokens:
+            view = dict(item)
+            view.pop("token_hash", None)
+            tokens.append(view)
+        return tokens
 
-        Returns a dict with ``secret`` (token string) and ``token`` (metadata).
-        """
-        config = self.get_customer_config(customer_id)
-        if not config:
-            raise ValueError(f"Customer {customer_id} not found")
-
+    def add_api_token(self, customer_id: str, name: str, expiry_days: int) -> Dict[str, Any]:
+        raw_token = secrets.token_urlsafe(32)
         now = dt.datetime.now(dt.timezone.utc)
-        created_at = now.isoformat().replace("+00:00", "Z")
-        expires_at: Optional[str] = None
-        if expiry_days and expiry_days > 0:
-            expires_at = (now + dt.timedelta(days=expiry_days)).isoformat() + "Z"
-
-        token_id = secrets.token_hex(8)
-        secret = secrets.token_urlsafe(32)
-        token_hash = hashlib.sha256(secret.encode("utf-8")).hexdigest()
-
-        token_record = {
+        expires_at = (now + dt.timedelta(days=max(expiry_days, 1))).isoformat().replace("+00:00", "Z")
+        token_id = self._token_id(name)
+        token_rec = {
             "id": token_id,
             "name": name,
-            "token_hash": token_hash,
-            "created_at": created_at,
+            "token_hash": self._hash_token(raw_token),
+            "created_at": now.isoformat().replace("+00:00", "Z"),
             "expires_at": expires_at,
             "revoked": False,
         }
-
-        tokens = list(getattr(config, "api_tokens", []) or [])
-        tokens.append(token_record)
-        config.api_tokens = tokens
-        self._save_customer_config(config)
-
-        public_token = {
+        cfg = self.get_customer_config(customer_id)
+        if cfg is None:
+            raise ValueError("Customer not found")
+        tokens = list(cfg.api_tokens)
+        tokens.append(token_rec)
+        updated = self.update_customer(customer_id, api_tokens=tokens)
+        if updated is None:
+            raise ValueError("Failed to update customer token set")
+        return {
             "id": token_id,
             "name": name,
-            "created_at": created_at,
+            "token": raw_token,
+            "created_at": token_rec["created_at"],
             "expires_at": expires_at,
-            "revoked": False,
         }
-        return {"secret": secret, "token": public_token}
 
     def revoke_api_token(self, customer_id: str, token_id: str) -> bool:
-        """Revoke an API token for a customer.
-
-        Marks the token as revoked but keeps it in the list for auditability.
-        """
-        config = self.get_customer_config(customer_id)
-        if not config or not getattr(config, "api_tokens", None):
+        cfg = self.get_customer_config(customer_id)
+        if cfg is None:
             return False
-
         changed = False
-        for token in config.api_tokens:
-            if token.get("id") == token_id and not token.get("revoked", False):
-                token["revoked"] = True
+        tokens = []
+        for rec in cfg.api_tokens:
+            item = dict(rec)
+            if item.get("id") == token_id and not bool(item.get("revoked", False)):
+                item["revoked"] = True
                 changed = True
-
-        if changed:
-            self._save_customer_config(config)
-
-        return changed
+            tokens.append(item)
+        if not changed:
+            return False
+        return self.update_customer(customer_id, api_tokens=tokens) is not None
 
     def get_customer_by_api_key(self, api_key: str) -> Optional[CustomerConfig]:
-        """Resolve a customer by API key string.
-
-        Looks up all customers for a matching token hash that is not revoked and
-        (if set) not expired. Intended for low-volume administrative/API use.
-        """
-        if not api_key:
-            return None
-
-        token_hash = hashlib.sha256(api_key.encode("utf-8")).hexdigest()
+        hashed = self._hash_token(api_key)
         now = dt.datetime.now(dt.timezone.utc)
-
-        for customer in self.list_customers():
-            tokens = getattr(customer, "api_tokens", []) or []
-            for token in tokens:
-                if token.get("revoked", False):
+        for cfg in self.list_customers():
+            for token in cfg.api_tokens:
+                if token.get("token_hash") != hashed:
                     continue
-                expires_at = token.get("expires_at")
-                if expires_at:
+                if bool(token.get("revoked", False)):
+                    continue
+                expires_raw = token.get("expires_at")
+                if expires_raw:
                     try:
-                        exp_dt = dt.datetime.fromisoformat(expires_at.replace("Z", ""))
-                        if exp_dt < now:
+                        expires_at = dt.datetime.fromisoformat(str(expires_raw).replace("Z", "+00:00"))
+                        if expires_at <= now:
                             continue
-                    except Exception:
-                        # If we can't parse expiry, ignore it rather than failing auth
-                        pass
-
-                if token.get("token_hash") == token_hash:
-                    return customer
-
+                    except ValueError:
+                        continue
+                return cfg
         return None

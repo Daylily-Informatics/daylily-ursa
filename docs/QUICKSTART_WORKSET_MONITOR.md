@@ -6,7 +6,7 @@ Get started with the enhanced workset monitoring system in 5 minutes.
 
 - Python 3.9+
 - AWS credentials configured
-- DynamoDB access
+- TapDB access
 - (Optional) SNS topic for notifications
 - (Optional) Linear API key for issue tracking
 
@@ -26,7 +26,7 @@ pip install -e ".[dev]"
 
 ## Quick Setup
 
-### 1. Create DynamoDB Table
+### 1. Create TapDB Table
 
 ```bash
 # Using the Python API (easiest)
@@ -38,7 +38,7 @@ db = WorksetStateDB(
     region="us-west-2",
 )
 db.create_table_if_not_exists()
-print("✓ DynamoDB table created successfully")
+print("✓ TapDB table created successfully")
 EOF
 ```
 

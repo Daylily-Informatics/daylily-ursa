@@ -1,7 +1,7 @@
-"""Integration layer bridging DynamoDB state management with S3 sentinel system.
+"""Integration layer bridging TapDB state management with S3 sentinel system.
 
 This module provides unified state synchronization between the new UI/API layer
-(DynamoDB-based) and the original processing engine (S3 sentinel-based).
+(TapDB-based) and the original processing engine (S3 sentinel-based).
 """
 
 from __future__ import annotations
@@ -58,10 +58,10 @@ PIPELINE_DY_R_COMMANDS = {
 
 
 class WorksetIntegration:
-    """Bridge between DynamoDB state management and S3 sentinel-based system.
+    """Bridge between TapDB state management and S3 sentinel-based system.
     
     Provides unified operations that keep both systems in sync:
-    - Workset registration writes to both DynamoDB and S3
+    - Workset registration writes to both TapDB and S3
     - State updates propagate to both systems
     - Discovery can pull from either source
     - Notifications are triggered on state changes
@@ -81,7 +81,7 @@ class WorksetIntegration:
         """Initialize the integration layer.
 
         Args:
-            state_db: DynamoDB state database (optional for S3-only mode)
+            state_db: TapDB state database (optional for S3-only mode)
             s3_client: Boto3 S3 client (created if not provided)
             bucket: S3 bucket for worksets (with or without s3:// prefix)
             prefix: S3 prefix for workset directories
@@ -118,9 +118,9 @@ class WorksetIntegration:
         cluster_region: Optional[str] = None,
         *,
         write_s3: bool = True,
-        write_dynamodb: bool = True,
+        write_tapdb: bool = True,
     ) -> bool:
-        """Register a new workset in both DynamoDB and S3.
+        """Register a new workset in both TapDB and S3.
 
         Args:
             workset_id: Unique workset identifier
@@ -133,7 +133,7 @@ class WorksetIntegration:
             preferred_cluster: User-selected cluster for execution
             cluster_region: AWS region of the preferred cluster (for pcluster commands)
             write_s3: Whether to write S3 sentinel files
-            write_dynamodb: Whether to write DynamoDB record
+            write_tapdb: Whether to write TapDB record
 
         Returns:
             True if registration successful
@@ -149,8 +149,8 @@ class WorksetIntegration:
         now = dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
         success = True
 
-        # Write to DynamoDB first (if enabled and available)
-        if write_dynamodb and self.state_db:
+        # Write to TapDB first (if enabled and available)
+        if write_tapdb and self.state_db:
             from daylib.workset_state_db import WorksetPriority, WorksetType
             try:
                 ws_priority = WorksetPriority(priority)
@@ -182,7 +182,7 @@ class WorksetIntegration:
                 cluster_region=effective_cluster_region,
             )
             if not db_success:
-                LOGGER.warning("DynamoDB registration failed for %s", workset_id)
+                LOGGER.warning("TapDB registration failed for %s", workset_id)
                 success = False
         
         # Write S3 sentinel files (if enabled)
@@ -217,7 +217,7 @@ class WorksetIntegration:
         metrics: Optional[Dict[str, Any]] = None,
         *,
         write_s3: bool = True,
-        write_dynamodb: bool = True,
+        write_tapdb: bool = True,
     ) -> bool:
         """Update workset state in both systems.
 
@@ -231,7 +231,7 @@ class WorksetIntegration:
             cluster_name: Associated cluster name
             metrics: Performance/cost metrics
             write_s3: Whether to update S3 sentinels
-            write_dynamodb: Whether to update DynamoDB
+            write_tapdb: Whether to update TapDB
 
         Returns:
             True if update successful
@@ -242,8 +242,8 @@ class WorksetIntegration:
         now = dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
         success = True
 
-        # Update DynamoDB
-        if write_dynamodb and self.state_db:
+        # Update TapDB
+        if write_tapdb and self.state_db:
             from daylib.workset_state_db import WorksetState
             try:
                 ws_state = WorksetState(new_state)
@@ -256,7 +256,7 @@ class WorksetIntegration:
                     metrics=metrics,
                 )
             except Exception as e:
-                LOGGER.error("DynamoDB state update failed for %s: %s", workset_id, str(e))
+                LOGGER.error("TapDB state update failed for %s: %s", workset_id, str(e))
                 success = False
 
         # Update S3 sentinel
@@ -278,10 +278,10 @@ class WorksetIntegration:
 
         return success
 
-    def sync_s3_to_dynamodb(self, workset_prefix: str) -> Optional[str]:
-        """Register an S3 workset in DynamoDB.
+    def sync_s3_to_tapdb(self, workset_prefix: str) -> Optional[str]:
+        """Register an S3 workset in TapDB.
 
-        Reads workset state from S3 sentinels and creates/updates DynamoDB record.
+        Reads workset state from S3 sentinels and creates/updates TapDB record.
 
         Args:
             workset_prefix: S3 prefix for the workset
@@ -290,7 +290,7 @@ class WorksetIntegration:
             Workset ID if sync successful, None otherwise
         """
         if not self.state_db or not self.bucket:
-            LOGGER.warning("DynamoDB or bucket not configured for sync")
+            LOGGER.warning("TapDB or bucket not configured for sync")
             return None
 
         # Determine workset ID from prefix
@@ -302,7 +302,7 @@ class WorksetIntegration:
 
         from daylib.workset_state_db import WorksetPriority, WorksetState
 
-        # Check if workset already exists in DynamoDB
+        # Check if workset already exists in TapDB
         existing = self.state_db.get_workset(workset_id)
 
         if existing:
@@ -332,11 +332,11 @@ class WorksetIntegration:
                 metadata=metadata,
             )
 
-        LOGGER.info("Synced S3 workset %s to DynamoDB", workset_id)
+        LOGGER.info("Synced S3 workset %s to TapDB", workset_id)
         return workset_id
 
-    def sync_dynamodb_to_s3(self, workset_id: str) -> bool:
-        """Write S3 sentinel files for a DynamoDB workset.
+    def sync_tapdb_to_s3(self, workset_id: str) -> bool:
+        """Write S3 sentinel files for a TapDB workset.
 
         Args:
             workset_id: Workset identifier
@@ -345,12 +345,12 @@ class WorksetIntegration:
             True if sync successful
         """
         if not self.state_db:
-            LOGGER.warning("DynamoDB not configured for sync")
+            LOGGER.warning("TapDB not configured for sync")
             return False
 
         workset = self.state_db.get_workset(workset_id)
         if not workset:
-            LOGGER.error("Workset %s not found in DynamoDB", workset_id)
+            LOGGER.error("Workset %s not found in TapDB", workset_id)
             return False
 
         bucket_name: str = normalize_bucket_name(workset.get("bucket")) or self.bucket or ""
@@ -382,7 +382,7 @@ class WorksetIntegration:
                 timestamp=now,
             )
 
-            LOGGER.info("Synced DynamoDB workset %s to S3", workset_id)
+            LOGGER.info("Synced TapDB workset %s to S3", workset_id)
             return True
 
         except Exception as e:
@@ -390,7 +390,7 @@ class WorksetIntegration:
             return False
 
     def get_ready_worksets(self, limit: int = 100) -> List[Dict[str, Any]]:
-        """Get worksets ready for processing from DynamoDB.
+        """Get worksets ready for processing from TapDB.
 
         Args:
             limit: Maximum number of results
@@ -412,7 +412,7 @@ class WorksetIntegration:
     ) -> bool:
         """Acquire distributed lock on a workset.
 
-        Uses DynamoDB for authoritative locking with S3 sentinel as backup.
+        Uses TapDB for authoritative locking with S3 sentinel as backup.
 
         Args:
             workset_id: Workset identifier
@@ -426,7 +426,7 @@ class WorksetIntegration:
         target_bucket = normalize_bucket_name(bucket) or self.bucket
         workset_prefix = prefix or f"{self.prefix}{workset_id}/"
 
-        # Try DynamoDB lock first (authoritative)
+        # Try TapDB lock first (authoritative)
         if self.state_db:
             if not self.state_db.acquire_lock(workset_id, owner_id):
                 return False
@@ -468,7 +468,7 @@ class WorksetIntegration:
         target_bucket = normalize_bucket_name(bucket) or self.bucket
         workset_prefix = prefix or f"{self.prefix}{workset_id}/"
 
-        # Release DynamoDB lock
+        # Release TapDB lock
         if self.state_db:
             if not self.state_db.release_lock(workset_id, owner_id):
                 return False

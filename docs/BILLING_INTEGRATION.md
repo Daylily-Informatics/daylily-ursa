@@ -153,7 +153,7 @@ The portal provides usage statistics through the API:
 
 ### Customer Record Schema
 
-Each customer has billing information stored in DynamoDB:
+Each customer has billing information stored in TapDB:
 
 ```python
 {

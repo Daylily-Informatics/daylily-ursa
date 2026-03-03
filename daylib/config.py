@@ -68,22 +68,26 @@ class Settings(BaseSettings):
         """Get list of allowed regions from comma-separated string."""
         return [r.strip() for r in self.ursa_allowed_regions.split(",") if r.strip()]
 
-    # ========== DynamoDB Table Names ==========
+    # ========== TapDB Table Names ==========
     workset_table_name: str = Field(
-        default="daylily-worksets",
-        description="DynamoDB table for workset state",
+        default="tapdb-worksets",
+        validation_alias="TAPDB_WORKSET_NAMESPACE",
+        description="TapDB namespace label for workset state",
     )
     customer_table_name: str = Field(
-        default="daylily-customers",
-        description="DynamoDB table for customer configuration",
+        default="tapdb-customers",
+        validation_alias="TAPDB_CUSTOMER_NAMESPACE",
+        description="TapDB namespace label for customer configuration",
     )
     daylily_manifest_table: str = Field(
-        default="daylily-manifests",
-        description="DynamoDB table for manifest storage",
+        default="tapdb-manifests",
+        validation_alias="TAPDB_MANIFEST_NAMESPACE",
+        description="TapDB namespace label for manifest storage",
     )
     daylily_linked_buckets_table: str = Field(
-        default="daylily-linked-buckets",
-        description="DynamoDB table for linked bucket management",
+        default="tapdb-linked-buckets",
+        validation_alias="TAPDB_BUCKET_NAMESPACE",
+        description="TapDB namespace label for linked bucket management",
     )
     # NOTE: FileRegistry uses hardcoded table names: daylily-files, daylily-filesets,
     # daylily-file-workset-usage. These are created via FileRegistry.create_tables_if_not_exist().

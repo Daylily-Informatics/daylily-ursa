@@ -146,7 +146,7 @@ def main():
 
     # Configuration from environment
     REGION = os.getenv("AWS_REGION", "us-west-2")
-    WORKSET_TABLE = os.getenv("WORKSET_TABLE_NAME", "daylily-worksets")
+    WORKSET_TABLE = os.getenv("TAPDB_WORKSET_NAMESPACE", "tapdb-worksets")
     USER_POOL_ID = os.getenv("COGNITO_USER_POOL_ID")
     APP_CLIENT_ID = os.getenv("COGNITO_APP_CLIENT_ID")
 
@@ -162,7 +162,7 @@ def main():
     LOGGER.info("Initializing Workset Monitor API (with authentication)")
 
     # Initialize state database
-    LOGGER.info(f"Connecting to DynamoDB table: {WORKSET_TABLE}")
+    LOGGER.info(f"Connecting to TapDB table: {WORKSET_TABLE}")
     state_db = WorksetStateDB(
         table_name=WORKSET_TABLE,
         region=REGION,
@@ -201,7 +201,7 @@ def main():
             logging.getLogger("botocore").setLevel(logging.DEBUG)
             logging.getLogger("boto3").setLevel(logging.DEBUG)
             logging.getLogger("botocore.hooks").setLevel(logging.DEBUG)
-            dynamodb = boto3.resource('dynamodb', region_name=REGION)
+            tapdb = boto3.resource('tapdb', region_name=REGION)
             file_registry = FileRegistry()
             LOGGER.info("File registry initialized - file management endpoints will be available")
         except Exception as e:
@@ -232,7 +232,7 @@ def main():
     LOGGER.info("Authentication: ENABLED (AWS Cognito)")
     LOGGER.info("Protocol: %s", protocol.upper())
     LOGGER.info("Region: %s", REGION)
-    LOGGER.info("DynamoDB Table: %s", WORKSET_TABLE)
+    LOGGER.info("TapDB Table: %s", WORKSET_TABLE)
     LOGGER.info("User Pool ID: %s", USER_POOL_ID)
     LOGGER.info("App Client ID: %s", APP_CLIENT_ID)
     if args.https:

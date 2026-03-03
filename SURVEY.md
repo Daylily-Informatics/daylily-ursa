@@ -40,12 +40,12 @@ A full architectural review of the Daylily genomics ecosystem was conducted, cov
 
 ### Strengths
 
-1. **Ephemeral-by-design infrastructure** — Clusters are cattle, not pets. All state lives in durable stores (S3, DynamoDB). This is the single most important architectural decision.
+1. **Ephemeral-by-design infrastructure** — Clusters are cattle, not pets. All state lives in durable stores (S3, TapDB). This is the single most important architectural decision.
 2. **Cost-as-a-first-class metric** — Custom Snakemake telemetry captures EC2 instance type, spot price, and actual cost per task. No other public bioinformatics framework does this.
 3. **Clean separation: infrastructure vs. analysis** — `daylily-ephemeral-cluster` (infra) and `daylily-omics-analysis` (workflows) are independent. The cluster layer is workflow-manager-agnostic.
 4. **FSx-as-shared-scratch with S3 mirror** — Solves distributed storage without requiring users to think about object storage during analysis.
 5. **Spot fleet diversity** — Heterogeneous instance partitions (i8–i192) with per-partition spot price caps. Sophisticated spot market engineering.
-6. **DynamoDB-backed workset state machine** — Conditional writes for locking, well-defined state enum, audit trail.
+6. **TapDB-backed workset state machine** — Conditional writes for locking, well-defined state enum, audit trail.
 7. **Auth as a shared library** — `daylily-cognito` is a standalone library any FastAPI service can consume.
 
 ### Novel/Publishable Contributions

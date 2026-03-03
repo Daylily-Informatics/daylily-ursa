@@ -139,10 +139,10 @@ stateDiagram-v2
 - **Tracking**: Original state preserved, archival metadata
 
 ### DELETED
-- **Description**: Hard deleted from S3 / DynamoDB
+- **Description**: Hard deleted from S3 / TapDB
 - **Entry**: `delete_workset()` from ARCHIVED (soft or hard delete)
 - **Exit**: None (terminal state)
-- **Note**: Hard delete removes the DynamoDB record entirely
+- **Note**: Hard delete removes the TapDB record entirely
 
 ## Priority Levels
 

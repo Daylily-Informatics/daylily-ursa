@@ -630,8 +630,8 @@ class TestLinkBucketEndpoint:
         data = response.json()
         assert data["buckets"] == []
 
-    def test_link_bucket_dynamodb_error(self, client_with_linking, mock_linked_bucket_manager):
-        """Test error handling when DynamoDB operation fails."""
+    def test_link_bucket_tapdb_error(self, client_with_linking, mock_linked_bucket_manager):
+        """Test error handling when TapDB operation fails."""
         from botocore.exceptions import ClientError
 
         # Simulate ResourceNotFoundException

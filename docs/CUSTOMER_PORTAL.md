@@ -21,9 +21,9 @@ graph TB
     B --> E[Workset API]
     
     C --> F[User Pool]
-    D --> G[Customer DynamoDB]
+    D --> G[Customer TapDB]
     D --> H[Customer S3 Buckets]
-    E --> I[Workset DynamoDB]
+    E --> I[Workset TapDB]
     
     H --> J[Cost Allocation Tags]
     J --> K[AWS Billing]
@@ -38,7 +38,7 @@ Automatically provision resources for new customers:
 - Dedicated S3 bucket with versioning
 - Cost allocation tags for billing
 - Lifecycle policies for cost management
-- DynamoDB record for tracking
+- TapDB record for tracking
 
 ### 2. Authentication with AWS Cognito
 

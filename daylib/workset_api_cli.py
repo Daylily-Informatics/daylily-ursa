@@ -36,7 +36,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--table-name",
         default="daylily-worksets",
-        help="DynamoDB table name for workset state",
+        help="TapDB table name for workset state",
     )
     parser.add_argument(
         "--region",
@@ -67,13 +67,13 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         "--create-table",
         action="store_true",
         default=True,
-        help="Create DynamoDB tables if they don't exist (default: True)",
+        help="Create TapDB tables if they don't exist (default: True)",
     )
     parser.add_argument(
         "--no-create-table",
         action="store_false",
         dest="create_table",
-        help="Don't create DynamoDB tables automatically",
+        help="Don't create TapDB tables automatically",
     )
     parser.add_argument(
         "--reload",
@@ -119,34 +119,34 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     # Load UrsaConfig for centralized settings
     ursa_config = get_ursa_config()
 
-    # Determine DynamoDB region: CLI arg > UrsaConfig > default
+    # Determine TapDB region: CLI arg > UrsaConfig > default
     # If --region was explicitly passed (not the default), use it.
-    # Otherwise, prefer UrsaConfig's dynamo_db_region.
+    # Otherwise, prefer UrsaConfig's tapdb_db_region.
     if args.region != "us-west-2":
-        dynamo_region = args.region
-        LOGGER.info("Using DynamoDB region from CLI: %s", dynamo_region)
+        tapdb_region = args.region
+        LOGGER.info("Using TapDB region from CLI: %s", tapdb_region)
     else:
-        dynamo_region = ursa_config.get_effective_dynamo_db_region()
-        source = ursa_config.get_value_source("dynamo_db_region")
+        tapdb_region = ursa_config.get_effective_tapdb_db_region()
+        source = ursa_config.get_value_source("tapdb_db_region")
         LOGGER.info(
-            "Using DynamoDB region from %s: %s",
+            "Using TapDB region from %s: %s",
             source if source != "not set" else "default",
-            dynamo_region,
+            tapdb_region,
         )
 
     LOGGER.info(
         "Initializing workset state database: %s (region: %s)",
         args.table_name,
-        dynamo_region,
+        tapdb_region,
     )
     state_db = WorksetStateDB(
         table_name=args.table_name,
-        region=dynamo_region,
+        region=tapdb_region,
         profile=args.profile,
     )
 
     if args.create_table:
-        LOGGER.info("Creating DynamoDB table if needed...")
+        LOGGER.info("Creating TapDB table if needed...")
         state_db.create_table_if_not_exists()
 
     scheduler = None

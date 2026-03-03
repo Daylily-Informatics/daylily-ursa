@@ -7,12 +7,12 @@
 # Usage:
 #   cp config/workset-monitor-config.template.yaml config/my-monitor-config.yaml
 #   # Edit my-monitor-config.yaml with your settings
-#   bin/daylily-workset-monitor config/my-monitor-config.yaml --enable-dynamodb
+#   bin/daylily-workset-monitor config/my-monitor-config.yaml --enable-tapdb
 #
-# For DynamoDB integration (recommended for portal UI):
+# For TapDB integration (recommended for portal UI):
 #   bin/daylily-workset-monitor config/my-monitor-config.yaml \
-#     --enable-dynamodb \
-#     --dynamodb-table daylily-worksets \
+#     --enable-tapdb \
+#     --tapdb-table daylily-worksets \
 #     --enable-notifications \
 #     --sns-topic-arn arn:aws:sns:us-west-2:123456789:daylily-alerts
 # =============================================================================
@@ -24,7 +24,7 @@ aws:
   # AWS profile name from ~/.aws/credentials (use "default" if not using profiles)
   profile: daylily-service-lsmc
   
-  # AWS region for S3, DynamoDB, and other services
+  # AWS region for S3, TapDB, and other services
   region: us-west-2
   
   # Optional: Session duration for profile authentication (in seconds)

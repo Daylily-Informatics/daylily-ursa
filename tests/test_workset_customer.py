@@ -8,22 +8,23 @@ from daylib.workset_customer import CustomerManager, CustomerConfig
 from daylib.routes.dependencies import verify_workset_ownership
 
 
+
 @pytest.fixture
 def mock_aws():
     """Mock AWS services."""
     with patch("daylib.workset_customer.boto3.Session") as mock_session:
         mock_s3 = MagicMock()
-        mock_dynamodb = MagicMock()
+        mock_tapdb = MagicMock()
         mock_table = MagicMock()
 
         mock_session.return_value.client.return_value = mock_s3
-        mock_session.return_value.resource.return_value = mock_dynamodb
-        mock_dynamodb.Table.return_value = mock_table
+        mock_session.return_value.resource.return_value = mock_tapdb
+        mock_tapdb.Table.return_value = mock_table
 
         yield {
             "session": mock_session,
             "s3": mock_s3,
-            "dynamodb": mock_dynamodb,
+            "tapdb": mock_tapdb,
             "table": mock_table,
         }
 
@@ -69,7 +70,7 @@ def test_onboard_customer(customer_manager, mock_aws):
     # Verify S3 bucket creation was called
     mock_aws["s3"].create_bucket.assert_called_once()
 
-    # Verify DynamoDB put_item was called
+    # Verify TapDB put_item was called
     mock_table.put_item.assert_called_once()
 
 
@@ -367,7 +368,7 @@ class TestBillingAccountIdIsMetadataOnly:
     INVESTIGATION RESULTS (2026-01-25):
     -----------------------------------
     1. billing_account_id is defined in CustomerConfig dataclass (workset_customer.py)
-    2. It is stored in DynamoDB via _save_customer_config() (conditionally, only if not None)
+    2. It is stored in TapDB via _save_customer_config() (conditionally, only if not None)
     3. It is returned in API responses via CustomerResponse model (workset_api.py)
     4. It is displayed on the /portal/account page (templates/account.html)
     5. It is NOT used in daylib/billing.py - BillingCalculator calculates costs from:
@@ -404,7 +405,7 @@ class TestBillingAccountIdIsMetadataOnly:
         )
         customer_manager._save_customer_config(config)
 
-        # Verify billing_account_id was saved to DynamoDB
+        # Verify billing_account_id was saved to TapDB
         mock_table.put_item.assert_called_once()
         call_args = mock_table.put_item.call_args
         item = call_args[1]["Item"]

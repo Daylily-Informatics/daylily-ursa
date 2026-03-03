@@ -223,7 +223,7 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
     ):
         """Create a new workset for a customer from the portal form.
 
-        This endpoint registers the workset in both DynamoDB (for UI state tracking)
+        This endpoint registers the workset in both TapDB (for UI state tracking)
         and writes S3 sentinel files (for processing engine discovery).
 
         Samples can be provided via:
@@ -431,7 +431,7 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
         if manifest_tsv_for_s3:
             metadata["stage_samples_tsv"] = manifest_tsv_for_s3
 
-        # Use integration layer for unified registration (DynamoDB + S3)
+        # Use integration layer for unified registration (TapDB + S3)
         # If no global integration exists but we have a bucket, create one ad-hoc
         effective_integration = integration
         if not effective_integration and bucket and INTEGRATION_AVAILABLE:
@@ -455,10 +455,10 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
                 preferred_cluster=preferred_cluster,
                 cluster_region=cluster_region,
                 write_s3=True,
-                write_dynamodb=True,
+                write_tapdb=True,
             )
         else:
-            # Fallback to DynamoDB-only registration (no S3 files)
+            # Fallback to TapDB-only registration (no S3 files)
             LOGGER.warning("No integration layer available - S3 files will NOT be created")
             try:
                 ws_priority = WorksetPriority(priority)
@@ -645,10 +645,10 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
                 preferred_cluster=preferred_cluster,
                 cluster_region=cluster_region,
                 write_s3=True,
-                write_dynamodb=True,
+                write_tapdb=True,
             )
         else:
-            # Fallback to DynamoDB-only registration
+            # Fallback to TapDB-only registration
             try:
                 ws_priority = WorksetPriority(priority)
             except ValueError:
@@ -775,7 +775,7 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
         """Delete a customer's workset.
 
         Args:
-            hard_delete: If True, permanently removes all S3 data and DynamoDB record.
+            hard_delete: If True, permanently removes all S3 data and TapDB record.
                         If False (default), marks as deleted but preserves data.
 
         Admins can delete any workset.
@@ -841,7 +841,7 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
                         detail=f"Failed to delete S3 data: {str(e)}",
                     )
 
-        # Update DynamoDB state
+        # Update TapDB state
         success = state_db.delete_workset(
             workset_id,
             deleted_by=customer_id,
@@ -915,7 +915,7 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
 
         Returns:
             - workset_id: The workset identifier
-            - state_history: List of state transitions from DynamoDB
+            - state_history: List of state transitions from TapDB
             - pipeline_status: Live status from headnode (null if unavailable)
               - is_running: Whether the tmux session is active
               - steps_completed: Number of Snakemake steps completed
@@ -955,14 +955,14 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
                 detail="Workset does not belong to this customer",
             )
 
-        # Get state history from DynamoDB
+        # Get state history from TapDB
         history = workset.get("state_history", [])
 
         # Attempt to fetch live pipeline status from headnode
         pipeline_status = None
         if PIPELINE_STATUS_AVAILABLE and PipelineStatusFetcher is not None:
             workset_name = workset.get("name") or workset.get("workset_name")
-            # Use cached headnode IP from DynamoDB (stored by monitor when workset started)
+            # Use cached headnode IP from TapDB (stored by monitor when workset started)
             headnode_ip = workset.get("execution_headnode_ip")
 
             if headnode_ip and workset_name:
@@ -995,7 +995,7 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
                         repo_dir_name=settings.pipeline_repo_dir_name,
                     )
 
-                    # Use headnode IP from DynamoDB (no pcluster call needed)
+                    # Use headnode IP from TapDB (no pcluster call needed)
                     # Derive tmux session name (matches monitor convention)
                     tmux_session = f"daylily-{workset_name}"
 
@@ -1101,7 +1101,7 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
         if PIPELINE_STATUS_AVAILABLE and PipelineStatusFetcher is not None:
             workset_name = workset.get("name") or workset.get("workset_name") or workset_id
             results_s3_uri = workset.get("results_s3_uri")
-            # Use cached headnode IP from DynamoDB (stored by monitor when workset started)
+            # Use cached headnode IP from TapDB (stored by monitor when workset started)
             headnode_ip = workset.get("execution_headnode_ip")
 
             # Get workset region for region-specific SSH key
@@ -1130,7 +1130,7 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
                 repo_dir_name=settings.pipeline_repo_dir_name,
             )
 
-            # Try headnode first (for running worksets) - use IP from DynamoDB
+            # Try headnode first (for running worksets) - use IP from TapDB
             if headnode_ip and workset_name and not is_terminal_state:
                 try:
                     metrics_data = fetcher.fetch_performance_metrics(
@@ -1331,7 +1331,7 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
             )
 
         workset_name = workset.get("name") or workset.get("workset_name")
-        # Use cached headnode IP from DynamoDB (stored by monitor when workset started)
+        # Use cached headnode IP from TapDB (stored by monitor when workset started)
         headnode_ip = workset.get("execution_headnode_ip")
 
         if not headnode_ip or not workset_name:

@@ -302,7 +302,7 @@ def test_create_workset_from_saved_manifest_id(
     assert call_kwargs["bucket"] == "control-bucket"  # control-plane bucket
     assert call_kwargs["customer_id"] == "cust-001"
     assert call_kwargs["write_s3"] is True
-    assert call_kwargs["write_dynamodb"] is True
+    assert call_kwargs["write_tapdb"] is True
 
     metadata = call_kwargs["metadata"]
     assert metadata["sample_count"] == 1

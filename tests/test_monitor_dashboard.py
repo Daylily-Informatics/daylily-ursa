@@ -220,7 +220,7 @@ class TestMonitorDashboardRoute:
     def test_monitor_page_shows_workset_statistics(
         self, authenticated_client, mock_ursa_dir, mock_state_db, monkeypatch
     ):
-        """Test monitor page shows workset statistics from DynamoDB."""
+        """Test monitor page shows workset statistics from TapDB."""
         monkeypatch.setattr(Path, "home", lambda: mock_ursa_dir.parent)
 
         # Configure mock to return specific counts for each state

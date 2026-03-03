@@ -18,16 +18,17 @@ from daylib.workset_validation import WorksetValidator
 from daylib.workset_diagnostics import classify_error
 
 
+
 @pytest.fixture
 def mock_aws():
     """Mock AWS services for integration tests."""
     with patch("daylib.workset_state_db.boto3.Session") as mock_session:
         mock_table = MagicMock()
-        mock_dynamodb = MagicMock()
+        mock_tapdb = MagicMock()
         mock_cloudwatch = MagicMock()
         
-        mock_dynamodb.Table.return_value = mock_table
-        mock_session.return_value.resource.return_value = mock_dynamodb
+        mock_tapdb.Table.return_value = mock_table
+        mock_session.return_value.resource.return_value = mock_tapdb
         mock_session.return_value.client.return_value = mock_cloudwatch
         
         # Set up table responses
@@ -49,7 +50,7 @@ def mock_aws():
         yield {
             "session": mock_session,
             "table": mock_table,
-            "dynamodb": mock_dynamodb,
+            "tapdb": mock_tapdb,
             "cloudwatch": mock_cloudwatch,
         }
 
@@ -297,4 +298,3 @@ class TestConcurrentProcessingIntegration:
 
         # Verify update was called
         mock_table.update_item.assert_called()
-

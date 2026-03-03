@@ -378,7 +378,7 @@ def start(
     aws_region = (
         os.environ.get("AWS_REGION")
         or os.environ.get("AWS_DEFAULT_REGION")
-        or ursa_config.get_effective_dynamo_db_region()
+        or ursa_config.get_effective_tapdb_db_region()
     )
 
     ssl_certfile, ssl_keyfile = _resolve_https_cert_paths(host)

@@ -1601,7 +1601,7 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
 
         if session_customer_id:
             all_archived = deps.state_db.list_archived_worksets(limit=500)
-            LOGGER.info("Found %d total archived worksets in DynamoDB", len(all_archived))
+            LOGGER.info("Found %d total archived worksets in TapDB", len(all_archived))
 
             # SECURITY: Filter to only worksets the user can access
             session_user_email = request.session.get("user_email") if hasattr(request, "session") else None
@@ -2900,8 +2900,13 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
             "AWS_ACCESS_KEY_ID": "***" if os.getenv("AWS_ACCESS_KEY_ID") else None,
             "AWS_SECRET_ACCESS_KEY": "***" if os.getenv("AWS_SECRET_ACCESS_KEY") else None,
             "AWS_ACCOUNT_ID": app_settings.aws_account_id,
-            "WORKSET_TABLE_NAME": app_settings.workset_table_name,
-            "CUSTOMER_TABLE_NAME": app_settings.customer_table_name,
+            "TAPDB_WORKSET_NAMESPACE": app_settings.workset_table_name,
+            "TAPDB_CUSTOMER_NAMESPACE": app_settings.customer_table_name,
+            "TAPDB_MANIFEST_NAMESPACE": app_settings.daylily_manifest_table,
+            "TAPDB_BUCKET_NAMESPACE": app_settings.daylily_linked_buckets_table,
+            "TAPDB_ENV": os.getenv("TAPDB_ENV"),
+            "TAPDB_DATABASE_NAME": os.getenv("TAPDB_DATABASE_NAME"),
+            "TAPDB_CLIENT_ID": os.getenv("TAPDB_CLIENT_ID"),
             "COGNITO_USER_POOL_ID": app_settings.cognito_user_pool_id,
             "COGNITO_APP_CLIENT_ID": app_settings.cognito_app_client_id,
             "COGNITO_APP_CLIENT_SECRET": "***" if app_settings.cognito_app_client_secret else None,
@@ -2985,7 +2990,7 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
             {"key": "Module", "value": "daylily_tapdb"},
             {"key": "Installed", "value": "Yes" if tapdb_installed else "No"},
             {"key": "Version", "value": tapdb_version or "Not installed"},
-            {"key": "Integrated in current runtime", "value": "No (DynamoDB currently active)"},
+            {"key": "Integrated in current runtime", "value": "Yes"},
             {
                 "key": "Detected TAPDB_* env vars",
                 "value": ", ".join(tapdb_env_vars) if tapdb_env_vars else "None",
@@ -2993,10 +2998,10 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         ]
 
         persistence_rows = [
-            {"key": "Worksets table", "value": app_settings.workset_table_name},
-            {"key": "Customers table", "value": app_settings.customer_table_name},
-            {"key": "Manifests table", "value": app_settings.daylily_manifest_table},
-            {"key": "Linked buckets table", "value": app_settings.daylily_linked_buckets_table},
+            {"key": "Workset namespace", "value": app_settings.workset_table_name},
+            {"key": "Customer namespace", "value": app_settings.customer_table_name},
+            {"key": "Manifest namespace", "value": app_settings.daylily_manifest_table},
+            {"key": "Bucket-link namespace", "value": app_settings.daylily_linked_buckets_table},
         ]
 
         return deps.templates.TemplateResponse(
@@ -3199,12 +3204,12 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
             "poll_interval_seconds": monitor_opts.get("poll_interval_seconds", 60),
             "max_concurrent_worksets": max_concurrent_runtime,
             "archive_prefix": monitor_opts.get("archive_prefix", ""),
-            "dynamodb_table": aws_opts.get("dynamodb_table", "daylily-worksets"),
+            "tapdb_table": aws_opts.get("tapdb_table", "daylily-worksets"),
             "reuse_cluster_name": cluster_opts.get("reuse_cluster_name", ""),
             "config_path": str(config_path) if config_path else "Not found",
         }
 
-        # Get workset statistics from DynamoDB
+        # Get workset statistics from TapDB
         stats = {
             "in_progress": 0,
             "ready": 0,
@@ -3566,7 +3571,7 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
             except (ValueError, ProcessLookupError, PermissionError):
                 pass
 
-        # Get workset statistics from DynamoDB
+        # Get workset statistics from TapDB
         stats = {
             "in_progress": 0,
             "ready": 0,

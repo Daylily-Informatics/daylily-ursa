@@ -144,7 +144,7 @@
             <div class="tabs-header">
                 <button class="tab-button active" onclick="switchTab(event, 'aws-vars')">AWS Configuration</button>
                 <button class="tab-button" onclick="switchTab(event, 'control-vars')">Control Bucket</button>
-                <button class="tab-button" onclick="switchTab(event, 'dynamodb-vars')">DynamoDB</button>
+                <button class="tab-button" onclick="switchTab(event, 'tapdb-vars')">TapDB</button>
                 <button class="tab-button" onclick="switchTab(event, 'cognito-vars')">Cognito Auth</button>
                 <button class="tab-button" onclick="switchTab(event, 'api-vars')">API Configuration</button>
                 <button class="tab-button" onclick="switchTab(event, 's3-vars')">S3 & Storage</button>
@@ -173,7 +173,7 @@
                             <tr>
                                 <td><code>AWS_DEFAULT_REGION</code></td>
                                 <td>{% if env_vars.AWS_DEFAULT_REGION %}<span class="env-value set">{{ env_vars.AWS_DEFAULT_REGION }}</span>{% else %}<span class="env-value not-set">Not set</span>{% endif %}</td>
-                                <td>AWS region for services (S3, DynamoDB, etc.)</td>
+                                <td>AWS region for services (S3, TapDB, etc.)</td>
                             </tr>
                             <tr>
                                 <td><code>AWS_REGION</code></td>
@@ -231,11 +231,11 @@
                 </div>
             </div>
 
-            <!-- DynamoDB Tab -->
-            <div id="dynamodb-vars" class="tab-content">
-                <h4 class="mb-md">DynamoDB Tables</h4>
+            <!-- TapDB Tab -->
+            <div id="tapdb-vars" class="tab-content">
+                <h4 class="mb-md">TapDB Configuration</h4>
                 <div class="alert alert-info mb-md">
-                    <strong>Note:</strong> DynamoDB is authoritative for workset state, locking, customer_id, and parameters.
+                    <strong>Note:</strong> TapDB is authoritative for workset state, locking, customer ownership, and manifests.
                 </div>
                 <div class="table-responsive">
                     <table class="table">
@@ -248,14 +248,39 @@
                         </thead>
                         <tbody>
                             <tr>
-                                <td><code>WORKSET_TABLE_NAME</code></td>
-                                <td>{% if env_vars.WORKSET_TABLE_NAME %}<span class="env-value set">{{ env_vars.WORKSET_TABLE_NAME }}</span>{% else %}<span class="env-value not-set">daylily-worksets (default)</span>{% endif %}</td>
-                                <td>DynamoDB table for workset state and metadata</td>
+                                <td><code>TAPDB_WORKSET_NAMESPACE</code></td>
+                                <td>{% if env_vars.TAPDB_WORKSET_NAMESPACE %}<span class="env-value set">{{ env_vars.TAPDB_WORKSET_NAMESPACE }}</span>{% else %}<span class="env-value not-set">tapdb-worksets (default)</span>{% endif %}</td>
+                                <td>TapDB namespace label for workset state and metadata</td>
                             </tr>
                             <tr>
-                                <td><code>CUSTOMER_TABLE_NAME</code></td>
-                                <td>{% if env_vars.CUSTOMER_TABLE_NAME %}<span class="env-value set">{{ env_vars.CUSTOMER_TABLE_NAME }}</span>{% else %}<span class="env-value not-set">daylily-customers (default)</span>{% endif %}</td>
-                                <td>DynamoDB table for customer configuration</td>
+                                <td><code>TAPDB_CUSTOMER_NAMESPACE</code></td>
+                                <td>{% if env_vars.TAPDB_CUSTOMER_NAMESPACE %}<span class="env-value set">{{ env_vars.TAPDB_CUSTOMER_NAMESPACE }}</span>{% else %}<span class="env-value not-set">tapdb-customers (default)</span>{% endif %}</td>
+                                <td>TapDB namespace label for customer configuration</td>
+                            </tr>
+                            <tr>
+                                <td><code>TAPDB_MANIFEST_NAMESPACE</code></td>
+                                <td>{% if env_vars.TAPDB_MANIFEST_NAMESPACE %}<span class="env-value set">{{ env_vars.TAPDB_MANIFEST_NAMESPACE }}</span>{% else %}<span class="env-value not-set">tapdb-manifests (default)</span>{% endif %}</td>
+                                <td>TapDB namespace label for manifest objects</td>
+                            </tr>
+                            <tr>
+                                <td><code>TAPDB_BUCKET_NAMESPACE</code></td>
+                                <td>{% if env_vars.TAPDB_BUCKET_NAMESPACE %}<span class="env-value set">{{ env_vars.TAPDB_BUCKET_NAMESPACE }}</span>{% else %}<span class="env-value not-set">tapdb-linked-buckets (default)</span>{% endif %}</td>
+                                <td>TapDB namespace label for linked bucket objects</td>
+                            </tr>
+                            <tr>
+                                <td><code>TAPDB_ENV</code></td>
+                                <td>{% if env_vars.TAPDB_ENV %}<span class="env-value set">{{ env_vars.TAPDB_ENV }}</span>{% else %}<span class="env-value not-set">not set</span>{% endif %}</td>
+                                <td>TapDB deployment environment selector</td>
+                            </tr>
+                            <tr>
+                                <td><code>TAPDB_DATABASE_NAME</code></td>
+                                <td>{% if env_vars.TAPDB_DATABASE_NAME %}<span class="env-value set">{{ env_vars.TAPDB_DATABASE_NAME }}</span>{% else %}<span class="env-value not-set">not set</span>{% endif %}</td>
+                                <td>TapDB database name override</td>
+                            </tr>
+                            <tr>
+                                <td><code>TAPDB_CLIENT_ID</code></td>
+                                <td>{% if env_vars.TAPDB_CLIENT_ID %}<span class="env-value set">{{ env_vars.TAPDB_CLIENT_ID }}</span>{% else %}<span class="env-value not-set">not set</span>{% endif %}</td>
+                                <td>Client namespace used for TapDB config selection</td>
                             </tr>
                         </tbody>
                     </table>

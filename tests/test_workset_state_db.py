@@ -1,4 +1,4 @@
-"""Tests for DynamoDB-based workset state management."""
+"""Tests for TapDB-based workset state management."""
 
 import datetime as dt
 from decimal import Decimal
@@ -15,9 +15,10 @@ from daylib.workset_state_db import (
 )
 
 
+
 @pytest.fixture
-def mock_dynamodb():
-    """Mock DynamoDB resource."""
+def mock_tapdb():
+    """Mock TapDB resource."""
     with patch("daylib.workset_state_db.boto3.Session") as mock_session:
         mock_resource = MagicMock()
         mock_table = MagicMock()
@@ -36,8 +37,8 @@ def mock_dynamodb():
 
 
 @pytest.fixture
-def state_db(mock_dynamodb):
-    """Create WorksetStateDB instance with mocked DynamoDB."""
+def state_db(mock_tapdb):
+    """Create WorksetStateDB instance with mocked TapDB."""
     db = WorksetStateDB(
         table_name="test-worksets",
         region="us-west-2",
@@ -47,9 +48,9 @@ def state_db(mock_dynamodb):
     return db
 
 
-def test_register_workset_success(state_db, mock_dynamodb):
+def test_register_workset_success(state_db, mock_tapdb):
     """Test successful workset registration."""
-    mock_table = mock_dynamodb["table"]
+    mock_table = mock_tapdb["table"]
     mock_table.put_item.return_value = {}
 
     result = state_db.register_workset(
@@ -77,11 +78,11 @@ def test_register_workset_success(state_db, mock_dynamodb):
     assert "state_history" in item
 
 
-def test_register_workset_already_exists(state_db, mock_dynamodb):
+def test_register_workset_already_exists(state_db, mock_tapdb):
     """Test registering a workset that already exists."""
     from botocore.exceptions import ClientError
 
-    mock_table = mock_dynamodb["table"]
+    mock_table = mock_tapdb["table"]
     mock_table.put_item.side_effect = ClientError(
         {"Error": {"Code": "ConditionalCheckFailedException"}},
         "PutItem",
@@ -98,7 +99,7 @@ def test_register_workset_already_exists(state_db, mock_dynamodb):
     assert result is False
 
 
-def test_register_workset_rejects_missing_customer_id(state_db, mock_dynamodb):
+def test_register_workset_rejects_missing_customer_id(state_db, mock_tapdb):
     """Test that registering a workset without customer_id is rejected."""
     import pytest
 
@@ -112,7 +113,7 @@ def test_register_workset_rejects_missing_customer_id(state_db, mock_dynamodb):
         )
 
 
-def test_register_workset_rejects_empty_customer_id(state_db, mock_dynamodb):
+def test_register_workset_rejects_empty_customer_id(state_db, mock_tapdb):
     """Test that registering a workset with empty customer_id is rejected."""
     import pytest
 
@@ -126,7 +127,7 @@ def test_register_workset_rejects_empty_customer_id(state_db, mock_dynamodb):
         )
 
 
-def test_register_workset_rejects_unknown_customer_id(state_db, mock_dynamodb):
+def test_register_workset_rejects_unknown_customer_id(state_db, mock_tapdb):
     """Test that registering a workset with 'Unknown' customer_id is rejected."""
     import pytest
 
@@ -140,7 +141,7 @@ def test_register_workset_rejects_unknown_customer_id(state_db, mock_dynamodb):
         )
 
 
-def test_register_workset_rejects_no_samples(state_db, mock_dynamodb):
+def test_register_workset_rejects_no_samples(state_db, mock_tapdb):
     """Test that registering a workset without samples is rejected."""
     import pytest
 
@@ -154,9 +155,9 @@ def test_register_workset_rejects_no_samples(state_db, mock_dynamodb):
         )
 
 
-def test_register_workset_skip_validation(state_db, mock_dynamodb):
+def test_register_workset_skip_validation(state_db, mock_tapdb):
     """Test that skip_validation=True bypasses customer_id and sample validation."""
-    mock_table = mock_dynamodb["table"]
+    mock_table = mock_tapdb["table"]
     mock_table.put_item.return_value = {}
 
     # This should succeed without customer_id or samples when skip_validation=True
@@ -172,9 +173,9 @@ def test_register_workset_skip_validation(state_db, mock_dynamodb):
     assert result is True
 
 
-def test_acquire_lock_success(state_db, mock_dynamodb):
+def test_acquire_lock_success(state_db, mock_tapdb):
     """Test successful lock acquisition."""
-    mock_table = mock_dynamodb["table"]
+    mock_table = mock_tapdb["table"]
     
     # Mock get_item to return a ready workset
     mock_table.get_item.return_value = {
@@ -197,9 +198,9 @@ def test_acquire_lock_success(state_db, mock_dynamodb):
     mock_table.update_item.assert_called_once()
 
 
-def test_acquire_lock_already_locked(state_db, mock_dynamodb):
+def test_acquire_lock_already_locked(state_db, mock_tapdb):
     """Test lock acquisition when workset is already locked."""
-    mock_table = mock_dynamodb["table"]
+    mock_table = mock_tapdb["table"]
 
     # Mock get_item to return a locked workset (recent lock)
     now = dt.datetime.now(dt.timezone.utc)
@@ -221,14 +222,14 @@ def test_acquire_lock_already_locked(state_db, mock_dynamodb):
     mock_table.update_item.assert_not_called()
 
 
-def test_acquire_lock_stale_lock(state_db, mock_dynamodb):
+def test_acquire_lock_stale_lock(state_db, mock_tapdb):
     """Test lock acquisition with stale lock (auto-release).
 
     Note: Locking is now separate from state. A workset with a stale lock
     is identified by lock_owner/lock_acquired_at fields, not by state.
     The state remains READY or RETRYING (lockable states).
     """
-    mock_table = mock_dynamodb["table"]
+    mock_table = mock_tapdb["table"]
 
     # Mock get_item to return a READY workset with stale lock fields
     stale_time = dt.datetime.now(dt.timezone.utc) - dt.timedelta(seconds=400)
@@ -254,9 +255,9 @@ def test_acquire_lock_stale_lock(state_db, mock_dynamodb):
     mock_table.update_item.assert_called_once()
 
 
-def test_release_lock_success(state_db, mock_dynamodb):
+def test_release_lock_success(state_db, mock_tapdb):
     """Test successful lock release."""
-    mock_table = mock_dynamodb["table"]
+    mock_table = mock_tapdb["table"]
     mock_table.update_item.return_value = {}
 
     result = state_db.release_lock(
@@ -268,9 +269,9 @@ def test_release_lock_success(state_db, mock_dynamodb):
     mock_table.update_item.assert_called_once()
 
 
-def test_update_state(state_db, mock_dynamodb):
+def test_update_state(state_db, mock_tapdb):
     """Test state update with audit trail."""
-    mock_table = mock_dynamodb["table"]
+    mock_table = mock_tapdb["table"]
     mock_table.update_item.return_value = {}
 
     state_db.update_state(
@@ -288,9 +289,9 @@ def test_update_state(state_db, mock_dynamodb):
     assert call_args.kwargs["ExpressionAttributeValues"][":cluster"] == "test-cluster"
 
 
-def test_get_ready_worksets_prioritized(state_db, mock_dynamodb):
+def test_get_ready_worksets_prioritized(state_db, mock_tapdb):
     """Test getting ready worksets ordered by priority."""
-    mock_table = mock_dynamodb["table"]
+    mock_table = mock_tapdb["table"]
 
     # Mock query to return worksets for each priority
     urgent_worksets = [
@@ -315,7 +316,7 @@ def test_get_ready_worksets_prioritized(state_db, mock_dynamodb):
 
 
 def test_serialize_metadata(state_db):
-    """Test metadata serialization for DynamoDB."""
+    """Test metadata serialization for TapDB."""
     data = {
         "cost": 10.5,
         "samples": 5,
@@ -334,7 +335,7 @@ def test_serialize_metadata(state_db):
 
 
 def test_deserialize_item(state_db):
-    """Test item deserialization from DynamoDB."""
+    """Test item deserialization from TapDB."""
     item = {
         "workset_id": "test",
         "cost": Decimal("10.5"),
@@ -394,9 +395,9 @@ def test_deserialize_item_does_not_overwrite_top_level_sample_count(state_db):
     assert deserialized["sample_count"] == 10
 
 
-def test_record_failure_transient(state_db, mock_dynamodb):
+def test_record_failure_transient(state_db, mock_tapdb):
     """Test recording a transient failure."""
-    mock_table = mock_dynamodb["table"]
+    mock_table = mock_tapdb["table"]
     mock_table.get_item.return_value = {
         "Item": {
             "workset_id": "ws-001",
@@ -417,9 +418,9 @@ def test_record_failure_transient(state_db, mock_dynamodb):
     mock_table.update_item.assert_called_once()
 
 
-def test_record_failure_permanent(state_db, mock_dynamodb):
+def test_record_failure_permanent(state_db, mock_tapdb):
     """Test recording a permanent failure."""
-    mock_table = mock_dynamodb["table"]
+    mock_table = mock_tapdb["table"]
     mock_table.get_item.return_value = {
         "Item": {
             "workset_id": "ws-001",
@@ -440,9 +441,9 @@ def test_record_failure_permanent(state_db, mock_dynamodb):
     mock_table.update_item.assert_called_once()
 
 
-def test_record_failure_max_retries_exceeded(state_db, mock_dynamodb):
+def test_record_failure_max_retries_exceeded(state_db, mock_tapdb):
     """Test recording failure when max retries exceeded."""
-    mock_table = mock_dynamodb["table"]
+    mock_table = mock_tapdb["table"]
     mock_table.get_item.return_value = {
         "Item": {
             "workset_id": "ws-001",
@@ -462,9 +463,9 @@ def test_record_failure_max_retries_exceeded(state_db, mock_dynamodb):
     assert should_retry is False
 
 
-def test_get_retryable_worksets(state_db, mock_dynamodb):
+def test_get_retryable_worksets(state_db, mock_tapdb):
     """Test getting retryable worksets."""
-    mock_table = mock_dynamodb["table"]
+    mock_table = mock_tapdb["table"]
     past_time = "2024-01-01T00:00:00Z"
     future_time = "2099-01-01T00:00:00Z"
 
@@ -490,9 +491,9 @@ def test_get_retryable_worksets(state_db, mock_dynamodb):
     assert retryable[0]["workset_id"] == "ws-001"
 
 
-def test_set_cluster_affinity(state_db, mock_dynamodb):
+def test_set_cluster_affinity(state_db, mock_tapdb):
     """Test setting cluster affinity."""
-    mock_table = mock_dynamodb["table"]
+    mock_table = mock_tapdb["table"]
     mock_table.update_item.return_value = {}
 
     success = state_db.set_cluster_affinity(
@@ -505,7 +506,7 @@ def test_set_cluster_affinity(state_db, mock_dynamodb):
     mock_table.update_item.assert_called_once()
 
 
-def test_get_concurrent_worksets_count(state_db, mock_dynamodb):
+def test_get_concurrent_worksets_count(state_db, mock_tapdb):
     """Test getting concurrent worksets count.
 
     Note: Concurrency count now includes:
@@ -513,7 +514,7 @@ def test_get_concurrent_worksets_count(state_db, mock_dynamodb):
     - Worksets with lock_owner set (via scan) - these are locked but may not have
       transitioned state yet
     """
-    mock_table = mock_dynamodb["table"]
+    mock_table = mock_tapdb["table"]
     # list_worksets_by_state uses query on state GSI
     mock_table.query.return_value = {
         "Items": [{"workset_id": "ws-001"}, {"workset_id": "ws-002"}]  # IN_PROGRESS
@@ -529,9 +530,9 @@ def test_get_concurrent_worksets_count(state_db, mock_dynamodb):
     assert count == 3
 
 
-def test_can_start_new_workset(state_db, mock_dynamodb):
+def test_can_start_new_workset(state_db, mock_tapdb):
     """Test checking if new workset can start."""
-    mock_table = mock_dynamodb["table"]
+    mock_table = mock_tapdb["table"]
     mock_table.query.return_value = {
         "Items": [{"workset_id": "ws-001"}]  # IN_PROGRESS
     }
@@ -544,9 +545,9 @@ def test_can_start_new_workset(state_db, mock_dynamodb):
     assert can_start is True
 
 
-def test_can_start_new_workset_at_limit(state_db, mock_dynamodb):
+def test_can_start_new_workset_at_limit(state_db, mock_tapdb):
     """Test checking if new workset can start when at limit."""
-    mock_table = mock_dynamodb["table"]
+    mock_table = mock_tapdb["table"]
     mock_table.query.return_value = {
         "Items": [{"workset_id": f"ws-{i}"} for i in range(5)]  # IN_PROGRESS
     }
@@ -562,9 +563,9 @@ def test_can_start_new_workset_at_limit(state_db, mock_dynamodb):
 # ==================== Archive/Delete/Restore Tests ====================
 
 
-def test_archive_workset_success(state_db, mock_dynamodb):
+def test_archive_workset_success(state_db, mock_tapdb):
     """Test successful workset archiving."""
-    mock_table = mock_dynamodb["table"]
+    mock_table = mock_tapdb["table"]
     mock_table.get_item.return_value = {
         "Item": {
             "workset_id": "test-ws-001",
@@ -592,9 +593,9 @@ def test_archive_workset_success(state_db, mock_dynamodb):
     assert expr_values[":reason"] == "No longer needed"
 
 
-def test_archive_workset_dynamodb_error(state_db, mock_dynamodb):
-    """Test archiving fails on DynamoDB error."""
-    mock_table = mock_dynamodb["table"]
+def test_archive_workset_tapdb_error(state_db, mock_tapdb):
+    """Test archiving fails on TapDB error."""
+    mock_table = mock_tapdb["table"]
     mock_table.update_item.side_effect = ClientError(
         {"Error": {"Code": "ConditionalCheckFailedException"}},
         "UpdateItem"
@@ -605,9 +606,9 @@ def test_archive_workset_dynamodb_error(state_db, mock_dynamodb):
     assert result is False
 
 
-def test_delete_workset_soft_delete_success(state_db, mock_dynamodb):
+def test_delete_workset_soft_delete_success(state_db, mock_tapdb):
     """Test successful soft delete of a workset."""
-    mock_table = mock_dynamodb["table"]
+    mock_table = mock_tapdb["table"]
     mock_table.get_item.return_value = {
         "Item": {
             "workset_id": "test-ws-001",
@@ -633,9 +634,9 @@ def test_delete_workset_soft_delete_success(state_db, mock_dynamodb):
     assert expr_values[":state"] == WorksetState.DELETED.value
 
 
-def test_delete_workset_hard_delete_success(state_db, mock_dynamodb):
+def test_delete_workset_hard_delete_success(state_db, mock_tapdb):
     """Test successful hard delete of a workset."""
-    mock_table = mock_dynamodb["table"]
+    mock_table = mock_tapdb["table"]
     mock_table.get_item.return_value = {
         "Item": {
             "workset_id": "test-ws-001",
@@ -656,9 +657,9 @@ def test_delete_workset_hard_delete_success(state_db, mock_dynamodb):
     assert call_args.kwargs["Key"] == {"workset_id": "test-ws-001"}
 
 
-def test_delete_workset_dynamodb_error(state_db, mock_dynamodb):
-    """Test deleting fails on DynamoDB error."""
-    mock_table = mock_dynamodb["table"]
+def test_delete_workset_tapdb_error(state_db, mock_tapdb):
+    """Test deleting fails on TapDB error."""
+    mock_table = mock_tapdb["table"]
     mock_table.update_item.side_effect = ClientError(
         {"Error": {"Code": "InternalServerError"}},
         "UpdateItem"
@@ -669,9 +670,9 @@ def test_delete_workset_dynamodb_error(state_db, mock_dynamodb):
     assert result is False
 
 
-def test_delete_workset_hard_delete_error(state_db, mock_dynamodb):
-    """Test hard delete fails on DynamoDB error."""
-    mock_table = mock_dynamodb["table"]
+def test_delete_workset_hard_delete_error(state_db, mock_tapdb):
+    """Test hard delete fails on TapDB error."""
+    mock_table = mock_tapdb["table"]
     mock_table.delete_item.side_effect = ClientError(
         {"Error": {"Code": "InternalServerError"}},
         "DeleteItem"
@@ -682,9 +683,9 @@ def test_delete_workset_hard_delete_error(state_db, mock_dynamodb):
     assert result is False
 
 
-def test_restore_workset_success(state_db, mock_dynamodb):
+def test_restore_workset_success(state_db, mock_tapdb):
     """Test successful restoration of an archived workset."""
-    mock_table = mock_dynamodb["table"]
+    mock_table = mock_tapdb["table"]
     mock_table.update_item.return_value = {}
 
     result = state_db.restore_workset(
@@ -702,10 +703,10 @@ def test_restore_workset_success(state_db, mock_dynamodb):
     assert expr_values[":archived"] == WorksetState.ARCHIVED.value
 
 
-def test_restore_workset_not_archived_fails(state_db, mock_dynamodb):
+def test_restore_workset_not_archived_fails(state_db, mock_tapdb):
     """Test restoring a non-archived workset fails due to condition check."""
-    mock_table = mock_dynamodb["table"]
-    # DynamoDB returns ConditionalCheckFailedException when condition not met
+    mock_table = mock_tapdb["table"]
+    # TapDB returns ConditionalCheckFailedException when condition not met
     mock_table.update_item.side_effect = ClientError(
         {"Error": {"Code": "ConditionalCheckFailedException"}},
         "UpdateItem"
@@ -716,9 +717,9 @@ def test_restore_workset_not_archived_fails(state_db, mock_dynamodb):
     assert result is False
 
 
-def test_list_archived_worksets(state_db, mock_dynamodb):
+def test_list_archived_worksets(state_db, mock_tapdb):
     """Test listing archived worksets."""
-    mock_table = mock_dynamodb["table"]
+    mock_table = mock_tapdb["table"]
     mock_table.query.return_value = {
         "Items": [
             {"workset_id": "ws-001", "state": WorksetState.ARCHIVED.value},
@@ -733,9 +734,9 @@ def test_list_archived_worksets(state_db, mock_dynamodb):
     mock_table.query.assert_called_once()
 
 
-def test_archive_workset_with_reason(state_db, mock_dynamodb):
+def test_archive_workset_with_reason(state_db, mock_tapdb):
     """Test archiving a workset with a reason."""
-    mock_table = mock_dynamodb["table"]
+    mock_table = mock_tapdb["table"]
     mock_table.update_item.return_value = {}
     # Mock get_workset to return a workset (archive_workset looks it up first)
     mock_table.get_item.return_value = {
@@ -754,9 +755,9 @@ def test_archive_workset_with_reason(state_db, mock_dynamodb):
     assert expr_values[":reason"] == "Data retention policy"
 
 
-def test_delete_workset_with_reason(state_db, mock_dynamodb):
+def test_delete_workset_with_reason(state_db, mock_tapdb):
     """Test soft deleting a workset with a reason."""
-    mock_table = mock_dynamodb["table"]
+    mock_table = mock_tapdb["table"]
     mock_table.update_item.return_value = {}
 
     result = state_db.delete_workset(
@@ -778,9 +779,9 @@ def test_delete_workset_with_reason(state_db, mock_dynamodb):
 class TestBucketNormalizationInStateDB:
     """Test bucket names are normalized in WorksetStateDB.register_workset."""
 
-    def test_register_workset_normalizes_s3_prefix(self, state_db, mock_dynamodb):
+    def test_register_workset_normalizes_s3_prefix(self, state_db, mock_tapdb):
         """Test register_workset strips s3:// prefix from bucket."""
-        mock_table = mock_dynamodb["table"]
+        mock_table = mock_tapdb["table"]
         mock_table.put_item.return_value = {}
 
         result = state_db.register_workset(
@@ -797,9 +798,9 @@ class TestBucketNormalizationInStateDB:
         item = call_args.kwargs["Item"]
         assert item["bucket"] == "my-bucket-with-prefix"
 
-    def test_register_workset_normalizes_bucket_with_path(self, state_db, mock_dynamodb):
+    def test_register_workset_normalizes_bucket_with_path(self, state_db, mock_tapdb):
         """Test register_workset extracts bucket from s3://bucket/path format."""
-        mock_table = mock_dynamodb["table"]
+        mock_table = mock_tapdb["table"]
         mock_table.put_item.return_value = {}
 
         result = state_db.register_workset(
@@ -816,7 +817,7 @@ class TestBucketNormalizationInStateDB:
         item = call_args.kwargs["Item"]
         assert item["bucket"] == "my-bucket"
 
-    def test_register_workset_rejects_empty_bucket(self, state_db, mock_dynamodb):
+    def test_register_workset_rejects_empty_bucket(self, state_db, mock_tapdb):
         """Test register_workset raises ValueError for empty bucket."""
         with pytest.raises(ValueError, match="Invalid bucket name"):
             state_db.register_workset(
@@ -828,7 +829,7 @@ class TestBucketNormalizationInStateDB:
                 customer_id="test-customer",
             )
 
-    def test_register_workset_rejects_s3_only_bucket(self, state_db, mock_dynamodb):
+    def test_register_workset_rejects_s3_only_bucket(self, state_db, mock_tapdb):
         """Test register_workset raises ValueError for 's3://' only bucket."""
         with pytest.raises(ValueError, match="Invalid bucket name"):
             state_db.register_workset(
@@ -840,9 +841,9 @@ class TestBucketNormalizationInStateDB:
                 customer_id="test-customer",
             )
 
-    def test_register_workset_plain_bucket_unchanged(self, state_db, mock_dynamodb):
+    def test_register_workset_plain_bucket_unchanged(self, state_db, mock_tapdb):
         """Test register_workset leaves plain bucket name unchanged."""
-        mock_table = mock_dynamodb["table"]
+        mock_table = mock_tapdb["table"]
         mock_table.put_item.return_value = {}
 
         result = state_db.register_workset(
@@ -863,9 +864,9 @@ class TestBucketNormalizationInStateDB:
 class TestCostReportStorage:
     """Tests for Phase 5B: Snakemake cost report storage."""
 
-    def test_update_cost_report_success(self, state_db, mock_dynamodb):
-        """Test storing cost report data in DynamoDB."""
-        mock_table = mock_dynamodb["table"]
+    def test_update_cost_report_success(self, state_db, mock_tapdb):
+        """Test storing cost report data in TapDB."""
+        mock_table = mock_tapdb["table"]
         mock_table.update_item.return_value = {}
 
         result = state_db.update_cost_report(
@@ -884,9 +885,9 @@ class TestCostReportStorage:
         assert expr_values[":rc"] == 42
         assert expr_values[":sc"] == 2
 
-    def test_update_cost_report_minimal(self, state_db, mock_dynamodb):
+    def test_update_cost_report_minimal(self, state_db, mock_tapdb):
         """Test storing cost report with only total cost."""
-        mock_table = mock_dynamodb["table"]
+        mock_table = mock_tapdb["table"]
         mock_table.update_item.return_value = {}
 
         result = state_db.update_cost_report(
@@ -902,9 +903,9 @@ class TestCostReportStorage:
         assert ":rc" not in expr_values
         assert ":sc" not in expr_values
 
-    def test_update_cost_report_handles_error(self, state_db, mock_dynamodb):
-        """Test update_cost_report returns False on DynamoDB error."""
-        mock_table = mock_dynamodb["table"]
+    def test_update_cost_report_handles_error(self, state_db, mock_tapdb):
+        """Test update_cost_report returns False on TapDB error."""
+        mock_table = mock_tapdb["table"]
         mock_table.update_item.side_effect = ClientError(
             {"Error": {"Code": "ValidationException", "Message": "Test error"}},
             "UpdateItem",
@@ -917,9 +918,9 @@ class TestCostReportStorage:
 
         assert result is False
 
-    def test_get_cost_report_success(self, state_db, mock_dynamodb):
-        """Test retrieving cost report data from DynamoDB."""
-        mock_table = mock_dynamodb["table"]
+    def test_get_cost_report_success(self, state_db, mock_tapdb):
+        """Test retrieving cost report data from TapDB."""
+        mock_table = mock_tapdb["table"]
         mock_table.get_item.return_value = {
             "Item": {
                 "total_compute_cost_usd": "12.3456",
@@ -939,18 +940,18 @@ class TestCostReportStorage:
         assert result["cost_report_rule_count"] == 42
         assert result["cost_report_sample_count"] == 2
 
-    def test_get_cost_report_not_found(self, state_db, mock_dynamodb):
+    def test_get_cost_report_not_found(self, state_db, mock_tapdb):
         """Test get_cost_report returns None when workset not found."""
-        mock_table = mock_dynamodb["table"]
+        mock_table = mock_tapdb["table"]
         mock_table.get_item.return_value = {}
 
         result = state_db.get_cost_report("nonexistent-ws")
 
         assert result is None
 
-    def test_get_cost_report_partial_data(self, state_db, mock_dynamodb):
+    def test_get_cost_report_partial_data(self, state_db, mock_tapdb):
         """Test get_cost_report handles partial data."""
-        mock_table = mock_dynamodb["table"]
+        mock_table = mock_tapdb["table"]
         mock_table.get_item.return_value = {
             "Item": {
                 "total_compute_cost_usd": "5.0",
@@ -967,9 +968,9 @@ class TestCostReportStorage:
 class TestStorageMetrics:
     """Tests for Phase 5C: FSx + S3 storage tracking."""
 
-    def test_update_storage_metrics_success(self, state_db, mock_dynamodb):
-        """Test storing storage metrics in DynamoDB."""
-        mock_table = mock_dynamodb["table"]
+    def test_update_storage_metrics_success(self, state_db, mock_tapdb):
+        """Test storing storage metrics in TapDB."""
+        mock_table = mock_tapdb["table"]
         mock_table.update_item.return_value = {}
 
         result = state_db.update_storage_metrics(
@@ -984,9 +985,9 @@ class TestStorageMetrics:
         assert expr_values[":rsb"] == 1073741824
         assert expr_values[":fsb"] == 2147483648
 
-    def test_update_storage_metrics_without_fsx(self, state_db, mock_dynamodb):
+    def test_update_storage_metrics_without_fsx(self, state_db, mock_tapdb):
         """Test storing storage metrics without FSx size."""
-        mock_table = mock_dynamodb["table"]
+        mock_table = mock_tapdb["table"]
         mock_table.update_item.return_value = {}
 
         result = state_db.update_storage_metrics(
@@ -1000,9 +1001,9 @@ class TestStorageMetrics:
         assert expr_values[":rsb"] == 536870912
         assert ":fsb" not in expr_values
 
-    def test_update_storage_metrics_handles_error(self, state_db, mock_dynamodb):
-        """Test update_storage_metrics returns False on DynamoDB error."""
-        mock_table = mock_dynamodb["table"]
+    def test_update_storage_metrics_handles_error(self, state_db, mock_tapdb):
+        """Test update_storage_metrics returns False on TapDB error."""
+        mock_table = mock_tapdb["table"]
         mock_table.update_item.side_effect = ClientError(
             {"Error": {"Code": "ValidationException", "Message": "Test error"}},
             "UpdateItem",
@@ -1015,9 +1016,9 @@ class TestStorageMetrics:
 
         assert result is False
 
-    def test_get_storage_metrics_success(self, state_db, mock_dynamodb):
-        """Test retrieving storage metrics from DynamoDB."""
-        mock_table = mock_dynamodb["table"]
+    def test_get_storage_metrics_success(self, state_db, mock_tapdb):
+        """Test retrieving storage metrics from TapDB."""
+        mock_table = mock_tapdb["table"]
         mock_table.get_item.return_value = {
             "Item": {
                 "results_storage_bytes": 1073741824,
@@ -1033,18 +1034,18 @@ class TestStorageMetrics:
         assert result["fsx_storage_bytes"] == 2147483648
         assert result["storage_calculated_at"] == "2026-01-24T10:00:00Z"
 
-    def test_get_storage_metrics_not_found(self, state_db, mock_dynamodb):
+    def test_get_storage_metrics_not_found(self, state_db, mock_tapdb):
         """Test get_storage_metrics returns None when workset not found."""
-        mock_table = mock_dynamodb["table"]
+        mock_table = mock_tapdb["table"]
         mock_table.get_item.return_value = {}
 
         result = state_db.get_storage_metrics("nonexistent-ws")
 
         assert result is None
 
-    def test_get_storage_metrics_partial_data(self, state_db, mock_dynamodb):
+    def test_get_storage_metrics_partial_data(self, state_db, mock_tapdb):
         """Test get_storage_metrics handles partial data."""
-        mock_table = mock_dynamodb["table"]
+        mock_table = mock_tapdb["table"]
         mock_table.get_item.return_value = {
             "Item": {
                 "results_storage_bytes": 500000,
@@ -1056,4 +1057,3 @@ class TestStorageMetrics:
         assert result is not None
         assert result["results_storage_bytes"] == 500000
         assert "fsx_storage_bytes" not in result
-

@@ -1,6 +1,6 @@
-"""Tests for workset_integration.py - State bridge between DynamoDB and S3.
+"""Tests for workset_integration.py - State bridge between TapDB and S3.
 
-Tests the integration layer that synchronizes DynamoDB state management
+Tests the integration layer that synchronizes TapDB state management
 with S3 sentinel-based processing system.
 """
 
@@ -46,8 +46,8 @@ def mock_s3_client():
 
 
 @pytest.fixture
-def mock_dynamodb():
-    """Mock DynamoDB resource for WorksetStateDB tests."""
+def mock_tapdb():
+    """Mock TapDB resource for WorksetStateDB tests."""
     with patch("daylib.workset_state_db.boto3.Session") as mock_session:
         mock_resource = MagicMock()
         mock_table = MagicMock()
@@ -125,7 +125,7 @@ class TestRegisterWorkset:
     """Test workset registration."""
 
     def test_register_workset_dual_write(self, integration, mock_state_db, mock_s3_client):
-        """Test registration writes to both DynamoDB and S3."""
+        """Test registration writes to both TapDB and S3."""
         result = integration.register_workset(
             workset_id="new-ws-001",
             bucket="test-bucket",
@@ -133,7 +133,7 @@ class TestRegisterWorkset:
             priority="high",
             metadata={"name": "Test Workset"},
             write_s3=True,
-            write_dynamodb=True,
+            write_tapdb=True,
         )
 
         assert result is True
@@ -141,14 +141,14 @@ class TestRegisterWorkset:
         # S3 sentinel should be written
         assert mock_s3_client.put_object.called
 
-    def test_register_workset_dynamodb_only(self, integration, mock_state_db, mock_s3_client):
-        """Test registration to DynamoDB only."""
+    def test_register_workset_tapdb_only(self, integration, mock_state_db, mock_s3_client):
+        """Test registration to TapDB only."""
         result = integration.register_workset(
             workset_id="db-only-ws",
             bucket="test-bucket",
             prefix="worksets/db-only-ws/",
             write_s3=False,
-            write_dynamodb=True,
+            write_tapdb=True,
         )
 
         assert result is True
@@ -161,7 +161,7 @@ class TestRegisterWorkset:
             bucket="test-bucket",
             prefix="worksets/s3-only-ws/",
             write_s3=True,
-            write_dynamodb=False,
+            write_tapdb=False,
         )
 
         assert result is True
@@ -229,21 +229,21 @@ class TestUpdateState:
     """Test state update synchronization."""
 
     def test_update_state_syncs_both(self, integration, mock_state_db, mock_s3_client):
-        """Test state update syncs to both DynamoDB and S3."""
+        """Test state update syncs to both TapDB and S3."""
         integration.update_state(
             workset_id="test-ws-001",
             new_state="in_progress",
             reason="Started processing",
             write_s3=True,
-            write_dynamodb=True,
+            write_tapdb=True,
         )
 
         mock_state_db.update_state.assert_called_once()
         # Should write new sentinel
         assert mock_s3_client.put_object.called
 
-    def test_update_state_dynamodb_only(self, integration, mock_state_db, mock_s3_client):
-        """Test state update to DynamoDB only."""
+    def test_update_state_tapdb_only(self, integration, mock_state_db, mock_s3_client):
+        """Test state update to TapDB only."""
         mock_s3_client.reset_mock()
 
         integration.update_state(
@@ -251,7 +251,7 @@ class TestUpdateState:
             new_state="in_progress",
             reason="Processing started",
             write_s3=False,
-            write_dynamodb=True,
+            write_tapdb=True,
         )
 
         mock_state_db.update_state.assert_called_once()
@@ -266,7 +266,7 @@ class TestUpdateState:
             new_state="complete",
             reason="Processing finished",
             write_s3=True,
-            write_dynamodb=False,
+            write_tapdb=False,
         )
 
         mock_state_db.update_state.assert_not_called()
@@ -274,10 +274,10 @@ class TestUpdateState:
 
 
 class TestGetReadyWorksets:
-    """Test getting ready worksets from DynamoDB."""
+    """Test getting ready worksets from TapDB."""
 
     def test_get_ready_worksets(self, integration, mock_state_db):
-        """Test getting ready worksets from DynamoDB."""
+        """Test getting ready worksets from TapDB."""
         mock_state_db.get_ready_worksets_prioritized.return_value = [
             {
                 "workset_id": "ws-001",
@@ -351,10 +351,10 @@ class TestBuildWorkYaml:
         assert 's3://customer-bucket/worksets/test-ws/results/' in work_yaml_content
 
 
-class TestSyncDynamoDBToS3:
-    """Test syncing DynamoDB worksets to S3."""
+class TestSyncTapDBToS3:
+    """Test syncing TapDB worksets to S3."""
 
-    def test_sync_dynamodb_to_s3(self, integration, mock_state_db, mock_s3_client):
+    def test_sync_tapdb_to_s3(self, integration, mock_state_db, mock_s3_client):
         """Test syncing a single workset to S3."""
         # Return a dict with metadata as a dict, not a JSON string
         mock_state_db.get_workset.return_value = {
@@ -368,7 +368,7 @@ class TestSyncDynamoDBToS3:
             },
         }
 
-        result = integration.sync_dynamodb_to_s3("sync-ws")
+        result = integration.sync_tapdb_to_s3("sync-ws")
 
         assert result is True
         # Should write work YAML and sentinel
@@ -407,7 +407,7 @@ class TestMonitorWorksetExistenceCheck:
         return mock_db
 
     def test_workset_exists_returns_true_when_found(self, mock_state_db_for_monitor):
-        """Test that _workset_exists_in_dynamodb returns True when workset exists."""
+        """Test that _workset_exists_in_tapdb returns True when workset exists."""
         from daylib.workset_monitor import WorksetMonitor
 
         mock_state_db_for_monitor.get_workset.return_value = {
@@ -418,13 +418,13 @@ class TestMonitorWorksetExistenceCheck:
         monitor = WorksetMonitor.__new__(WorksetMonitor)
         monitor.state_db = mock_state_db_for_monitor
 
-        result = monitor._workset_exists_in_dynamodb("test-ws-001")
+        result = monitor._workset_exists_in_tapdb("test-ws-001")
 
         assert result is True
         mock_state_db_for_monitor.get_workset.assert_called_once_with("test-ws-001")
 
     def test_workset_exists_returns_false_when_not_found(self, mock_state_db_for_monitor):
-        """Test that _workset_exists_in_dynamodb returns False when workset doesn't exist."""
+        """Test that _workset_exists_in_tapdb returns False when workset doesn't exist."""
         from daylib.workset_monitor import WorksetMonitor
 
         mock_state_db_for_monitor.get_workset.return_value = None
@@ -432,19 +432,19 @@ class TestMonitorWorksetExistenceCheck:
         monitor = WorksetMonitor.__new__(WorksetMonitor)
         monitor.state_db = mock_state_db_for_monitor
 
-        result = monitor._workset_exists_in_dynamodb("unknown-ws")
+        result = monitor._workset_exists_in_tapdb("unknown-ws")
 
         assert result is False
         mock_state_db_for_monitor.get_workset.assert_called_once_with("unknown-ws")
 
     def test_workset_exists_returns_false_when_no_state_db(self):
-        """Test that _workset_exists_in_dynamodb returns False when state_db is None."""
+        """Test that _workset_exists_in_tapdb returns False when state_db is None."""
         from daylib.workset_monitor import WorksetMonitor
 
         monitor = WorksetMonitor.__new__(WorksetMonitor)
         monitor.state_db = None
 
-        result = monitor._workset_exists_in_dynamodb("test-ws-001")
+        result = monitor._workset_exists_in_tapdb("test-ws-001")
 
         assert result is False
 
@@ -452,25 +452,25 @@ class TestMonitorWorksetExistenceCheck:
         """Test that monitor does NOT call register_workset for unknown worksets."""
         from daylib.workset_monitor import WorksetMonitor
 
-        # Workset doesn't exist in DynamoDB
+        # Workset doesn't exist in TapDB
         mock_state_db_for_monitor.get_workset.return_value = None
 
         monitor = WorksetMonitor.__new__(WorksetMonitor)
         monitor.state_db = mock_state_db_for_monitor
 
         # Check existence - should return False
-        result = monitor._workset_exists_in_dynamodb("new-workset")
+        result = monitor._workset_exists_in_tapdb("new-workset")
 
         assert result is False
         # Most importantly: register_workset should NOT be called
         mock_state_db_for_monitor.register_workset.assert_not_called()
 
 
-class TestMonitorReconcileDynamoDBState:
-    """Tests for monitor's DynamoDB/S3 state reconciliation on restart.
+class TestMonitorReconcileTapDBState:
+    """Tests for monitor's TapDB/S3 state reconciliation on restart.
 
     These tests verify that when the monitor restarts after a crash
-    (mid-SSH failure), it correctly reconciles DynamoDB state with
+    (mid-SSH failure), it correctly reconciles TapDB state with
     S3 sentinel files.
     """
 
@@ -484,13 +484,13 @@ class TestMonitorReconcileDynamoDBState:
         monitor.dry_run = False
         return monitor, SENTINEL_FILES
 
-    def test_reconcile_updates_dynamodb_when_s3_shows_complete(self, mock_monitor_for_reconciliation):
-        """Test that DynamoDB is updated when S3 shows complete but DynamoDB shows in_progress."""
+    def test_reconcile_updates_tapdb_when_s3_shows_complete(self, mock_monitor_for_reconciliation):
+        """Test that TapDB is updated when S3 shows complete but TapDB shows in_progress."""
         from daylib.workset_monitor import Workset
 
         monitor, SENTINEL_FILES = mock_monitor_for_reconciliation
 
-        # S3 shows complete, DynamoDB shows in_progress
+        # S3 shows complete, TapDB shows in_progress
         workset = Workset(
             name="test-ws-001",
             prefix="worksets/test-ws-001/",
@@ -503,21 +503,21 @@ class TestMonitorReconcileDynamoDBState:
             "state": "in_progress",
         }
 
-        monitor._reconcile_dynamodb_state(workset)
+        monitor._reconcile_tapdb_state(workset)
 
-        # Verify DynamoDB state was updated to complete
+        # Verify TapDB state was updated to complete
         monitor.state_db.update_state.assert_called_once()
         call_kwargs = monitor.state_db.update_state.call_args.kwargs
         assert call_kwargs["workset_id"] == "test-ws-001"
         assert "Reconciled" in call_kwargs["reason"]
 
-    def test_reconcile_updates_dynamodb_when_s3_shows_error(self, mock_monitor_for_reconciliation):
-        """Test that DynamoDB is updated when S3 shows error but DynamoDB shows ready."""
+    def test_reconcile_updates_tapdb_when_s3_shows_error(self, mock_monitor_for_reconciliation):
+        """Test that TapDB is updated when S3 shows error but TapDB shows ready."""
         from daylib.workset_monitor import Workset
 
         monitor, SENTINEL_FILES = mock_monitor_for_reconciliation
 
-        # S3 shows error, DynamoDB shows ready
+        # S3 shows error, TapDB shows ready
         workset = Workset(
             name="test-ws-002",
             prefix="worksets/test-ws-002/",
@@ -530,20 +530,20 @@ class TestMonitorReconcileDynamoDBState:
             "state": "ready",
         }
 
-        monitor._reconcile_dynamodb_state(workset)
+        monitor._reconcile_tapdb_state(workset)
 
-        # Verify DynamoDB state was updated to error
+        # Verify TapDB state was updated to error
         monitor.state_db.update_state.assert_called_once()
         call_kwargs = monitor.state_db.update_state.call_args.kwargs
         assert call_kwargs["workset_id"] == "test-ws-002"
 
-    def test_reconcile_does_not_overwrite_terminal_dynamodb_state(self, mock_monitor_for_reconciliation):
-        """Test that terminal states in DynamoDB are not overwritten."""
+    def test_reconcile_does_not_overwrite_terminal_tapdb_state(self, mock_monitor_for_reconciliation):
+        """Test that terminal states in TapDB are not overwritten."""
         from daylib.workset_monitor import Workset
 
         monitor, SENTINEL_FILES = mock_monitor_for_reconciliation
 
-        # DynamoDB already shows complete (terminal state)
+        # TapDB already shows complete (terminal state)
         workset = Workset(
             name="test-ws-003",
             prefix="worksets/test-ws-003/",
@@ -556,18 +556,18 @@ class TestMonitorReconcileDynamoDBState:
             "state": "complete",
         }
 
-        monitor._reconcile_dynamodb_state(workset)
+        monitor._reconcile_tapdb_state(workset)
 
         # update_state should NOT be called for terminal states
         monitor.state_db.update_state.assert_not_called()
 
     def test_reconcile_updates_ready_to_in_progress(self, mock_monitor_for_reconciliation):
-        """Test that DynamoDB is updated from ready to in_progress when S3 shows in_progress."""
+        """Test that TapDB is updated from ready to in_progress when S3 shows in_progress."""
         from daylib.workset_monitor import Workset
 
         monitor, SENTINEL_FILES = mock_monitor_for_reconciliation
 
-        # S3 shows in_progress, DynamoDB shows ready
+        # S3 shows in_progress, TapDB shows ready
         workset = Workset(
             name="test-ws-004",
             prefix="worksets/test-ws-004/",
@@ -583,18 +583,18 @@ class TestMonitorReconcileDynamoDBState:
             "state": "ready",
         }
 
-        monitor._reconcile_dynamodb_state(workset)
+        monitor._reconcile_tapdb_state(workset)
 
-        # Verify DynamoDB state was updated to in_progress
+        # Verify TapDB state was updated to in_progress
         monitor.state_db.update_state.assert_called_once()
 
-    def test_reconcile_skips_workset_not_in_dynamodb(self, mock_monitor_for_reconciliation):
-        """Test that reconciliation is skipped for worksets not in DynamoDB."""
+    def test_reconcile_skips_workset_not_in_tapdb(self, mock_monitor_for_reconciliation):
+        """Test that reconciliation is skipped for worksets not in TapDB."""
         from daylib.workset_monitor import Workset
 
         monitor, SENTINEL_FILES = mock_monitor_for_reconciliation
 
-        # Workset exists in S3 but not in DynamoDB
+        # Workset exists in S3 but not in TapDB
         workset = Workset(
             name="orphan-ws",
             prefix="worksets/orphan-ws/",
@@ -604,7 +604,7 @@ class TestMonitorReconcileDynamoDBState:
         )
         monitor.state_db.get_workset.return_value = None
 
-        monitor._reconcile_dynamodb_state(workset)
+        monitor._reconcile_tapdb_state(workset)
 
         # update_state should NOT be called - monitor doesn't create worksets
         monitor.state_db.update_state.assert_not_called()
@@ -625,10 +625,10 @@ class TestMonitorReconcileDynamoDBState:
         )
 
         # Should not raise, just return early
-        monitor._reconcile_dynamodb_state(workset)
+        monitor._reconcile_tapdb_state(workset)
 
     def test_reconcile_handles_update_failure_gracefully(self, mock_monitor_for_reconciliation):
-        """Test that reconciliation handles DynamoDB update failures gracefully."""
+        """Test that reconciliation handles TapDB update failures gracefully."""
         from daylib.workset_monitor import Workset
 
         monitor, SENTINEL_FILES = mock_monitor_for_reconciliation
@@ -644,10 +644,10 @@ class TestMonitorReconcileDynamoDBState:
             "workset_id": "test-ws-006",
             "state": "in_progress",
         }
-        monitor.state_db.update_state.side_effect = Exception("DynamoDB error")
+        monitor.state_db.update_state.side_effect = Exception("TapDB error")
 
         # Should not raise, just log warning
-        monitor._reconcile_dynamodb_state(workset)
+        monitor._reconcile_tapdb_state(workset)
 
     def test_reconcile_called_during_check_workset_state(self, mock_monitor_for_reconciliation):
         """Test that reconciliation is called during _check_workset_state."""
@@ -1150,10 +1150,10 @@ class TestParseBenchmarkCosts:
 
 
 class TestHeadnodeAnalysisPath:
-    """Tests for headnode_analysis_path storage in DynamoDB."""
+    """Tests for headnode_analysis_path storage in TapDB."""
 
     def test_record_pipeline_location_stores_path(self):
-        """Test that _record_pipeline_location stores headnode_analysis_path in DynamoDB."""
+        """Test that _record_pipeline_location stores headnode_analysis_path in TapDB."""
         from daylib.workset_monitor import WorksetMonitor
         from pathlib import Path, PurePosixPath
         import tempfile
@@ -1175,14 +1175,14 @@ class TestHeadnodeAnalysisPath:
             location = PurePosixPath("/fsx/analysis_results/ubuntu/test-ws-path-001/daylily-omics-analysis")
             monitor._record_pipeline_location(workset, location)
 
-            # Verify DynamoDB was called with headnode_analysis_path
+            # Verify TapDB was called with headnode_analysis_path
             monitor.state_db.update_execution_environment.assert_called_once_with(
                 "test-ws-path-001",
                 headnode_analysis_path="/fsx/analysis_results/ubuntu/test-ws-path-001/daylily-omics-analysis",
             )
 
     def test_record_pipeline_location_handles_db_failure(self):
-        """Test that _record_pipeline_location continues on DynamoDB failure."""
+        """Test that _record_pipeline_location continues on TapDB failure."""
         from daylib.workset_monitor import WorksetMonitor
         from pathlib import Path, PurePosixPath
         import tempfile
@@ -1237,8 +1237,8 @@ class TestProgressStepsMetrics:
 class TestUpdateExecutionEnvironmentHeadnodePath:
     """Tests for headnode_analysis_path in update_execution_environment."""
 
-    def test_update_with_headnode_analysis_path(self, mock_dynamodb):
-        """Test that headnode_analysis_path is stored in DynamoDB."""
+    def test_update_with_headnode_analysis_path(self, mock_tapdb):
+        """Test that headnode_analysis_path is stored in TapDB."""
         from daylib.workset_state_db import WorksetStateDB
 
         db = WorksetStateDB(
@@ -1247,7 +1247,7 @@ class TestUpdateExecutionEnvironmentHeadnodePath:
             profile=None,
         )
 
-        mock_table = mock_dynamodb["table"]
+        mock_table = mock_tapdb["table"]
         mock_table.update_item.return_value = {}
 
         db.update_execution_environment(
@@ -1266,7 +1266,7 @@ class TestUpdateExecutionEnvironmentHeadnodePath:
         assert ":analysis_path" in expr_values
         assert expr_values[":analysis_path"] == "/fsx/analysis_results/ubuntu/test-ws-001/daylily-omics-analysis"
 
-    def test_update_with_multiple_fields_including_path(self, mock_dynamodb):
+    def test_update_with_multiple_fields_including_path(self, mock_tapdb):
         """Test updating multiple fields including headnode_analysis_path."""
         from daylib.workset_state_db import WorksetStateDB
 
@@ -1276,7 +1276,7 @@ class TestUpdateExecutionEnvironmentHeadnodePath:
             profile=None,
         )
 
-        mock_table = mock_dynamodb["table"]
+        mock_table = mock_tapdb["table"]
         mock_table.update_item.return_value = {}
 
         db.update_execution_environment(
@@ -1534,7 +1534,7 @@ class TestBucketNormalizationAtIngress:
             priority="normal",
             metadata={"samples": []},
             write_s3=False,
-            write_dynamodb=True,
+            write_tapdb=True,
         )
 
         assert result is True
@@ -1584,10 +1584,10 @@ class TestBucketNormalizationAtIngress:
 
         assert result is True
 
-    def test_sync_dynamodb_to_s3_normalizes_bucket_from_workset(
+    def test_sync_tapdb_to_s3_normalizes_bucket_from_workset(
         self, integration, mock_state_db, mock_s3_client
     ):
-        """Test sync_dynamodb_to_s3 normalizes bucket from workset data."""
+        """Test sync_tapdb_to_s3 normalizes bucket from workset data."""
         mock_state_db.get_workset.return_value = {
             "workset_id": "sync-ws",
             "state": "ready",
@@ -1596,7 +1596,7 @@ class TestBucketNormalizationAtIngress:
             "metadata": {"samples": []},
         }
 
-        result = integration.sync_dynamodb_to_s3("sync-ws")
+        result = integration.sync_tapdb_to_s3("sync-ws")
 
         assert result is True
         # Verify S3 operations use normalized bucket
@@ -2158,11 +2158,11 @@ class TestExecutionContext:
         assert reconstructed.export_s3_uri == original.export_s3_uri
 
 
-class TestExecutionContextDynamoDB:
-    """Tests for ExecutionContext storage in DynamoDB."""
+class TestExecutionContextTapDB:
+    """Tests for ExecutionContext storage in TapDB."""
 
     def test_set_execution_context_stores_correctly(self):
-        """Test that set_execution_context stores the context in DynamoDB."""
+        """Test that set_execution_context stores the context in TapDB."""
         with patch("daylib.workset_state_db.boto3.Session") as mock_session:
             mock_resource = MagicMock()
             mock_table = MagicMock()
@@ -2201,7 +2201,7 @@ class TestExecutionContextDynamoDB:
 
             db = WorksetStateDB(table_name="test-table", region="us-west-2")
 
-            # Mock the response from DynamoDB
+            # Mock the response from TapDB
             mock_table.get_item.return_value = {
                 "Item": {
                     "execution_context": {
@@ -2276,7 +2276,7 @@ class TestListWorksetsByCustomerGSI:
         db = WorksetStateDB.__new__(WorksetStateDB)
         db.table_name = "test-table"
         db.table = MagicMock()
-        db.dynamodb = MagicMock()
+        db.tapdb = MagicMock()
         return db
 
     def test_list_worksets_by_customer_returns_matching(self, mock_db):
@@ -2871,7 +2871,7 @@ class TestCostReportIntegration:
             yield monitor, mock_state_db
 
     def test_collect_post_export_metrics_stores_cost_report(self, monitor_with_state_db):
-        """Test that _collect_post_export_metrics stores cost report in DynamoDB."""
+        """Test that _collect_post_export_metrics stores cost report in TapDB."""
         from unittest.mock import MagicMock, patch
 
         monitor, mock_state_db = monitor_with_state_db
@@ -2975,7 +2975,7 @@ class TestStorageMetricsIntegration:
             yield monitor, mock_state_db
 
     def test_collect_post_export_metrics_stores_storage_metrics(self, monitor_with_state_db):
-        """Test that _collect_post_export_metrics stores storage metrics in DynamoDB."""
+        """Test that _collect_post_export_metrics stores storage metrics in TapDB."""
         from unittest.mock import MagicMock, patch
 
         monitor, mock_state_db = monitor_with_state_db
@@ -3034,7 +3034,7 @@ class TestStorageMetricsIntegration:
         from unittest.mock import MagicMock, patch
 
         monitor, mock_state_db = monitor_with_state_db
-        mock_state_db.update_storage_metrics.side_effect = Exception("DynamoDB error")
+        mock_state_db.update_storage_metrics.side_effect = Exception("TapDB error")
 
         mock_workset = MagicMock()
         mock_workset.name = "test-ws-storage-error"
@@ -3476,7 +3476,7 @@ class TestConcurrentProcessorIntegration:
                     scheduler=mock_scheduler,
                 )
 
-        with pytest.raises(MonitorError, match="DynamoDB state_db is required"):
+        with pytest.raises(MonitorError, match="TapDB state_db is required"):
             monitor.run_with_concurrent_processor()
 
     def test_run_with_concurrent_processor_creates_processor(self, monitor_with_all_components):

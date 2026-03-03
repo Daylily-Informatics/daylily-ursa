@@ -81,7 +81,7 @@ def calculate_cost_with_efficiency(total_size_gb: float) -> float:
 def convert_customer_for_template(customer_config):
     """Convert CustomerConfig with Decimal fields to template-friendly object.
 
-    DynamoDB returns Decimal types which can't be used in Jinja2 template math operations.
+    TapDB returns Decimal types which can't be used in Jinja2 template math operations.
     This converts them to native Python types.
     """
     if not customer_config:

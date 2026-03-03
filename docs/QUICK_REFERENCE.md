@@ -268,9 +268,9 @@ print(f"Storage: {usage['storage_gb']} GB")
 export AWS_PROFILE=my-profile
 export AWS_REGION=us-west-2
 
-# DynamoDB table names
-export WORKSET_TABLE_NAME=daylily-worksets
-export CUSTOMER_TABLE_NAME=daylily-customers
+# TapDB table names
+export TAPDB_WORKSET_NAMESPACE=tapdb-worksets
+export TAPDB_CUSTOMER_NAMESPACE=tapdb-customers
 
 # Cognito configuration
 export COGNITO_USER_POOL_ID=us-west-2_XXXXXXXXX
@@ -300,7 +300,7 @@ pytest tests/test_workset_state_db.py::test_record_failure_transient -v
 
 ## Troubleshooting
 
-### Check DynamoDB Connection
+### Check TapDB Connection
 ```python
 state_db = WorksetStateDB("daylily-worksets", "us-west-2")
 # If this succeeds, connection is working

@@ -9,7 +9,7 @@
 
 Daylily Ursa provides a comprehensive workset management system for orchestrating genomics analysis pipelines. It handles:
 
-- **Workset Lifecycle Management** — Create, monitor, and manage analysis worksets through DynamoDB-backed state machine
+- **Workset Lifecycle Management** — Create, monitor, and manage analysis worksets through TapDB-backed state machine
 - **File Registry** — Track and validate input/output files across S3 buckets
 - **Customer Portal** — Web-based interface for customers to submit and monitor worksets
 - **Biospecimen Management** — Track samples, manifests, and metadata
@@ -92,7 +92,7 @@ ursa test lint                 # Run ruff linter
 ursa test format               # Format code
 
 # AWS resources
-ursa aws setup                 # Create DynamoDB tables
+ursa aws setup                 # Create TapDB tables
 ursa aws status                # Check resource status
 ursa aws teardown              # Delete all resources (destructive)
 
@@ -130,9 +130,9 @@ daylily-workset-monitor config/workset-monitor-config.yaml
 ```
 daylib/
 ├── workset_api.py          # FastAPI application entry point
-├── workset_state_db.py     # DynamoDB state management
+├── workset_state_db.py     # TapDB state management
 ├── workset_monitor.py      # S3 workset monitoring daemon
-├── workset_integration.py  # DynamoDB/S3 integration layer
+├── workset_integration.py  # TapDB/S3 integration layer
 ├── workset_metrics.py      # Storage and performance metrics
 ├── workset_customer.py     # Customer/tenant management
 ├── workset_multi_region.py # Multi-region coordination
@@ -176,9 +176,9 @@ URSA_ALLOWED_REGIONS=us-west-2,us-east-1
 # NOTE: S3 buckets are discovered from cluster tags (aws-parallelcluster-monitor-bucket)
 # No bucket environment variables are required.
 
-# DynamoDB Tables (auto-created if missing)
-WORKSET_TABLE_NAME=daylily-worksets
-CUSTOMER_TABLE_NAME=daylily-customers
+# TapDB Tables (auto-created if missing)
+TAPDB_WORKSET_NAMESPACE=tapdb-worksets
+TAPDB_CUSTOMER_NAMESPACE=tapdb-customers
 DAYLILY_FILE_REGISTRY_TABLE=daylily-file-registry
 
 # Authentication (optional)

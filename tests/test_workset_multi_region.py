@@ -15,6 +15,7 @@ from daylib.workset_multi_region import (
 from daylib.workset_state_db import WorksetPriority
 
 
+
 @pytest.fixture
 def mock_state_db():
     """Create mock WorksetStateDB."""
@@ -613,7 +614,7 @@ class TestWorksetIntegrationClusterRegion:
             preferred_cluster="daylily-us-west-2-001",
             cluster_region="us-west-2",
             write_s3=False,
-            write_dynamodb=True,
+            write_tapdb=True,
         )
 
         assert result is True
@@ -650,7 +651,7 @@ class TestWorksetIntegrationClusterRegion:
             },
             customer_id="test-customer",
             write_s3=False,
-            write_dynamodb=True,
+            write_tapdb=True,
         )
 
         assert result is True

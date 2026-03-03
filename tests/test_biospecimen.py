@@ -21,13 +21,14 @@ from daylib.biospecimen import (
 )
 
 
+
 # =============================================================================
 # Fixtures
 # =============================================================================
 
 @pytest.fixture
-def mock_dynamodb():
-    """Mock DynamoDB resource for biospecimen tests."""
+def mock_tapdb():
+    """Mock TapDB resource for biospecimen tests."""
     with patch("daylib.biospecimen.boto3.Session") as mock_session:
         mock_resource = MagicMock()
         mock_subjects_table = MagicMock()
@@ -61,8 +62,8 @@ def mock_dynamodb():
 
 
 @pytest.fixture
-def registry(mock_dynamodb):
-    """Create a BiospecimenRegistry with mocked DynamoDB tables."""
+def registry(mock_tapdb):
+    """Create a BiospecimenRegistry with mocked TapDB tables."""
     reg = BiospecimenRegistry(
         subjects_table_name="test-subjects",
         biospecimens_table_name="test-biospecimens",
@@ -186,9 +187,9 @@ class TestIDGeneration:
 class TestSubjectCRUD:
     """Tests for Subject CRUD operations."""
 
-    def test_create_subject_success(self, registry, mock_dynamodb, sample_subject):
+    def test_create_subject_success(self, registry, mock_tapdb, sample_subject):
         """Successfully create a new subject."""
-        mock_table = mock_dynamodb["subjects_table"]
+        mock_table = mock_tapdb["subjects_table"]
         mock_table.put_item.return_value = {}
 
         result = registry.create_subject(sample_subject)
@@ -196,9 +197,9 @@ class TestSubjectCRUD:
         assert result is True
         mock_table.put_item.assert_called_once()
 
-    def test_create_subject_duplicate_fails(self, registry, mock_dynamodb, sample_subject):
+    def test_create_subject_duplicate_fails(self, registry, mock_tapdb, sample_subject):
         """Creating duplicate subject returns False."""
-        mock_table = mock_dynamodb["subjects_table"]
+        mock_table = mock_tapdb["subjects_table"]
         mock_table.put_item.side_effect = ClientError(
             {"Error": {"Code": "ConditionalCheckFailedException", "Message": "Item exists"}},
             "PutItem"
@@ -208,10 +209,10 @@ class TestSubjectCRUD:
 
         assert result is False
 
-    def test_get_subject_exists(self, registry, mock_dynamodb, sample_subject):
+    def test_get_subject_exists(self, registry, mock_tapdb, sample_subject):
         """Retrieve an existing subject."""
-        mock_table = mock_dynamodb["subjects_table"]
-        # Return the subject as dict (simulating DynamoDB)
+        mock_table = mock_tapdb["subjects_table"]
+        # Return the subject as dict (simulating TapDB)
         item = asdict(sample_subject)
         mock_table.get_item.return_value = {"Item": item}
 
@@ -223,18 +224,18 @@ class TestSubjectCRUD:
         assert fetched.display_name == sample_subject.display_name
         assert fetched.sex == sample_subject.sex
 
-    def test_get_subject_not_found(self, registry, mock_dynamodb):
+    def test_get_subject_not_found(self, registry, mock_tapdb):
         """Get non-existent subject returns None."""
-        mock_table = mock_dynamodb["subjects_table"]
+        mock_table = mock_tapdb["subjects_table"]
         mock_table.get_item.return_value = {}  # No Item key
 
         fetched = registry.get_subject("subj-nonexistent")
 
         assert fetched is None
 
-    def test_get_subject_preserves_list_fields(self, registry, mock_dynamodb, sample_subject):
+    def test_get_subject_preserves_list_fields(self, registry, mock_tapdb, sample_subject):
         """Verify external_ids and tags are preserved after roundtrip."""
-        mock_table = mock_dynamodb["subjects_table"]
+        mock_table = mock_tapdb["subjects_table"]
         item = asdict(sample_subject)
         mock_table.get_item.return_value = {"Item": item}
 
@@ -245,9 +246,9 @@ class TestSubjectCRUD:
         assert isinstance(fetched.external_ids, list)
         assert isinstance(fetched.tags, list)
 
-    def test_create_subject_empty_lists(self, registry, mock_dynamodb):
+    def test_create_subject_empty_lists(self, registry, mock_tapdb):
         """Create subject with empty lists for external_ids and tags."""
-        mock_table = mock_dynamodb["subjects_table"]
+        mock_table = mock_tapdb["subjects_table"]
         mock_table.put_item.return_value = {}
 
         subject = Subject(
@@ -264,9 +265,9 @@ class TestSubjectCRUD:
         assert item["external_ids"] == []
         assert item["tags"] == []
 
-    def test_update_subject_success(self, registry, mock_dynamodb, sample_subject):
+    def test_update_subject_success(self, registry, mock_tapdb, sample_subject):
         """Successfully update a subject."""
-        mock_table = mock_dynamodb["subjects_table"]
+        mock_table = mock_tapdb["subjects_table"]
         mock_table.put_item.return_value = {}
 
         sample_subject.display_name = "Jane Doe"
@@ -278,9 +279,9 @@ class TestSubjectCRUD:
         assert result is True
         mock_table.put_item.assert_called_once()
 
-    def test_list_subjects_by_customer(self, registry, mock_dynamodb):
+    def test_list_subjects_by_customer(self, registry, mock_tapdb):
         """List subjects filtered by customer_id."""
-        mock_table = mock_dynamodb["subjects_table"]
+        mock_table = mock_tapdb["subjects_table"]
 
         # Create test subjects
         subj1 = Subject(
@@ -304,9 +305,9 @@ class TestSubjectCRUD:
         assert len(cust1_subjects) == 2
         mock_table.query.assert_called_once()
 
-    def test_list_subjects_limit(self, registry, mock_dynamodb):
+    def test_list_subjects_limit(self, registry, mock_tapdb):
         """Test listing subjects with limit."""
-        mock_table = mock_dynamodb["subjects_table"]
+        mock_table = mock_tapdb["subjects_table"]
 
         # Create test subjects
         subjects = [
@@ -338,9 +339,9 @@ class TestSubjectCRUD:
 class TestBiosampleCRUD:
     """Tests for Biosample CRUD operations."""
 
-    def test_create_biosample_success(self, registry, mock_dynamodb, sample_biosample):
+    def test_create_biosample_success(self, registry, mock_tapdb, sample_biosample):
         """Successfully create a new biosample."""
-        mock_table = mock_dynamodb["biosamples_table"]
+        mock_table = mock_tapdb["biosamples_table"]
         mock_table.put_item.return_value = {}
 
         result = registry.create_biosample(sample_biosample)
@@ -348,9 +349,9 @@ class TestBiosampleCRUD:
         assert result is True
         mock_table.put_item.assert_called_once()
 
-    def test_create_biosample_duplicate_fails(self, registry, mock_dynamodb, sample_biosample):
+    def test_create_biosample_duplicate_fails(self, registry, mock_tapdb, sample_biosample):
         """Creating duplicate biosample returns False."""
-        mock_table = mock_dynamodb["biosamples_table"]
+        mock_table = mock_tapdb["biosamples_table"]
         mock_table.put_item.side_effect = ClientError(
             {"Error": {"Code": "ConditionalCheckFailedException", "Message": "Item exists"}},
             "PutItem"
@@ -360,9 +361,9 @@ class TestBiosampleCRUD:
 
         assert result is False
 
-    def test_get_biosample_exists(self, registry, mock_dynamodb, sample_biosample):
+    def test_get_biosample_exists(self, registry, mock_tapdb, sample_biosample):
         """Retrieve an existing biosample."""
-        mock_table = mock_dynamodb["biosamples_table"]
+        mock_table = mock_tapdb["biosamples_table"]
         item = asdict(sample_biosample)
         mock_table.get_item.return_value = {"Item": item}
 
@@ -373,18 +374,18 @@ class TestBiosampleCRUD:
         assert fetched.subject_id == sample_biosample.subject_id
         assert fetched.sample_type == sample_biosample.sample_type
 
-    def test_get_biosample_not_found(self, registry, mock_dynamodb):
+    def test_get_biosample_not_found(self, registry, mock_tapdb):
         """Get non-existent biosample returns None."""
-        mock_table = mock_dynamodb["biosamples_table"]
+        mock_table = mock_tapdb["biosamples_table"]
         mock_table.get_item.return_value = {}
 
         fetched = registry.get_biosample("bio-nonexistent")
 
         assert fetched is None
 
-    def test_list_biosamples_for_subject(self, registry, mock_dynamodb, sample_subject, sample_biospecimen):
+    def test_list_biosamples_for_subject(self, registry, mock_tapdb, sample_subject, sample_biospecimen):
         """List biosamples for a specific subject."""
-        mock_table = mock_dynamodb["biosamples_table"]
+        mock_table = mock_tapdb["biosamples_table"]
 
         # Create test biosamples
         biosamples = [
@@ -408,9 +409,9 @@ class TestBiosampleCRUD:
         for bio in result:
             assert bio.subject_id == sample_subject.subject_id
 
-    def test_update_biosample_tumor_info(self, registry, mock_dynamodb, sample_biosample):
+    def test_update_biosample_tumor_info(self, registry, mock_tapdb, sample_biosample):
         """Update biosample with tumor-specific information."""
-        mock_table = mock_dynamodb["biosamples_table"]
+        mock_table = mock_tapdb["biosamples_table"]
         mock_table.put_item.return_value = {}
 
         sample_biosample.is_tumor = True
@@ -436,9 +437,9 @@ class TestBiosampleCRUD:
 class TestLibraryCRUD:
     """Tests for Library CRUD operations."""
 
-    def test_create_library_success(self, registry, mock_dynamodb, sample_library):
+    def test_create_library_success(self, registry, mock_tapdb, sample_library):
         """Successfully create a new library."""
-        mock_table = mock_dynamodb["libraries_table"]
+        mock_table = mock_tapdb["libraries_table"]
         mock_table.put_item.return_value = {}
 
         result = registry.create_library(sample_library)
@@ -446,9 +447,9 @@ class TestLibraryCRUD:
         assert result is True
         mock_table.put_item.assert_called_once()
 
-    def test_create_library_duplicate_fails(self, registry, mock_dynamodb, sample_library):
+    def test_create_library_duplicate_fails(self, registry, mock_tapdb, sample_library):
         """Creating duplicate library returns False."""
-        mock_table = mock_dynamodb["libraries_table"]
+        mock_table = mock_tapdb["libraries_table"]
         mock_table.put_item.side_effect = ClientError(
             {"Error": {"Code": "ConditionalCheckFailedException", "Message": "Item exists"}},
             "PutItem"
@@ -458,9 +459,9 @@ class TestLibraryCRUD:
 
         assert result is False
 
-    def test_get_library_exists(self, registry, mock_dynamodb, sample_library):
+    def test_get_library_exists(self, registry, mock_tapdb, sample_library):
         """Retrieve an existing library."""
-        mock_table = mock_dynamodb["libraries_table"]
+        mock_table = mock_tapdb["libraries_table"]
         item = asdict(sample_library)
         mock_table.get_item.return_value = {"Item": item}
 
@@ -471,9 +472,9 @@ class TestLibraryCRUD:
         assert fetched.biosample_id == sample_library.biosample_id
         assert fetched.library_prep == sample_library.library_prep
 
-    def test_list_libraries_for_biosample(self, registry, mock_dynamodb, sample_biosample):
+    def test_list_libraries_for_biosample(self, registry, mock_tapdb, sample_biosample):
         """List libraries for a specific biosample."""
-        mock_table = mock_dynamodb["libraries_table"]
+        mock_table = mock_tapdb["libraries_table"]
 
         # Create test libraries
         libraries = [
@@ -505,13 +506,13 @@ class TestHierarchy:
     """Tests for hierarchy queries."""
 
     def test_get_subject_hierarchy_complete(
-        self, registry, mock_dynamodb, sample_subject, sample_biospecimen, sample_biosample, sample_library
+        self, registry, mock_tapdb, sample_subject, sample_biospecimen, sample_biosample, sample_library
     ):
         """Get complete hierarchy for a subject."""
-        subjects_table = mock_dynamodb["subjects_table"]
-        biospecimens_table = mock_dynamodb.get("biospecimens_table", MagicMock())
-        biosamples_table = mock_dynamodb["biosamples_table"]
-        libraries_table = mock_dynamodb["libraries_table"]
+        subjects_table = mock_tapdb["subjects_table"]
+        biospecimens_table = mock_tapdb.get("biospecimens_table", MagicMock())
+        biosamples_table = mock_tapdb["biosamples_table"]
+        libraries_table = mock_tapdb["libraries_table"]
 
         # Mock get_subject
         subjects_table.get_item.return_value = {"Item": asdict(sample_subject)}
@@ -540,9 +541,9 @@ class TestHierarchy:
         assert "libraries" in biosample_entry
         assert len(biosample_entry["libraries"]) == 1
 
-    def test_get_subject_hierarchy_not_found(self, registry, mock_dynamodb):
+    def test_get_subject_hierarchy_not_found(self, registry, mock_tapdb):
         """Get hierarchy for non-existent subject returns empty dict."""
-        subjects_table = mock_dynamodb["subjects_table"]
+        subjects_table = mock_tapdb["subjects_table"]
         subjects_table.get_item.return_value = {}  # No Item
 
         hierarchy = registry.get_subject_hierarchy("subj-nonexistent")
@@ -550,13 +551,13 @@ class TestHierarchy:
         assert hierarchy == {}
 
     def test_get_statistics(
-        self, registry, mock_dynamodb, sample_subject, sample_biospecimen, sample_biosample, sample_library
+        self, registry, mock_tapdb, sample_subject, sample_biospecimen, sample_biosample, sample_library
     ):
         """Get statistics for a customer."""
-        subjects_table = mock_dynamodb["subjects_table"]
-        biospecimens_table = mock_dynamodb["biospecimens_table"]
-        biosamples_table = mock_dynamodb["biosamples_table"]
-        libraries_table = mock_dynamodb["libraries_table"]
+        subjects_table = mock_tapdb["subjects_table"]
+        biospecimens_table = mock_tapdb["biospecimens_table"]
+        biosamples_table = mock_tapdb["biosamples_table"]
+        libraries_table = mock_tapdb["libraries_table"]
 
         # Mock query responses with Items (get_statistics uses list_* methods)
         subjects_table.query.return_value = {"Items": [asdict(sample_subject)]}
@@ -570,4 +571,3 @@ class TestHierarchy:
         assert stats["biospecimens"] == 1
         assert stats["biosamples"] == 1
         assert stats["libraries"] == 1
-

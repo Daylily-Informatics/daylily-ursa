@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Poll DynamoDB for ready worksets and execute them via the WorksetMonitor."""
+"""Poll TapDB for ready worksets and execute them via the WorksetMonitor."""
 
 from __future__ import annotations
 
@@ -36,13 +36,13 @@ PROCESSING_STEPS = [
 
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Poll DynamoDB and run Daylily worksets using the monitor pipeline",
+        description="Poll TapDB and run Daylily worksets using the monitor pipeline",
     )
     parser.add_argument("config", type=Path, help="Path to the YAML configuration file")
     parser.add_argument(
         "--table-name",
-        default=os.environ.get("DAYLILY_DYNAMODB_TABLE", "daylily-worksets"),
-        help="DynamoDB table name for workset state",
+        default=os.environ.get("DAYLILY_TAPDB_TABLE", "daylily-worksets"),
+        help="TapDB table name for workset state",
     )
     parser.add_argument(
         "--region",
@@ -85,7 +85,7 @@ def build_worker_id() -> str:
 
 
 class ProgressTracker:
-    """Track and report workset processing progress to DynamoDB."""
+    """Track and report workset processing progress to TapDB."""
 
     def __init__(
         self,
@@ -100,7 +100,7 @@ class ProgressTracker:
         self._current_step: Optional[str] = None
 
     def update_step(self, step: str, metrics: Optional[Dict[str, Any]] = None) -> None:
-        """Update current processing step in DynamoDB."""
+        """Update current processing step in TapDB."""
         self._current_step = step
         LOGGER.info("Workset %s: step=%s", self.workset_id, step)
         try:

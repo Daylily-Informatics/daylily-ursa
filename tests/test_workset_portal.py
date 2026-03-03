@@ -2511,7 +2511,7 @@ class TestPortalFileAutoRegistration:
         from daylib.file_registry import BucketFileDiscovery
 
         # Make register_file raise an exception for the first file
-        mock_file_registry.register_file.side_effect = [Exception("DynamoDB error"), True]
+        mock_file_registry.register_file.side_effect = [Exception("TapDB error"), True]
 
         discovery = BucketFileDiscovery(region="us-west-2")
 
@@ -2526,7 +2526,7 @@ class TestPortalFileAutoRegistration:
         assert registered == 1
         assert skipped == 0
         assert len(errors) == 1
-        assert "DynamoDB error" in errors[0]
+        assert "TapDB error" in errors[0]
 
     def test_auto_register_sets_correct_metadata(self, mock_file_registry, mock_bucket_discovery):
         """Test that biosample and sequencing metadata are set correctly."""

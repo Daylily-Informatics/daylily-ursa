@@ -945,7 +945,7 @@ def create_file_api_router(
             error_detail = str(e)
             if "ResourceNotFoundException" in error_detail:
                 error_detail = (
-                    "DynamoDB table not found. The linked buckets table may need to be created. "
+                    "TapDB table not found. The linked buckets table may need to be created. "
                     f"Original error: {str(e)}"
                 )
             raise HTTPException(
@@ -1681,7 +1681,7 @@ def create_file_api_router(
             # Enforce customer-based ownership when we know who the
             # authenticated customer is. This mirrors the
             # verify_workset_ownership pattern in workset_api, using
-            # DynamoDB customer_id as the authoritative ownership field
+            # TapDB customer_id as the authoritative ownership field
             # rather than any bucket-based comparison.
             user_customer_id = _get_authenticated_customer_id(current_user)
             if user_customer_id:

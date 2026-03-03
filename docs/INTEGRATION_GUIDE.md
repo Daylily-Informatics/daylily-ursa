@@ -6,7 +6,7 @@ This guide explains how the UI/API layer integrates with the processing engine a
 
 The Daylily system consists of two main layers that must work together:
 
-1. **UI/API Layer** - Customer portal, REST API, DynamoDB state management
+1. **UI/API Layer** - Customer portal, REST API, TapDB state management
 2. **Processing Layer** - S3 sentinel-based workset monitor, compute engine
 
 ```mermaid
@@ -14,7 +14,7 @@ flowchart TB
     subgraph UI["UI/API Layer"]
         Portal[Customer Portal]
         API[FastAPI Server]
-        DDB[(DynamoDB)]
+        DDB[(TapDB)]
     end
     
     subgraph Integration["Integration Layer"]
@@ -60,7 +60,7 @@ integration = WorksetIntegration(
     region="us-west-2",
 )
 
-# Register a workset (writes to both DynamoDB and S3)
+# Register a workset (writes to both TapDB and S3)
 integration.register_workset(
     workset_id="customer-ws-001",
     bucket="daylily-worksets-bucket",
@@ -71,7 +71,7 @@ integration.register_workset(
         "reference_genome": "GRCh38",
     },
     write_s3=True,
-    write_dynamodb=True,
+    write_tapdb=True,
 )
 ```
 
@@ -95,22 +95,22 @@ app = create_app(
 
 ### Workset Monitor Configuration
 
-Enable DynamoDB integration in the workset monitor:
+Enable TapDB integration in the workset monitor:
 
 ```bash
-# Basic invocation with DynamoDB integration
+# Basic invocation with TapDB integration
 daylily-workset-monitor \
     --bucket daylily-worksets-bucket \
     --prefix worksets/ \
-    --dynamodb-table daylily-worksets \
-    --dynamodb-region us-west-2
+    --tapdb-table daylily-worksets \
+    --tapdb-region us-west-2
 
 # Full integration with notifications
 daylily-workset-monitor \
     --bucket daylily-worksets-bucket \
     --prefix worksets/ \
-    --dynamodb-table daylily-worksets \
-    --dynamodb-region us-west-2 \
+    --tapdb-table daylily-worksets \
+    --tapdb-region us-west-2 \
     --sns-topic-arn arn:aws:sns:us-west-2:123456789:workset-notifications \
     --linear-api-key $LINEAR_API_KEY \
     --linear-team-id $LINEAR_TEAM_ID
@@ -131,7 +131,7 @@ python -m uvicorn daylib.workset_api:app \
 # Start monitor (separate process)
 daylily-workset-monitor \
     --bucket $WORKSET_BUCKET \
-    --dynamodb-table $WORKSET_TABLE \
+    --tapdb-table $WORKSET_TABLE \
     --poll-interval 60
 ```
 
@@ -144,7 +144,7 @@ containerDefinitions:
   - name: daylily-api
     image: daylily/api:latest
     environment:
-      - name: WORKSET_TABLE_NAME
+      - name: TAPDB_WORKSET_NAMESPACE
         value: daylily-worksets
       - name: S3_BUCKET
         value: daylily-worksets-bucket
@@ -157,7 +157,7 @@ containerDefinitions:
 # monitor-config.yaml
 bucket: daylily-worksets-bucket
 prefix: worksets/
-dynamodb_table: daylily-worksets
+tapdb_table: daylily-worksets
 poll_interval: 60
 sns_topic_arn: arn:aws:sns:us-west-2:123456789:notifications
 ```
@@ -188,7 +188,7 @@ For production, use certificates from AWS Certificate Manager or Let's Encrypt.
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `AWS_REGION` | AWS region | `us-west-2` |
-| `WORKSET_TABLE_NAME` | DynamoDB table name | `daylily-worksets` |
+| `TAPDB_WORKSET_NAMESPACE` | TapDB namespace label | `tapdb-worksets` |
 | `S3_BUCKET` | S3 bucket for worksets | - |
 | `S3_PREFIX` | S3 prefix for worksets | `worksets/` |
 | `COGNITO_USER_POOL_ID` | Cognito User Pool ID | - |
@@ -207,7 +207,7 @@ sequenceDiagram
     participant P as Portal
     participant A as API
     participant I as Integration
-    participant D as DynamoDB
+    participant D as TapDB
     participant S as S3
 
     C->>P: Submit Workset Form
@@ -226,7 +226,7 @@ sequenceDiagram
 sequenceDiagram
     participant M as Monitor
     participant S as S3
-    participant D as DynamoDB
+    participant D as TapDB
     participant E as Compute Engine
     participant N as Notifications
 
@@ -255,13 +255,13 @@ The integration requires these IAM permissions:
         {
             "Effect": "Allow",
             "Action": [
-                "dynamodb:GetItem",
-                "dynamodb:PutItem",
-                "dynamodb:UpdateItem",
-                "dynamodb:Query",
-                "dynamodb:Scan"
+                "tapdb:GetItem",
+                "tapdb:PutItem",
+                "tapdb:UpdateItem",
+                "tapdb:Query",
+                "tapdb:Scan"
             ],
-            "Resource": "arn:aws:dynamodb:*:*:table/daylily-worksets*"
+            "Resource": "arn:aws:tapdb:*:*:table/daylily-worksets*"
         },
         {
             "Effect": "Allow",
@@ -289,26 +289,26 @@ The integration requires these IAM permissions:
 
 ### Worksets Not Being Discovered
 
-1. Check DynamoDB table exists and has correct GSI
+1. Check TapDB table exists and has correct GSI
 2. Verify S3 bucket permissions
 3. Check monitor logs for discovery errors
 
 ```bash
 # Enable debug logging
 export DAYLILY_LOG_LEVEL=DEBUG
-daylily-workset-monitor --bucket $BUCKET --dynamodb-table $TABLE
+daylily-workset-monitor --bucket $BUCKET --tapdb-table $TABLE
 ```
 
 ### State Sync Issues
 
-If DynamoDB and S3 states diverge:
+If TapDB and S3 states diverge:
 
 ```python
 from daylib.workset_integration import WorksetIntegration
 
 integration = WorksetIntegration(...)
 
-# Force sync from DynamoDB to S3
+# Force sync from TapDB to S3
 integration.sync_workset_to_s3("workset-id")
 
 # Or sync all pending worksets
