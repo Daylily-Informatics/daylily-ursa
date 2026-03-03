@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% set active_page = 'info' %}
+
+{% block title %}System Info - Ursa Customer Portal{% endblock %}
+
+{% block content %}
+<div class="container container-md">
+    <div class="page-header">
+        <h1 class="page-title">System Info</h1>
+        <p class="page-subtitle">Runtime dependency details for authentication and data backends.</p>
+        <p class="text-muted">Generated at {{ generated_at }}</p>
+    </div>
+
+    <div class="grid grid-2 gap-lg">
+        <div class="card">
+            <h3 class="card-title"><i class="fas fa-user-shield text-accent"></i> daylily-cognito</h3>
+            <div class="table-responsive">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>Field</th>
+                            <th>Value</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in cognito_rows %}
+                        <tr>
+                            <td><strong>{{ row.key }}</strong></td>
+                            <td><code>{{ row.value }}</code></td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="card">
+            <h3 class="card-title"><i class="fas fa-database text-accent"></i> daylily-tapdb</h3>
+            <div class="table-responsive">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>Field</th>
+                            <th>Value</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in tapdb_rows %}
+                        <tr>
+                            <td><strong>{{ row.key }}</strong></td>
+                            <td><code>{{ row.value }}</code></td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div class="card mt-xl">
+        <h3 class="card-title"><i class="fas fa-table text-accent"></i> Current Persistence</h3>
+        <p class="text-muted">Ursa currently uses DynamoDB tables for runtime state.</p>
+        <div class="table-responsive">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Table Role</th>
+                        <th>Configured Table Name</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in persistence_rows %}
+                    <tr>
+                        <td><strong>{{ row.key }}</strong></td>
+                        <td><code>{{ row.value }}</code></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}

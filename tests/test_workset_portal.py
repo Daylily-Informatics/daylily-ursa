@@ -1139,6 +1139,14 @@ class TestPortalBucketsEditDialog:
         assert "text/html" in response.headers["content-type"]
         assert b"Support" in response.content or b"Contact" in response.content
 
+    def test_portal_info(self, authenticated_client):
+        """Test dependency info page loads (requires auth)."""
+        response = authenticated_client.get("/portal/info")
+        assert response.status_code == 200
+        assert "text/html" in response.headers["content-type"]
+        assert b"daylily-cognito" in response.content
+        assert b"daylily-tapdb" in response.content
+
     def test_portal_account(self, authenticated_client):
         """Test account page loads (requires auth)."""
         response = authenticated_client.get("/portal/account")

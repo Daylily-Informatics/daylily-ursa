@@ -144,6 +144,7 @@ def _show_ecosystem_versions() -> None:
         combo_table.add_column("Ephemeral Cluster")
         combo_table.add_column("Omics Analysis")
         combo_table.add_column("Cognito")
+        combo_table.add_column("TapDB")
         combo_table.add_column("Omics Refs")
         combo_table.add_column("Notes", style="dim")
 
@@ -154,6 +155,7 @@ def _show_ecosystem_versions() -> None:
                 combo.get("ephemeral_cluster", ""),
                 combo.get("omics_analysis", ""),
                 combo.get("cognito", ""),
+                combo.get("tapdb", ""),
                 combo.get("omics_references", ""),
                 combo.get("notes", ""),
             )

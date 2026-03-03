@@ -18,6 +18,8 @@ import csv
 import io
 import os
 import secrets
+from importlib import metadata as importlib_metadata
+from importlib import util as importlib_util
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
@@ -192,6 +194,21 @@ def _require_portal_api_session(request: Request) -> str:
     if not user_email or not customer_id:
         raise HTTPException(status_code=401, detail="Not authenticated")
     return str(customer_id)
+
+
+def _get_distribution_version(distribution_name: str) -> Optional[str]:
+    """Return installed distribution version, or None when unavailable."""
+    try:
+        return importlib_metadata.version(distribution_name)
+    except importlib_metadata.PackageNotFoundError:
+        return None
+    except Exception:
+        return None
+
+
+def _is_module_available(module_name: str) -> bool:
+    """Return True when an importable module is available in this runtime."""
+    return importlib_util.find_spec(module_name) is not None
 
 
 def _clear_portal_auth_session(request: Request) -> None:
@@ -2927,6 +2944,74 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
             request,
             "support.html",
             _get_template_context(request, deps, customer=customer, active_page="support"),
+        )
+
+    @router.get("/portal/info", response_class=HTMLResponse)
+    async def portal_info(request: Request):
+        """Dependency and persistence information page."""
+        auth_redirect = _require_portal_auth(request)
+        if auth_redirect:
+            return auth_redirect
+
+        customer, _ = _get_customer_for_session(request, deps)
+        app_settings = deps.settings
+
+        cognito_installed = _is_module_available("daylily_cognito")
+        cognito_version = _get_distribution_version("daylily-cognito")
+        tapdb_installed = _is_module_available("daylily_tapdb")
+        tapdb_version = _get_distribution_version("daylily-tapdb")
+        tapdb_env_vars = sorted(key for key in os.environ.keys() if key.startswith("TAPDB_"))
+
+        cognito_rows = [
+            {"key": "Distribution", "value": "daylily-cognito"},
+            {"key": "Module", "value": "daylily_cognito"},
+            {"key": "Installed", "value": "Yes" if cognito_installed else "No"},
+            {"key": "Version", "value": cognito_version or "Not installed"},
+            {"key": "Auth enabled in Ursa", "value": "Yes" if deps.enable_auth else "No"},
+            {
+                "key": "Auth backend initialized",
+                "value": "Yes" if bool(deps.enable_auth and deps.cognito_auth) else "No",
+            },
+            {"key": "Cognito region", "value": os.getenv("COGNITO_REGION") or "Not set"},
+            {"key": "User pool ID", "value": app_settings.cognito_user_pool_id or "Not set"},
+            {"key": "App client ID", "value": app_settings.cognito_app_client_id or "Not set"},
+            {"key": "Hosted UI domain", "value": _get_effective_cognito_domain(deps) or "Not set"},
+            {"key": "Callback URL", "value": _get_effective_callback_url(request)},
+            {"key": "Logout URL", "value": _get_effective_logout_url(request)},
+        ]
+
+        tapdb_rows = [
+            {"key": "Distribution", "value": "daylily-tapdb"},
+            {"key": "Module", "value": "daylily_tapdb"},
+            {"key": "Installed", "value": "Yes" if tapdb_installed else "No"},
+            {"key": "Version", "value": tapdb_version or "Not installed"},
+            {"key": "Integrated in current runtime", "value": "No (DynamoDB currently active)"},
+            {
+                "key": "Detected TAPDB_* env vars",
+                "value": ", ".join(tapdb_env_vars) if tapdb_env_vars else "None",
+            },
+        ]
+
+        persistence_rows = [
+            {"key": "Worksets table", "value": app_settings.workset_table_name},
+            {"key": "Customers table", "value": app_settings.customer_table_name},
+            {"key": "Manifests table", "value": app_settings.daylily_manifest_table},
+            {"key": "Linked buckets table", "value": app_settings.daylily_linked_buckets_table},
+        ]
+
+        return deps.templates.TemplateResponse(
+            request,
+            "info.html",
+            _get_template_context(
+                request,
+                deps,
+                customer=customer,
+                active_page="info",
+                cognito_rows=cognito_rows,
+                tapdb_rows=tapdb_rows,
+                persistence_rows=persistence_rows,
+                generated_at=datetime.now(timezone.utc).isoformat(),
+            ),
         )
 
     # ========== Feature Requests Routes ==========
