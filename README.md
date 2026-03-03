@@ -96,8 +96,8 @@ ursa aws setup                 # Create DynamoDB tables
 ursa aws status                # Check resource status
 ursa aws teardown              # Delete all resources (destructive)
 
-# Cognito authentication
-daycog setup --client-name ursa  # Create Cognito User Pool + app client named "ursa"
+# Cognito authentication (Google-first default)
+./scripts/setup_cognito_google_default.sh  # Uses ~/.config/google_oauth/client_secret_2_...json
 daycog status            # Check Cognito configuration
 daycog list-users        # List users in the configured pool
 daycog set-password --email user@example.com --password 'NewPass123!'
