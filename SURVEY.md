@@ -100,7 +100,7 @@ Created `config/ecosystem-versions.json` and `ursa version --ecosystem` CLI comm
 | daylily-ursa | 0.1.7 | Daylily-Informatics/daylily-ursa |
 | daylily-ephemeral-cluster | 0.7.601 | Daylily-Informatics/daylily-ephemeral-cluster |
 | daylily-omics-analysis | 0.7.602 | Daylily-Informatics/daylily-omics-analysis |
-| daylily-cognito | 0.1.22 | Daylily-Informatics/daylily-cognito |
+| daylily-cognito | 0.1.24 | Daylily-Informatics/daylily-cognito |
 | daylily-omics-references | 0.3.1 | Daylily-Informatics/daylily-omics-references |
 
 ---
