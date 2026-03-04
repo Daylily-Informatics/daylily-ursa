@@ -2,6 +2,11 @@
 
 Contains routes for ParallelCluster operations:
 - GET /api/clusters
+- POST /api/clusters/create
+- GET /api/clusters/create/jobs
+- GET /api/clusters/create/jobs/{job_id}
+- GET /api/clusters/create/jobs/{job_id}/logs
+- GET /api/clusters/create/options
 - DELETE /api/clusters/{cluster_name}
 """
 
