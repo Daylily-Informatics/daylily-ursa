@@ -632,17 +632,8 @@ class TestLinkBucketEndpoint:
 
     def test_link_bucket_tapdb_error(self, client_with_linking, mock_linked_bucket_manager):
         """Test error handling when TapDB operation fails."""
-        from botocore.exceptions import ClientError
-
-        # Simulate ResourceNotFoundException
-        error_response = {
-            "Error": {
-                "Code": "ResourceNotFoundException",
-                "Message": "Requested resource not found",
-            }
-        }
-        mock_linked_bucket_manager.link_bucket.side_effect = ClientError(
-            error_response, "PutItem"
+        mock_linked_bucket_manager.link_bucket.side_effect = RuntimeError(
+            "Missing template: data/storage/s3-bucket-link/1.0/"
         )
 
         response = client_with_linking.post(
@@ -655,7 +646,8 @@ class TestLinkBucketEndpoint:
 
         assert response.status_code == 500
         data = response.json()
-        assert "ResourceNotFoundException" in data["detail"] or "table" in data["detail"].lower()
+        assert "templates" in data["detail"].lower()
+        assert "bootstrap" in data["detail"].lower()
 
     def test_link_bucket_generic_error(self, client_with_linking, mock_linked_bucket_manager):
         """Test error handling for generic exceptions."""
@@ -2008,4 +2000,3 @@ class TestManifestGenerationEndpoints:
         assert data["sample_count"] == 0
         assert data["file_count"] == 0
         assert len(data["warnings"]) > 0
-

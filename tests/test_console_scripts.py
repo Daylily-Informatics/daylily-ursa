@@ -63,9 +63,6 @@ def test_ursa_server_start_uses_packaged_entrypoint(monkeypatch):
         def get_allowed_regions(self):
             return ["us-west-2"]
 
-        def get_effective_tapdb_db_region(self):
-            return "us-west-2"
-
     monkeypatch.setenv("AWS_PROFILE", "test-profile")
     monkeypatch.setattr(ursa_config_mod, "get_ursa_config", lambda reload=False: DummyUrsaConfig())
     monkeypatch.setattr(server_mod, "_ensure_dir", lambda: None)
@@ -161,9 +158,6 @@ def test_ursa_server_start_auth_fails_when_cognito_uri_ports_mismatch(monkeypatc
 
         def get_allowed_regions(self):
             return ["us-west-2"]
-
-        def get_effective_tapdb_db_region(self):
-            return "us-west-2"
 
     monkeypatch.setenv("AWS_PROFILE", "test-profile")
     monkeypatch.setattr(ursa_config_mod, "get_ursa_config", lambda reload=False: DummyUrsaConfig())

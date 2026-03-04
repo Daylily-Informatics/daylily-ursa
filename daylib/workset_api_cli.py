@@ -34,11 +34,6 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         description="Launch Daylily workset monitoring web API",
     )
     parser.add_argument(
-        "--table-name",
-        default="daylily-worksets",
-        help="TapDB table name for workset state",
-    )
-    parser.add_argument(
         "--region",
         default="us-west-2",
         help="AWS region",
@@ -64,16 +59,16 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         help="Enable scheduler endpoints",
     )
     parser.add_argument(
-        "--create-table",
+        "--bootstrap-tapdb",
         action="store_true",
         default=True,
-        help="Create TapDB tables if they don't exist (default: True)",
+        help="Bootstrap TapDB templates if needed (default: True)",
     )
     parser.add_argument(
-        "--no-create-table",
+        "--no-bootstrap-tapdb",
         action="store_false",
-        dest="create_table",
-        help="Don't create TapDB tables automatically",
+        dest="bootstrap_tapdb",
+        help="Don't bootstrap TapDB templates automatically",
     )
     parser.add_argument(
         "--reload",
@@ -119,35 +114,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     # Load UrsaConfig for centralized settings
     ursa_config = get_ursa_config()
 
-    # Determine TapDB region: CLI arg > UrsaConfig > default
-    # If --region was explicitly passed (not the default), use it.
-    # Otherwise, prefer UrsaConfig's tapdb_db_region.
-    if args.region != "us-west-2":
-        tapdb_region = args.region
-        LOGGER.info("Using TapDB region from CLI: %s", tapdb_region)
-    else:
-        tapdb_region = ursa_config.get_effective_tapdb_db_region()
-        source = ursa_config.get_value_source("tapdb_db_region")
-        LOGGER.info(
-            "Using TapDB region from %s: %s",
-            source if source != "not set" else "default",
-            tapdb_region,
-        )
+    LOGGER.info("Initializing TapDB workset state store (namespace via TAPDB_* env vars)")
+    state_db = WorksetStateDB()
 
-    LOGGER.info(
-        "Initializing workset state database: %s (region: %s)",
-        args.table_name,
-        tapdb_region,
-    )
-    state_db = WorksetStateDB(
-        table_name=args.table_name,
-        region=tapdb_region,
-        profile=args.profile,
-    )
-
-    if args.create_table:
-        LOGGER.info("Creating TapDB table if needed...")
-        state_db.create_table_if_not_exists()
+    if args.bootstrap_tapdb:
+        LOGGER.info("Bootstrapping TapDB templates if needed...")
+        state_db.bootstrap()
 
     scheduler = None
     if args.enable_scheduler:
@@ -168,17 +140,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             profile=args.profile,
         )
         try:
-            customer_manager.create_customer_table_if_not_exists()
-            LOGGER.info(
-                "CustomerManager initialized (table: %s)",
-                customer_manager.customer_table_name,
-            )
-        except Exception as table_err:
-            LOGGER.warning("Could not verify/create customer table: %s", table_err)
-            LOGGER.info(
-                "CustomerManager initialized (table: %s, may need manual creation)",
-                customer_manager.customer_table_name,
-            )
+            customer_manager.bootstrap()
+            LOGGER.info("CustomerManager TapDB templates bootstrapped")
+        except Exception as exc:
+            LOGGER.warning("Could not bootstrap customer templates: %s", exc)
+            LOGGER.info("CustomerManager initialized (templates may require manual bootstrap)")
     except Exception as exc:
         LOGGER.warning("Failed to initialize CustomerManager: %s", exc)
         import traceback
@@ -252,50 +218,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     try:
         from daylib.file_registry import FileRegistry
 
-        file_registry = FileRegistry(
-            region=args.region,
-            profile=args.profile,
-        )
         try:
-            file_registry.create_tables_if_not_exist()
-            LOGGER.info(
-                "FileRegistry initialized (tables: %s, %s, %s)",
-                file_registry.files_table_name,
-                file_registry.filesets_table_name,
-                file_registry.file_workset_usage_table_name,
-            )
-        except Exception as table_err:
-            LOGGER.warning("Could not verify/create file registry tables: %s", table_err)
+            file_registry = FileRegistry()
+            if args.bootstrap_tapdb:
+                file_registry.bootstrap()
+                LOGGER.info("FileRegistry TapDB templates bootstrapped")
+        except Exception as exc:
+            LOGGER.warning("Could not bootstrap file registry templates: %s", exc)
     except Exception as exc:
         LOGGER.warning("Failed to initialize FileRegistry: %s", exc)
         import traceback
 
         LOGGER.debug("FileRegistry init traceback: %s", traceback.format_exc())
-
-    # Initialize BiospecimenRegistry for biospecimen management
-    try:
-        from daylib.biospecimen import BiospecimenRegistry
-
-        biospecimen_registry = BiospecimenRegistry(
-            region=args.region,
-            profile=args.profile,
-        )
-        try:
-            biospecimen_registry.create_tables_if_not_exist()
-            LOGGER.info(
-                "BiospecimenRegistry initialized (tables: %s, %s, %s, %s)",
-                biospecimen_registry.subjects_table_name,
-                biospecimen_registry.biospecimens_table_name,
-                biospecimen_registry.biosamples_table_name,
-                biospecimen_registry.libraries_table_name,
-            )
-        except Exception as table_err:
-            LOGGER.warning("Could not verify/create biospecimen tables: %s", table_err)
-    except Exception as exc:
-        LOGGER.warning("Failed to initialize BiospecimenRegistry: %s", exc)
-        import traceback
-
-        LOGGER.debug("BiospecimenRegistry init traceback: %s", traceback.format_exc())
 
     LOGGER.info(
         "Creating FastAPI app with customer_manager=%s, file_registry=%s",

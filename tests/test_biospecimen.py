@@ -47,12 +47,6 @@ def _instance(payload: dict, *, euid: str = "euid-1", template_uuid: int = 1, bs
 @pytest.fixture
 def registry() -> BiospecimenRegistry:
     reg = BiospecimenRegistry.__new__(BiospecimenRegistry)
-    reg.subjects_table_name = "test-subjects"
-    reg.biospecimens_table_name = "test-biospecimens"
-    reg.biosamples_table_name = "test-biosamples"
-    reg.libraries_table_name = "test-libraries"
-    reg.region = "us-west-2"
-    reg.profile = None
 
     reg.backend = MagicMock()
     reg._session = MagicMock()

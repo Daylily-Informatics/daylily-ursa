@@ -271,24 +271,10 @@ class FileRegistry:
 
     def __init__(
         self,
-        files_table_name: str = "tapdb-files",
-        filesets_table_name: str = "tapdb-filesets",
-        file_workset_usage_table_name: str = "tapdb-file-workset-usage",
-        region: str = "us-west-2",
-        profile: Optional[str] = None,
     ):
-        self.files_table_name = files_table_name
-        self.filesets_table_name = filesets_table_name
-        self.file_workset_usage_table_name = file_workset_usage_table_name
-        # Compatibility aliases retained for existing route and script wiring.
-        self.files_table = files_table_name
-        self.filesets_table = filesets_table_name
-        self.file_workset_usage_table = file_workset_usage_table_name
-        self.region = region
-        self.profile = profile
         self.backend = TapDBBackend(app_username="ursa-file")
 
-    def create_tables_if_not_exist(self) -> None:
+    def bootstrap(self) -> None:
         with self.backend.session_scope(commit=True) as session:
             self.backend.ensure_templates(session)
 

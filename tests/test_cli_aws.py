@@ -27,18 +27,18 @@ class TestAwsSetup:
 
         assert result.exit_code == 0
         assert "Bootstrapping Ursa TapDB resources" in result.output
-        mock_state.return_value.create_table_if_not_exists.assert_called_once()
-        mock_customer.return_value.create_customer_table_if_not_exists.assert_called_once()
-        mock_files.return_value.create_tables_if_not_exist.assert_called_once()
-        mock_manifest.return_value.create_table_if_not_exists.assert_called_once()
-        mock_bio.return_value.create_tables_if_not_exist.assert_called_once()
-        mock_bucket.return_value.create_table_if_not_exists.assert_called_once()
+        mock_state.return_value.bootstrap.assert_called_once()
+        mock_customer.return_value.bootstrap.assert_called_once()
+        mock_files.return_value.bootstrap.assert_called_once()
+        mock_manifest.return_value.bootstrap.assert_called_once()
+        mock_bio.return_value.bootstrap.assert_called_once()
+        mock_bucket.return_value.bootstrap.assert_called_once()
 
     def test_setup_returns_nonzero_on_component_failure(self):
         with patch("daylib.cli.aws._effective_region", return_value="us-west-2"), patch(
             "daylib.workset_state_db.WorksetStateDB"
         ) as mock_state:
-            mock_state.return_value.create_table_if_not_exists.side_effect = RuntimeError("boom")
+            mock_state.return_value.bootstrap.side_effect = RuntimeError("boom")
             result = runner.invoke(aws_app, ["setup"])
 
         assert result.exit_code == 1

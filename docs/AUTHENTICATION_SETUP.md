@@ -42,7 +42,7 @@ from daylib.workset_api import create_app
 from daylib.workset_state_db import WorksetStateDB
 
 # Initialize components
-state_db = WorksetStateDB("daylily-worksets", "us-west-2")
+state_db = WorksetStateDB()
 
 # Create app WITHOUT authentication
 app = create_app(
@@ -122,7 +122,7 @@ from daylib.workset_state_db import WorksetStateDB
 from daylily_cognito.auth import CognitoAuth
 
 # Initialize components
-state_db = WorksetStateDB("daylily-worksets", "us-west-2")
+state_db = WorksetStateDB()
 
 # Initialize Cognito authentication
 cognito_auth = CognitoAuth(

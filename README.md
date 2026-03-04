@@ -92,9 +92,9 @@ ursa test lint                 # Run ruff linter
 ursa test format               # Format code
 
 # AWS resources
-ursa aws setup                 # Create TapDB tables
-ursa aws status                # Check resource status
-ursa aws teardown              # Delete all resources (destructive)
+ursa aws setup                 # Bootstrap TapDB templates and registries
+ursa aws status                # Show TapDB template readiness
+ursa aws teardown --force      # Print manual teardown instructions
 
 # Cognito authentication (Google-first default)
 ./scripts/setup_cognito_google_default.sh  # Uses ~/.config/google_oauth/client_secret_2_...json

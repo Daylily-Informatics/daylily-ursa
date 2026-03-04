@@ -9,6 +9,15 @@ Prerequisites:
     pip install -e .
 
 Usage:
+    # TapDB strict namespace (required)
+    export TAPDB_STRICT_NAMESPACE=1
+    export TAPDB_CLIENT_ID=local
+    export TAPDB_DATABASE_NAME=ursa
+    export TAPDB_ENV=dev
+
+    # Bootstrap TapDB templates (once per namespace)
+    ursa aws setup
+
     python examples/run_api_without_auth.py
 
 Then access the API at:
@@ -18,6 +27,7 @@ Then access the API at:
 """
 
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -35,7 +45,7 @@ except ModuleNotFoundError as e:
     print("  pip install -e .")
     print()
     print("Or install specific dependencies:")
-    print("  pip install fastapi uvicorn boto3 pyyaml pydantic")
+    print("  pip install fastapi uvicorn boto3 pyyaml pydantic daylily-tapdb")
     sys.exit(1)
 from daylib.workset_state_db import WorksetStateDB
 from daylib.workset_scheduler import WorksetScheduler
@@ -61,40 +71,42 @@ LOGGER = logging.getLogger(__name__)
 
 def main():
     """Run the API server without authentication."""
-    
+
     # Configuration
-    REGION = "us-west-2"
-    WORKSET_TABLE = "daylily-worksets"
-    
+    AWS_REGION = os.getenv("AWS_REGION", "us-west-2")
+
     LOGGER.info("Initializing Workset Monitor API (no authentication)")
-    
+
     # Initialize state database
-    LOGGER.info(f"Connecting to TapDB table: {WORKSET_TABLE}")
-    state_db = WorksetStateDB(
-        table_name=WORKSET_TABLE,
-        region=REGION,
+    LOGGER.info(
+        "Initializing TapDB backend (namespace %s/%s env=%s)",
+        os.getenv("TAPDB_CLIENT_ID"),
+        os.getenv("TAPDB_DATABASE_NAME"),
+        os.getenv("TAPDB_ENV"),
     )
-    
+    state_db = WorksetStateDB()
+    state_db.bootstrap()
+
     # Initialize scheduler (optional)
     LOGGER.info("Initializing workset scheduler")
     scheduler = WorksetScheduler(state_db)
-    
+
     # Initialize validator (optional)
     LOGGER.info("Initializing workset validator")
-    validator = WorksetValidator(region=REGION)
-    
+    validator = WorksetValidator(region=AWS_REGION)
+
     # Initialize customer manager (optional)
     LOGGER.info("Initializing customer manager")
-    customer_manager = CustomerManager(region=REGION)
+    customer_manager = CustomerManager(region=AWS_REGION)
+    customer_manager.bootstrap()
 
     # Initialize file registry (optional)
     file_registry = None
     if FILE_MANAGEMENT_AVAILABLE:
         LOGGER.info("Initializing file registry")
         try:
-            import boto3
-            tapdb = boto3.resource('tapdb', region_name=REGION)
             file_registry = FileRegistry()
+            file_registry.bootstrap()
             LOGGER.info("File registry initialized - file management endpoints will be available")
         except Exception as e:
             LOGGER.warning("Failed to initialize file registry: %s", e)
@@ -118,8 +130,13 @@ def main():
     LOGGER.info("Workset Monitor API Server")
     LOGGER.info("=" * 60)
     LOGGER.info("Authentication: DISABLED")
-    LOGGER.info("Region: %s", REGION)
-    LOGGER.info("TapDB Table: %s", WORKSET_TABLE)
+    LOGGER.info("AWS Region: %s", AWS_REGION)
+    LOGGER.info(
+        "TapDB Namespace: %s/%s (env=%s)",
+        os.getenv("TAPDB_CLIENT_ID"),
+        os.getenv("TAPDB_DATABASE_NAME"),
+        os.getenv("TAPDB_ENV"),
+    )
     LOGGER.info("")
     LOGGER.info("Starting server on http://0.0.0.0:8914")
     LOGGER.info("API Documentation: http://localhost:8914/docs")

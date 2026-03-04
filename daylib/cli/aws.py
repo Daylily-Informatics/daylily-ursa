@@ -43,46 +43,33 @@ def setup() -> None:
     components = [
         (
             "worksets",
-            lambda: WorksetStateDB(
-                table_name="tapdb-worksets",
-                region=region,
-                profile=profile,
-            ).create_table_if_not_exists(),
+            lambda: WorksetStateDB().bootstrap(),
         ),
         (
             "customers",
             lambda: CustomerManager(
                 region=region,
                 profile=profile,
-            ).create_customer_table_if_not_exists(),
+            ).bootstrap(),
         ),
         (
             "files",
-            lambda: FileRegistry(
-                region=region,
-                profile=profile,
-            ).create_tables_if_not_exist(),
+            lambda: FileRegistry().bootstrap(),
         ),
         (
             "manifests",
-            lambda: ManifestRegistry(
-                region=region,
-                profile=profile,
-            ).create_table_if_not_exists(),
+            lambda: ManifestRegistry().bootstrap(),
         ),
         (
             "biospecimen",
-            lambda: BiospecimenRegistry(
-                region=region,
-                profile=profile,
-            ).create_tables_if_not_exist(),
+            lambda: BiospecimenRegistry().bootstrap(),
         ),
         (
             "linked-buckets",
             lambda: LinkedBucketManager(
                 region=region,
                 profile=profile,
-            ).create_table_if_not_exists(),
+            ).bootstrap(),
         ),
     ]
 

@@ -378,7 +378,7 @@ def start(
     aws_region = (
         os.environ.get("AWS_REGION")
         or os.environ.get("AWS_DEFAULT_REGION")
-        or ursa_config.get_effective_tapdb_db_region()
+        or (ursa_config.get_allowed_regions()[0] if ursa_config.is_configured else "us-west-2")
     )
 
     ssl_certfile, ssl_keyfile = _resolve_https_cert_paths(host)
@@ -409,7 +409,7 @@ def start(
         aws_profile,
         "--region",
         aws_region,
-        "--create-table",
+        "--bootstrap-tapdb",
         "--ssl-certfile",
         ssl_certfile,
         "--ssl-keyfile",

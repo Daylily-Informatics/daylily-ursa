@@ -40,11 +40,6 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument("config", type=Path, help="Path to the YAML configuration file")
     parser.add_argument(
-        "--table-name",
-        default=os.environ.get("DAYLILY_TAPDB_TABLE", "daylily-worksets"),
-        help="TapDB table name for workset state",
-    )
-    parser.add_argument(
         "--region",
         default=None,
         help="AWS region (defaults to config value)",
@@ -232,11 +227,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if args.profile:
         config.aws.profile = args.profile
 
-    state_db = WorksetStateDB(
-        table_name=args.table_name,
-        region=config.aws.region,
-        profile=config.aws.profile if config.aws.profile else None,
-    )
+    state_db = WorksetStateDB()
+    state_db.bootstrap()
 
     monitor = WorksetMonitor(
         config,

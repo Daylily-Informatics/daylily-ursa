@@ -42,7 +42,6 @@ def customer_manager() -> CustomerManager:
     mgr.region = "us-west-2"
     mgr.bucket_prefix = "test-customer"
     mgr.profile = None
-    mgr.customer_table_name = "tapdb-customer-graph"
     mgr.backend = MagicMock()
     mgr._backend_session = MagicMock()
     mgr.backend.session_scope.return_value = _SessionCtx(mgr._backend_session)

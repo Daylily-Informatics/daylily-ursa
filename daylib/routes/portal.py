@@ -3237,7 +3237,6 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
             "poll_interval_seconds": monitor_opts.get("poll_interval_seconds", 60),
             "max_concurrent_worksets": max_concurrent_runtime,
             "archive_prefix": monitor_opts.get("archive_prefix", ""),
-            "tapdb_table": aws_opts.get("tapdb_table", "daylily-worksets"),
             "reuse_cluster_name": cluster_opts.get("reuse_cluster_name", ""),
             "config_path": str(config_path) if config_path else "Not found",
         }

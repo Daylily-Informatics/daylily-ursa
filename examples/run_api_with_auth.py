@@ -159,7 +159,6 @@ def main():
     TAPDB_CLIENT_ID = os.getenv("TAPDB_CLIENT_ID")
     TAPDB_DATABASE_NAME = os.getenv("TAPDB_DATABASE_NAME")
     TAPDB_ENV = os.getenv("TAPDB_ENV")
-    WORKSET_TABLE_NAME = "tapdb-worksets"  # legacy label; TapDB graph backend ignores this value
     USER_POOL_ID = os.getenv("COGNITO_USER_POOL_ID")
     APP_CLIENT_ID = os.getenv("COGNITO_APP_CLIENT_ID")
 
@@ -188,10 +187,8 @@ def main():
         TAPDB_DATABASE_NAME,
         TAPDB_ENV,
     )
-    state_db = WorksetStateDB(
-        table_name=WORKSET_TABLE_NAME,
-        region=REGION,
-    )
+    state_db = WorksetStateDB()
+    state_db.bootstrap()
 
     # Initialize scheduler (optional)
     LOGGER.info("Initializing workset scheduler")
@@ -204,6 +201,7 @@ def main():
     # Initialize customer manager (optional)
     LOGGER.info("Initializing customer manager")
     customer_manager = CustomerManager(region=REGION)
+    customer_manager.bootstrap()
 
     # Initialize Cognito authentication
     LOGGER.info("Initializing AWS Cognito authentication")
@@ -218,16 +216,8 @@ def main():
     if FILE_MANAGEMENT_AVAILABLE:
         LOGGER.info("Initializing file registry")
         try:
-            import boto3
-            import logging
-
-            logging.basicConfig(level=logging.DEBUG)
-
-            logging.getLogger("botocore").setLevel(logging.DEBUG)
-            logging.getLogger("boto3").setLevel(logging.DEBUG)
-            logging.getLogger("botocore.hooks").setLevel(logging.DEBUG)
-            tapdb = boto3.resource('tapdb', region_name=REGION)
             file_registry = FileRegistry()
+            file_registry.bootstrap()
             LOGGER.info("File registry initialized - file management endpoints will be available")
         except Exception as e:
             LOGGER.warning("Failed to initialize file registry: %s", e)
@@ -256,8 +246,8 @@ def main():
     LOGGER.info("=" * 60)
     LOGGER.info("Authentication: ENABLED (AWS Cognito)")
     LOGGER.info("Protocol: %s", protocol.upper())
-    LOGGER.info("Region: %s", REGION)
-    LOGGER.info("TapDB Table: %s", WORKSET_TABLE)
+    LOGGER.info("AWS Region: %s", REGION)
+    LOGGER.info("TapDB Namespace: %s/%s (env=%s)", TAPDB_CLIENT_ID, TAPDB_DATABASE_NAME, TAPDB_ENV)
     LOGGER.info("User Pool ID: %s", USER_POOL_ID)
     LOGGER.info("App Client ID: %s", APP_CLIENT_ID)
     if args.https:

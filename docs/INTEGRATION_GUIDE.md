@@ -1,346 +1,109 @@
-# Daylily Integration Guide
+# Ursa Integration Guide
 
-This guide explains how the UI/API layer integrates with the processing engine and how to deploy the complete system.
+This guide describes how the Ursa UI/API layer integrates with the processing layer, and how persistence works with TapDB graph objects (Postgres).
 
 ## Architecture Overview
 
-The Daylily system consists of two main layers that must work together:
-
-1. **UI/API Layer** - Customer portal, REST API, TapDB state management
-2. **Processing Layer** - S3 sentinel-based workset monitor, compute engine
+- **UI/API layer**
+  - Portal (browser) + FastAPI server
+  - Reads/writes workflow state via TapDB graph persistence
+- **Processing layer**
+  - Workset monitor/worker process
+  - Observes S3 workset directories (sentinels) and executes pipelines
+  - Updates workflow state in TapDB
 
 ```mermaid
 flowchart TB
     subgraph UI["UI/API Layer"]
-        Portal[Customer Portal]
+        Portal[Portal]
         API[FastAPI Server]
-        DDB[(TapDB)]
     end
-    
-    subgraph Integration["Integration Layer"]
-        Bridge[WorksetIntegration]
+
+    subgraph Persistence["Persistence"]
+        TapDB[(TapDB Graph<br/>(Postgres))]
     end
-    
+
     subgraph Processing["Processing Layer"]
-        Monitor[Workset Monitor]
-        S3[(S3 Sentinels)]
+        Monitor[Workset Monitor / Worker]
+        S3[(S3 Workset Paths<br/>+ Sentinels)]
         Compute[Compute Engine]
     end
-    
+
     Portal --> API
-    API --> Bridge
-    Bridge --> DDB
-    Bridge --> S3
+    API --> TapDB
+    API --> S3
     Monitor --> S3
-    Monitor --> DDB
+    Monitor --> TapDB
     Monitor --> Compute
 ```
 
-## Component Integration
+## TapDB Configuration (Strict Namespace)
 
-### WorksetIntegration Module
-
-The `daylib.workset_integration` module provides the bridge between systems:
-
-```python
-from daylib.workset_integration import WorksetIntegration
-from daylib.workset_state_db import WorksetStateDB
-
-# Initialize state database
-state_db = WorksetStateDB(
-    table_name="daylily-worksets",
-    region="us-west-2",
-)
-
-# Create integration layer
-integration = WorksetIntegration(
-    state_db=state_db,
-    bucket="daylily-worksets-bucket",
-    prefix="worksets/",
-    region="us-west-2",
-)
-
-# Register a workset (writes to both TapDB and S3)
-integration.register_workset(
-    workset_id="customer-ws-001",
-    bucket="daylily-worksets-bucket",
-    prefix="worksets/customer-ws-001/",
-    priority="normal",
-    metadata={
-        "samples": [...],
-        "reference_genome": "GRCh38",
-    },
-    write_s3=True,
-    write_tapdb=True,
-)
-```
-
-### API Server Configuration
-
-The API server automatically uses the integration layer when configured:
-
-```python
-from daylib.workset_api import create_app
-from daylib.workset_state_db import WorksetStateDB
-
-state_db = WorksetStateDB(table_name="daylily-worksets")
-
-# Integration is automatically configured
-app = create_app(
-    state_db=state_db,
-    s3_bucket="daylily-worksets-bucket",
-    s3_prefix="worksets/",
-)
-```
-
-### Workset Monitor Configuration
-
-Enable TapDB integration in the workset monitor:
+Ursa uses TapDB in strict namespace mode. Configure TapDB via environment variables:
 
 ```bash
-# Basic invocation with TapDB integration
-daylily-workset-monitor \
-    --bucket daylily-worksets-bucket \
-    --prefix worksets/ \
-    --tapdb-table daylily-worksets \
-    --tapdb-region us-west-2
-
-# Full integration with notifications
-daylily-workset-monitor \
-    --bucket daylily-worksets-bucket \
-    --prefix worksets/ \
-    --tapdb-table daylily-worksets \
-    --tapdb-region us-west-2 \
-    --sns-topic-arn arn:aws:sns:us-west-2:123456789:workset-notifications \
-    --linear-api-key $LINEAR_API_KEY \
-    --linear-team-id $LINEAR_TEAM_ID
+export TAPDB_STRICT_NAMESPACE=1
+export TAPDB_CLIENT_ID=local
+export TAPDB_DATABASE_NAME=ursa
+export TAPDB_ENV=dev   # dev|test|prod
 ```
 
-## Deployment Options
-
-### Option 1: Unified Deployment
-
-Run API and monitor on the same instance:
+Then bootstrap TapDB (preferred):
 
 ```bash
-# Start API server
-python -m uvicorn daylib.workset_api:app \
-    --host 0.0.0.0 \
-    --port 8914
-
-# Start monitor (separate process)
-daylily-workset-monitor \
-    --bucket $WORKSET_BUCKET \
-    --tapdb-table $WORKSET_TABLE \
-    --poll-interval 60
+tapdb config init --client-id local --database-name ursa --env dev
+tapdb bootstrap local
 ```
 
-### Option 2: Separated Deployment
-
-**API Server (ECS/Fargate)**
-```yaml
-# ecs-task-definition.yaml
-containerDefinitions:
-  - name: daylily-api
-    image: daylily/api:latest
-    environment:
-      - name: TAPDB_STRICT_NAMESPACE
-        value: "1"
-      - name: TAPDB_CLIENT_ID
-        value: local
-      - name: TAPDB_DATABASE_NAME
-        value: ursa
-      - name: TAPDB_ENV
-        value: dev
-      - name: S3_BUCKET
-        value: daylily-worksets-bucket
-    portMappings:
-      - containerPort: 8914
-```
-
-**Monitor (EC2/Lambda)**
-```yaml
-# monitor-config.yaml
-bucket: daylily-worksets-bucket
-prefix: worksets/
-tapdb_table: daylily-worksets
-poll_interval: 60
-sns_topic_arn: arn:aws:sns:us-west-2:123456789:notifications
-```
-
-## HTTPS Configuration
-
-For production deployments, enable HTTPS:
+Ursa can also bootstrap the required templates:
 
 ```bash
-# Generate self-signed certificate for testing
-openssl req -x509 -newkey rsa:4096 \
-    -keyout key.pem -out cert.pem \
-    -days 365 -nodes \
-    -subj "/CN=localhost"
-
-# Run API with HTTPS
-python examples/run_api_with_auth.py \
-    --https \
-    --port 8443 \
-    --cert /etc/ssl/certs/server.pem \
-    --key /etc/ssl/private/server-key.pem
+ursa aws setup
+ursa aws status
 ```
 
-For production, use certificates from AWS Certificate Manager or Let's Encrypt.
+## API Server
 
-## Environment Variables
+Start the API server using the packaged entry points:
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `AWS_REGION` | AWS region | `us-west-2` |
-| `TAPDB_STRICT_NAMESPACE` | Enforce TapDB strict namespace mode | `1` |
-| `TAPDB_CLIENT_ID` | TapDB namespace client-id | `local` |
-| `TAPDB_DATABASE_NAME` | TapDB namespace database-name | `ursa` |
-| `TAPDB_ENV` | TapDB environment selector | `dev` |
-| `S3_BUCKET` | S3 bucket for worksets | - |
-| `S3_PREFIX` | S3 prefix for worksets | `worksets/` |
-| `COGNITO_USER_POOL_ID` | Cognito User Pool ID | - |
-| `COGNITO_APP_CLIENT_ID` | Cognito App Client ID | - |
-| `SNS_TOPIC_ARN` | SNS topic for notifications | - |
-| `LINEAR_API_KEY` | Linear API key | - |
-| `LINEAR_TEAM_ID` | Linear team ID | - |
-
-## Data Flow
-
-### Workset Submission Flow
-
-```mermaid
-sequenceDiagram
-    participant C as Customer
-    participant P as Portal
-    participant A as API
-    participant I as Integration
-    participant D as TapDB
-    participant S as S3
-
-    C->>P: Submit Workset Form
-    P->>A: POST /api/customers/{id}/worksets
-    A->>I: register_workset()
-    I->>D: put_item(workset)
-    I->>S: write daylily_work.yaml
-    I->>S: write daylily.ready sentinel
-    A->>P: Return workset_id
-    P->>C: Show confirmation
+```bash
+export AWS_PROFILE=lsmc
+ursa server start
 ```
 
-### Workset Processing Flow
+Or run directly:
 
-```mermaid
-sequenceDiagram
-    participant M as Monitor
-    participant S as S3
-    participant D as TapDB
-    participant E as Compute Engine
-    participant N as Notifications
-
-    M->>S: List daylily.ready sentinels
-    M->>D: Check for UI-submitted worksets
-    M->>M: Merge and prioritize
-    M->>S: Write daylily.lock
-    M->>D: Update state=locked
-    M->>E: Start processing
-    E->>S: Write daylily.in_progress
-    E->>D: Update state=in_progress
-    E-->>E: Process samples
-    E->>S: Write daylily.complete
-    E->>D: Update state=complete
-    M->>N: Send completion notification
+```bash
+daylily-workset-api --host 0.0.0.0 --port 8914 --bootstrap-tapdb
 ```
 
-## IAM Permissions
+## Workset Monitor
 
-The integration requires these IAM permissions:
+The workset monitor reads a YAML config file and runs continuously (or `--once` for a single iteration).
 
-```json
-{
-    "Version": "2012-10-17",
-    "Statement": [
-        {
-            "Effect": "Allow",
-            "Action": [
-                "tapdb:GetItem",
-                "tapdb:PutItem",
-                "tapdb:UpdateItem",
-                "tapdb:Query",
-                "tapdb:Scan"
-            ],
-            "Resource": "arn:aws:tapdb:*:*:table/daylily-worksets*"
-        },
-        {
-            "Effect": "Allow",
-            "Action": [
-                "s3:GetObject",
-                "s3:PutObject",
-                "s3:DeleteObject",
-                "s3:ListBucket"
-            ],
-            "Resource": [
-                "arn:aws:s3:::daylily-worksets-bucket",
-                "arn:aws:s3:::daylily-worksets-bucket/*"
-            ]
-        },
-        {
-            "Effect": "Allow",
-            "Action": "sns:Publish",
-            "Resource": "arn:aws:sns:*:*:workset-*"
-        }
-    ]
-}
+Example:
+
+```bash
+daylily-workset-monitor ~/.config/ursa/workset-monitor-config.yaml --enable-tapdb
 ```
+
+TapDB configuration is read from `TAPDB_*` environment variables. There is no per-service “table name” configuration.
 
 ## Troubleshooting
 
 ### Worksets Not Being Discovered
 
-1. Check TapDB table exists and has correct GSI
-2. Verify S3 bucket permissions
-3. Check monitor logs for discovery errors
+1. Confirm TapDB is configured (`TAPDB_CLIENT_ID`, `TAPDB_DATABASE_NAME`, `TAPDB_ENV`).
+2. Confirm templates are present:
+   - `ursa aws status`
+3. Verify S3 permissions and bucket/prefix values in your monitor config.
+4. Check monitor logs.
+
+### Template Bootstrap Errors
+
+If you see errors mentioning missing templates, bootstrap:
 
 ```bash
-# Enable debug logging
-export DAYLILY_LOG_LEVEL=DEBUG
-daylily-workset-monitor --bucket $BUCKET --tapdb-table $TABLE
+ursa aws setup
 ```
 
-### State Sync Issues
-
-If TapDB and S3 states diverge:
-
-```python
-from daylib.workset_integration import WorksetIntegration
-
-integration = WorksetIntegration(...)
-
-# Force sync from TapDB to S3
-integration.sync_workset_to_s3("workset-id")
-
-# Or sync all pending worksets
-integration.sync_all_pending_to_s3()
-```
-
-### Cost Estimation Not Working
-
-Ensure the `/api/estimate-cost` endpoint is reachable:
-
-```bash
-curl -X POST http://localhost:8914/api/estimate-cost \
-    -H "Content-Type: application/json" \
-    -d '{
-        "pipeline_type": "germline",
-        "reference_genome": "GRCh38",
-        "sample_count": 5
-    }'
-```
-
-## Related Documentation
-
-- [ARCHITECTURE.md](ARCHITECTURE.md) - System architecture
-- [AUTHENTICATION_SETUP.md](AUTHENTICATION_SETUP.md) - Cognito setup
-- [CUSTOMER_PORTAL.md](CUSTOMER_PORTAL.md) - Portal deployment
-- [WORKSET_MONITOR_README.md](WORKSET_MONITOR_README.md) - Monitor details

@@ -7,12 +7,16 @@
 # Usage:
 #   cp config/workset-monitor-config.template.yaml config/my-monitor-config.yaml
 #   # Edit my-monitor-config.yaml with your settings
-#   bin/daylily-workset-monitor config/my-monitor-config.yaml --enable-tapdb
+#   daylily-workset-monitor config/my-monitor-config.yaml --enable-tapdb
 #
-# For TapDB integration (recommended for portal UI):
-#   bin/daylily-workset-monitor config/my-monitor-config.yaml \
+# For TapDB state tracking (recommended for portal UI):
+#   export TAPDB_STRICT_NAMESPACE=1
+#   export TAPDB_CLIENT_ID=local
+#   export TAPDB_DATABASE_NAME=ursa
+#   export TAPDB_ENV=dev
+#
+#   daylily-workset-monitor config/my-monitor-config.yaml \
 #     --enable-tapdb \
-#     --tapdb-table daylily-worksets \
 #     --enable-notifications \
 #     --sns-topic-arn arn:aws:sns:us-west-2:123456789:daylily-alerts
 # =============================================================================
@@ -24,7 +28,7 @@ aws:
   # AWS profile name from ~/.aws/credentials (use "default" if not using profiles)
   profile: daylily-service-lsmc
   
-  # AWS region for S3, TapDB, and other services
+  # AWS region for S3 and other AWS services
   region: us-west-2
   
   # Optional: Session duration for profile authentication (in seconds)
@@ -36,7 +40,7 @@ aws:
 # -----------------------------------------------------------------------------
 # NOTE: The monitor does not have a default bucket. Each workset has its own bucket
 # assigned during creation based on the selected cluster's region. Bucket mappings
-# are defined in ~/.ursa/config.yaml.
+# are configured via Ursa config (see ~/.config/ursa/ursa-config.yaml).
 monitor:
   # S3 prefix for active worksets (must end with /)
   # This must match the server's S3_PREFIX setting (default: worksets/)
@@ -153,4 +157,3 @@ dy-r: "--name my-analysis --samples config/samples.tsv --outdir results/my-analy
 
 # Optional: S3 URI for exporting results
 export_uri: "s3://daylily-customer-johnm-8cef133c/"
-

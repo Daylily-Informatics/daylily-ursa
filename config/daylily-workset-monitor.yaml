@@ -1,5 +1,5 @@
 # Example configuration for the daylily workset monitor tool.
-# Copy and edit this file before running bin/daylily-monitor-worksets.
+# Copy and edit this file before running daylily-workset-monitor.
 
 aws:
   profile: default
@@ -8,7 +8,7 @@ aws:
   session_duration_seconds: 3600
 
 # NOTE: The monitor does not have a default bucket. Each workset has its own bucket
-# assigned during creation based on the selected cluster's region (from ~/.ursa/config.yaml).
+# assigned during creation based on the selected cluster's region (from ~/.config/ursa/ursa-config.yaml).
 monitor:
   prefix: daylily_monitoring/active_worksets/
   archive_prefix: daylily_monitoring/archived_worksets/
@@ -79,4 +79,3 @@ dy-r: "--name runme14 --samples config/samples.tsv --outdir results/runme14 --pr
 
 # optional export
 export_uri: "s3://my-daylily-bucket/daylily_monitoring/active_worksets/runme14/results/"
-
