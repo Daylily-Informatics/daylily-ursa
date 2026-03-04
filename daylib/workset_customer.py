@@ -55,11 +55,10 @@ class CustomerManager:
         self.region = region
         self.bucket_prefix = bucket_prefix
         self.profile = profile
-        self.customer_table_name = "tapdb-customer-graph"
         self.backend = TapDBBackend(app_username="ursa-customer")
 
-    def create_customer_table_if_not_exists(self) -> None:
-        """Compatibility hook. Ensures TapDB templates exist."""
+    def bootstrap(self) -> None:
+        """Ensure TapDB templates exist for customer graph objects."""
         with self.backend.session_scope(commit=True) as session:
             self.backend.ensure_templates(session)
 

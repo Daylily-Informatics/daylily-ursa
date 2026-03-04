@@ -11,7 +11,6 @@ from __future__ import annotations
 import logging
 import re
 import uuid
-from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
 
 import boto3
@@ -1392,4 +1391,3 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
             )
 
     return router
-

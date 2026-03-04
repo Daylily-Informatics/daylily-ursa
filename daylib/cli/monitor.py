@@ -51,20 +51,6 @@ def _get_pid() -> Optional[int]:
     return None
 
 
-def _find_monitor_script() -> Path:
-    """Find the daylily-workset-monitor script."""
-    # Check in bin/ relative to package
-    pkg_bin = Path(__file__).parent.parent.parent / "bin" / "daylily-workset-monitor"
-    if pkg_bin.exists():
-        return pkg_bin
-    # Check in current directory
-    cwd_bin = Path.cwd() / "bin" / "daylily-workset-monitor"
-    if cwd_bin.exists():
-        return cwd_bin
-    # Fallback to PATH
-    return Path("daylily-workset-monitor")
-
-
 def _find_default_config() -> Optional[Path]:
     """Find default monitor config file."""
     search_paths = [
@@ -86,7 +72,6 @@ def start(
     dry_run: bool = typer.Option(False, "--dry-run", help="Do not mutate S3 or execute commands"),
     background: bool = typer.Option(True, "--background/--foreground", "-b/-f", help="Run in background"),
     enable_tapdb: bool = typer.Option(True, "--enable-tapdb/--no-tapdb", help="Enable TapDB state tracking (default: on)"),
-    tapdb_table: str = typer.Option("daylily-worksets", "--tapdb-table", help="TapDB table name"),
     parallel: Optional[int] = typer.Option(None, "--parallel", "-p", help="Maximum number of worksets to run in parallel (overrides config file)"),
 ):
     """Start the workset monitor daemon."""
@@ -124,11 +109,8 @@ def start(
         regions = ursa_config.get_allowed_regions()
         console.print(f"[green]✓[/green]  Ursa config loaded: [cyan]{len(regions)} regions[/cyan]")
 
-    # Find monitor script
-    monitor_script = _find_monitor_script()
-
     # Build command
-    cmd = [sys.executable, str(monitor_script), str(config)]
+    cmd = [sys.executable, "-m", "daylib.workset_monitor_cli", str(config)]
     if once:
         cmd.append("--once")
     if verbose:
@@ -136,7 +118,7 @@ def start(
     if dry_run:
         cmd.append("--dry-run")
     if enable_tapdb:
-        cmd.extend(["--enable-tapdb", "--tapdb-table", tapdb_table])
+        cmd.append("--enable-tapdb")
     if parallel is not None:
         cmd.extend(["--parallel", str(parallel)])
 
@@ -300,4 +282,3 @@ def grep_logs(
 
     if result.returncode == 1:
         console.print(f"\n[yellow]⚠[/yellow]  No matches found for '{pattern}'")
-

@@ -18,8 +18,6 @@ import logging
 import os
 import sys
 
-from botocore.exceptions import ClientError
-
 from daylib.workset_state_db import WorksetStateDB
 
 logging.basicConfig(
@@ -31,11 +29,7 @@ LOGGER = logging.getLogger(__name__)
 
 def get_all_worksets(state_db: WorksetStateDB) -> list:
     """Retrieve all worksets from the graph-backed state store."""
-    try:
-        return state_db._list_all_worksets(limit=100000)
-    except ClientError as e:
-        LOGGER.error("Failed to list worksets: %s", e)
-        raise
+    return state_db._list_all_worksets(limit=100000)
 
 
 def filter_worksets_by_customer(worksets: list, customer_id: str, include_unknown: bool = False) -> list:
@@ -133,11 +127,6 @@ Examples:
         help="Preview what would be deleted without actually deleting",
     )
     parser.add_argument(
-        "--table",
-        default=os.environ.get("DAYLILY_WORKSET_TABLE", "daylily-worksets"),
-        help="TapDB table name (default: daylily-worksets or DAYLILY_WORKSET_TABLE env var)",
-    )
-    parser.add_argument(
         "--region",
         default=os.environ.get("AWS_REGION", "us-west-2"),
         help="AWS region (default: us-west-2 or AWS_REGION env var)",
@@ -164,18 +153,19 @@ Examples:
 
     # Initialize the state database
     try:
-        state_db = WorksetStateDB(
-            table_name=args.table,
-            region=args.region,
-            profile=args.profile,
-        )
-        LOGGER.info("Connected to TapDB table: %s in %s", args.table, args.region)
+        if args.profile and not os.environ.get("AWS_PROFILE"):
+            os.environ["AWS_PROFILE"] = args.profile
+        if args.region and not os.environ.get("AWS_REGION"):
+            os.environ["AWS_REGION"] = args.region
+
+        state_db = WorksetStateDB()
+        LOGGER.info("Connected to TapDB persistence (namespace via TAPDB_* env vars)")
     except Exception as e:
         print(f"Error: Failed to connect to TapDB: {e}", file=sys.stderr)
         sys.exit(1)
 
     # Scan all worksets
-    print(f"Scanning worksets from table '{args.table}'...")
+    print("Scanning worksets...")
     try:
         all_worksets = get_all_worksets(state_db)
     except Exception as e:

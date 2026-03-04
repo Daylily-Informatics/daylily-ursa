@@ -7,9 +7,6 @@ import logging
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-import boto3  # test compatibility: legacy fixtures patch this symbol
-from sqlalchemy import and_
-
 from daylib.config import normalize_bucket_name
 from daylib.tapdb_graph import TapDBBackend, from_json_addl, utc_now_iso
 from daylily_tapdb import generic_instance
@@ -108,20 +105,15 @@ class WorksetStateDB:
 
     def __init__(
         self,
-        table_name: str,
-        region: str,
-        profile: Optional[str] = None,
+        *,
         lock_timeout_seconds: int = 3600,
     ):
-        self.table_name = table_name
-        self.region = region
-        self.profile = profile
         self.lock_timeout_seconds = lock_timeout_seconds
         self.backend = TapDBBackend(app_username="ursa")
         self.cloudwatch = _NoopMetrics()
         self._cloudwatch = None
 
-    def create_table_if_not_exists(self) -> None:
+    def bootstrap(self) -> None:
         with self.backend.session_scope(commit=True) as session:
             self.backend.ensure_templates(session)
 

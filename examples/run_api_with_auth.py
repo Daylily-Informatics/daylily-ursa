@@ -10,7 +10,17 @@ Prerequisites:
     AWS Cognito User Pool and App Client must be created.
 
 Usage:
-    # Set environment variables
+    # TapDB strict namespace (required)
+    export TAPDB_STRICT_NAMESPACE=1
+    export TAPDB_CLIENT_ID=local
+    export TAPDB_DATABASE_NAME=ursa
+    export TAPDB_ENV=dev
+
+    # Bootstrap TapDB for local dev (once per namespace)
+    tapdb config init --client-id local --database-name ursa --env dev
+    tapdb bootstrap local
+
+    # AWS Cognito env (required for this example auth)
     export COGNITO_USER_POOL_ID=us-west-2_XXXXXXXXX
     export COGNITO_APP_CLIENT_ID=XXXXXXXXXXXXXXXXXXXXXXXXXX
 
@@ -146,11 +156,20 @@ def main():
 
     # Configuration from environment
     REGION = os.getenv("AWS_REGION", "us-west-2")
-    WORKSET_TABLE = os.getenv("TAPDB_WORKSET_NAMESPACE", "tapdb-worksets")
+    TAPDB_CLIENT_ID = os.getenv("TAPDB_CLIENT_ID")
+    TAPDB_DATABASE_NAME = os.getenv("TAPDB_DATABASE_NAME")
+    TAPDB_ENV = os.getenv("TAPDB_ENV")
     USER_POOL_ID = os.getenv("COGNITO_USER_POOL_ID")
     APP_CLIENT_ID = os.getenv("COGNITO_APP_CLIENT_ID")
 
     # Validate required configuration
+    if not TAPDB_CLIENT_ID or not TAPDB_DATABASE_NAME or not TAPDB_ENV:
+        LOGGER.error(
+            "TapDB strict namespace env vars not set. Required: TAPDB_CLIENT_ID, TAPDB_DATABASE_NAME, TAPDB_ENV "
+            "(and TAPDB_STRICT_NAMESPACE=1).",
+        )
+        sys.exit(1)
+
     if not USER_POOL_ID:
         LOGGER.error("COGNITO_USER_POOL_ID environment variable not set")
         sys.exit(1)
@@ -162,11 +181,14 @@ def main():
     LOGGER.info("Initializing Workset Monitor API (with authentication)")
 
     # Initialize state database
-    LOGGER.info(f"Connecting to TapDB table: {WORKSET_TABLE}")
-    state_db = WorksetStateDB(
-        table_name=WORKSET_TABLE,
-        region=REGION,
+    LOGGER.info(
+        "Initializing TapDB backend (namespace %s/%s env=%s)",
+        TAPDB_CLIENT_ID,
+        TAPDB_DATABASE_NAME,
+        TAPDB_ENV,
     )
+    state_db = WorksetStateDB()
+    state_db.bootstrap()
 
     # Initialize scheduler (optional)
     LOGGER.info("Initializing workset scheduler")
@@ -179,6 +201,7 @@ def main():
     # Initialize customer manager (optional)
     LOGGER.info("Initializing customer manager")
     customer_manager = CustomerManager(region=REGION)
+    customer_manager.bootstrap()
 
     # Initialize Cognito authentication
     LOGGER.info("Initializing AWS Cognito authentication")
@@ -193,16 +216,8 @@ def main():
     if FILE_MANAGEMENT_AVAILABLE:
         LOGGER.info("Initializing file registry")
         try:
-            import boto3
-            import logging
-
-            logging.basicConfig(level=logging.DEBUG)
-
-            logging.getLogger("botocore").setLevel(logging.DEBUG)
-            logging.getLogger("boto3").setLevel(logging.DEBUG)
-            logging.getLogger("botocore.hooks").setLevel(logging.DEBUG)
-            tapdb = boto3.resource('tapdb', region_name=REGION)
             file_registry = FileRegistry()
+            file_registry.bootstrap()
             LOGGER.info("File registry initialized - file management endpoints will be available")
         except Exception as e:
             LOGGER.warning("Failed to initialize file registry: %s", e)
@@ -231,8 +246,8 @@ def main():
     LOGGER.info("=" * 60)
     LOGGER.info("Authentication: ENABLED (AWS Cognito)")
     LOGGER.info("Protocol: %s", protocol.upper())
-    LOGGER.info("Region: %s", REGION)
-    LOGGER.info("TapDB Table: %s", WORKSET_TABLE)
+    LOGGER.info("AWS Region: %s", REGION)
+    LOGGER.info("TapDB Namespace: %s/%s (env=%s)", TAPDB_CLIENT_ID, TAPDB_DATABASE_NAME, TAPDB_ENV)
     LOGGER.info("User Pool ID: %s", USER_POOL_ID)
     LOGGER.info("App Client ID: %s", APP_CLIENT_ID)
     if args.https:

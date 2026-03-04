@@ -42,7 +42,7 @@ from daylib.workset_api import create_app
 from daylib.workset_state_db import WorksetStateDB
 
 # Initialize components
-state_db = WorksetStateDB("daylily-worksets", "us-west-2")
+state_db = WorksetStateDB()
 
 # Create app WITHOUT authentication
 app = create_app(
@@ -122,7 +122,7 @@ from daylib.workset_state_db import WorksetStateDB
 from daylily_cognito.auth import CognitoAuth
 
 # Initialize components
-state_db = WorksetStateDB("daylily-worksets", "us-west-2")
+state_db = WorksetStateDB()
 
 # Initialize Cognito authentication
 cognito_auth = CognitoAuth(
@@ -333,9 +333,14 @@ daycog list-pools --profile <aws-profile> --region us-west-2
 export AWS_REGION=us-west-2
 export AWS_PROFILE=my-profile
 
-# TapDB Tables
-export TAPDB_WORKSET_NAMESPACE=tapdb-worksets
-export TAPDB_CUSTOMER_NAMESPACE=tapdb-customers
+# TapDB (Strict Namespace)
+# Bootstrap (preferred):
+#   tapdb config init --client-id local --database-name ursa --env dev
+#   tapdb bootstrap local
+export TAPDB_STRICT_NAMESPACE=1
+export TAPDB_CLIENT_ID=local
+export TAPDB_DATABASE_NAME=ursa
+export TAPDB_ENV=dev
 
 # Cognito Configuration (only if using authentication)
 export COGNITO_USER_POOL_ID=us-west-2_XXXXXXXXX

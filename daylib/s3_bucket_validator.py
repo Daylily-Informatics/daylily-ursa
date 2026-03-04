@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -209,17 +209,15 @@ class LinkedBucketManager:
 
     def __init__(
         self,
-        table_name: str = "tapdb-linked-buckets",
         region: str = "us-west-2",
         profile: Optional[str] = None,
     ):
-        self.table_name = table_name
         self.region = region
         self.profile = profile
         self.backend = TapDBBackend(app_username="ursa-linked-bucket")
         self.validator = S3BucketValidator(region=region, profile=profile)
 
-    def create_table_if_not_exists(self) -> None:
+    def bootstrap(self) -> None:
         with self.backend.session_scope(commit=True) as session:
             self.backend.ensure_templates(session)
 
@@ -282,8 +280,12 @@ class LinkedBucketManager:
         description: Optional[str] = None,
         prefix_restriction: Optional[str] = None,
         read_only: bool = False,
+        validate: bool = True,
         validation_result: Optional[BucketValidationResult] = None,
-    ) -> LinkedBucket:
+    ) -> tuple[LinkedBucket, Optional[BucketValidationResult]]:
+        if validation_result is None and validate:
+            validation_result = self.validator.validate_bucket(bucket_name)
+
         bucket_id = self._bucket_id(customer_id, bucket_name)
         now = utc_now_iso()
         payload: Dict[str, Any] = {
@@ -339,7 +341,7 @@ class LinkedBucketManager:
                 self.backend.update_instance_json(session, existing, payload)
                 payload["bucket_euid"] = existing.euid
 
-        return self._to_bucket(payload)
+        return self._to_bucket(payload), validation_result
 
     def get_linked_bucket(self, bucket_id: str) -> Optional[LinkedBucket]:
         with self.backend.session_scope(commit=False) as session:

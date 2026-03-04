@@ -68,7 +68,7 @@ Web-based form to generate `daylily_work.yaml`:
 
 ## Setup
 
-### 1. Create Customer Table
+### 1. Bootstrap Customer Templates
 
 ```python
 from daylib.workset_customer import CustomerManager
@@ -78,7 +78,7 @@ manager = CustomerManager(
     bucket_prefix="daylily-customer",
 )
 
-manager.create_customer_table_if_not_exists()
+manager.bootstrap()
 ```
 
 ### 2. Setup Cognito Authentication
@@ -98,7 +98,7 @@ from daylily_cognito.auth import CognitoAuth
 from daylib.workset_customer import CustomerManager
 
 # Initialize components
-state_db = WorksetStateDB("daylily-worksets", "us-west-2")
+state_db = WorksetStateDB()
 cognito_auth = CognitoAuth(
     region="us-west-2",
     user_pool_id="us-west-2_XXXXXXXXX",

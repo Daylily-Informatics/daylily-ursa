@@ -16,16 +16,14 @@ Read-only review of code + docs focused on “what remains” for production rea
 ## Current strengths
 - Solid packaging baseline via `pyproject.toml` (extras: `auth`, `dev`, `cluster`).
 - Clear entry points defined (`ursa`, `daylily-workset-api`, `daylily-workset-monitor`, etc.).
-- Multi-region primitives exist (`daylib/workset_multi_region.py`) + documentation.
+- Multi-region cluster discovery exists via `UrsaConfig.regions` + documentation.
 - Cross-region S3 risk is actively addressed via `RegionAwareS3Client`.
 - Guardrails exist in settings (e.g., wildcard CORS forbidden in production; demo mode validation).
 
 ## Production blockers (fix before go-live)
-1. **CLI server launcher is not production-package-safe**
-   - `daylib/cli/server.py` shells out to `bin/daylily-workset-api` relative to repo root.
-   - After `pip install daylily-ursa`, that `bin/` file likely won’t exist.
-   - This will break `ursa server start` in real deployments.
-   - TODO: make the executable scripts pip available console scripts instead of only repo-relative paths
+1. **(Resolved) CLI server launcher is production-package-safe**
+   - `daylib/cli/server.py` uses module execution (`python -m daylib.workset_api_cli`), which works in installed environments.
+   - Ensure docs and runbooks reference the packaged entry points from `pyproject.toml`.
 
 2. **No visible CI configuration in-repo**
    - At review time, `.github/` was not present (so no GitHub Actions workflows were found).

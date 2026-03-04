@@ -29,13 +29,6 @@ class _SessionCtx:
 @pytest.fixture
 def manifest_registry() -> ManifestRegistry:
     registry = ManifestRegistry.__new__(ManifestRegistry)
-    registry.table_name = "test-manifests"
-    registry.region = "us-west-2"
-    registry.profile = None
-    registry._schema_loaded = True
-    registry._hash_key_name = "manifest_id"
-    registry._range_key_name = None
-
     registry.backend = MagicMock()
     registry._session = MagicMock()
     registry.backend.session_scope.return_value = _SessionCtx(registry._session)
@@ -179,7 +172,7 @@ class TestGetManifestAndTsv:
         assert manifest_registry.get_manifest(customer_id="cust-001", manifest_id="m-1") is None
 
 
-class TestCreateTableIfNotExists:
-    def test_create_table_if_not_exists_bootstraps_templates(self, manifest_registry: ManifestRegistry):
-        manifest_registry.create_table_if_not_exists()
+class TestBootstrap:
+    def test_bootstrap_ensures_templates(self, manifest_registry: ManifestRegistry):
+        manifest_registry.bootstrap()
         manifest_registry.backend.ensure_templates.assert_called_once_with(manifest_registry._session)

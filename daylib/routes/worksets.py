@@ -39,7 +39,7 @@ def create_worksets_router(
     """
     router = APIRouter(tags=["worksets"])
 
-    @router.get("/", tags=["health"])
+    @router.get("/", tags=["health"], include_in_schema=False)
     async def root():
         """Health check endpoint."""
         return {
@@ -221,4 +221,3 @@ def create_worksets_router(
         return WorksetResponse(**next_workset)
 
     return router
-

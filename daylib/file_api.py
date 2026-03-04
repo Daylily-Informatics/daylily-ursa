@@ -943,9 +943,10 @@ def create_file_api_router(
             LOGGER.error("Failed to link bucket: %s", str(e))
             # Include more detail in the error message for debugging
             error_detail = str(e)
-            if "ResourceNotFoundException" in error_detail:
+            if "template" in error_detail.lower() or "missing" in error_detail.lower():
                 error_detail = (
-                    "TapDB table not found. The linked buckets table may need to be created. "
+                    "TapDB templates may not be bootstrapped. Run `ursa aws setup` or "
+                    "`tapdb bootstrap local`. "
                     f"Original error: {str(e)}"
                 )
             raise HTTPException(

@@ -7,7 +7,6 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-import boto3  # test compatibility: legacy fixtures patch this symbol
 from daylib.tapdb_graph import TapDBBackend, from_json_addl, utc_now_iso
 
 
@@ -122,22 +121,10 @@ class BiospecimenRegistry:
 
     def __init__(
         self,
-        subjects_table_name: str = "tapdb-subjects",
-        biospecimens_table_name: str = "tapdb-biospecimens",
-        biosamples_table_name: str = "tapdb-biosamples",
-        libraries_table_name: str = "tapdb-libraries",
-        region: str = "us-west-2",
-        profile: Optional[str] = None,
     ):
-        self.subjects_table_name = subjects_table_name
-        self.biospecimens_table_name = biospecimens_table_name
-        self.biosamples_table_name = biosamples_table_name
-        self.libraries_table_name = libraries_table_name
-        self.region = region
-        self.profile = profile
         self.backend = TapDBBackend(app_username="ursa-biospecimen")
 
-    def create_tables_if_not_exist(self) -> None:
+    def bootstrap(self) -> None:
         with self.backend.session_scope(commit=True) as session:
             self.backend.ensure_templates(session)
 

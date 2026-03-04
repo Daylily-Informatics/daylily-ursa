@@ -543,6 +543,30 @@ class TestPortalRoutes:
         assert "text/html" in response.headers["content-type"]
         assert b"Dashboard" in response.content or b"dashboard" in response.content.lower()
 
+    def test_portal_nav_hides_monitor_for_non_admin(self, mock_state_db):
+        """Non-admin users should not see Monitor in the main nav."""
+        client = _make_authenticated_client(
+            mock_state_db,
+            customer_id="cust-user",
+            is_admin=False,
+            email="user@example.com",
+        )
+        response = client.get("/portal")
+        assert response.status_code == 200
+        assert b'href="/portal/monitor"' not in response.content
+
+    def test_portal_nav_shows_monitor_for_admin(self, mock_state_db):
+        """Admin users should see Monitor in the main nav."""
+        client = _make_authenticated_client(
+            mock_state_db,
+            customer_id="cust-admin",
+            is_admin=True,
+            email="admin@example.com",
+        )
+        response = client.get("/portal")
+        assert response.status_code == 200
+        assert b'href="/portal/monitor"' in response.content
+
     def test_portal_login(self, client):
         """Test login page loads."""
         response = client.get("/portal/login")
@@ -2146,6 +2170,80 @@ def test_auth_registration_uses_session_email_and_ignores_form_email(mock_state_
     assert mock_customer_manager.onboard_customer.call_args.kwargs["email"] == "johnm+t@lsmc.com"
 
 
+def test_auth_registration_failure_hides_internal_db_error(mock_state_db):
+    """Registration errors should be sanitized for the portal user."""
+    settings = get_settings_for_testing(
+        enable_auth=True,
+        cognito_app_client_id="test-client-id",
+        cognito_domain="example.auth.us-west-2.amazoncognito.com",
+    )
+
+    mock_cognito_auth = MagicMock()
+    mock_cognito_auth.get_current_user.return_value = {
+        "client_id": "test-client-id",
+        "username": "johnm+t@lsmc.com",
+    }
+    mock_cognito_auth.cognito.get_user.return_value = {
+        "UserAttributes": [
+            {"Name": "email", "Value": "johnm+t@lsmc.com"},
+        ]
+    }
+
+    mock_customer_manager = MagicMock()
+    mock_customer_manager.get_customer_by_email.return_value = None
+    mock_customer_manager.get_customer_config.return_value = None
+    mock_customer_manager.onboard_customer.side_effect = RuntimeError(
+        "psycopg2.errors.RaiseException Missing EUID sequence ct_instance_seq"
+    )
+
+    app = create_app(
+        state_db=mock_state_db,
+        enable_auth=True,
+        cognito_auth=mock_cognito_auth,
+        customer_manager=mock_customer_manager,
+        settings=settings,
+    )
+    client = TestClient(app)
+
+    login_response = client.get("/portal/login?sso=1", follow_redirects=False)
+    auth_redirect = login_response.headers["location"]
+    oauth_state = parse_qs(urlparse(auth_redirect).query)["state"][0]
+
+    with patch(
+        "daylib.routes.portal.exchange_authorization_code",
+        return_value={
+            "access_token": "access-token",
+            "id_token": "id-token",
+            "refresh_token": "refresh-token",
+        },
+    ):
+        callback_response = client.get(
+            f"/auth/callback?code=auth-code&state={oauth_state}",
+            follow_redirects=False,
+        )
+    assert callback_response.status_code == 302
+    assert callback_response.headers["location"].startswith("/portal/register")
+
+    response = client.post(
+        "/portal/register",
+        data={
+            "customer_name": "John Team",
+            "max_concurrent_worksets": "10",
+            "max_storage_gb": "500",
+            "s3_option": "auto",
+            "bucket_region": "us-east-1",
+            "terms": "on",
+        },
+    )
+
+    assert response.status_code == 200
+    assert b"Unable to create account right now. Please try again." in response.content
+    assert b"Reference ID:" in response.content
+    assert b"REG-" in response.content
+    assert b"psycopg2.errors.RaiseException" not in response.content
+    assert b"ct_instance_seq" not in response.content
+
+
 def test_hosted_ui_signup_link_and_redirect(mock_state_db):
     """Hosted UI login page should expose Cognito signup flow and redirect to /signup."""
     settings = get_settings_for_testing(
@@ -2208,12 +2306,19 @@ class TestPortalFileUpload:
         manager.list_customers.return_value = [customer]
         return manager
 
+    @pytest.fixture
+    def mock_file_registry(self):
+        registry = MagicMock()
+        registry.register_file.return_value = True
+        return registry
+
     def _make_client_with_file_upload(
         self,
         mock_state_db: MagicMock,
         *,
         mock_customer_manager: MagicMock,
         mock_linked_bucket_manager: MagicMock,
+        mock_file_registry: MagicMock,
     ) -> tuple[TestClient, MagicMock]:
         """Create an authenticated client with linked bucket manager + mocked S3 client."""
         mock_s3_client = MagicMock()
@@ -2225,6 +2330,7 @@ class TestPortalFileUpload:
                 state_db=mock_state_db,
                 enable_auth=False,
                 customer_manager=mock_customer_manager,
+                file_registry=mock_file_registry,
             )
 
         client = TestClient(app)
@@ -2265,13 +2371,14 @@ class TestPortalFileUpload:
         assert "File management" in response.json()["detail"]
 
     def test_upload_bucket_not_found_404(
-        self, mock_state_db, mock_customer_manager, mock_linked_bucket_manager
+        self, mock_state_db, mock_customer_manager, mock_linked_bucket_manager, mock_file_registry
     ):
         mock_linked_bucket_manager.get_bucket.return_value = None
         client, _mock_s3 = self._make_client_with_file_upload(
             mock_state_db,
             mock_customer_manager=mock_customer_manager,
             mock_linked_bucket_manager=mock_linked_bucket_manager,
+            mock_file_registry=mock_file_registry,
         )
 
         response = client.post(
@@ -2282,13 +2389,14 @@ class TestPortalFileUpload:
         assert response.status_code == 404
 
     def test_upload_bucket_wrong_customer_403(
-        self, mock_state_db, mock_customer_manager, mock_linked_bucket_manager, mock_linked_bucket
+        self, mock_state_db, mock_customer_manager, mock_linked_bucket_manager, mock_linked_bucket, mock_file_registry
     ):
         mock_linked_bucket.customer_id = "cust-999"
         client, _mock_s3 = self._make_client_with_file_upload(
             mock_state_db,
             mock_customer_manager=mock_customer_manager,
             mock_linked_bucket_manager=mock_linked_bucket_manager,
+            mock_file_registry=mock_file_registry,
         )
 
         response = client.post(
@@ -2300,13 +2408,14 @@ class TestPortalFileUpload:
         assert "Access denied" in response.json()["detail"]
 
     def test_upload_bucket_no_write_403(
-        self, mock_state_db, mock_customer_manager, mock_linked_bucket_manager, mock_linked_bucket
+        self, mock_state_db, mock_customer_manager, mock_linked_bucket_manager, mock_linked_bucket, mock_file_registry
     ):
         mock_linked_bucket.can_write = False
         client, _mock_s3 = self._make_client_with_file_upload(
             mock_state_db,
             mock_customer_manager=mock_customer_manager,
             mock_linked_bucket_manager=mock_linked_bucket_manager,
+            mock_file_registry=mock_file_registry,
         )
 
         response = client.post(
@@ -2318,12 +2427,13 @@ class TestPortalFileUpload:
         assert "Write access" in response.json()["detail"]
 
     def test_upload_s3_access_denied_surfaces_403(
-        self, mock_state_db, mock_customer_manager, mock_linked_bucket_manager
+        self, mock_state_db, mock_customer_manager, mock_linked_bucket_manager, mock_file_registry
     ):
         client, mock_s3 = self._make_client_with_file_upload(
             mock_state_db,
             mock_customer_manager=mock_customer_manager,
             mock_linked_bucket_manager=mock_linked_bucket_manager,
+            mock_file_registry=mock_file_registry,
         )
         mock_s3.upload_fileobj.side_effect = ClientError(
             {"Error": {"Code": "AccessDenied", "Message": "Denied"}},
@@ -2339,13 +2449,15 @@ class TestPortalFileUpload:
         assert "AccessDenied" in response.json()["detail"]
 
     def test_upload_success_calls_s3_with_normalized_prefix(
-        self, mock_state_db, mock_customer_manager, mock_linked_bucket_manager
+        self, mock_state_db, mock_customer_manager, mock_linked_bucket_manager, mock_file_registry
     ):
         client, mock_s3 = self._make_client_with_file_upload(
             mock_state_db,
             mock_customer_manager=mock_customer_manager,
             mock_linked_bucket_manager=mock_linked_bucket_manager,
+            mock_file_registry=mock_file_registry,
         )
+        mock_s3.head_object.return_value = {"ContentLength": 5, "ETag": '"abc123"'}
 
         response = client.post(
             "/portal/files/upload",
@@ -2357,20 +2469,49 @@ class TestPortalFileUpload:
         assert data["success"] is True
         assert data["bucket"] == "test-linked-bucket"
         assert data["key"] == "foo/bar/hello.txt"
+        assert data["registered"] is True
+        assert data["file_id"].startswith("file-")
 
         assert mock_s3.upload_fileobj.call_count == 1
         _args, kwargs = mock_s3.upload_fileobj.call_args
         assert kwargs == {}
         assert _args[1] == "test-linked-bucket"
         assert _args[2] == "foo/bar/hello.txt"
+        mock_s3.head_object.assert_called_once_with("test-linked-bucket", "foo/bar/hello.txt")
+        mock_file_registry.register_file.assert_called_once()
+        registration = mock_file_registry.register_file.call_args.args[0]
+        assert registration.customer_id == "cust-001"
+        assert registration.file_metadata.s3_uri == "s3://test-linked-bucket/foo/bar/hello.txt"
+        assert registration.file_metadata.file_size_bytes == 5
+
+    def test_upload_can_disable_auto_registration(
+        self, mock_state_db, mock_customer_manager, mock_linked_bucket_manager, mock_file_registry
+    ):
+        client, mock_s3 = self._make_client_with_file_upload(
+            mock_state_db,
+            mock_customer_manager=mock_customer_manager,
+            mock_linked_bucket_manager=mock_linked_bucket_manager,
+            mock_file_registry=mock_file_registry,
+        )
+
+        response = client.post(
+            "/portal/files/upload",
+            data={"bucket_id": "bucket-abc123", "prefix": "", "auto_register": "false"},
+            files={"file": ("hello.txt", b"hello")},
+        )
+        assert response.status_code == 200
+        assert response.json()["registered"] is False
+        mock_s3.head_object.assert_not_called()
+        mock_file_registry.register_file.assert_not_called()
 
     def test_upload_missing_filename_returns_422_from_validation(
-        self, mock_state_db, mock_customer_manager, mock_linked_bucket_manager
+        self, mock_state_db, mock_customer_manager, mock_linked_bucket_manager, mock_file_registry
     ):
         client, _mock_s3 = self._make_client_with_file_upload(
             mock_state_db,
             mock_customer_manager=mock_customer_manager,
             mock_linked_bucket_manager=mock_linked_bucket_manager,
+            mock_file_registry=mock_file_registry,
         )
 
         response = client.post(

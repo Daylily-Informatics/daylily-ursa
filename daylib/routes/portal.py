@@ -39,7 +39,14 @@ from daylily_cognito.oauth import (
 )
 from daylib.security import sanitize_for_log
 from daylib.s3_utils import RegionAwareS3Client
-from daylib.file_registry import detect_file_format as _detect_file_format
+from daylib.file_registry import (
+    BiosampleMetadata as _BiosampleMetadata,
+    FileMetadata as _FileMetadata,
+    FileRegistration as _FileRegistration,
+    SequencingMetadata as _SequencingMetadata,
+    detect_file_format as _detect_file_format,
+    generate_file_id as _generate_file_id,
+)
 from daylib.search import search_portal
 from daylib.routes.dependencies import (
     convert_customer_for_template,
@@ -66,6 +73,10 @@ PORTAL_REGISTRATION_REGIONS = [
     "ap-south-1",
     "eu-central-1",
 ]
+
+
+def _new_error_ref(prefix: str) -> str:
+    return f"{prefix}-{secrets.token_hex(4).upper()}"
 
 
 class PortalDependencies:
@@ -1261,14 +1272,20 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                 # Re-enter Hosted UI login so Cognito session can issue fresh tokens
                 # and map into the newly created customer account.
                 return RedirectResponse(url="/portal/login?sso=1", status_code=302)
-        except Exception as e:
-            LOGGER.error(f"Registration failed for {resolved_email}: {e}")
+        except Exception:
+            error_ref = _new_error_ref("REG")
+            LOGGER.exception(
+                "Registration failed [error_ref=%s, email=%s]",
+                error_ref,
+                sanitize_for_log(resolved_email),
+            )
             return deps.templates.TemplateResponse(
                 request, "auth/register.html",
                 _get_template_context(
                     request,
                     deps,
-                    error=str(e),
+                    error="Unable to create account right now. Please try again.",
+                    error_code=error_ref,
                     allowed_regions=PORTAL_REGISTRATION_REGIONS,
                     default_region=PORTAL_REGISTRATION_REGIONS[0],
                     pending_signup_email=request.session.get("pending_signup_email"),
@@ -2281,7 +2298,13 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         )
 
     @router.post("/portal/files/upload")
-    async def portal_files_upload_submit(request: Request, bucket_id: str = Form(...), prefix: str = Form(""), file: UploadFile = File(...)):
+    async def portal_files_upload_submit(
+        request: Request,
+        bucket_id: str = Form(...),
+        prefix: str = Form(""),
+        auto_register: bool = Form(True),
+        file: UploadFile = File(...),
+    ):
         """Handle file upload to S3 bucket."""
         user_email = request.session.get("user_email")
         customer_id = request.session.get("customer_id")
@@ -2307,12 +2330,77 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
             # Use region-aware S3 client to avoid 403s when bucket is in a different region.
             _portal_s3_client.upload_fileobj(file.file, bucket_obj.bucket_name, s3_key)
             LOGGER.info(f"Uploaded {file.filename} to s3://{bucket_obj.bucket_name}/{s3_key}")
-            return {
+            response_payload: Dict[str, Any] = {
                 "success": True,
                 "bucket": bucket_obj.bucket_name,
                 "key": s3_key,
                 "filename": file.filename,
             }
+
+            if auto_register and deps.file_registry:
+                s3_uri = f"s3://{bucket_obj.bucket_name}/{s3_key}"
+                file_id = _generate_file_id(s3_uri, customer_id)
+                content_length = 0
+                etag: Optional[str] = None
+                try:
+                    head_obj = _portal_s3_client.head_object(bucket_obj.bucket_name, s3_key)
+                    content_length = int(head_obj.get("ContentLength", 0) or 0)
+                    raw_etag = head_obj.get("ETag")
+                    if isinstance(raw_etag, str):
+                        etag = raw_etag.strip('"')
+                except Exception as head_err:
+                    LOGGER.warning(
+                        "Failed to fetch object metadata after upload for registration: bucket=%s key=%s error=%s",
+                        sanitize_for_log(bucket_obj.bucket_name),
+                        sanitize_for_log(s3_key),
+                        str(head_err),
+                    )
+
+                read_number = 2 if any(token in filename for token in ("_R2", "_2.fastq", "_2.fq")) else 1
+                registration = _FileRegistration(
+                    file_id=file_id,
+                    customer_id=customer_id,
+                    file_metadata=_FileMetadata(
+                        file_id=file_id,
+                        s3_uri=s3_uri,
+                        file_size_bytes=content_length,
+                        md5_checksum=etag,
+                        file_format=_detect_file_format(s3_uri),
+                    ),
+                    sequencing_metadata=_SequencingMetadata(platform="UNKNOWN", vendor="UNKNOWN"),
+                    biosample_metadata=_BiosampleMetadata(
+                        biosample_id="unassigned-biosample",
+                        subject_id="unassigned-subject",
+                        sample_type="unknown",
+                    ),
+                    read_number=read_number,
+                    tags=["source:portal_upload"],
+                )
+                registered = deps.file_registry.register_file(registration)
+                if not registered:
+                    LOGGER.error(
+                        "Portal upload registration returned False: customer_id=%s file_id=%s s3_uri=%s",
+                        sanitize_for_log(customer_id),
+                        sanitize_for_log(file_id),
+                        sanitize_for_log(s3_uri),
+                    )
+                    raise HTTPException(
+                        status_code=500,
+                        detail="Upload succeeded, but file registration failed. Use auto-register from linked buckets to recover.",
+                    )
+                response_payload["registered"] = True
+                response_payload["file_id"] = file_id
+            elif auto_register and not deps.file_registry:
+                LOGGER.warning(
+                    "Portal upload auto-register requested but file registry is unavailable for customer_id=%s",
+                    sanitize_for_log(customer_id),
+                )
+                response_payload["registered"] = False
+                response_payload["warning"] = "File uploaded but registry is unavailable; file list may not update."
+            else:
+                response_payload["registered"] = False
+
+            return response_payload
         except HTTPException:
             raise
         except ClientError as e:
@@ -2900,13 +2988,11 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
             "AWS_ACCESS_KEY_ID": "***" if os.getenv("AWS_ACCESS_KEY_ID") else None,
             "AWS_SECRET_ACCESS_KEY": "***" if os.getenv("AWS_SECRET_ACCESS_KEY") else None,
             "AWS_ACCOUNT_ID": app_settings.aws_account_id,
-            "TAPDB_WORKSET_NAMESPACE": app_settings.workset_table_name,
-            "TAPDB_CUSTOMER_NAMESPACE": app_settings.customer_table_name,
-            "TAPDB_MANIFEST_NAMESPACE": app_settings.daylily_manifest_table,
-            "TAPDB_BUCKET_NAMESPACE": app_settings.daylily_linked_buckets_table,
-            "TAPDB_ENV": os.getenv("TAPDB_ENV"),
-            "TAPDB_DATABASE_NAME": os.getenv("TAPDB_DATABASE_NAME"),
+            "TAPDB_STRICT_NAMESPACE": os.getenv("TAPDB_STRICT_NAMESPACE"),
             "TAPDB_CLIENT_ID": os.getenv("TAPDB_CLIENT_ID"),
+            "TAPDB_DATABASE_NAME": os.getenv("TAPDB_DATABASE_NAME"),
+            "TAPDB_ENV": os.getenv("TAPDB_ENV"),
+            "TAPDB_CONFIG_PATH": os.getenv("TAPDB_CONFIG_PATH"),
             "COGNITO_USER_POOL_ID": app_settings.cognito_user_pool_id,
             "COGNITO_APP_CLIENT_ID": app_settings.cognito_app_client_id,
             "COGNITO_APP_CLIENT_SECRET": "***" if app_settings.cognito_app_client_secret else None,
@@ -2964,8 +3050,26 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         cognito_installed = _is_module_available("daylily_cognito")
         cognito_version = _get_distribution_version("daylily-cognito")
         tapdb_installed = _is_module_available("daylily_tapdb")
-        tapdb_version = _get_distribution_version("daylily-tapdb")
+        tapdb_dist_version = _get_distribution_version("daylily-tapdb")
+        tapdb_module_version = None
+        try:
+            import daylily_tapdb  # type: ignore
+
+            tapdb_module_version = getattr(daylily_tapdb, "__version__", None)
+        except Exception:
+            tapdb_module_version = None
+
         tapdb_env_vars = sorted(key for key in os.environ.keys() if key.startswith("TAPDB_"))
+        tapdb_cfg: dict | None = None
+        tapdb_cfg_error: str | None = None
+        try:
+            from daylily_tapdb.cli.db_config import get_db_config_for_env  # type: ignore
+
+            env_name = (os.getenv("TAPDB_ENV") or "").strip()
+            if env_name:
+                tapdb_cfg = get_db_config_for_env(env_name)
+        except Exception as exc:
+            tapdb_cfg_error = f"{type(exc).__name__}: {exc}"
 
         cognito_rows = [
             {"key": "Distribution", "value": "daylily-cognito"},
@@ -2989,20 +3093,37 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
             {"key": "Distribution", "value": "daylily-tapdb"},
             {"key": "Module", "value": "daylily_tapdb"},
             {"key": "Installed", "value": "Yes" if tapdb_installed else "No"},
-            {"key": "Version", "value": tapdb_version or "Not installed"},
+            {"key": "Dist version", "value": tapdb_dist_version or "Not installed"},
+            {"key": "Module version", "value": tapdb_module_version or "Unknown"},
             {"key": "Integrated in current runtime", "value": "Yes"},
+            {
+                "key": "Namespace",
+                "value": (
+                    f"{os.getenv('TAPDB_CLIENT_ID')}/{os.getenv('TAPDB_DATABASE_NAME')}"
+                    if os.getenv("TAPDB_CLIENT_ID") and os.getenv("TAPDB_DATABASE_NAME")
+                    else "Not set"
+                ),
+            },
+            {"key": "TAPDB_ENV", "value": os.getenv("TAPDB_ENV") or "Not set"},
             {
                 "key": "Detected TAPDB_* env vars",
                 "value": ", ".join(tapdb_env_vars) if tapdb_env_vars else "None",
             },
         ]
 
-        persistence_rows = [
-            {"key": "Workset namespace", "value": app_settings.workset_table_name},
-            {"key": "Customer namespace", "value": app_settings.customer_table_name},
-            {"key": "Manifest namespace", "value": app_settings.daylily_manifest_table},
-            {"key": "Bucket-link namespace", "value": app_settings.daylily_linked_buckets_table},
-        ]
+        persistence_rows = [{"key": "Backend", "value": "TapDB graph (Postgres)"}]
+        if tapdb_cfg:
+            persistence_rows.extend(
+                [
+                    {"key": "Config path", "value": str(tapdb_cfg.get("config_path") or "") or "Unknown"},
+                    {"key": "Engine type", "value": str(tapdb_cfg.get("engine_type") or "") or "Unknown"},
+                    {"key": "Host", "value": str(tapdb_cfg.get("host") or "") or "Unknown"},
+                    {"key": "Port", "value": str(tapdb_cfg.get("port") or "") or "Unknown"},
+                    {"key": "Database", "value": str(tapdb_cfg.get("database") or "") or "Unknown"},
+                ]
+            )
+        elif tapdb_cfg_error:
+            persistence_rows.append({"key": "Config error", "value": tapdb_cfg_error})
 
         return deps.templates.TemplateResponse(
             request,
@@ -3174,7 +3295,6 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         # Extract config values for display
         monitor_opts = monitor_config.get("monitor", {})
         cluster_opts = monitor_config.get("cluster", {})
-        aws_opts = monitor_config.get("aws", {})
 
         # Get max_concurrent_worksets from YAML config as default
         max_concurrent_from_config = monitor_opts.get("max_concurrent_worksets", 1)
@@ -3204,7 +3324,6 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
             "poll_interval_seconds": monitor_opts.get("poll_interval_seconds", 60),
             "max_concurrent_worksets": max_concurrent_runtime,
             "archive_prefix": monitor_opts.get("archive_prefix", ""),
-            "tapdb_table": aws_opts.get("tapdb_table", "daylily-worksets"),
             "reuse_cluster_name": cluster_opts.get("reuse_cluster_name", ""),
             "config_path": str(config_path) if config_path else "Not found",
         }

@@ -89,11 +89,6 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         help="Enable TapDB state tracking integration",
     )
     parser.add_argument(
-        "--tapdb-table",
-        default=os.environ.get("DAYLILY_TAPDB_TABLE", "daylily-worksets"),
-        help="TapDB table name for workset state (default: daylily-worksets)",
-    )
-    parser.add_argument(
         "--enable-notifications",
         action="store_true",
         help="Enable SNS notifications for workset events",
@@ -131,8 +126,6 @@ def setup_integration_components(
     Returns dict with state_db, integration, notification_manager, and scheduler keys.
     """
 
-    from daylib.ursa_config import get_ursa_config
-
     components: dict[str, Any] = {
         "state_db": None,
         "integration": None,
@@ -144,26 +137,10 @@ def setup_integration_components(
         try:
             from daylib.workset_state_db import WorksetStateDB
 
-            ursa_config = get_ursa_config()
-            tapdb_region = ursa_config.get_effective_tapdb_db_region()
-            source = ursa_config.get_value_source("tapdb_db_region")
-            LOGGER.info(
-                "Using TapDB region from %s: %s",
-                source if source != "not set" else "default",
-                tapdb_region,
-            )
-
-            state_db = WorksetStateDB(
-                table_name=args.tapdb_table,
-                region=tapdb_region,
-                profile=config.aws.profile if config.aws.profile else None,
-            )
+            state_db = WorksetStateDB()
+            state_db.bootstrap()
             components["state_db"] = state_db
-            LOGGER.info(
-                "TapDB state tracking enabled (table: %s, region: %s)",
-                args.tapdb_table,
-                tapdb_region,
-            )
+            LOGGER.info("TapDB state tracking enabled (templates bootstrapped)")
         except ImportError:
             LOGGER.warning(
                 "TapDB integration requested but workset_state_db module not available"

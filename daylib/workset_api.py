@@ -152,14 +152,9 @@ def create_app(
     # Initialize manifest registry (optional but enabled by default when available)
     if MANIFEST_STORAGE_AVAILABLE and manifest_registry is None and ManifestRegistry is not None:
         try:
-            manifest_registry = ManifestRegistry(
-                table_name=settings.daylily_manifest_table,
-                region=region,
-                profile=profile,
-            )
-            # Ensure table exists
-            manifest_registry.create_table_if_not_exists()
-            LOGGER.info("Manifest storage enabled (table: %s)", settings.daylily_manifest_table)
+            manifest_registry = ManifestRegistry()
+            manifest_registry.bootstrap()
+            LOGGER.info("Manifest storage enabled (TapDB templates bootstrapped)")
         except Exception as e:
             LOGGER.warning("Failed to initialize ManifestRegistry: %s", str(e))
             manifest_registry = None
@@ -171,10 +166,10 @@ def create_app(
     if FILE_MANAGEMENT_AVAILABLE and LinkedBucketManager is not None:
         try:
             linked_bucket_manager = LinkedBucketManager(
-                table_name=settings.daylily_linked_buckets_table,
                 region=region,
                 profile=profile,
             )
+            linked_bucket_manager.bootstrap()
             LOGGER.info("LinkedBucketManager initialized for portal and file API")
         except Exception as e:
             LOGGER.warning("Failed to create LinkedBucketManager: %s", str(e))
@@ -420,7 +415,7 @@ def create_app(
 
         return None
 
-    @app.get("/", tags=["health"])
+    @app.get("/", tags=["health"], operation_id="api_health_root")
     async def root(request: Request):
         """Health check endpoint."""
         accept = request.headers.get("accept", "")
@@ -608,9 +603,8 @@ def create_app(
         biospecimen_registry_for_portal = None
         if BIOSPECIMEN_AVAILABLE:
             try:
-                biospecimen_registry_for_portal = BiospecimenRegistry(region=region, profile=profile)
-                # Ensure tables exist
-                biospecimen_registry_for_portal.create_tables_if_not_exist()
+                biospecimen_registry_for_portal = BiospecimenRegistry()
+                biospecimen_registry_for_portal.bootstrap()
                 LOGGER.info("Biospecimen registry initialized for portal")
             except Exception as e:
                 LOGGER.warning("Failed to initialize biospecimen registry for portal: %s", str(e))
@@ -733,7 +727,8 @@ def create_app(
     if BIOSPECIMEN_AVAILABLE:
         LOGGER.info("Integrating biospecimen API endpoints")
         try:
-            biospecimen_registry = BiospecimenRegistry(region=region, profile=profile)
+            biospecimen_registry = BiospecimenRegistry()
+            biospecimen_registry.bootstrap()
 
             def get_customer_id_from_request(request: Request) -> str:
                 """Get customer ID from request session or raise 401.

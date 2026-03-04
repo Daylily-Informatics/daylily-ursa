@@ -37,9 +37,6 @@ class _Instance:
 @pytest.fixture
 def state_db() -> WorksetStateDB:
     db = WorksetStateDB.__new__(WorksetStateDB)
-    db.table_name = "test-worksets"
-    db.region = "us-west-2"
-    db.profile = None
     db.lock_timeout_seconds = 300
 
     db.backend = MagicMock()

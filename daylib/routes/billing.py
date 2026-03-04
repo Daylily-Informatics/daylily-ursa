@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, HTTPException, Query, status
 

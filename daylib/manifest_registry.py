@@ -10,7 +10,6 @@ import uuid
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
-import boto3  # test compatibility: legacy fixtures patch this symbol
 from daylib.tapdb_graph import TapDBBackend, from_json_addl, utc_now_iso
 
 
@@ -115,20 +114,10 @@ class ManifestRegistry:
 
     def __init__(
         self,
-        table_name: str = "tapdb-manifests",
-        region: str = "us-west-2",
-        profile: Optional[str] = None,
     ):
-        self.table_name = table_name
-        self.region = region
-        self.profile = profile
-        # Compatibility fields retained for older tests/helpers.
-        self._schema_loaded = True
-        self._hash_key_name = "manifest_id"
-        self._range_key_name = None
         self.backend = TapDBBackend(app_username="ursa-manifest")
 
-    def create_table_if_not_exists(self) -> None:
+    def bootstrap(self) -> None:
         with self.backend.session_scope(commit=True) as session:
             self.backend.ensure_templates(session)
 

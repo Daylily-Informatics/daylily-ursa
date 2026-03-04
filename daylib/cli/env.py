@@ -106,6 +106,16 @@ URSA_PORT=8914
 # URSA_SSL_CERT_FILE=/absolute/path/to/cert.pem
 # URSA_SSL_KEY_FILE=/absolute/path/to/key.pem
 
+# ========== TapDB (Strict Namespace) ==========
+# Ursa uses TapDB graph persistence in strict namespace mode.
+# Bootstrap (preferred):
+#   tapdb config init --client-id local --database-name ursa --env dev
+#   tapdb bootstrap local
+TAPDB_STRICT_NAMESPACE=1
+TAPDB_CLIENT_ID=local
+TAPDB_DATABASE_NAME=ursa
+TAPDB_ENV=dev
+
 # ========== Authentication ==========
 # Set to 'true' to enable Cognito authentication
 ENABLE_AUTH=false

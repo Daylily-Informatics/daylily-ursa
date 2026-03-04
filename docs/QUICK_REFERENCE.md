@@ -124,7 +124,7 @@ from daylib.workset_validation import WorksetValidator
 from daylib.workset_customer import CustomerManager
 
 # State database
-state_db = WorksetStateDB("daylily-worksets", "us-west-2")
+state_db = WorksetStateDB()
 
 # Scheduler
 scheduler = WorksetScheduler(state_db)
@@ -268,9 +268,14 @@ print(f"Storage: {usage['storage_gb']} GB")
 export AWS_PROFILE=my-profile
 export AWS_REGION=us-west-2
 
-# TapDB table names
-export TAPDB_WORKSET_NAMESPACE=tapdb-worksets
-export TAPDB_CUSTOMER_NAMESPACE=tapdb-customers
+# TapDB (Strict Namespace)
+# Bootstrap (preferred):
+#   tapdb config init --client-id local --database-name ursa --env dev
+#   tapdb bootstrap local
+export TAPDB_STRICT_NAMESPACE=1
+export TAPDB_CLIENT_ID=local
+export TAPDB_DATABASE_NAME=ursa
+export TAPDB_ENV=dev
 
 # Cognito configuration
 export COGNITO_USER_POOL_ID=us-west-2_XXXXXXXXX
@@ -302,8 +307,12 @@ pytest tests/test_workset_state_db.py::test_record_failure_transient -v
 
 ### Check TapDB Connection
 ```python
-state_db = WorksetStateDB("daylily-worksets", "us-west-2")
-# If this succeeds, connection is working
+from daylib.tapdb_graph import TapDBBackend
+
+backend = TapDBBackend(app_username="ursa-healthcheck")
+with backend.session_scope(commit=False) as session:
+    # If this query succeeds, TapDB connectivity is working.
+    backend.templates.get_template(session, "workflow/workset/analysis/1.0/")
 ```
 
 ### Check S3 Access
@@ -330,4 +339,3 @@ auth = CognitoAuth(
 - [Customer Portal](CUSTOMER_PORTAL.md)
 - [Integration Guide](INTEGRATION_GUIDE.md)
 - [Authentication Setup](AUTHENTICATION_SETUP.md)
-

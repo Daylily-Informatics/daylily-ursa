@@ -31,7 +31,7 @@ prefer clusters in us-west-2
 ## Phase 0 — Release blockers (must-fix)
 
 ### 0.1 Packaging/runtime correctness
-- [ ] Fix `ursa server start` so it does **not** depend on repo-relative `bin/daylily-workset-api`.
+- [x] Fix `ursa server start` so it does **not** depend on repo-relative `bin/daylily-workset-api`.
   - Acceptance: after `pip install daylily-ursa`, `ursa server start` works and starts the API.
 
 ### 0.2 CI gates
@@ -120,4 +120,3 @@ prefer clusters in us-west-2
 ## Phase 4 — Documentation quick wins
 - [ ] Fix port inconsistencies in `docs/QUICKSTART_WORKSET_MONITOR.md`.
 - [ ] Ensure docs reference packaged entry points (console scripts), not repo-relative scripts.
-

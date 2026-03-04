@@ -92,9 +92,9 @@ ursa test lint                 # Run ruff linter
 ursa test format               # Format code
 
 # AWS resources
-ursa aws setup                 # Create TapDB tables
-ursa aws status                # Check resource status
-ursa aws teardown              # Delete all resources (destructive)
+ursa aws setup                 # Bootstrap TapDB templates and registries
+ursa aws status                # Show TapDB template readiness
+ursa aws teardown --force      # Print manual teardown instructions
 
 # Cognito authentication (Google-first default)
 ./scripts/setup_cognito_google_default.sh  # Uses ~/.config/google_oauth/client_secret_2_...json
@@ -176,10 +176,14 @@ URSA_ALLOWED_REGIONS=us-west-2,us-east-1
 # NOTE: S3 buckets are discovered from cluster tags (aws-parallelcluster-monitor-bucket)
 # No bucket environment variables are required.
 
-# TapDB Tables (auto-created if missing)
-TAPDB_WORKSET_NAMESPACE=tapdb-worksets
-TAPDB_CUSTOMER_NAMESPACE=tapdb-customers
-DAYLILY_FILE_REGISTRY_TABLE=daylily-file-registry
+# TapDB (Strict Namespace)
+# Bootstrap (preferred):
+#   tapdb config init --client-id local --database-name ursa --env dev
+#   tapdb bootstrap local
+TAPDB_STRICT_NAMESPACE=1
+TAPDB_CLIENT_ID=local
+TAPDB_DATABASE_NAME=ursa
+TAPDB_ENV=dev
 
 # Authentication (optional)
 ENABLE_AUTH=false

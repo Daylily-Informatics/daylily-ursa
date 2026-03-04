@@ -47,14 +47,6 @@ def _instance(payload: dict, *, euid: str = "euid-1", template_uuid: int = 1, bs
 @pytest.fixture
 def file_registry() -> FileRegistry:
     reg = FileRegistry.__new__(FileRegistry)
-    reg.files_table_name = "test-files"
-    reg.filesets_table_name = "test-filesets"
-    reg.file_workset_usage_table_name = "test-file-workset-usage"
-    reg.files_table = "test-files"
-    reg.filesets_table = "test-filesets"
-    reg.file_workset_usage_table = "test-file-workset-usage"
-    reg.region = "us-west-2"
-    reg.profile = None
 
     reg.backend = MagicMock()
     reg._session = MagicMock()

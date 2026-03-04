@@ -280,7 +280,7 @@ Proposed core tables and semantics:
 | Retry clone/retry attempt semantics | `customer_worksets.retry_customer_workset`, `record_failure`, `reset_for_retry` | Retry state and cloned workset relations are split across APIs and metadata fields | First-class `execution_attempt` rows plus optional `retries_from_workset_id` relation | Unique `(workset_id, attempt_number)`; FK consistency | Retry increments attempt number exactly once under concurrent triggers |
 | Archive/delete semantics | `archive_workset`, `delete_workset` (soft/hard), `restore_workset` | Mixed soft/hard semantics can break lineage/audit | Soft delete + archive flags on core tables; hard delete restricted to retention jobs | `is_deleted`/`archived_at` indexed, FK with `ON DELETE RESTRICT` | Archive, restore, soft-delete, retention purge flows preserve audit |
 | Mutable progress updates | `update_progress`, `update_progress_step` | Best-effort updates may overwrite critical state if unordered | Progress updates versioned by `updated_at` + optimistic guard (`version`) | Version column + check constraint on legal state/progress combos | Out-of-order progress writes are rejected or ignored deterministically |
-| Query/index assumptions (GSI + scan fallback) | `list_worksets_by_customer` uses `customer-id-state-index` else scan | Scan fallback causes latency/cost and potential consistency surprises | Native relational indexes on `(tenant_id,state,updated_at)` and pagination by keyset | Composite indexes + covering indexes for common list patterns | Query parity for customer+state+limit pagination |
+| Query/index assumptions (indexing + broad-read fallback) | `list_worksets_by_customer` performs broad reads and filters in memory when server-side filtering is not available | Broad reads increase latency/cost and can hide scaling limits | Add explicit relational indexes on `(tenant_id,state,updated_at)` and paginate by keyset | Composite indexes + covering indexes for common list patterns | Query parity for customer+state+limit pagination |
 | Eventual-consistency assumptions between S3 sentinels and DB state | `WorksetMonitor._sync_workset_state` and sentinel logic | Divergent source-of-truth can cause duplicate or stuck worksets | DB becomes authoritative for lifecycle; S3 sentinels become derived/diagnostic | DB transition transaction + reconciliation job constraints | Simulate sentinel/DB divergence and verify deterministic recovery |
 | Idempotent external calls | File URI dedupe in `FileRegistry.find_file_by_s3_uri`; no formal outbox for Atlas | Retries can duplicate external side effects (status pushes, notifications) | `idempotency_key` + `outbox_event` with destination dedupe keys | Unique `(destination, dedupe_key)` on outbox | Replayed delivery attempts yield one external side effect |
 
@@ -380,7 +380,7 @@ Cutover vs dual write decision:
 - Choose cutover (with temporary validation reads), not dual-write.
 
 Backfill approach:
-- Snapshot TapDB tables (`worksets`, `customers`, files/manifests as needed).
+- Snapshot TapDB graph data (`worksets`, `customers`, files/manifests as needed).
 - Transform to relational model with deterministic id mapping and event-history reconstruction.
 - Validate counts, key uniqueness, and sampled record equivalence.
 
@@ -413,7 +413,7 @@ Environment variables (new/changed likely):
 - New DB connectivity: `URSA_DB_URL` (or split host/port/db/user/password), `URSA_DB_POOL_SIZE`, `URSA_DB_MAX_OVERFLOW`.
 - New migration/runtime toggles: `URSA_WORKFLOW_BACKEND` (`tapdb|postgres`), `URSA_PARITY_MODE`, `URSA_OUTBOX_ENABLED`.
 - New Atlas integration: `URSA_ATLAS_BASE_URL`, `URSA_ATLAS_SERVICE_TOKEN` (or API key), `URSA_ATLAS_TIMEOUT_SECONDS`.
-- Existing settings likely retained temporarily: TapDB table names and auth/cognito settings in `daylib/config.py:Settings`.
+- Existing settings likely retained temporarily: TapDB strict-namespace environment variables and auth/cognito settings in `daylib/config.py:Settings`.
 
 Secrets:
 - Postgres credentials/DSN.

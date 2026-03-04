@@ -1,6 +1,6 @@
 {
   "schema_version": "1",
-  "last_updated": "2026-03-03",
+  "last_updated": "2026-03-04",
   "components": {
     "daylily-ursa": {
       "repo": "Daylily-Informatics/daylily-ursa",
@@ -20,7 +20,7 @@
     },
     "daylily-tapdb": {
       "repo": "Daylily-Informatics/daylily-tapdb",
-      "current": "0.1.21"
+      "current": "0.1.28"
     },
     "daylily-omics-references": {
       "repo": "Daylily-Informatics/daylily-omics-references",
@@ -37,6 +37,26 @@
       "tapdb": "0.1.21",
       "omics_references": "0.3.1",
       "notes": "Updated Cognito and TapDB dependency baselines"
+    },
+    {
+      "date": "2026-03-04",
+      "ursa": "0.1.7",
+      "ephemeral_cluster": "0.7.601",
+      "omics_analysis": "0.7.602",
+      "cognito": "0.1.24",
+      "tapdb": "0.1.27",
+      "omics_references": "0.3.1",
+      "notes": "Bumped TapDB baseline to strict-namespace 0.1.27"
+    },
+    {
+      "date": "2026-03-04",
+      "ursa": "0.1.7",
+      "ephemeral_cluster": "0.7.601",
+      "omics_analysis": "0.7.602",
+      "cognito": "0.1.24",
+      "tapdb": "0.1.28",
+      "omics_references": "0.3.1",
+      "notes": "Bumped TapDB baseline to strict-namespace 0.1.28"
     }
   ]
 }

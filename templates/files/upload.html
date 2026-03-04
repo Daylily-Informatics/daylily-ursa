@@ -515,6 +515,8 @@ async function uploadFile(file, idx) {
         const formData = new FormData();
         formData.append('bucket_id', bucketId);
         formData.append('prefix', prefix);
+        const autoRegister = document.getElementById('auto-register');
+        formData.append('auto_register', autoRegister && autoRegister.checked ? 'true' : 'false');
         formData.append('file', file);
 
         // Upload to server without timeout (large files can take a long time)
@@ -635,4 +637,3 @@ function cancelUpload() {
 }
 </script>
 {% endblock %}
-
