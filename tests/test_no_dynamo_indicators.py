@@ -81,12 +81,16 @@ def _is_probably_text(path: Path) -> bool:
 def test_no_dynamo_era_indicators_in_tracked_files() -> None:
     repo_root = _repo_root()
     tracked_files = _git_tracked_files(repo_root)
+    skip_relpaths = {"tests/test_no_dynamo_indicators.py"}
 
     compiled = [(re.compile(pat, re.IGNORECASE), label) for pat, label in BANNED_PATTERNS]
 
     violations: list[str] = []
     for path in tracked_files:
         if not path.is_file():
+            continue
+        rel = path.relative_to(repo_root).as_posix()
+        if rel in skip_relpaths:
             continue
         if not _is_probably_text(path):
             continue
@@ -103,4 +107,3 @@ def test_no_dynamo_era_indicators_in_tracked_files() -> None:
                     violations.append(f"{rel}:{lineno}: {label}: {line.strip()}")
 
     assert not violations, "Found Dynamo-era indicators:\n" + "\n".join(violations)
-
