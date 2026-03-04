@@ -3619,6 +3619,8 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         error = None
         # Check if user is admin to determine if we should fetch SSH status
         is_admin = bool(request.session.get("is_admin", False))
+        create_mode = request.query_params.get("action") == "create"
+        prefill_region = request.query_params.get("region")
         try:
             from daylib.cluster_service import get_cluster_service
             from daylib.ursa_config import get_ursa_config
@@ -3633,6 +3635,8 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                 aws_profile = deps.settings.aws_profile
 
             regions = allowed_regions or []
+            if prefill_region and prefill_region not in regions:
+                prefill_region = None
 
             if allowed_regions:
                 # Use global singleton to share cache across requests
@@ -3661,6 +3665,8 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                 error=error,
                 active_page="clusters",
                 is_admin=is_admin,  # Explicitly pass to ensure template matches fetch_ssh_status
+                create_mode=create_mode,
+                prefill_region=prefill_region,
             ),
         )
 

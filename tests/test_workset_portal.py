@@ -3477,6 +3477,43 @@ class TestPortalAuthzSurfaces:
         assert non_admin_response.status_code == 200
         assert b"data-testid=\"delete-cluster-btn\"" not in non_admin_response.content
 
+    def test_clusters_create_ui_is_admin_only(self, mock_state_db, monkeypatch):
+        """Create cluster button must be visible only to admins on /portal/clusters."""
+
+        class _FakeUrsaConfig:
+            is_configured = True
+            aws_profile = None
+
+            def get_allowed_regions(self):
+                return ["us-west-2"]
+
+        monkeypatch.setattr("daylib.ursa_config.get_ursa_config", lambda: _FakeUrsaConfig())
+
+        mock_cluster = MagicMock()
+        mock_cluster.to_dict.return_value = {
+            "cluster_name": "test-cluster",
+            "region": "us-west-2",
+            "cluster_status": "CREATE_COMPLETE",
+            "compute_fleet_status": "RUNNING",
+            "head_node": None,
+            "budget_info": None,
+            "job_queue": None,
+        }
+
+        mock_service = MagicMock()
+        mock_service.get_all_clusters_with_status.return_value = [mock_cluster]
+        monkeypatch.setattr("daylib.cluster_service.get_cluster_service", lambda **kwargs: mock_service)
+
+        admin_client = _make_authenticated_client(mock_state_db, customer_id="cust-admin", is_admin=True)
+        admin_response = admin_client.get("/portal/clusters")
+        assert admin_response.status_code == 200
+        assert b"data-testid=\"create-cluster-btn\"" in admin_response.content
+
+        non_admin_client = _make_authenticated_client(mock_state_db, customer_id="cust-user", is_admin=False)
+        non_admin_response = non_admin_client.get("/portal/clusters")
+        assert non_admin_response.status_code == 200
+        assert b"data-testid=\"create-cluster-btn\"" not in non_admin_response.content
+
     def test_api_delete_cluster_requires_admin(self, mock_state_db, monkeypatch):
         """DELETE /api/clusters/* must be admin-only."""
 
@@ -3496,6 +3533,76 @@ class TestPortalAuthzSurfaces:
         non_admin_client = _make_authenticated_client(mock_state_db, customer_id="cust-user", is_admin=False)
         resp = non_admin_client.delete("/api/clusters/test-cluster?region=us-west-2")
         assert resp.status_code == 403
+
+    def test_api_create_cluster_requires_admin(self, mock_state_db):
+        """POST /api/clusters/create must be admin-only."""
+        non_admin_client = _make_authenticated_client(mock_state_db, customer_id="cust-user", is_admin=False)
+        resp = non_admin_client.post(
+            "/api/clusters/create",
+            json={
+                "region_az": "us-west-2a",
+                "cluster_name": "test-cluster",
+                "ssh_key_name": "test-key",
+                "s3_bucket_name": "omics-analysis-test",
+                "config_path": None,
+                "pass_on_warn": False,
+                "debug": False,
+            },
+        )
+        assert resp.status_code == 403
+
+    def test_api_create_cluster_admin_starts_background_job(self, mock_state_db, monkeypatch, tmp_path):
+        """Admin create should start a background job and return URLs."""
+
+        class _FakeUrsaConfig:
+            is_configured = True
+            aws_profile = "lsmc"
+
+            def get_allowed_regions(self):
+                return ["us-west-2"]
+
+        monkeypatch.setattr("daylib.ursa_config.get_ursa_config", lambda: _FakeUrsaConfig())
+
+        from daylib.ephemeral_cluster.runner import ClusterCreateJob
+
+        job_path = tmp_path / "job.json"
+        log_path = tmp_path / "job.log"
+        fake_job = ClusterCreateJob(
+            job_id="ec_test_0001",
+            cluster_name="test-cluster",
+            region_az="us-west-2a",
+            aws_profile="lsmc",
+            job_path=job_path,
+            log_path=log_path,
+            status="running",
+        )
+
+        start_mock = MagicMock(return_value=fake_job)
+        monkeypatch.setattr("daylib.ephemeral_cluster.runner.start_create_job", start_mock)
+
+        admin_client = _make_authenticated_client(mock_state_db, customer_id="cust-admin", is_admin=True)
+        resp = admin_client.post(
+            "/api/clusters/create",
+            json={
+                "region_az": "us-west-2a",
+                "cluster_name": "test-cluster",
+                "ssh_key_name": "test-key",
+                "s3_bucket_name": "omics-analysis-test",
+                "config_path": None,
+                "pass_on_warn": False,
+                "debug": False,
+            },
+        )
+        assert resp.status_code == 200
+        payload = resp.json()
+        assert payload["job_id"] == "ec_test_0001"
+        assert payload["cluster_name"] == "test-cluster"
+        assert payload["region_az"] == "us-west-2a"
+        assert payload["aws_profile"] == "lsmc"
+        assert payload["job_status_url"] == "/api/clusters/create/jobs/ec_test_0001"
+        assert payload["job_logs_url"] == "/api/clusters/create/jobs/ec_test_0001/logs"
+
+        start_mock.assert_called_once()
 
     def test_api_delete_cluster_admin_returns_command(self, mock_state_db, monkeypatch):
         """Admin delete should return a pcluster command string for audit/debug."""
