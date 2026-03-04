@@ -4,9 +4,9 @@ import os
 import datetime as dt
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any, Dict, Generator, Iterable, Optional
+from typing import Any, Dict, Generator, Optional
 
-from sqlalchemy import and_
+from sqlalchemy import and_, text
 from sqlalchemy.orm import Session
 
 from daylily_tapdb import (
@@ -19,6 +19,7 @@ from daylily_tapdb import (
 )
 from daylily_tapdb.cli.context import resolve_context
 from daylily_tapdb.cli.db_config import get_db_config_for_env
+from daylily_tapdb.sequences import ensure_instance_prefix_sequence
 
 
 def utc_now_iso() -> str:
@@ -115,9 +116,59 @@ class TapDBBackend:
         with self.connection.session_scope(commit=commit) as session:
             yield session
 
+    @staticmethod
+    def _normalize_prefix(prefix: str) -> str:
+        return prefix.strip().upper()
+
+    def _required_instance_prefixes(self, session: Session) -> list[str]:
+        prefixes = {
+            self._normalize_prefix(spec.instance_prefix)
+            for spec in TEMPLATE_DEFINITIONS
+            if spec.instance_prefix and spec.instance_prefix.strip()
+        }
+
+        template_rows = (
+            session.query(generic_template.instance_prefix)
+            .filter(
+                generic_template.is_deleted.is_(False),
+                generic_template.instance_prefix.isnot(None),
+            )
+            .all()
+        )
+        for (prefix,) in template_rows:
+            value = str(prefix or "").strip()
+            if value:
+                prefixes.add(self._normalize_prefix(value))
+        return sorted(prefixes)
+
+    def _required_instance_sequence_names(self, session: Session) -> list[str]:
+        return [f"{prefix.lower()}_instance_seq" for prefix in self._required_instance_prefixes(session)]
+
+    def list_required_instance_sequences(self, session: Session) -> list[str]:
+        return self._required_instance_sequence_names(session)
+
+    def ensure_instance_sequences(self, session: Session) -> None:
+        for prefix in sorted(set(self._required_instance_prefixes(session))):
+            ensure_instance_prefix_sequence(session, prefix)
+
+    def get_missing_instance_sequences(self, session: Session) -> list[str]:
+        required = set(self._required_instance_sequence_names(session))
+        if not required:
+            return []
+        rows = session.execute(
+            text(
+                "SELECT sequence_name "
+                "FROM information_schema.sequences "
+                "WHERE sequence_schema = 'public'"
+            )
+        ).fetchall()
+        existing = {str(row[0]) for row in rows}
+        return sorted(seq for seq in required if seq not in existing)
+
     def ensure_templates(self, session: Session) -> None:
         for spec in TEMPLATE_DEFINITIONS:
             self._ensure_template(session, spec)
+        self.ensure_instance_sequences(session)
 
     def _ensure_template(self, session: Session, spec: TemplateDefinition) -> generic_template:
         template = self.templates.get_template(session, spec.template_code)
@@ -160,6 +211,16 @@ class TapDBBackend:
         bstatus: str = "active",
         singleton: bool = False,
     ) -> generic_instance:
+        template = self.templates.get_template(session, template_code)
+        if template is None:
+            self.ensure_templates(session)
+            template = self.templates.get_template(session, template_code)
+        if template is None:
+            raise RuntimeError(f"Missing template: {template_code}")
+        prefix = str(template.instance_prefix or "").strip()
+        if prefix:
+            ensure_instance_prefix_sequence(session, self._normalize_prefix(prefix))
+
         instance = self.factory.create_instance(
             session=session,
             template_code=template_code,

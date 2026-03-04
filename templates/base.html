@@ -62,7 +62,9 @@
                         {% if is_admin %}
                         <li><a href="/portal/admin/users" class="nav-link {% if active_page == 'admin_users' %}active{% endif %}">Admin</a></li>
                         {% endif %}
+                        {% if is_admin %}
                         <li><a href="/portal/monitor" class="nav-link {% if active_page == 'monitor' %}active{% endif %}">Monitor</a></li>
+                        {% endif %}
                         <li><a href="/portal/usage" class="nav-link {% if active_page == 'usage' %}active{% endif %}">Usage</a></li>
                     </ul>
 

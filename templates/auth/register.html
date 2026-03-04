@@ -29,7 +29,12 @@
         {% if error %}
         <div class="alert alert-error">
             <i class="fas fa-exclamation-circle"></i>
-            <span>{{ error }}</span>
+            <div>
+                <span>{{ error }}</span>
+                {% if error_code %}
+                <p class="form-text mb-0">Reference ID: <code>{{ error_code }}</code></p>
+                {% endif %}
+            </div>
         </div>
         {% endif %}
         

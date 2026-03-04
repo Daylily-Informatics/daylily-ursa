@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from typing import Dict, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from daylib.config import Settings
 from daylib.security import sanitize_for_log
@@ -142,4 +142,3 @@ def create_clusters_router(deps: ClusterDependencies) -> APIRouter:
             raise HTTPException(status_code=500, detail=str(e))
 
     return router
-

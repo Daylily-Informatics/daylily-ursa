@@ -59,6 +59,8 @@ class TestAwsStatus:
         fake_backend = MagicMock()
         fake_backend.session_scope.return_value = _Ctx()
         fake_backend.templates.get_template.return_value = object()
+        fake_backend.get_missing_instance_sequences.return_value = []
+        fake_backend.list_required_instance_sequences.return_value = ["ws_instance_seq"]
 
         with patch("daylib.tapdb_graph.backend.TEMPLATE_DEFINITIONS", [fake_template]), patch(
             "daylib.tapdb_graph.backend.TapDBBackend", return_value=fake_backend
@@ -68,6 +70,76 @@ class TestAwsStatus:
         assert result.exit_code == 0
         assert "TapDB Template Status" in result.output
         assert "workflow/workset/analysis/1.0/" in result.output
+        assert "ws_instance_seq" in result.output
+
+    def test_status_fails_when_sequence_missing(self):
+        fake_template = MagicMock(template_code="actor/customer/account/1.0/")
+
+        class _Ctx:
+            def __enter__(self):
+                return object()
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        fake_backend = MagicMock()
+        fake_backend.session_scope.return_value = _Ctx()
+        fake_backend.templates.get_template.return_value = object()
+        fake_backend.get_missing_instance_sequences.return_value = ["ct_instance_seq"]
+        fake_backend.list_required_instance_sequences.return_value = ["ct_instance_seq"]
+
+        with patch("daylib.tapdb_graph.backend.TEMPLATE_DEFINITIONS", [fake_template]), patch(
+            "daylib.tapdb_graph.backend.TapDBBackend", return_value=fake_backend
+        ):
+            result = runner.invoke(aws_app, ["status"])
+
+        assert result.exit_code == 1
+        assert "ct_instance_seq" in result.output
+        assert "Remediation:" in result.output
+
+
+class TestAwsRepairSequences:
+    def test_repair_sequences_dry_run(self):
+        class _Ctx:
+            def __enter__(self):
+                return object()
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        fake_backend = MagicMock()
+        fake_backend.session_scope.return_value = _Ctx()
+        fake_backend.get_missing_instance_sequences.return_value = ["ct_instance_seq"]
+
+        with patch("daylib.tapdb_graph.backend.TapDBBackend", return_value=fake_backend):
+            result = runner.invoke(aws_app, ["repair-sequences", "--dry-run"])
+
+        assert result.exit_code == 0
+        assert "ct_instance_seq" in result.output
+        assert "Dry run only" in result.output
+        fake_backend.ensure_instance_sequences.assert_not_called()
+
+    def test_repair_sequences_applies_changes(self):
+        class _Ctx:
+            def __enter__(self):
+                return object()
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        fake_backend = MagicMock()
+        fake_backend.session_scope.return_value = _Ctx()
+        fake_backend.get_missing_instance_sequences.side_effect = [
+            ["ct_instance_seq"],
+            [],
+        ]
+
+        with patch("daylib.tapdb_graph.backend.TapDBBackend", return_value=fake_backend):
+            result = runner.invoke(aws_app, ["repair-sequences"])
+
+        assert result.exit_code == 0
+        assert "Repaired TapDB instance sequences" in result.output
+        fake_backend.ensure_instance_sequences.assert_called_once()
 
 
 class TestAwsTeardown:

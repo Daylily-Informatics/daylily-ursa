@@ -415,7 +415,7 @@ def create_app(
 
         return None
 
-    @app.get("/", tags=["health"])
+    @app.get("/", tags=["health"], operation_id="api_health_root")
     async def root(request: Request):
         """Health check endpoint."""
         accept = request.headers.get("accept", "")

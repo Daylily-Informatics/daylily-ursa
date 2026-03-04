@@ -7,7 +7,6 @@ integration-style request test, so refactors don't leave endpoints unexercised.
 from __future__ import annotations
 
 import datetime as dt
-import io
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 

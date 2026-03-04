@@ -93,23 +93,82 @@ def status() -> None:
     from daylib.tapdb_graph.backend import TEMPLATE_DEFINITIONS, TapDBBackend
 
     backend = TapDBBackend(app_username="ursa-status")
-    table = Table(title="TapDB Template Status")
-    table.add_column("Template", style="cyan")
-    table.add_column("Status")
+    template_table = Table(title="TapDB Template Status")
+    template_table.add_column("Template", style="cyan")
+    template_table.add_column("Status")
+    sequence_table = Table(title="TapDB Instance Sequence Status")
+    sequence_table.add_column("Sequence", style="cyan")
+    sequence_table.add_column("Status")
+    missing_templates = False
+    missing_sequences = False
 
     try:
         with backend.session_scope() as session:
             for spec in TEMPLATE_DEFINITIONS:
                 template = backend.templates.get_template(session, spec.template_code)
                 if template is None:
-                    table.add_row(spec.template_code, "[red]missing[/red]")
+                    template_table.add_row(spec.template_code, "[red]missing[/red]")
+                    missing_templates = True
                 else:
-                    table.add_row(spec.template_code, "[green]ready[/green]")
+                    template_table.add_row(spec.template_code, "[green]ready[/green]")
+            missing = set(backend.get_missing_instance_sequences(session))
+            for seq_name in backend.list_required_instance_sequences(session):
+                if seq_name in missing:
+                    sequence_table.add_row(seq_name, "[red]missing[/red]")
+                    missing_sequences = True
+                else:
+                    sequence_table.add_row(seq_name, "[green]ready[/green]")
     except Exception as exc:  # pragma: no cover - operational path
         console.print(f"[red]✗[/red] Unable to check TapDB status: {exc}")
         raise typer.Exit(1)
 
-    console.print(table)
+    console.print(template_table)
+    console.print(sequence_table)
+    if missing_templates or missing_sequences:
+        console.print(
+            "[yellow]Remediation:[/yellow] run "
+            "`ursa aws setup` then `ursa aws repair-sequences`."
+        )
+        raise typer.Exit(1)
+
+
+@aws_app.command("repair-sequences")
+def repair_sequences(
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Show missing sequences without applying changes",
+    )
+) -> None:
+    """Repair missing TapDB instance-prefix sequences required by Ursa templates."""
+    from daylib.tapdb_graph.backend import TapDBBackend
+
+    backend = TapDBBackend(app_username="ursa-repair")
+    try:
+        with backend.session_scope(commit=not dry_run) as session:
+            missing = backend.get_missing_instance_sequences(session)
+            if not missing:
+                console.print("[green]✓[/green] No missing TapDB instance sequences.")
+                return
+            console.print("[yellow]Missing TapDB instance sequences:[/yellow]")
+            for seq_name in missing:
+                console.print(f"  - {seq_name}")
+            if dry_run:
+                console.print("[cyan]Dry run only.[/cyan] No changes applied.")
+                return
+            backend.ensure_instance_sequences(session)
+            remaining = backend.get_missing_instance_sequences(session)
+    except Exception as exc:  # pragma: no cover - operational path
+        console.print(f"[red]✗[/red] Unable to repair sequence state: {exc}")
+        raise typer.Exit(1)
+
+    if remaining:
+        console.print("[red]✗[/red] Sequence repair incomplete:")
+        for seq_name in remaining:
+            console.print(f"  - {seq_name}")
+        raise typer.Exit(1)
+
+    console.print("[green]✓[/green] Repaired TapDB instance sequences.")
 
 
 @aws_app.command("teardown")

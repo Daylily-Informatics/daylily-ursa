@@ -11,7 +11,6 @@ This package contains FastAPI routers organized by functionality:
 - monitoring: Admin monitoring endpoints (command logs)
 - dashboard: Customer dashboard chart data
 - billing: Customer billing summary, invoices
-- utilities: Legacy S3 discovery, cost estimation
 - portal: HTML portal pages and web interface routes
 """
 
@@ -41,7 +40,6 @@ from daylib.routes.dependencies import (
 
 # Router factories
 from daylib.routes.worksets import create_worksets_router
-from daylib.routes.utilities import create_utilities_router
 from daylib.routes.portal import create_portal_router, PortalDependencies
 from daylib.routes.customer_worksets import (
     create_customer_worksets_router,
@@ -59,7 +57,6 @@ from daylib.routes.monitoring import create_monitoring_router, MonitoringDepende
 __all__ = [
     # Router factories
     "create_worksets_router",
-    "create_utilities_router",
     "create_portal_router",
     "PortalDependencies",
     "create_customer_worksets_router",
@@ -102,4 +99,3 @@ __all__ = [
     "convert_customer_for_template",
     "verify_workset_ownership",
 ]
-

@@ -7,8 +7,6 @@ import logging
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import and_
-
 from daylib.config import normalize_bucket_name
 from daylib.tapdb_graph import TapDBBackend, from_json_addl, utc_now_iso
 from daylily_tapdb import generic_instance

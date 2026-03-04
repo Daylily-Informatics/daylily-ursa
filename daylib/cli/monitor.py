@@ -51,11 +51,6 @@ def _get_pid() -> Optional[int]:
     return None
 
 
-def _find_monitor_script() -> Path:
-    """(Deprecated) Find the legacy repo-relative monitor script."""
-    return Path(__file__).parent.parent.parent / "bin" / "daylily-workset-monitor"
-
-
 def _find_default_config() -> Optional[Path]:
     """Find default monitor config file."""
     search_paths = [
