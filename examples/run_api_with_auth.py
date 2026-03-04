@@ -10,7 +10,17 @@ Prerequisites:
     AWS Cognito User Pool and App Client must be created.
 
 Usage:
-    # Set environment variables
+    # TapDB strict namespace (required)
+    export TAPDB_STRICT_NAMESPACE=1
+    export TAPDB_CLIENT_ID=local
+    export TAPDB_DATABASE_NAME=ursa
+    export TAPDB_ENV=dev
+
+    # Bootstrap TapDB for local dev (once per namespace)
+    tapdb config init --client-id local --database-name ursa --env dev
+    tapdb bootstrap local
+
+    # AWS Cognito env (required for this example auth)
     export COGNITO_USER_POOL_ID=us-west-2_XXXXXXXXX
     export COGNITO_APP_CLIENT_ID=XXXXXXXXXXXXXXXXXXXXXXXXXX
 
@@ -146,11 +156,21 @@ def main():
 
     # Configuration from environment
     REGION = os.getenv("AWS_REGION", "us-west-2")
-    WORKSET_TABLE = os.getenv("TAPDB_WORKSET_NAMESPACE", "tapdb-worksets")
+    TAPDB_CLIENT_ID = os.getenv("TAPDB_CLIENT_ID")
+    TAPDB_DATABASE_NAME = os.getenv("TAPDB_DATABASE_NAME")
+    TAPDB_ENV = os.getenv("TAPDB_ENV")
+    WORKSET_TABLE_NAME = "tapdb-worksets"  # legacy label; TapDB graph backend ignores this value
     USER_POOL_ID = os.getenv("COGNITO_USER_POOL_ID")
     APP_CLIENT_ID = os.getenv("COGNITO_APP_CLIENT_ID")
 
     # Validate required configuration
+    if not TAPDB_CLIENT_ID or not TAPDB_DATABASE_NAME or not TAPDB_ENV:
+        LOGGER.error(
+            "TapDB strict namespace env vars not set. Required: TAPDB_CLIENT_ID, TAPDB_DATABASE_NAME, TAPDB_ENV "
+            "(and TAPDB_STRICT_NAMESPACE=1).",
+        )
+        sys.exit(1)
+
     if not USER_POOL_ID:
         LOGGER.error("COGNITO_USER_POOL_ID environment variable not set")
         sys.exit(1)
@@ -162,9 +182,14 @@ def main():
     LOGGER.info("Initializing Workset Monitor API (with authentication)")
 
     # Initialize state database
-    LOGGER.info(f"Connecting to TapDB table: {WORKSET_TABLE}")
+    LOGGER.info(
+        "Initializing TapDB backend (namespace %s/%s env=%s)",
+        TAPDB_CLIENT_ID,
+        TAPDB_DATABASE_NAME,
+        TAPDB_ENV,
+    )
     state_db = WorksetStateDB(
-        table_name=WORKSET_TABLE,
+        table_name=WORKSET_TABLE_NAME,
         region=REGION,
     )
 

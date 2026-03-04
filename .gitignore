@@ -11,6 +11,7 @@ __pycache__/
 tmp/
 _tmp_*
 *.bak
+.codex_artifacts/
 
 # Distribution / packaging
 .Python

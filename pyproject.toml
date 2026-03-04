@@ -7,7 +7,7 @@ name = "daylily-ursa"
 dynamic = ["version"]
 description = "Daylily Workset Management API - automated analysis workset manager for genomics pipelines"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
     {name = "Daylily Informatics", email = "daylily@daylilyinformatics.com"}
@@ -17,6 +17,8 @@ dependencies = [
     "pyyaml>=6.0",
     # Cognito auth library
     "daylily-cognito>=0.1.24",
+    # TapDB graph persistence
+    "daylily-tapdb>=0.1.25,<0.2.0",
     "fastapi>=0.104.0",
     "uvicorn[standard]>=0.24.0",
     "pydantic>=2.0.0",
@@ -56,11 +58,6 @@ cluster = [
     "daylily-ephemeral-cluster",
 ]
 
-# TapDB integration (optional for Postgres migration-related workflows)
-tapdb = [
-    "daylily-tapdb>=0.1.21",
-]
-
 [project.scripts]
 ursa = "daylib.cli:main"
 daylily-workset-api = "daylib.workset_api_cli:main"
@@ -89,14 +86,14 @@ addopts = "-v"
 
 [tool.black]
 line-length = 100
-target-version = ['py39', 'py310', 'py311']
+target-version = ['py310', 'py311', 'py312']
 
 [tool.ruff]
 line-length = 100
-target-version = "py39"
+target-version = "py310"
 
 [tool.mypy]
-python_version = "3.9"
+python_version = "3.10"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false

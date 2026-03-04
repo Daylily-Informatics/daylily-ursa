@@ -245,47 +245,37 @@
                                 <th>Current Value</th>
                                 <th>Description</th>
                             </tr>
-                        </thead>
-                        <tbody>
-                            <tr>
-                                <td><code>TAPDB_WORKSET_NAMESPACE</code></td>
-                                <td>{% if env_vars.TAPDB_WORKSET_NAMESPACE %}<span class="env-value set">{{ env_vars.TAPDB_WORKSET_NAMESPACE }}</span>{% else %}<span class="env-value not-set">tapdb-worksets (default)</span>{% endif %}</td>
-                                <td>TapDB namespace label for workset state and metadata</td>
-                            </tr>
-                            <tr>
-                                <td><code>TAPDB_CUSTOMER_NAMESPACE</code></td>
-                                <td>{% if env_vars.TAPDB_CUSTOMER_NAMESPACE %}<span class="env-value set">{{ env_vars.TAPDB_CUSTOMER_NAMESPACE }}</span>{% else %}<span class="env-value not-set">tapdb-customers (default)</span>{% endif %}</td>
-                                <td>TapDB namespace label for customer configuration</td>
-                            </tr>
-                            <tr>
-                                <td><code>TAPDB_MANIFEST_NAMESPACE</code></td>
-                                <td>{% if env_vars.TAPDB_MANIFEST_NAMESPACE %}<span class="env-value set">{{ env_vars.TAPDB_MANIFEST_NAMESPACE }}</span>{% else %}<span class="env-value not-set">tapdb-manifests (default)</span>{% endif %}</td>
-                                <td>TapDB namespace label for manifest objects</td>
-                            </tr>
-                            <tr>
-                                <td><code>TAPDB_BUCKET_NAMESPACE</code></td>
-                                <td>{% if env_vars.TAPDB_BUCKET_NAMESPACE %}<span class="env-value set">{{ env_vars.TAPDB_BUCKET_NAMESPACE }}</span>{% else %}<span class="env-value not-set">tapdb-linked-buckets (default)</span>{% endif %}</td>
-                                <td>TapDB namespace label for linked bucket objects</td>
-                            </tr>
-                            <tr>
-                                <td><code>TAPDB_ENV</code></td>
-                                <td>{% if env_vars.TAPDB_ENV %}<span class="env-value set">{{ env_vars.TAPDB_ENV }}</span>{% else %}<span class="env-value not-set">not set</span>{% endif %}</td>
-                                <td>TapDB deployment environment selector</td>
-                            </tr>
-                            <tr>
-                                <td><code>TAPDB_DATABASE_NAME</code></td>
-                                <td>{% if env_vars.TAPDB_DATABASE_NAME %}<span class="env-value set">{{ env_vars.TAPDB_DATABASE_NAME }}</span>{% else %}<span class="env-value not-set">not set</span>{% endif %}</td>
-                                <td>TapDB database name override</td>
-                            </tr>
-                            <tr>
-                                <td><code>TAPDB_CLIENT_ID</code></td>
-                                <td>{% if env_vars.TAPDB_CLIENT_ID %}<span class="env-value set">{{ env_vars.TAPDB_CLIENT_ID }}</span>{% else %}<span class="env-value not-set">not set</span>{% endif %}</td>
-                                <td>Client namespace used for TapDB config selection</td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
+	                        </thead>
+	                        <tbody>
+	                            <tr>
+	                                <td><code>TAPDB_STRICT_NAMESPACE</code></td>
+	                                <td>{% if env_vars.TAPDB_STRICT_NAMESPACE %}<span class="env-value set">{{ env_vars.TAPDB_STRICT_NAMESPACE }}</span>{% else %}<span class="env-value not-set">not set</span>{% endif %}</td>
+	                                <td>Enable strict namespace config resolution (recommended: <code>1</code>)</td>
+	                            </tr>
+	                            <tr>
+	                                <td><code>TAPDB_ENV</code></td>
+	                                <td>{% if env_vars.TAPDB_ENV %}<span class="env-value set">{{ env_vars.TAPDB_ENV }}</span>{% else %}<span class="env-value not-set">not set</span>{% endif %}</td>
+	                                <td>TapDB environment selector (dev|test|prod)</td>
+	                            </tr>
+	                            <tr>
+	                                <td><code>TAPDB_DATABASE_NAME</code></td>
+	                                <td>{% if env_vars.TAPDB_DATABASE_NAME %}<span class="env-value set">{{ env_vars.TAPDB_DATABASE_NAME }}</span>{% else %}<span class="env-value not-set">not set</span>{% endif %}</td>
+	                                <td>TapDB namespace database-name (required)</td>
+	                            </tr>
+	                            <tr>
+	                                <td><code>TAPDB_CLIENT_ID</code></td>
+	                                <td>{% if env_vars.TAPDB_CLIENT_ID %}<span class="env-value set">{{ env_vars.TAPDB_CLIENT_ID }}</span>{% else %}<span class="env-value not-set">not set</span>{% endif %}</td>
+	                                <td>TapDB namespace client-id (required)</td>
+	                            </tr>
+	                            <tr>
+	                                <td><code>TAPDB_CONFIG_PATH</code></td>
+	                                <td>{% if env_vars.TAPDB_CONFIG_PATH %}<span class="env-value set">{{ env_vars.TAPDB_CONFIG_PATH }}</span>{% else %}<span class="env-value not-set">not set</span>{% endif %}</td>
+	                                <td>Optional override path for TapDB config file</td>
+	                            </tr>
+	                        </tbody>
+	                    </table>
+	                </div>
+	            </div>
 
             <!-- Cognito Auth Tab -->
             <div id="cognito-vars" class="tab-content">

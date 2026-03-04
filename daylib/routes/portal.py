@@ -2900,13 +2900,11 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
             "AWS_ACCESS_KEY_ID": "***" if os.getenv("AWS_ACCESS_KEY_ID") else None,
             "AWS_SECRET_ACCESS_KEY": "***" if os.getenv("AWS_SECRET_ACCESS_KEY") else None,
             "AWS_ACCOUNT_ID": app_settings.aws_account_id,
-            "TAPDB_WORKSET_NAMESPACE": app_settings.workset_table_name,
-            "TAPDB_CUSTOMER_NAMESPACE": app_settings.customer_table_name,
-            "TAPDB_MANIFEST_NAMESPACE": app_settings.daylily_manifest_table,
-            "TAPDB_BUCKET_NAMESPACE": app_settings.daylily_linked_buckets_table,
-            "TAPDB_ENV": os.getenv("TAPDB_ENV"),
-            "TAPDB_DATABASE_NAME": os.getenv("TAPDB_DATABASE_NAME"),
+            "TAPDB_STRICT_NAMESPACE": os.getenv("TAPDB_STRICT_NAMESPACE"),
             "TAPDB_CLIENT_ID": os.getenv("TAPDB_CLIENT_ID"),
+            "TAPDB_DATABASE_NAME": os.getenv("TAPDB_DATABASE_NAME"),
+            "TAPDB_ENV": os.getenv("TAPDB_ENV"),
+            "TAPDB_CONFIG_PATH": os.getenv("TAPDB_CONFIG_PATH"),
             "COGNITO_USER_POOL_ID": app_settings.cognito_user_pool_id,
             "COGNITO_APP_CLIENT_ID": app_settings.cognito_app_client_id,
             "COGNITO_APP_CLIENT_SECRET": "***" if app_settings.cognito_app_client_secret else None,
@@ -2964,8 +2962,26 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         cognito_installed = _is_module_available("daylily_cognito")
         cognito_version = _get_distribution_version("daylily-cognito")
         tapdb_installed = _is_module_available("daylily_tapdb")
-        tapdb_version = _get_distribution_version("daylily-tapdb")
+        tapdb_dist_version = _get_distribution_version("daylily-tapdb")
+        tapdb_module_version = None
+        try:
+            import daylily_tapdb  # type: ignore
+
+            tapdb_module_version = getattr(daylily_tapdb, "__version__", None)
+        except Exception:
+            tapdb_module_version = None
+
         tapdb_env_vars = sorted(key for key in os.environ.keys() if key.startswith("TAPDB_"))
+        tapdb_cfg: dict | None = None
+        tapdb_cfg_error: str | None = None
+        try:
+            from daylily_tapdb.cli.db_config import get_db_config_for_env  # type: ignore
+
+            env_name = (os.getenv("TAPDB_ENV") or "").strip()
+            if env_name:
+                tapdb_cfg = get_db_config_for_env(env_name)
+        except Exception as exc:
+            tapdb_cfg_error = f"{type(exc).__name__}: {exc}"
 
         cognito_rows = [
             {"key": "Distribution", "value": "daylily-cognito"},
@@ -2989,20 +3005,37 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
             {"key": "Distribution", "value": "daylily-tapdb"},
             {"key": "Module", "value": "daylily_tapdb"},
             {"key": "Installed", "value": "Yes" if tapdb_installed else "No"},
-            {"key": "Version", "value": tapdb_version or "Not installed"},
+            {"key": "Dist version", "value": tapdb_dist_version or "Not installed"},
+            {"key": "Module version", "value": tapdb_module_version or "Unknown"},
             {"key": "Integrated in current runtime", "value": "Yes"},
+            {
+                "key": "Namespace",
+                "value": (
+                    f"{os.getenv('TAPDB_CLIENT_ID')}/{os.getenv('TAPDB_DATABASE_NAME')}"
+                    if os.getenv("TAPDB_CLIENT_ID") and os.getenv("TAPDB_DATABASE_NAME")
+                    else "Not set"
+                ),
+            },
+            {"key": "TAPDB_ENV", "value": os.getenv("TAPDB_ENV") or "Not set"},
             {
                 "key": "Detected TAPDB_* env vars",
                 "value": ", ".join(tapdb_env_vars) if tapdb_env_vars else "None",
             },
         ]
 
-        persistence_rows = [
-            {"key": "Workset namespace", "value": app_settings.workset_table_name},
-            {"key": "Customer namespace", "value": app_settings.customer_table_name},
-            {"key": "Manifest namespace", "value": app_settings.daylily_manifest_table},
-            {"key": "Bucket-link namespace", "value": app_settings.daylily_linked_buckets_table},
-        ]
+        persistence_rows = [{"key": "Backend", "value": "TapDB graph (Postgres)"}]
+        if tapdb_cfg:
+            persistence_rows.extend(
+                [
+                    {"key": "Config path", "value": str(tapdb_cfg.get("config_path") or "") or "Unknown"},
+                    {"key": "Engine type", "value": str(tapdb_cfg.get("engine_type") or "") or "Unknown"},
+                    {"key": "Host", "value": str(tapdb_cfg.get("host") or "") or "Unknown"},
+                    {"key": "Port", "value": str(tapdb_cfg.get("port") or "") or "Unknown"},
+                    {"key": "Database", "value": str(tapdb_cfg.get("database") or "") or "Unknown"},
+                ]
+            )
+        elif tapdb_cfg_error:
+            persistence_rows.append({"key": "Config error", "value": tapdb_cfg_error})
 
         return deps.templates.TemplateResponse(
             request,

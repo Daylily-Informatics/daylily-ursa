@@ -7,7 +7,6 @@
 #
 # This file defines:
 # - AWS regions to scan for ParallelCluster instances
-# - TapDB region (single source of truth for workset state)
 # - AWS profile and Cognito settings
 #
 # NOTE: S3 buckets are discovered from cluster tags (aws-parallelcluster-monitor-bucket)
@@ -15,7 +14,6 @@
 #
 # Environment variables take precedence over config file values:
 # - AWS_PROFILE overrides aws_profile
-# - TAPDB_DB_REGION overrides tapdb_db_region
 # - COGNITO_REGION overrides cognito_region
 # - COGNITO_USER_POOL_ID overrides cognito_user_pool_id
 # - COGNITO_APP_CLIENT_ID overrides cognito_app_client_id
@@ -36,19 +34,20 @@ regions:
 
 
 # =============================================================================
-# TapDB Region (Single Source of Truth)
+# TapDB (Strict Namespace)
 # =============================================================================
-# In a multi-region architecture, worksets may have S3 data and compute clusters
-# in different AWS regions. However, all workset state is stored in a SINGLE
-# TapDB table in this region. This ensures the API server and monitor always
-# see the same worksets.
+# Ursa uses TapDB graph persistence (Postgres). TapDB is configured via TAPDB
+# namespace env vars and the TapDB CLI, not via this file.
 #
-# Each workset stores its resource region (cluster_region, execution_cluster_region)
-# in TapDB so the monitor knows which region to use for S3 and cluster operations.
+# Recommended:
+#   export TAPDB_STRICT_NAMESPACE=1
+#   export TAPDB_CLIENT_ID=local
+#   export TAPDB_DATABASE_NAME=ursa
+#   export TAPDB_ENV=dev
 #
-# Default: us-west-2 (if not set)
-# Overridden by TAPDB_DB_REGION env var
-tapdb_db_region: us-west-2
+# Bootstrap (preferred):
+#   tapdb config init --client-id local --database-name ursa --env dev
+#   tapdb bootstrap local
 
 # Cognito configuration (overridden by env vars COGNITO_USER_POOL_ID, COGNITO_APP_CLIENT_ID, COGNITO_REGION)
 # cognito_user_pool_id: us-west-2_xxxxxxxx

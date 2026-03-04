@@ -333,9 +333,14 @@ daycog list-pools --profile <aws-profile> --region us-west-2
 export AWS_REGION=us-west-2
 export AWS_PROFILE=my-profile
 
-# TapDB Tables
-export TAPDB_WORKSET_NAMESPACE=tapdb-worksets
-export TAPDB_CUSTOMER_NAMESPACE=tapdb-customers
+# TapDB (Strict Namespace)
+# Bootstrap (preferred):
+#   tapdb config init --client-id local --database-name ursa --env dev
+#   tapdb bootstrap local
+export TAPDB_STRICT_NAMESPACE=1
+export TAPDB_CLIENT_ID=local
+export TAPDB_DATABASE_NAME=ursa
+export TAPDB_ENV=dev
 
 # Cognito Configuration (only if using authentication)
 export COGNITO_USER_POOL_ID=us-west-2_XXXXXXXXX

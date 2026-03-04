@@ -176,10 +176,14 @@ URSA_ALLOWED_REGIONS=us-west-2,us-east-1
 # NOTE: S3 buckets are discovered from cluster tags (aws-parallelcluster-monitor-bucket)
 # No bucket environment variables are required.
 
-# TapDB Tables (auto-created if missing)
-TAPDB_WORKSET_NAMESPACE=tapdb-worksets
-TAPDB_CUSTOMER_NAMESPACE=tapdb-customers
-DAYLILY_FILE_REGISTRY_TABLE=daylily-file-registry
+# TapDB (Strict Namespace)
+# Bootstrap (preferred):
+#   tapdb config init --client-id local --database-name ursa --env dev
+#   tapdb bootstrap local
+TAPDB_STRICT_NAMESPACE=1
+TAPDB_CLIENT_ID=local
+TAPDB_DATABASE_NAME=ursa
+TAPDB_ENV=dev
 
 # Authentication (optional)
 ENABLE_AUTH=false

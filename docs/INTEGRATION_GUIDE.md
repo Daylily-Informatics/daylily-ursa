@@ -144,8 +144,14 @@ containerDefinitions:
   - name: daylily-api
     image: daylily/api:latest
     environment:
-      - name: TAPDB_WORKSET_NAMESPACE
-        value: daylily-worksets
+      - name: TAPDB_STRICT_NAMESPACE
+        value: "1"
+      - name: TAPDB_CLIENT_ID
+        value: local
+      - name: TAPDB_DATABASE_NAME
+        value: ursa
+      - name: TAPDB_ENV
+        value: dev
       - name: S3_BUCKET
         value: daylily-worksets-bucket
     portMappings:
@@ -188,7 +194,10 @@ For production, use certificates from AWS Certificate Manager or Let's Encrypt.
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `AWS_REGION` | AWS region | `us-west-2` |
-| `TAPDB_WORKSET_NAMESPACE` | TapDB namespace label | `tapdb-worksets` |
+| `TAPDB_STRICT_NAMESPACE` | Enforce TapDB strict namespace mode | `1` |
+| `TAPDB_CLIENT_ID` | TapDB namespace client-id | `local` |
+| `TAPDB_DATABASE_NAME` | TapDB namespace database-name | `ursa` |
+| `TAPDB_ENV` | TapDB environment selector | `dev` |
 | `S3_BUCKET` | S3 bucket for worksets | - |
 | `S3_PREFIX` | S3 prefix for worksets | `worksets/` |
 | `COGNITO_USER_POOL_ID` | Cognito User Pool ID | - |
