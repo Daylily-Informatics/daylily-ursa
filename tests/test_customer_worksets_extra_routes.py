@@ -10,8 +10,8 @@ from fastapi.testclient import TestClient
 
 
 def test_customer_worksets_extra_routes_have_request_level_coverage():
-    from daylib.routes.customer_worksets import CustomerWorksetDependencies, create_customer_worksets_router
-    from daylib.workset_state_db import WorksetStateDB
+    from daylily_ursa.routes.customer_worksets import CustomerWorksetDependencies, create_customer_worksets_router
+    from daylily_ursa.workset_state_db import WorksetStateDB
 
     state_db = MagicMock(spec=WorksetStateDB)
 
@@ -78,7 +78,7 @@ def test_customer_worksets_extra_routes_have_request_level_coverage():
     app = FastAPI()
     app.include_router(create_customer_worksets_router(deps))
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url="https://testserver") as client:
         assert client.post("/api/customers/cust-001/worksets/ws-123/cancel").status_code != 404
         assert client.post("/api/customers/cust-001/worksets/ws-123/retry").status_code != 404
         assert client.get("/api/customers/cust-001/worksets/ws-123/logs").status_code != 404

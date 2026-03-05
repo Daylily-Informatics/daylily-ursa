@@ -5,13 +5,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from daylib.workset_validation import (
+from daylily_ursa.workset_validation import (
     WorksetValidator,
     ValidationResult,
     ValidationStrictness,
     ValidationError,
 )
-from daylib.rate_limiting import (
+from daylily_ursa.rate_limiting import (
     InMemoryStorage,
     RateLimiter,
     RateLimitCategory,
@@ -21,7 +21,7 @@ from daylib.rate_limiting import (
 @pytest.fixture
 def mock_s3():
     """Mock S3 client."""
-    with patch("daylib.workset_validation.boto3.Session") as mock_session:
+    with patch("daylily_ursa.workset_validation.boto3.Session") as mock_session:
         mock_client = MagicMock()
         mock_session.return_value.client.return_value = mock_client
         yield mock_client

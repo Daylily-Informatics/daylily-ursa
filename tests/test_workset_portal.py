@@ -11,11 +11,11 @@ from botocore.exceptions import ClientError
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-from daylib.billing import calculate_customer_cost_breakdown
-from daylib.config import get_settings_for_testing
-from daylib.routes.portal import PortalDependencies
-from daylib.workset_state_db import WorksetStateDB, WorksetState
-from daylib.workset_api import create_app
+from daylily_ursa.billing import calculate_customer_cost_breakdown
+from daylily_ursa.config import get_settings_for_testing
+from daylily_ursa.routes.portal import PortalDependencies
+from daylily_ursa.workset_state_db import WorksetStateDB, WorksetState
+from daylily_ursa.workset_api import create_app
 
 
 def _make_authenticated_client(
@@ -39,7 +39,7 @@ def _make_authenticated_client(
         enable_auth=False,
         customer_manager=mock_customer_manager,
     )
-    client = TestClient(app)
+    client = TestClient(app, base_url="https://testserver")
     client.post("/portal/login", data={"email": email, "password": "testpass"})
     return client
 
@@ -49,7 +49,7 @@ class TestPortalAdminUsers:
 
     def test_admin_users_unauthenticated_redirects_to_login(self, mock_state_db):
         app = create_app(state_db=mock_state_db, enable_auth=False)
-        client = TestClient(app)
+        client = TestClient(app, base_url="https://testserver")
         response = client.get("/portal/admin/users", follow_redirects=False)
         assert response.status_code == 302
         assert "/portal/login" in response.headers["location"]
@@ -68,7 +68,7 @@ class TestPortalAdminUsers:
             enable_auth=False,
             customer_manager=mock_customer_manager,
         )
-        client = TestClient(app)
+        client = TestClient(app, base_url="https://testserver")
         client.post("/portal/login", data={"email": non_admin.email, "password": "testpass"})
 
         response = client.get("/portal/admin/users")
@@ -97,7 +97,7 @@ class TestPortalAdminUsers:
             enable_auth=False,
             customer_manager=mock_customer_manager,
         )
-        client = TestClient(app)
+        client = TestClient(app, base_url="https://testserver")
         client.post("/portal/login", data={"email": admin.email, "password": "testpass"})
 
         response = client.get("/portal/admin/users")
@@ -107,7 +107,7 @@ class TestPortalAdminUsers:
 
     def test_admin_tapdb_metrics_unauthenticated_redirects_to_login(self, mock_state_db):
         app = create_app(state_db=mock_state_db, enable_auth=False)
-        client = TestClient(app)
+        client = TestClient(app, base_url="https://testserver")
         response = client.get("/portal/admin/tapdb-metrics", follow_redirects=False)
         assert response.status_code == 302
         assert "/portal/login" in response.headers["location"]
@@ -126,7 +126,7 @@ class TestPortalAdminUsers:
             enable_auth=False,
             customer_manager=mock_customer_manager,
         )
-        client = TestClient(app)
+        client = TestClient(app, base_url="https://testserver")
         client.post("/portal/login", data={"email": non_admin.email, "password": "testpass"})
 
         monkeypatch.setenv("TAPDB_ENV", "test")
@@ -151,7 +151,7 @@ class TestPortalAdminUsers:
             enable_auth=False,
             customer_manager=mock_customer_manager,
         )
-        client = TestClient(app)
+        client = TestClient(app, base_url="https://testserver")
         client.post("/portal/login", data={"email": admin.email, "password": "testpass"})
 
         monkeypatch.setenv("TAPDB_ENV", "test")
@@ -185,7 +185,7 @@ class TestPortalAdminUsers:
             enable_auth=False,
             customer_manager=mock_customer_manager,
         )
-        client = TestClient(app)
+        client = TestClient(app, base_url="https://testserver")
         client.post("/portal/login", data={"email": admin.email, "password": "testpass"})
 
         response = client.post(
@@ -225,7 +225,7 @@ class TestPortalAdminUsers:
             enable_auth=False,
             customer_manager=mock_customer_manager,
         )
-        client = TestClient(app)
+        client = TestClient(app, base_url="https://testserver")
         client.post("/portal/login", data={"email": admin.email, "password": "testpass"})
 
         response = client.post(
@@ -256,7 +256,7 @@ class TestPortalAdminUsers:
             customer_manager=mock_customer_manager,
             settings=settings,
         )
-        client = TestClient(app)
+        client = TestClient(app, base_url="https://testserver")
         client.post("/portal/login", data={"email": admin.email, "password": "testpass"})
 
         response = client.post(
@@ -281,7 +281,7 @@ class TestPortalAdminUsers:
             enable_auth=False,
             customer_manager=mock_customer_manager,
         )
-        client = TestClient(app)
+        client = TestClient(app, base_url="https://testserver")
         client.post("/portal/login", data={"email": non_admin.email, "password": "testpass"})
 
         response = client.post(
@@ -307,7 +307,7 @@ class TestPortalAdminUsers:
             enable_auth=False,
             customer_manager=mock_customer_manager,
         )
-        client = TestClient(app)
+        client = TestClient(app, base_url="https://testserver")
         client.post("/portal/login", data={"email": admin.email, "password": "testpass"})
 
         response = client.post(
@@ -335,7 +335,7 @@ class TestPortalAdminUsers:
             enable_auth=False,
             customer_manager=mock_customer_manager,
         )
-        client = TestClient(app)
+        client = TestClient(app, base_url="https://testserver")
         client.post("/portal/login", data={"email": admin.email, "password": "testpass"})
 
         response = client.post(
@@ -360,7 +360,7 @@ class TestPortalAdminUsers:
             enable_auth=False,
             customer_manager=mock_customer_manager,
         )
-        client = TestClient(app)
+        client = TestClient(app, base_url="https://testserver")
         client.post("/portal/login", data={"email": non_admin.email, "password": "testpass"})
 
         response = client.post(
@@ -393,7 +393,7 @@ class TestPortalAdminUsers:
             customer_manager=mock_customer_manager,
             cognito_auth=mock_cognito_auth,
         )
-        client = TestClient(app)
+        client = TestClient(app, base_url="https://testserver")
         client.post("/portal/login", data={"email": admin.email, "password": "testpass"})
 
         response = client.post(
@@ -429,7 +429,7 @@ class TestPortalAdminUsers:
             customer_manager=mock_customer_manager,
             cognito_auth=mock_cognito_auth,
         )
-        client = TestClient(app)
+        client = TestClient(app, base_url="https://testserver")
         client.post("/portal/login", data={"email": admin.email, "password": "testpass"})
 
         response = client.post(
@@ -468,7 +468,7 @@ class TestPortalAdminUsers:
             customer_manager=mock_customer_manager,
             cognito_auth=mock_cognito_auth,
         )
-        client = TestClient(app)
+        client = TestClient(app, base_url="https://testserver")
         client.post("/portal/login", data={"email": admin.email, "password": "testpass"})
 
         response = client.post(
@@ -508,7 +508,7 @@ class TestPortalAdminUsers:
             customer_manager=mock_customer_manager,
             cognito_auth=mock_cognito_auth,
         )
-        client = TestClient(app)
+        client = TestClient(app, base_url="https://testserver")
         client.post("/portal/login", data={"email": admin.email, "password": "testpass"})
 
         response = client.post(
@@ -569,14 +569,14 @@ def mock_state_db():
 def client(mock_state_db):
     """Create test client."""
     app = create_app(state_db=mock_state_db, enable_auth=False)
-    return TestClient(app)
+    return TestClient(app, base_url="https://testserver")
 
 
 @pytest.fixture
 def authenticated_client(mock_state_db):
     """Create test client with authenticated session."""
     app = create_app(state_db=mock_state_db, enable_auth=False)
-    client = TestClient(app)
+    client = TestClient(app, base_url="https://testserver")
     # Perform login to set session
     client.post("/portal/login", data={"email": "test@example.com", "password": "testpass"})
     return client
@@ -883,13 +883,13 @@ class TestPortalGlobalSearch:
             enable_auth=False,
             customer_manager=mock_customer_manager,
         )
-        client = TestClient(app)
+        client = TestClient(app, base_url="https://testserver")
         client.post("/portal/login", data={"email": admin.email, "password": "testpass"})
         return client
 
     def test_portal_search_unauthenticated_redirects_to_login(self, mock_state_db):
         app = create_app(state_db=mock_state_db, enable_auth=False)
-        client = TestClient(app)
+        client = TestClient(app, base_url="https://testserver")
 
         response = client.get("/portal/search", follow_redirects=False)
         assert response.status_code == 302
@@ -1014,16 +1014,16 @@ class TestPortalBucketsEditDialog:
         return manager
 
     def _make_client(self, mock_state_db: MagicMock, *, mock_customer_manager: MagicMock, mock_linked_bucket_manager: MagicMock):
-        with patch("daylib.routes.portal.RegionAwareS3Client", return_value=MagicMock()), patch(
-            "daylib.workset_api.FILE_MANAGEMENT_AVAILABLE", True
-        ), patch("daylib.workset_api.LinkedBucketManager", return_value=mock_linked_bucket_manager):
+        with patch("daylily_ursa.routes.portal.RegionAwareS3Client", return_value=MagicMock()), patch(
+            "daylily_ursa.workset_api.FILE_MANAGEMENT_AVAILABLE", True
+        ), patch("daylily_ursa.workset_api.LinkedBucketManager", return_value=mock_linked_bucket_manager):
             app = create_app(
                 state_db=mock_state_db,
                 enable_auth=False,
                 customer_manager=mock_customer_manager,
             )
 
-        client = TestClient(app)
+        client = TestClient(app, base_url="https://testserver")
         client.post("/portal/login", data={"email": "test@example.com", "password": "testpass"})
         return client
 
@@ -1299,7 +1299,7 @@ def client_with_customer(mock_state_db, mock_customer_manager):
         customer_manager=mock_customer_manager,
         enable_auth=False
     )
-    return TestClient(app)
+    return TestClient(app, base_url="https://testserver")
 
 
 class TestArchiveDeleteAPI:
@@ -1383,7 +1383,7 @@ class TestArchiveDeleteAPI:
         }
         mock_state_db.delete_workset.return_value = True
 
-        with patch("daylib.routes.customer_worksets.boto3") as mock_boto:
+        with patch("daylily_ursa.routes.customer_worksets.boto3") as mock_boto:
             mock_s3 = MagicMock()
             mock_boto.client.return_value = mock_s3
             mock_s3.list_objects_v2.return_value = {"Contents": []}
@@ -1471,7 +1471,7 @@ class TestArchiveDeleteAPI:
             customer_manager=mock_customer_manager,
             enable_auth=False
         )
-        client = TestClient(app)
+        client = TestClient(app, base_url="https://testserver")
 
         response = client.get("/api/customers/cust-001/worksets/archived")
 
@@ -1522,8 +1522,8 @@ class TestWorksetCreationValidation:
     @pytest.fixture(autouse=True)
     def setup_cluster_mock(self, monkeypatch):
         """Set up mocked cluster service for all tests in this class."""
-        from daylib.config import clear_settings_cache
-        from daylib.cluster_service import ClusterInfo
+        from daylily_ursa.config import clear_settings_cache
+        from daylily_ursa.cluster_service import ClusterInfo
 
         # Create a mock cluster with monitor bucket tag
         mock_cluster = MagicMock(spec=ClusterInfo)
@@ -1537,7 +1537,7 @@ class TestWorksetCreationValidation:
         # Patch the get_cluster_service function at its source module
         # (it's imported locally inside workset_api functions)
         monkeypatch.setattr(
-            "daylib.cluster_service.get_cluster_service",
+            "daylily_ursa.cluster_service.get_cluster_service",
             lambda **kwargs: mock_service
         )
         # Clear settings cache
@@ -1550,7 +1550,7 @@ class TestWorksetCreationValidation:
             customer_manager=mock_customer_manager_with_email_lookup,
             enable_auth=False
         )
-        client = TestClient(app)
+        client = TestClient(app, base_url="https://testserver")
 
         # Test with empty string
         response = client.post(
@@ -1575,7 +1575,7 @@ class TestWorksetCreationValidation:
             customer_manager=mock_mgr,
             enable_auth=False
         )
-        client = TestClient(app)
+        client = TestClient(app, base_url="https://testserver")
 
         response = client.post(
             "/api/customers/Unknown/worksets",
@@ -1599,7 +1599,7 @@ class TestWorksetCreationValidation:
             customer_manager=mock_mgr,
             enable_auth=False
         )
-        client = TestClient(app)
+        client = TestClient(app, base_url="https://testserver")
 
         response = client.post(
             "/api/customers/nonexistent-customer/worksets",
@@ -1620,7 +1620,7 @@ class TestWorksetCreationValidation:
             customer_manager=mock_customer_manager_with_email_lookup,
             enable_auth=False
         )
-        client = TestClient(app)
+        client = TestClient(app, base_url="https://testserver")
 
         response = client.post(
             "/api/customers/cust-001/worksets",
@@ -1642,7 +1642,7 @@ class TestWorksetCreationValidation:
             customer_manager=mock_customer_manager_with_email_lookup,
             enable_auth=False
         )
-        client = TestClient(app)
+        client = TestClient(app, base_url="https://testserver")
 
         response = client.post(
             "/api/customers/cust-001/worksets",
@@ -1676,7 +1676,7 @@ class TestWorksetCreationValidation:
             integration=mock_integration,
             enable_auth=False
         )
-        client = TestClient(app)
+        client = TestClient(app, base_url="https://testserver")
 
         response = client.post(
             "/api/customers/cust-no-bucket/worksets",
@@ -1713,7 +1713,7 @@ class TestWorksetCreationValidation:
             integration=mock_integration,
             enable_auth=False
         )
-        client = TestClient(app)
+        client = TestClient(app, base_url="https://testserver")
 
         response = client.post(
             "/api/customers/cust-001/worksets",
@@ -1757,7 +1757,7 @@ class TestWorksetCreationValidation:
             integration=mock_integration,
             enable_auth=False
         )
-        client = TestClient(app)
+        client = TestClient(app, base_url="https://testserver")
 
         response = client.post(
             "/api/customers/cust-001/worksets",
@@ -1788,7 +1788,7 @@ class TestWorksetCreationValidation:
             integration=mock_integration,
             enable_auth=False
         )
-        client = TestClient(app)
+        client = TestClient(app, base_url="https://testserver")
 
         response = client.post(
             "/api/customers/cust-001/worksets",
@@ -1819,7 +1819,7 @@ class TestWorksetCreationValidation:
             integration=mock_integration,
             enable_auth=False
         )
-        client = TestClient(app)
+        client = TestClient(app, base_url="https://testserver")
 
         yaml_content = """
 samples:
@@ -1857,7 +1857,7 @@ samples:
             customer_manager=mock_customer_manager_with_email_lookup,
             enable_auth=False
         )
-        client = TestClient(app)
+        client = TestClient(app, base_url="https://testserver")
 
         yaml_content = """
 samples: []
@@ -1887,7 +1887,7 @@ samples: []
             integration=mock_integration,
             enable_auth=False
         )
-        client = TestClient(app)
+        client = TestClient(app, base_url="https://testserver")
 
         # Sample manifest TSV content matching the user's format
         manifest_tsv = """RUN_ID\tSAMPLE_ID\tEXPERIMENTID\tSAMPLE_TYPE\tLIB_PREP\tSEQ_VENDOR\tSEQ_PLATFORM\tLANE\tSEQBC_ID\tPATH_TO_CONCORDANCE_DATA_DIR\tR1_FQ\tR2_FQ\tSTAGE_DIRECTIVE\tSTAGE_TARGET\tSUBSAMPLE_PCT\tIS_POS_CTRL\tIS_NEG_CTRL\tN_X\tN_Y\tEXTERNAL_SAMPLE_ID
@@ -1925,7 +1925,7 @@ R0\tA1\tE1\tblood\tnoampwgs\tILMN\tNOVASEQX\t0\tS1\t\ts3://bucket/sample.R1.fast
             customer_manager=mock_customer_manager_with_email_lookup,
             enable_auth=False
         )
-        client = TestClient(app)
+        client = TestClient(app, base_url="https://testserver")
 
         # Header only, no data rows
         manifest_tsv = "RUN_ID\tSAMPLE_ID\tR1_FQ\tR2_FQ"
@@ -2059,7 +2059,7 @@ class TestPortalFileRegistration:
     def test_portal_register_requires_auth(self, mock_state_db):
         """Test that portal file registration requires authentication."""
         app = create_app(state_db=mock_state_db, enable_auth=False)
-        client = TestClient(app)
+        client = TestClient(app, base_url="https://testserver")
 
         response = client.post(
             "/portal/files/register",
@@ -2083,7 +2083,7 @@ class TestPortalFileRegistration:
             customer_manager=mock_customer_manager,
             enable_auth=False,
         )
-        client = TestClient(app)
+        client = TestClient(app, base_url="https://testserver")
 
         # Set up authenticated session
         with client:
@@ -2115,7 +2115,7 @@ class TestPortalFileRegistration:
         assert "/portal/files/register" in routes
 
         # Verify it accepts POST method
-        client = TestClient(app)
+        client = TestClient(app, base_url="https://testserver")
         # Without auth, should return 401 (not 404 or 405)
         response = client.post(
             "/portal/files/register",
@@ -2179,7 +2179,7 @@ def test_auth_registration_uses_session_email_and_ignores_form_email(mock_state_
         customer_manager=mock_customer_manager,
         settings=settings,
     )
-    client = TestClient(app)
+    client = TestClient(app, base_url="https://testserver")
 
     login_response = client.get("/portal/login?sso=1", follow_redirects=False)
     assert login_response.status_code == 302
@@ -2188,7 +2188,7 @@ def test_auth_registration_uses_session_email_and_ignores_form_email(mock_state_
     oauth_state = parse_qs(parsed_auth.query)["state"][0]
 
     with patch(
-        "daylib.routes.portal.exchange_authorization_code",
+        "daylily_ursa.routes.portal.exchange_authorization_code",
         return_value={
             "access_token": "access-token",
             "id_token": "id-token",
@@ -2260,14 +2260,14 @@ def test_auth_registration_failure_hides_internal_db_error(mock_state_db):
         customer_manager=mock_customer_manager,
         settings=settings,
     )
-    client = TestClient(app)
+    client = TestClient(app, base_url="https://testserver")
 
     login_response = client.get("/portal/login?sso=1", follow_redirects=False)
     auth_redirect = login_response.headers["location"]
     oauth_state = parse_qs(urlparse(auth_redirect).query)["state"][0]
 
     with patch(
-        "daylib.routes.portal.exchange_authorization_code",
+        "daylily_ursa.routes.portal.exchange_authorization_code",
         return_value={
             "access_token": "access-token",
             "id_token": "id-token",
@@ -2318,7 +2318,7 @@ def test_hosted_ui_signup_link_and_redirect(mock_state_db):
         customer_manager=mock_customer_manager,
         settings=settings,
     )
-    client = TestClient(app)
+    client = TestClient(app, base_url="https://testserver")
 
     page = client.get("/portal/login?error=x")
     assert page.status_code == 200
@@ -2380,9 +2380,9 @@ class TestPortalFileUpload:
         """Create an authenticated client with linked bucket manager + mocked S3 client."""
         mock_s3_client = MagicMock()
 
-        with patch("daylib.routes.portal.RegionAwareS3Client", return_value=mock_s3_client), patch(
-            "daylib.workset_api.FILE_MANAGEMENT_AVAILABLE", True
-        ), patch("daylib.workset_api.LinkedBucketManager", return_value=mock_linked_bucket_manager):
+        with patch("daylily_ursa.routes.portal.RegionAwareS3Client", return_value=mock_s3_client), patch(
+            "daylily_ursa.workset_api.FILE_MANAGEMENT_AVAILABLE", True
+        ), patch("daylily_ursa.workset_api.LinkedBucketManager", return_value=mock_linked_bucket_manager):
             app = create_app(
                 state_db=mock_state_db,
                 enable_auth=False,
@@ -2390,21 +2390,21 @@ class TestPortalFileUpload:
                 file_registry=mock_file_registry,
             )
 
-        client = TestClient(app)
+        client = TestClient(app, base_url="https://testserver")
         client.post("/portal/login", data={"email": "test@example.com", "password": "testpass"})
         return client, mock_s3_client
 
     def test_upload_requires_auth(self, mock_state_db, mock_customer_manager, mock_linked_bucket_manager):
-        with patch("daylib.routes.portal.RegionAwareS3Client", return_value=MagicMock()), patch(
-            "daylib.workset_api.FILE_MANAGEMENT_AVAILABLE", True
-        ), patch("daylib.workset_api.LinkedBucketManager", return_value=mock_linked_bucket_manager):
+        with patch("daylily_ursa.routes.portal.RegionAwareS3Client", return_value=MagicMock()), patch(
+            "daylily_ursa.workset_api.FILE_MANAGEMENT_AVAILABLE", True
+        ), patch("daylily_ursa.workset_api.LinkedBucketManager", return_value=mock_linked_bucket_manager):
             app = create_app(
                 state_db=mock_state_db,
                 enable_auth=False,
                 customer_manager=mock_customer_manager,
             )
 
-        client = TestClient(app)
+        client = TestClient(app, base_url="https://testserver")
         response = client.post(
             "/portal/files/upload",
             data={"bucket_id": "bucket-abc123", "prefix": ""},
@@ -2609,7 +2609,7 @@ class TestPortalFileAutoRegistration:
     @pytest.fixture
     def mock_bucket_discovery(self):
         """Mock BucketFileDiscovery."""
-        from daylib.file_registry import DiscoveredFile
+        from daylily_ursa.file_registry import DiscoveredFile
 
         discovered = [
             DiscoveredFile(
@@ -2637,7 +2637,7 @@ class TestPortalFileAutoRegistration:
 
     def test_auto_register_files_success(self, mock_file_registry, mock_bucket_discovery):
         """Test successful auto-registration of discovered files."""
-        from daylib.file_registry import BucketFileDiscovery
+        from daylily_ursa.file_registry import BucketFileDiscovery
 
         discovery = BucketFileDiscovery(region="us-west-2")
 
@@ -2658,7 +2658,7 @@ class TestPortalFileAutoRegistration:
 
     def test_auto_register_files_skips_already_registered(self, mock_file_registry, mock_bucket_discovery):
         """Test that already-registered files are skipped."""
-        from daylib.file_registry import BucketFileDiscovery
+        from daylily_ursa.file_registry import BucketFileDiscovery
 
         # Mark first file as already registered
         mock_bucket_discovery[0].is_registered = True
@@ -2680,7 +2680,7 @@ class TestPortalFileAutoRegistration:
 
     def test_auto_register_detects_read_number(self, mock_file_registry, mock_bucket_discovery):
         """Test that R1/R2 detection works correctly."""
-        from daylib.file_registry import BucketFileDiscovery
+        from daylily_ursa.file_registry import BucketFileDiscovery
 
         discovery = BucketFileDiscovery(region="us-west-2")
 
@@ -2706,7 +2706,7 @@ class TestPortalFileAutoRegistration:
 
     def test_auto_register_handles_registration_failure(self, mock_file_registry, mock_bucket_discovery):
         """Test that registration failures are captured in errors list."""
-        from daylib.file_registry import BucketFileDiscovery
+        from daylily_ursa.file_registry import BucketFileDiscovery
 
         # Make register_file raise an exception for the first file
         mock_file_registry.register_file.side_effect = [Exception("TapDB error"), True]
@@ -2728,7 +2728,7 @@ class TestPortalFileAutoRegistration:
 
     def test_auto_register_sets_correct_metadata(self, mock_file_registry, mock_bucket_discovery):
         """Test that biosample and sequencing metadata are set correctly."""
-        from daylib.file_registry import BucketFileDiscovery
+        from daylily_ursa.file_registry import BucketFileDiscovery
 
         discovery = BucketFileDiscovery(region="us-west-2")
 
@@ -2757,7 +2757,7 @@ class TestFileSearchAPI:
     @pytest.fixture
     def mock_file_registrations(self):
         """Create mock file registrations for search tests."""
-        from daylib.file_registry import FileRegistration, FileMetadata, BiosampleMetadata, SequencingMetadata
+        from daylily_ursa.file_registry import FileRegistration, FileMetadata, BiosampleMetadata, SequencingMetadata
 
         return [
             FileRegistration(
@@ -2841,7 +2841,7 @@ class TestFileSearchAPI:
 
     def test_search_returns_all_files_when_no_filters(self, mock_file_registry_for_search, mock_file_registrations):
         """Test that search returns all files when no filters are applied."""
-        from daylib.file_api import FileSearchRequest
+        from daylily_ursa.file_api import FileSearchRequest
 
         # Simulate the search logic
         FileSearchRequest()
@@ -2988,7 +2988,7 @@ class TestBucketRegionDetectionAPI:
 
     def test_bucket_region_detection_us_east_1(self, client):
         """Test bucket region detection returns us-east-1 for None location."""
-        with patch("daylib.routes.s3.boto3.Session") as mock_session:
+        with patch("daylily_ursa.routes.s3.boto3.Session") as mock_session:
             mock_s3 = MagicMock()
             mock_session.return_value.client.return_value = mock_s3
             # S3 returns None for us-east-1 buckets
@@ -3003,7 +3003,7 @@ class TestBucketRegionDetectionAPI:
 
     def test_bucket_region_detection_us_west_2(self, client):
         """Test bucket region detection returns correct region."""
-        with patch("daylib.routes.s3.boto3.Session") as mock_session:
+        with patch("daylily_ursa.routes.s3.boto3.Session") as mock_session:
             mock_s3 = MagicMock()
             mock_session.return_value.client.return_value = mock_s3
             mock_s3.get_bucket_location.return_value = {"LocationConstraint": "us-west-2"}
@@ -3019,7 +3019,7 @@ class TestBucketRegionDetectionAPI:
         """Test bucket region detection handles non-existent bucket."""
         from botocore.exceptions import ClientError
 
-        with patch("daylib.routes.s3.boto3.Session") as mock_session:
+        with patch("daylily_ursa.routes.s3.boto3.Session") as mock_session:
             mock_s3 = MagicMock()
             mock_session.return_value.client.return_value = mock_s3
             mock_s3.get_bucket_location.side_effect = ClientError(
@@ -3037,7 +3037,7 @@ class TestBucketRegionDetectionAPI:
         """Test bucket region detection handles access denied."""
         from botocore.exceptions import ClientError
 
-        with patch("daylib.routes.s3.boto3.Session") as mock_session:
+        with patch("daylily_ursa.routes.s3.boto3.Session") as mock_session:
             mock_s3 = MagicMock()
             mock_session.return_value.client.return_value = mock_s3
             mock_s3.get_bucket_location.side_effect = ClientError(
@@ -3137,7 +3137,7 @@ class TestPortalCustomerIsolation:
 
     def test_filter_worksets_by_customer_id(self):
         """Test that workset list filtering works correctly."""
-        from daylib.routes.dependencies import verify_workset_ownership
+        from daylily_ursa.routes.dependencies import verify_workset_ownership
 
         # Worksets belonging to different customers
         customer_a_worksets = [
@@ -3165,7 +3165,7 @@ class TestPortalCustomerIsolation:
 
     def test_ownership_check_blocks_cross_customer_access(self):
         """Test that ownership check prevents cross-customer access."""
-        from daylib.routes.dependencies import verify_workset_ownership
+        from daylily_ursa.routes.dependencies import verify_workset_ownership
 
         # Customer B's workset
         workset_b = {"workset_id": "ws-b-001", "customer_id": "customer-B", "results_s3_uri": "s3://..."}
@@ -3178,7 +3178,7 @@ class TestPortalCustomerIsolation:
 
     def test_archived_worksets_filtered_by_customer(self):
         """Test that archived worksets are also filtered by customer."""
-        from daylib.routes.dependencies import verify_workset_ownership
+        from daylily_ursa.routes.dependencies import verify_workset_ownership
 
         archived = [
             {"workset_id": "ws-archived-a", "state": "archived", "customer_id": "customer-A"},
@@ -3192,7 +3192,7 @@ class TestPortalCustomerIsolation:
 
     def test_empty_customer_id_returns_empty_list(self):
         """Test that empty/None customer_id filters out all worksets."""
-        from daylib.routes.dependencies import verify_workset_ownership
+        from daylily_ursa.routes.dependencies import verify_workset_ownership
 
         worksets = [
             {"workset_id": "ws-001", "customer_id": "customer-A"},
@@ -3213,7 +3213,7 @@ class TestVerifyWorksetOwnership:
 
     def test_ownership_by_customer_id_field(self):
         """Test ownership check using customer_id field."""
-        from daylib.routes.dependencies import verify_workset_ownership
+        from daylily_ursa.routes.dependencies import verify_workset_ownership
 
         workset = {"workset_id": "ws-001", "customer_id": "cust-A"}
         assert verify_workset_ownership(workset, "cust-A") is True
@@ -3221,7 +3221,7 @@ class TestVerifyWorksetOwnership:
 
     def test_ownership_fallback_to_metadata_submitted_by(self):
         """Test ownership check falls back to metadata.submitted_by."""
-        from daylib.routes.dependencies import verify_workset_ownership
+        from daylily_ursa.routes.dependencies import verify_workset_ownership
 
         workset = {
             "workset_id": "ws-001",
@@ -3233,14 +3233,14 @@ class TestVerifyWorksetOwnership:
 
     def test_ownership_fails_without_customer_info(self):
         """Test ownership check fails when no customer info available."""
-        from daylib.routes.dependencies import verify_workset_ownership
+        from daylily_ursa.routes.dependencies import verify_workset_ownership
 
         workset = {"workset_id": "ws-001"}  # No customer_id or metadata.submitted_by
         assert verify_workset_ownership(workset, "cust-A") is False
 
     def test_ownership_handles_empty_inputs(self):
         """Test ownership check handles None/empty inputs gracefully."""
-        from daylib.routes.dependencies import verify_workset_ownership
+        from daylily_ursa.routes.dependencies import verify_workset_ownership
 
         assert verify_workset_ownership(None, "cust-A") is False
         assert verify_workset_ownership({}, "cust-A") is False
@@ -3249,7 +3249,7 @@ class TestVerifyWorksetOwnership:
 
     def test_ownership_customer_id_takes_precedence(self):
         """Test that customer_id field takes precedence over metadata.submitted_by."""
-        from daylib.routes.dependencies import verify_workset_ownership
+        from daylily_ursa.routes.dependencies import verify_workset_ownership
 
         workset = {
             "workset_id": "ws-001",
@@ -3265,7 +3265,7 @@ class TestVerifyWorksetAccess:
     """Unit tests for verify_workset_access helper function."""
 
     def test_admin_can_access_any_workset_for_customer(self):
-        from daylib.routes.dependencies import verify_workset_access
+        from daylily_ursa.routes.dependencies import verify_workset_access
 
         workset = {
             "workset_id": "ws-1",
@@ -3283,7 +3283,7 @@ class TestVerifyWorksetAccess:
         )
 
     def test_non_admin_requires_created_by_email_match(self):
-        from daylib.routes.dependencies import verify_workset_access
+        from daylily_ursa.routes.dependencies import verify_workset_access
 
         workset = {
             "workset_id": "ws-1",
@@ -3310,7 +3310,7 @@ class TestVerifyWorksetAccess:
         )
 
     def test_legacy_workset_allows_any_authenticated_user_for_customer(self):
-        from daylib.routes.dependencies import verify_workset_access
+        from daylily_ursa.routes.dependencies import verify_workset_access
 
         legacy_workset = {
             "workset_id": "ws-legacy",
@@ -3337,7 +3337,7 @@ class TestVerifyWorksetAccess:
         )
 
     def test_cross_customer_denied(self):
-        from daylib.routes.dependencies import verify_workset_access
+        from daylily_ursa.routes.dependencies import verify_workset_access
 
         workset = {
             "workset_id": "ws-1",
@@ -3439,7 +3439,7 @@ class TestPortalAuthzSurfaces:
                 return ["us-west-2"]
 
         # Patch config/cluster services used by the route.
-        monkeypatch.setattr("daylib.ursa_config.get_ursa_config", lambda: _FakeUrsaConfig())
+        monkeypatch.setattr("daylily_ursa.ursa_config.get_ursa_config", lambda: _FakeUrsaConfig())
 
         mock_cluster = MagicMock()
 
@@ -3481,7 +3481,7 @@ class TestPortalAuthzSurfaces:
 
         mock_service = MagicMock()
         mock_service.get_all_clusters_with_status.return_value = [mock_cluster]
-        monkeypatch.setattr("daylib.cluster_service.get_cluster_service", lambda **kwargs: mock_service)
+        monkeypatch.setattr("daylily_ursa.cluster_service.get_cluster_service", lambda **kwargs: mock_service)
 
         admin_client = _make_authenticated_client(mock_state_db, customer_id="cust-admin", is_admin=True)
         admin_response = admin_client.get("/portal/clusters")
@@ -3507,7 +3507,7 @@ class TestPortalAuthzSurfaces:
             def get_allowed_regions(self):
                 return ["us-west-2"]
 
-        monkeypatch.setattr("daylib.ursa_config.get_ursa_config", lambda: _FakeUrsaConfig())
+        monkeypatch.setattr("daylily_ursa.ursa_config.get_ursa_config", lambda: _FakeUrsaConfig())
 
         mock_cluster = MagicMock()
         mock_cluster.to_dict.return_value = {
@@ -3522,7 +3522,7 @@ class TestPortalAuthzSurfaces:
 
         mock_service = MagicMock()
         mock_service.get_all_clusters_with_status.return_value = [mock_cluster]
-        monkeypatch.setattr("daylib.cluster_service.get_cluster_service", lambda **kwargs: mock_service)
+        monkeypatch.setattr("daylily_ursa.cluster_service.get_cluster_service", lambda **kwargs: mock_service)
 
         admin_client = _make_authenticated_client(mock_state_db, customer_id="cust-admin", is_admin=True)
         admin_response = admin_client.get("/portal/clusters")
@@ -3544,7 +3544,7 @@ class TestPortalAuthzSurfaces:
             def get_allowed_regions(self):
                 return ["us-west-2"]
 
-        monkeypatch.setattr("daylib.ursa_config.get_ursa_config", lambda: _FakeUrsaConfig())
+        monkeypatch.setattr("daylily_ursa.ursa_config.get_ursa_config", lambda: _FakeUrsaConfig())
 
         mock_cluster = MagicMock()
         mock_cluster.to_dict.return_value = {
@@ -3559,7 +3559,7 @@ class TestPortalAuthzSurfaces:
 
         mock_service = MagicMock()
         mock_service.get_all_clusters_with_status.return_value = [mock_cluster]
-        monkeypatch.setattr("daylib.cluster_service.get_cluster_service", lambda **kwargs: mock_service)
+        monkeypatch.setattr("daylily_ursa.cluster_service.get_cluster_service", lambda **kwargs: mock_service)
 
         admin_client = _make_authenticated_client(mock_state_db, customer_id="cust-admin", is_admin=True)
         admin_response = admin_client.get("/portal/clusters")
@@ -3583,11 +3583,11 @@ class TestPortalAuthzSurfaces:
             def get_allowed_regions(self):
                 return ["us-west-2"]
 
-        monkeypatch.setattr("daylib.ursa_config.get_ursa_config", lambda: _FakeUrsaConfig())
+        monkeypatch.setattr("daylily_ursa.ursa_config.get_ursa_config", lambda: _FakeUrsaConfig())
 
         mock_service = MagicMock()
         mock_service.delete_cluster.return_value = {}
-        monkeypatch.setattr("daylib.cluster_service.get_cluster_service", lambda **kwargs: mock_service)
+        monkeypatch.setattr("daylily_ursa.cluster_service.get_cluster_service", lambda **kwargs: mock_service)
 
         non_admin_client = _make_authenticated_client(mock_state_db, customer_id="cust-user", is_admin=False)
         resp = non_admin_client.delete("/api/clusters/test-cluster?region=us-west-2")
@@ -3620,9 +3620,9 @@ class TestPortalAuthzSurfaces:
             def get_allowed_regions(self):
                 return ["us-west-2"]
 
-        monkeypatch.setattr("daylib.ursa_config.get_ursa_config", lambda: _FakeUrsaConfig())
+        monkeypatch.setattr("daylily_ursa.ursa_config.get_ursa_config", lambda: _FakeUrsaConfig())
 
-        from daylib.ephemeral_cluster.runner import ClusterCreateJob
+        from daylily_ursa.ephemeral_cluster.runner import ClusterCreateJob
 
         job_path = tmp_path / "job.json"
         log_path = tmp_path / "job.log"
@@ -3637,7 +3637,7 @@ class TestPortalAuthzSurfaces:
         )
 
         start_mock = MagicMock(return_value=fake_job)
-        monkeypatch.setattr("daylib.ephemeral_cluster.runner.start_create_job", start_mock)
+        monkeypatch.setattr("daylily_ursa.ephemeral_cluster.runner.start_create_job", start_mock)
 
         admin_client = _make_authenticated_client(mock_state_db, customer_id="cust-admin", is_admin=True)
         resp = admin_client.post(
@@ -3673,11 +3673,11 @@ class TestPortalAuthzSurfaces:
             def get_allowed_regions(self):
                 return ["us-west-2"]
 
-        monkeypatch.setattr("daylib.ursa_config.get_ursa_config", lambda: _FakeUrsaConfig())
+        monkeypatch.setattr("daylily_ursa.ursa_config.get_ursa_config", lambda: _FakeUrsaConfig())
 
         mock_service = MagicMock()
         mock_service.delete_cluster.return_value = {}
-        monkeypatch.setattr("daylib.cluster_service.get_cluster_service", lambda **kwargs: mock_service)
+        monkeypatch.setattr("daylily_ursa.cluster_service.get_cluster_service", lambda **kwargs: mock_service)
 
         admin_client = _make_authenticated_client(mock_state_db, customer_id="cust-admin", is_admin=True)
         resp = admin_client.delete("/api/clusters/test-cluster?region=us-west-2")
@@ -3692,7 +3692,7 @@ class TestPortalAuthzSurfaces:
 def test_portal_uncovered_routes_have_request_level_coverage(mock_state_db):
     """Exercise request-level coverage for routes that are often missed in tests."""
     app = create_app(state_db=mock_state_db, enable_auth=False)
-    client = TestClient(app)
+    client = TestClient(app, base_url="https://testserver")
 
     # Public auth helpers
     assert client.get("/portal/forgot-password").status_code == 200

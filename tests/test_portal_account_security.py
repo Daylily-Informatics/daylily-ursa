@@ -4,8 +4,8 @@ from unittest.mock import MagicMock
 
 from fastapi.testclient import TestClient
 
-from daylib.workset_api import create_app
-from daylib.workset_state_db import WorksetStateDB
+from daylily_ursa.workset_api import create_app
+from daylily_ursa.workset_state_db import WorksetStateDB
 
 
 def _make_state_db() -> MagicMock:
@@ -28,7 +28,7 @@ def test_change_password_challenge_rejects_short_password() -> None:
         cognito_auth=cognito_auth,
         customer_manager=customer_manager,
     )
-    client = TestClient(app)
+    client = TestClient(app, base_url="https://testserver")
 
     login = client.post(
         "/portal/login",
@@ -58,7 +58,7 @@ def test_reset_password_rejects_short_password() -> None:
         cognito_auth=cognito_auth,
         customer_manager=customer_manager,
     )
-    client = TestClient(app)
+    client = TestClient(app, base_url="https://testserver")
 
     resp = client.post(
         "/portal/reset-password",
@@ -86,7 +86,7 @@ def test_api_change_password_returns_user_friendly_error_on_short_password() -> 
         cognito_auth=cognito_auth,
         customer_manager=customer_manager,
     )
-    client = TestClient(app)
+    client = TestClient(app, base_url="https://testserver")
 
     client.post(
         "/portal/login",
@@ -123,7 +123,7 @@ def test_api_tokens_endpoints_work_for_authenticated_session() -> None:
         enable_auth=False,
         customer_manager=customer_manager,
     )
-    client = TestClient(app)
+    client = TestClient(app, base_url="https://testserver")
 
     client.post(
         "/portal/login",

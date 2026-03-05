@@ -142,16 +142,12 @@
                             <th>Status</th>
                             <th>Return</th>
                             <th>Created</th>
-                            <th></th>
+                            <th data-no-sort></th>
                         </tr>
                     </thead>
                     <tbody id="cluster-create-jobs-tbody"></tbody>
                 </table>
             </div>
-            <details class="mt-md" id="cluster-create-log-viewer" style="display: none;">
-                <summary class="cursor-pointer text-sm text-muted">Job Logs</summary>
-                <pre class="mt-sm" id="cluster-create-log-text" style="max-height: 300px; overflow: auto; background: var(--color-bg-secondary); padding: 0.75rem; border-radius: 0.5rem;"></pre>
-            </details>
 	        </div>
 	    </div>
 
@@ -204,6 +200,7 @@
 	            </div>
 
 	            <div class="mt-md text-xs text-muted" id="spot-market-status">Loading…</div>
+	            <div class="mt-xs text-xs text-muted" id="spot-market-job-summary"></div>
 
 	            <div class="mt-lg">
 	                <canvas id="spot-market-chart" height="120"></canvas>
@@ -227,10 +224,25 @@
 	                </div>
 	            </div>
 
-	            <details class="mt-md" id="spot-market-job-log-viewer" style="display: none;">
-	                <summary class="cursor-pointer text-sm text-muted">Job Logs</summary>
-	                <pre class="mt-sm" id="spot-market-job-log-text" style="max-height: 300px; overflow: auto; background: var(--color-bg-secondary); padding: 0.75rem; border-radius: 0.5rem;"></pre>
-	            </details>
+	            <div class="mt-lg" id="spot-market-jobs-card">
+	                <h4 class="text-sm" style="margin-bottom: 0.5rem;"><i class="fas fa-list"></i> Spot Market Poll Jobs</h4>
+	                <div id="spot-market-jobs-empty" class="text-muted text-sm">Loading…</div>
+	                <div class="table-wrapper" style="overflow-x: auto;">
+	                    <table class="table" id="spot-market-jobs-table" style="display: none;">
+	                        <thead>
+	                            <tr>
+	                                <th>Job ID</th>
+	                                <th>Region</th>
+	                                <th>Status</th>
+	                                <th>Return</th>
+	                                <th>Created</th>
+	                                <th data-no-sort></th>
+	                            </tr>
+	                        </thead>
+	                        <tbody id="spot-market-jobs-tbody"></tbody>
+	                    </table>
+	                </div>
+	            </div>
 	        </div>
 	    </details>
 	    {% endif %}
@@ -721,14 +733,14 @@ async function refreshClusters() {
         const data = await response.json();
 
         if (data.error) {
-            showToast('Error refreshing clusters: ' + data.error, 'error');
+            showClusterToast('Error refreshing clusters: ' + data.error, 'error');
         } else {
-            showToast('Clusters refreshed successfully', 'success');
+            showClusterToast('Clusters refreshed successfully', 'success');
             // Reload page to show updated data
             setTimeout(() => window.location.reload(), 500);
         }
     } catch (error) {
-        showToast('Failed to refresh clusters: ' + error.message, 'error');
+        showClusterToast('Failed to refresh clusters: ' + error.message, 'error');
     } finally {
         btn.disabled = false;
         icon.classList.remove('fa-spin');
@@ -761,7 +773,7 @@ async function loadCreateOptions() {
     if (!regionEl || !keySelect || !bucketSelect) return;
     const region = (regionEl.value || '').trim();
     if (!region) {
-        showToast('Select a region first', 'error');
+        showClusterToast('Select a region first', 'error');
         return;
     }
 
@@ -777,7 +789,7 @@ async function loadCreateOptions() {
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok) {
             const detail = data.detail || data.error || 'Failed to load options';
-            showToast(detail, 'error');
+            showClusterToast(detail, 'error');
             return;
         }
 
@@ -800,9 +812,9 @@ async function loadCreateOptions() {
             bucketSelect.appendChild(opt);
         });
 
-        showToast('Options loaded', 'success');
+        showClusterToast('Options loaded', 'success');
     } catch (e) {
-        showToast(`Failed to load options: ${e.message || e}`, 'error');
+        showClusterToast(`Failed to load options: ${e.message || e}`, 'error');
     } finally {
         if (btn) {
             btn.disabled = false;
@@ -832,19 +844,19 @@ async function createCluster() {
     const configPath = cfgEl ? (cfgEl.value || '').trim() : '';
 
     if (!regionAz) {
-        showToast('Select a region and AZ suffix', 'error');
+        showClusterToast('Select a region and AZ suffix', 'error');
         return;
     }
     if (!clusterName) {
-        showToast('Cluster name is required', 'error');
+        showClusterToast('Cluster name is required', 'error');
         return;
     }
     if (!sshKeyName) {
-        showToast('SSH keypair is required', 'error');
+        showClusterToast('SSH keypair is required', 'error');
         return;
     }
     if (!s3BucketName) {
-        showToast('S3 bucket name is required', 'error');
+        showClusterToast('S3 bucket name is required', 'error');
         return;
     }
 
@@ -874,15 +886,15 @@ async function createCluster() {
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok) {
             const detail = data.detail || data.error || 'Failed to start cluster create job';
-            showToast(detail, 'error');
+            showClusterToast(detail, 'error');
             return;
         }
 
-        showToast(`Cluster create job started: ${data.job_id}`, 'success');
+        showClusterToast(`Cluster create job started: ${data.job_id}`, 'success');
         await refreshCreateJobs();
         await viewCreateJobLogs(data.job_id);
     } catch (e) {
-        showToast(`Failed to start cluster create job: ${e.message || e}`, 'error');
+        showClusterToast(`Failed to start cluster create job: ${e.message || e}`, 'error');
     } finally {
         if (btn) {
             btn.disabled = false;
@@ -954,11 +966,42 @@ async function refreshCreateJobs() {
             const btn = document.createElement('button');
             btn.className = 'btn btn-outline btn-sm';
             btn.textContent = 'View logs';
-            btn.onclick = () => viewCreateJobLogs(jobId);
+            btn.dataset.jobId = jobId;
+            btn.onclick = () => toggleCreateJobLogs(jobId, btn);
             tdActions.appendChild(btn);
             tr.appendChild(tdActions);
-
             tbodyEl.appendChild(tr);
+
+            const logRow = document.createElement('tr');
+            logRow.className = 'cluster-create-log-row';
+            logRow.dataset.jobId = jobId;
+            logRow.style.display = 'none';
+
+            const logCell = document.createElement('td');
+            logCell.colSpan = 7;
+            logCell.style.padding = '0.5rem 0.75rem 0.75rem 0.75rem';
+            logCell.style.background = 'var(--color-bg-secondary)';
+
+            const meta = document.createElement('div');
+            meta.className = 'text-xs text-muted';
+            meta.textContent = `Logs for job ${jobId}`;
+            logCell.appendChild(meta);
+
+            const pre = document.createElement('pre');
+            pre.className = 'cluster-create-job-log';
+            pre.style.maxHeight = '280px';
+            pre.style.overflow = 'auto';
+            pre.style.marginTop = '0.35rem';
+            pre.style.background = 'var(--color-bg-primary)';
+            pre.style.padding = '0.75rem';
+            pre.style.borderRadius = '0.5rem';
+            pre.style.whiteSpace = 'pre-wrap';
+            pre.style.wordBreak = 'break-word';
+            pre.textContent = '';
+            logCell.appendChild(pre);
+
+            logRow.appendChild(logCell);
+            tbodyEl.appendChild(logRow);
         });
 
         emptyEl.style.display = 'none';
@@ -968,16 +1011,20 @@ async function refreshCreateJobs() {
     }
 }
 
-async function viewCreateJobLogs(jobId) {
-    if (!jobId) return;
-    const viewer = document.getElementById('cluster-create-log-viewer');
-    const pre = document.getElementById('cluster-create-log-text');
-    if (!viewer || !pre) return;
+function _findCreateJobLogRow(jobId) {
+    return Array.from(document.querySelectorAll('tr.cluster-create-log-row'))
+        .find(row => row.dataset.jobId === jobId) || null;
+}
 
-    viewer.style.display = '';
-    viewer.open = true;
+function _findCreateJobLogButton(jobId) {
+    return Array.from(document.querySelectorAll('button[data-job-id]'))
+        .find(btn => btn.dataset.jobId === jobId) || null;
+}
+
+async function _loadCreateJobLogs(jobId, logRow) {
+    const pre = logRow.querySelector('pre.cluster-create-job-log');
+    if (!pre) return;
     pre.textContent = 'Loading…';
-
     try {
         const resp = await fetch(`/api/clusters/create/jobs/${encodeURIComponent(jobId)}/logs?lines=200`);
         const data = await resp.json().catch(() => ({}));
@@ -987,18 +1034,58 @@ async function viewCreateJobLogs(jobId) {
             return;
         }
         pre.textContent = data.log || '';
-        viewer.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        logRow.dataset.loaded = '1';
     } catch (e) {
         pre.textContent = `Failed to load logs: ${e.message || e}`;
     }
 }
 
+async function toggleCreateJobLogs(jobId, buttonEl) {
+    if (!jobId) return;
+    const logRow = _findCreateJobLogRow(jobId);
+    if (!logRow) return;
+
+    const isOpen = logRow.style.display !== 'none';
+    if (isOpen) {
+        logRow.style.display = 'none';
+        if (buttonEl) buttonEl.textContent = 'View logs';
+        return;
+    }
+
+    logRow.style.display = '';
+    if (buttonEl) buttonEl.textContent = 'Hide logs';
+    await _loadCreateJobLogs(jobId, logRow);
+    logRow.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+async function viewCreateJobLogs(jobId) {
+    if (!jobId) return;
+    const btn = _findCreateJobLogButton(jobId);
+    if (btn) {
+        await toggleCreateJobLogs(jobId, btn);
+    }
+}
+
 // ── Spot Market Tracker (admin-only) ─────────────────────────────────────────
 let _spotMarketChart = null;
+let _spotMarketJobsRefreshTimer = null;
 
 function _spotMarketGetSelectedRegions() {
     const els = Array.from(document.querySelectorAll('input.spot-market-region'));
     return els.filter(e => e && e.checked).map(e => String(e.value || '').trim()).filter(Boolean).slice(0, 3);
+}
+
+function _spotMarketErrorDetail(data, fallback) {
+    const detail = data && (data.detail !== undefined ? data.detail : data.error);
+    if (typeof detail === 'string' && detail.trim()) return detail;
+    if (detail && typeof detail === 'object') {
+        try {
+            return JSON.stringify(detail);
+        } catch (_err) {
+            return fallback;
+        }
+    }
+    return fallback;
 }
 
 function _spotMarketSetStatus(text, type) {
@@ -1008,9 +1095,61 @@ function _spotMarketSetStatus(text, type) {
     el.style.color = type === 'error' ? 'var(--color-danger)' : 'var(--color-text-muted)';
 }
 
+function _spotMarketSetJobSummary(text) {
+    const el = document.getElementById('spot-market-job-summary');
+    if (!el) return;
+    el.textContent = text || '';
+}
+
 function _spotMarketColor(idx) {
     const palette = ['#00d9a6', '#e94560', '#3b82f6', '#f59e0b', '#8b5cf6'];
     return palette[idx % palette.length];
+}
+
+function _spotMarketApplyNowButtonState() {
+    const btn = document.getElementById('spot-market-now-btn');
+    if (!btn) return;
+    const isBusy = btn.dataset.busy === '1';
+    const hasRunning = btn.dataset.running === '1';
+
+    if (isBusy) {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Polling…';
+        return;
+    }
+
+    if (hasRunning) {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-hourglass-half"></i> Checker Running';
+        btn.title = 'A spot market checker is currently running';
+        return;
+    }
+
+    btn.disabled = false;
+    btn.innerHTML = '<i class="fas fa-bolt"></i> Now';
+    btn.removeAttribute('title');
+}
+
+function _spotMarketSetRunningJobs(runningJobs) {
+    const btn = document.getElementById('spot-market-now-btn');
+    if (!btn) return;
+    const hasRunning = Array.isArray(runningJobs) && runningJobs.length > 0;
+    btn.dataset.running = hasRunning ? '1' : '0';
+    _spotMarketApplyNowButtonState();
+}
+
+function _spotMarketScheduleJobsRefresh(hasRunning) {
+    if (hasRunning) {
+        if (_spotMarketJobsRefreshTimer) return;
+        _spotMarketJobsRefreshTimer = setInterval(() => {
+            spotMarketRefreshJobs().catch(() => {});
+        }, 5000);
+        return;
+    }
+    if (_spotMarketJobsRefreshTimer) {
+        clearInterval(_spotMarketJobsRefreshTimer);
+        _spotMarketJobsRefreshTimer = null;
+    }
 }
 
 async function spotMarketLoadStatus() {
@@ -1021,7 +1160,7 @@ async function spotMarketLoadStatus() {
         const resp = await fetch('/api/spot-market/status');
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok) {
-            const detail = data.detail || data.error || 'Failed to load spot market status';
+            const detail = _spotMarketErrorDetail(data, 'Failed to load spot market status');
             _spotMarketSetStatus(detail, 'error');
             return;
         }
@@ -1045,8 +1184,25 @@ async function spotMarketLoadStatus() {
             const ts = lastSamples[r];
             return ts ? `${r}: ${String(ts).slice(0, 19)}` : `${r}: (no samples)`;
         });
+        const runningJobs = Array.isArray(data.running_jobs) ? data.running_jobs : [];
+        const runningIds = runningJobs
+            .map(j => String((j && j.job_id) || '').trim())
+            .filter(Boolean);
+
+        if (runningIds.length) {
+            parts.push(`running: ${runningIds.join(', ')}`);
+        }
+
+        _spotMarketSetRunningJobs(runningJobs);
+        _spotMarketScheduleJobsRefresh(runningIds.length > 0);
+        _spotMarketSetJobSummary(
+            runningIds.length
+                ? `Job tracker: ${runningIds.length} running (${runningIds.join(', ')})`
+                : 'Job tracker: idle'
+        );
         _spotMarketSetStatus(parts.length ? parts.join(' | ') : 'No regions selected');
     } catch (e) {
+        _spotMarketSetJobSummary('');
         _spotMarketSetStatus(`Failed to load status: ${e.message || e}`, 'error');
     }
 }
@@ -1062,7 +1218,7 @@ async function spotMarketSaveConfig() {
     try {
         const regions = _spotMarketGetSelectedRegions();
         if (!regions.length) {
-            showToast('Select at least one region', 'error');
+            showClusterToast('Select at least one region', 'error');
             return;
         }
         const intervalEl = document.getElementById('spot-market-interval');
@@ -1075,15 +1231,15 @@ async function spotMarketSaveConfig() {
         });
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok) {
-            const detail = data.detail || data.error || 'Failed to save config';
-            showToast(detail, 'error');
+            const detail = _spotMarketErrorDetail(data, 'Failed to save config');
+            showClusterToast(detail, 'error');
             return;
         }
-        showToast('Spot market config saved', 'success');
+        showClusterToast('Spot market config saved', 'success');
         await spotMarketLoadStatus();
         await spotMarketRefreshChart();
     } catch (e) {
-        showToast(`Failed to save spot market config: ${e.message || e}`, 'error');
+        showClusterToast(`Failed to save spot market config: ${e.message || e}`, 'error');
     } finally {
         if (btn) {
             btn.disabled = false;
@@ -1094,16 +1250,20 @@ async function spotMarketSaveConfig() {
 
 async function spotMarketPollNow() {
     const btn = document.getElementById('spot-market-now-btn');
-    const originalHtml = btn ? btn.innerHTML : null;
+    if (btn && btn.dataset.running === '1') {
+        showClusterToast('A spot market checker is already running. Wait for completion.', 'error');
+        await spotMarketRefreshJobs();
+        return;
+    }
     if (btn) {
-        btn.disabled = true;
-        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Polling…';
+        btn.dataset.busy = '1';
+        _spotMarketApplyNowButtonState();
     }
 
     try {
         const regions = _spotMarketGetSelectedRegions();
         if (!regions.length) {
-            showToast('Select at least one region', 'error');
+            showClusterToast('Select at least one region', 'error');
             return;
         }
         const resp = await fetch('/api/spot-market/poll', {
@@ -1113,52 +1273,195 @@ async function spotMarketPollNow() {
         });
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok) {
-            const detail = data.detail || data.error || 'Failed to start spot market poll';
-            showToast(detail, 'error');
+            const detail = _spotMarketErrorDetail(data, 'Failed to start spot market poll');
+            showClusterToast(detail, 'error');
+            await spotMarketRefreshJobs();
             return;
         }
         const jobIds = Array.isArray(data.job_ids) ? data.job_ids : [];
-        showToast(jobIds.length ? `Spot market poll started (${jobIds.length} jobs)` : 'Spot market poll started', 'success');
+        showClusterToast(jobIds.length ? `Spot market poll started (${jobIds.length} jobs)` : 'Spot market poll started', 'success');
 
-        // Best-effort: show logs for the first job after a short delay.
+        await spotMarketRefreshJobs();
+
+        // Best-effort: show logs for the first job in its dedicated row after a short delay.
         if (jobIds.length) {
-            setTimeout(() => spotMarketViewJobLogs(jobIds[0]), 500);
+            setTimeout(() => {
+                const logBtn = _spotMarketFindJobLogButton(jobIds[0]);
+                spotMarketToggleJobLogs(jobIds[0], logBtn).catch(() => {});
+            }, 500);
         }
 
         // Refresh chart after a short delay (jobs may still be running).
         setTimeout(() => spotMarketRefreshAll(), 1500);
     } catch (e) {
-        showToast(`Failed to poll spot market: ${e.message || e}`, 'error');
+        showClusterToast(`Failed to poll spot market: ${e.message || e}`, 'error');
     } finally {
         if (btn) {
-            btn.disabled = false;
-            btn.innerHTML = originalHtml;
+            btn.dataset.busy = '0';
+            _spotMarketApplyNowButtonState();
         }
     }
 }
 
-async function spotMarketViewJobLogs(jobId) {
-    if (!jobId) return;
-    const viewer = document.getElementById('spot-market-job-log-viewer');
-    const pre = document.getElementById('spot-market-job-log-text');
-    if (!viewer || !pre) return;
+function _spotMarketFindJobLogRow(jobId) {
+    return Array.from(document.querySelectorAll('tr.spot-market-log-row'))
+        .find(row => row.dataset.jobId === jobId) || null;
+}
 
-    viewer.style.display = '';
-    viewer.open = true;
+function _spotMarketFindJobLogButton(jobId) {
+    return Array.from(document.querySelectorAll('button[data-spot-job-id]'))
+        .find(btn => btn.dataset.spotJobId === jobId) || null;
+}
+
+async function _spotMarketLoadJobLogs(jobId, logRow) {
+    const pre = logRow.querySelector('pre.spot-market-job-log');
+    if (!pre) return;
     pre.textContent = 'Loading…';
 
     try {
         const resp = await fetch(`/api/spot-market/jobs/${encodeURIComponent(jobId)}/logs?lines=200`);
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok) {
-            const detail = data.detail || data.error || 'Failed to load logs';
+            const detail = _spotMarketErrorDetail(data, 'Failed to load logs');
             pre.textContent = detail;
             return;
         }
         pre.textContent = data.log || '';
-        viewer.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        logRow.dataset.loaded = '1';
     } catch (e) {
         pre.textContent = `Failed to load logs: ${e.message || e}`;
+    }
+}
+
+async function spotMarketToggleJobLogs(jobId, buttonEl) {
+    if (!jobId) return;
+    const logRow = _spotMarketFindJobLogRow(jobId);
+    if (!logRow) return;
+
+    const isOpen = logRow.style.display !== 'none';
+    if (isOpen) {
+        logRow.style.display = 'none';
+        if (buttonEl) buttonEl.textContent = 'View logs';
+        return;
+    }
+
+    logRow.style.display = '';
+    if (buttonEl) buttonEl.textContent = 'Hide logs';
+    await _spotMarketLoadJobLogs(jobId, logRow);
+    logRow.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+async function spotMarketViewJobLogs(jobId) {
+    if (!jobId) return;
+    const btn = _spotMarketFindJobLogButton(jobId);
+    if (btn) {
+        await spotMarketToggleJobLogs(jobId, btn);
+    }
+}
+
+async function spotMarketRefreshJobs() {
+    const emptyEl = document.getElementById('spot-market-jobs-empty');
+    const tableEl = document.getElementById('spot-market-jobs-table');
+    const tbodyEl = document.getElementById('spot-market-jobs-tbody');
+    if (!emptyEl || !tableEl || !tbodyEl) return;
+
+    emptyEl.style.display = '';
+    emptyEl.textContent = 'Loading…';
+    tableEl.style.display = 'none';
+    tbodyEl.innerHTML = '';
+
+    try {
+        const resp = await fetch('/api/spot-market/jobs?limit=20');
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) {
+            emptyEl.textContent = _spotMarketErrorDetail(data, 'Failed to load spot market jobs');
+            _spotMarketSetJobSummary('');
+            return;
+        }
+
+        const jobs = Array.isArray(data.jobs) ? data.jobs : [];
+        if (!jobs.length) {
+            _spotMarketSetRunningJobs([]);
+            _spotMarketScheduleJobsRefresh(false);
+            _spotMarketSetJobSummary('Job tracker: no jobs yet');
+            emptyEl.textContent = 'No spot market jobs yet.';
+            return;
+        }
+
+        const runningJobs = jobs.filter(job => {
+            const status = String((job && job.status) || '').toLowerCase();
+            return status === 'running' || status === 'queued';
+        });
+        const completedJobs = jobs.filter(job => String((job && job.status) || '').toLowerCase() === 'completed');
+        const failedJobs = jobs.filter(job => String((job && job.status) || '').toLowerCase() === 'failed');
+
+        jobs.forEach(job => {
+            const tr = document.createElement('tr');
+            const jobId = String(job.job_id || '');
+            const status = String(job.status || '');
+            const returnCode = job.return_code === null || job.return_code === undefined ? '' : String(job.return_code);
+            const createdAt = String(job.created_at || '');
+
+            tr.innerHTML = `
+                <td>${jobId}</td>
+                <td>${String(job.region || '')}</td>
+                <td>${status}</td>
+                <td>${returnCode}</td>
+                <td>${createdAt ? createdAt.slice(0, 19) : ''}</td>
+                <td></td>
+            `;
+
+            const tdActions = tr.lastElementChild;
+            const btn = document.createElement('button');
+            btn.className = 'btn btn-outline btn-sm';
+            btn.textContent = 'View logs';
+            btn.dataset.spotJobId = jobId;
+            btn.onclick = () => spotMarketToggleJobLogs(jobId, btn);
+            if (tdActions) tdActions.appendChild(btn);
+            tbodyEl.appendChild(tr);
+
+            const logRow = document.createElement('tr');
+            logRow.className = 'spot-market-log-row';
+            logRow.dataset.jobId = jobId;
+            logRow.style.display = 'none';
+
+            const logCell = document.createElement('td');
+            logCell.colSpan = 6;
+            logCell.style.padding = '0.5rem 0.75rem 0.75rem 0.75rem';
+            logCell.style.background = 'var(--color-bg-secondary)';
+
+            const meta = document.createElement('div');
+            meta.className = 'text-xs text-muted';
+            meta.textContent = `Logs for spot-market job ${jobId}`;
+            logCell.appendChild(meta);
+
+            const pre = document.createElement('pre');
+            pre.className = 'spot-market-job-log';
+            pre.style.maxHeight = '280px';
+            pre.style.overflow = 'auto';
+            pre.style.marginTop = '0.35rem';
+            pre.style.background = 'var(--color-bg-primary)';
+            pre.style.padding = '0.75rem';
+            pre.style.borderRadius = '0.5rem';
+            pre.style.whiteSpace = 'pre-wrap';
+            pre.style.wordBreak = 'break-word';
+            pre.textContent = '';
+            logCell.appendChild(pre);
+
+            logRow.appendChild(logCell);
+            tbodyEl.appendChild(logRow);
+        });
+
+        _spotMarketSetRunningJobs(runningJobs);
+        _spotMarketScheduleJobsRefresh(runningJobs.length > 0);
+        _spotMarketSetJobSummary(
+            `Job tracker: ${jobs.length} total, ${runningJobs.length} running, ${completedJobs.length} completed, ${failedJobs.length} failed`
+        );
+        emptyEl.style.display = 'none';
+        tableEl.style.display = '';
+    } catch (e) {
+        _spotMarketSetJobSummary('');
+        emptyEl.textContent = `Failed to load spot market jobs: ${e.message || e}`;
     }
 }
 
@@ -1293,6 +1596,7 @@ async function spotMarketRefreshChart() {
 
 async function spotMarketRefreshAll() {
     await spotMarketLoadStatus();
+    await spotMarketRefreshJobs();
     await spotMarketRefreshChart();
 }
 
@@ -1303,7 +1607,7 @@ async function deleteCluster(buttonEl) {
     const region = buttonEl.dataset.region;
 
     if (!clusterName || !region) {
-        showToast('Missing cluster name/region for deletion', 'error');
+        showClusterToast('Missing cluster name/region for deletion', 'error');
         return;
     }
 
@@ -1316,7 +1620,7 @@ async function deleteCluster(buttonEl) {
 
     const typed = prompt(`Type the cluster name to confirm deletion:\n\n${clusterName}`);
     if (typed !== clusterName) {
-        showToast('Deletion cancelled (name did not match)', 'error');
+        showClusterToast('Deletion cancelled (name did not match)', 'error');
         return;
     }
 
@@ -1332,21 +1636,21 @@ async function deleteCluster(buttonEl) {
         const data = await response.json().catch(() => ({}));
 
         if (response.ok && data.success) {
-            showToast(`Cluster "${clusterName}" deletion initiated`, 'success');
+            showClusterToast(`Cluster "${clusterName}" deletion initiated`, 'success');
             setTimeout(() => window.location.reload(), 1500);
         } else {
             const detail = data.detail || data.message || 'Unknown error';
-            showToast(`Failed to delete cluster: ${detail}`, 'error');
+            showClusterToast(`Failed to delete cluster: ${detail}`, 'error');
         }
     } catch (error) {
-        showToast(`Failed to delete cluster: ${error.message}`, 'error');
+        showClusterToast(`Failed to delete cluster: ${error.message}`, 'error');
     } finally {
         buttonEl.disabled = false;
         buttonEl.innerHTML = originalHtml;
     }
 }
 
-function showToast(message, type) {
+function showClusterToast(message, type) {
     const container = document.getElementById('toast-container');
     if (!container) return;
 
@@ -1370,7 +1674,7 @@ function copySSHCommand(elementId) {
 
     const text = codeEl.textContent;
     navigator.clipboard.writeText(text).then(() => {
-        showToast('SSH command copied to clipboard', 'success');
+        showClusterToast('SSH command copied to clipboard', 'success');
     }).catch(err => {
         // Fallback for older browsers
         const textarea = document.createElement('textarea');
@@ -1379,7 +1683,7 @@ function copySSHCommand(elementId) {
         textarea.select();
         document.execCommand('copy');
         document.body.removeChild(textarea);
-        showToast('SSH command copied to clipboard', 'success');
+        showClusterToast('SSH command copied to clipboard', 'success');
     });
 }
 
@@ -1414,7 +1718,9 @@ document.querySelectorAll('.expand-jobs-link').forEach(link => {
         loadCreateOptions();
     }
     refreshCreateJobs();
-    spotMarketRefreshAll();
+    if (document.getElementById('spot-market-panel')) {
+        spotMarketRefreshAll();
+    }
 })();
 </script>
 {% endblock %}

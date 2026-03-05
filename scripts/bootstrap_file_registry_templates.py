@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Bootstrap TapDB templates for the file registry.
 
-This ensures the TapDB templates used by `daylib.file_registry.FileRegistry` exist
+This ensures the TapDB templates used by `daylily_ursa.file_registry.FileRegistry` exist
 in the configured TapDB namespace (strict namespace mode).
 
 Usage:
@@ -27,7 +27,7 @@ def main() -> int:
         os.environ.setdefault("AWS_REGION", args.region)
 
     try:
-        from daylib.file_registry import FileRegistry
+        from daylily_ursa.file_registry import FileRegistry
     except ImportError as exc:
         print(f"Error importing FileRegistry: {exc}")
         return 1

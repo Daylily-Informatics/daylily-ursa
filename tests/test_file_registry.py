@@ -1,4 +1,4 @@
-"""Graph-native tests for daylib.file_registry."""
+"""Graph-native tests for daylily_ursa.file_registry."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from daylib.file_registry import (
+from daylily_ursa.file_registry import (
     BiosampleMetadata,
     FileMetadata,
     FileRegistration,

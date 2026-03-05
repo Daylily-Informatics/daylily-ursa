@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from daylib.workset_notifications import (
+from daylily_ursa.workset_notifications import (
     LinearNotificationChannel,
     NotificationEvent,
     NotificationManager,
@@ -41,7 +41,7 @@ def error_event():
 
 def test_sns_notification_success(sample_event):
     """Test successful SNS notification."""
-    with patch("daylib.workset_notifications.boto3.Session") as mock_session:
+    with patch("daylily_ursa.workset_notifications.boto3.Session") as mock_session:
         mock_sns = MagicMock()
         mock_session.return_value.client.return_value = mock_sns
         mock_sns.publish.return_value = {"MessageId": "test-message-id"}
@@ -64,7 +64,7 @@ def test_sns_notification_success(sample_event):
 
 def test_sns_notification_with_error_details(error_event):
     """Test SNS notification with error details."""
-    with patch("daylib.workset_notifications.boto3.Session") as mock_session:
+    with patch("daylily_ursa.workset_notifications.boto3.Session") as mock_session:
         mock_sns = MagicMock()
         mock_session.return_value.client.return_value = mock_sns
         mock_sns.publish.return_value = {"MessageId": "test-message-id"}
@@ -88,7 +88,7 @@ def test_sns_notification_failure(sample_event):
     """Test SNS notification failure handling."""
     from botocore.exceptions import ClientError
     
-    with patch("daylib.workset_notifications.boto3.Session") as mock_session:
+    with patch("daylily_ursa.workset_notifications.boto3.Session") as mock_session:
         mock_sns = MagicMock()
         mock_session.return_value.client.return_value = mock_sns
         mock_sns.publish.side_effect = ClientError(
@@ -108,7 +108,7 @@ def test_sns_notification_failure(sample_event):
 
 def test_linear_notification_error_event(error_event):
     """Test Linear notification for error event."""
-    with patch("daylib.workset_notifications.httpx.Client") as mock_client_class:
+    with patch("daylily_ursa.workset_notifications.httpx.Client") as mock_client_class:
         mock_client = MagicMock()
         mock_response = MagicMock()
         mock_response.json.return_value = {
@@ -160,7 +160,7 @@ def test_notification_manager_add_channel():
     """Test adding channels to notification manager."""
     manager = NotificationManager()
     
-    with patch("daylib.workset_notifications.boto3.Session"):
+    with patch("daylily_ursa.workset_notifications.boto3.Session"):
         channel1 = SNSNotificationChannel(
             topic_arn="arn:aws:sns:us-west-2:123:topic1",
             region="us-west-2",
@@ -180,7 +180,7 @@ def test_notification_manager_filters(sample_event, error_event):
     """Test notification filtering."""
     manager = NotificationManager()
 
-    with patch("daylib.workset_notifications.boto3.Session") as mock_session:
+    with patch("daylily_ursa.workset_notifications.boto3.Session") as mock_session:
         mock_sns = MagicMock()
         mock_session.return_value.client.return_value = mock_sns
         mock_sns.publish.return_value = {"MessageId": "test"}
@@ -207,7 +207,7 @@ def test_notification_manager_priority_filter(sample_event, error_event):
     """Test notification filtering by priority."""
     manager = NotificationManager()
 
-    with patch("daylib.workset_notifications.boto3.Session") as mock_session:
+    with patch("daylily_ursa.workset_notifications.boto3.Session") as mock_session:
         mock_sns = MagicMock()
         mock_session.return_value.client.return_value = mock_sns
         mock_sns.publish.return_value = {"MessageId": "test"}
@@ -234,7 +234,7 @@ def test_notification_manager_multiple_channels(sample_event):
     """Test notification to multiple channels."""
     manager = NotificationManager()
 
-    with patch("daylib.workset_notifications.boto3.Session") as mock_session:
+    with patch("daylily_ursa.workset_notifications.boto3.Session") as mock_session:
         mock_sns = MagicMock()
         mock_session.return_value.client.return_value = mock_sns
         mock_sns.publish.return_value = {"MessageId": "test"}

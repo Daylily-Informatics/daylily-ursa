@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from daylib.s3_bucket_validator import BucketValidationResult, LinkedBucketManager
+from daylily_ursa.s3_bucket_validator import BucketValidationResult, LinkedBucketManager
 
 
 class _SessionCtx:

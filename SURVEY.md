@@ -58,7 +58,7 @@ A full architectural review of the Daylily genomics ecosystem was conducted, cov
 
 | Risk | Severity | Status |
 |------|----------|--------|
-| `daylib` namespace collision across 3 repos | 🔴 High | Open — needs rename strategy |
+| `daylily_ursa` namespace collision across 3 repos | 🔴 High | Open — needs rename strategy |
 | SSH-based headnode interrogation | 🟡 Medium | Open — works for v1, won't scale |
 | IAM policy uses `Resource: "*"` for FSx | 🟡 Medium | Open — acceptable if documented |
 | DAYOA has no `pyproject.toml` | 🟡 Medium | Open |
@@ -98,7 +98,7 @@ Created `config/ecosystem-versions.json` and `ursa version --ecosystem` CLI comm
 | Component | Version | Repository |
 |-----------|---------|------------|
 | daylily-ursa | 0.1.7 | Daylily-Informatics/daylily-ursa |
-| daylily-ephemeral-cluster | 0.7.601 | Daylily-Informatics/daylily-ephemeral-cluster |
+| daylily-ephemeral-cluster | 0.7.605 | Daylily-Informatics/daylily-ephemeral-cluster |
 | daylily-omics-analysis | 0.7.602 | Daylily-Informatics/daylily-omics-analysis |
 | daylily-cognito | 0.1.24 | Daylily-Informatics/daylily-cognito |
 | daylily-omics-references | 0.3.1 | Daylily-Informatics/daylily-omics-references |
@@ -123,7 +123,7 @@ Three environments exist across the ecosystem:
 
 | Item | Notes |
 |------|-------|
-| `daylib` namespace collision | Needs rename: `daylily_ec`, `daylily_oa`, `daylily_ursa` (or shared `daylily-core`) |
+| `daylily_ursa` namespace collision | Needs rename: `daylily_ec`, `daylily_oa`, `daylily_ursa` (or shared `daylily-core`) |
 | URSA/DAY-EC conda env unification | Low-hanging fruit per matrix research; deferred by owner |
 | Headnode agent (push-based monitoring) | Replaces SSH; architecture-level change |
 | DAYOA `pyproject.toml` migration | Legacy `setup.py` with hardcoded version |
@@ -139,7 +139,7 @@ Three environments exist across the ecosystem:
 4. Multi-platform support breadth
 
 **Fix before publishing**:
-1. `daylib` namespace collision
+1. `daylily_ursa` namespace collision
 2. Temporary files in omics-analysis/ephemeral-cluster repos
 3. Document cost guardrails prominently
 

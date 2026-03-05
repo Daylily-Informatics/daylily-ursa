@@ -11,8 +11,8 @@ from unittest.mock import MagicMock
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
-from daylib.biospecimen import Biosample, Biospecimen, BiospecimenRegistry, Library, Subject
-from daylib.biospecimen_api import create_biospecimen_router
+from daylily_ursa.biospecimen import Biosample, Biospecimen, BiospecimenRegistry, Library, Subject
+from daylily_ursa.biospecimen_api import create_biospecimen_router
 
 
 def test_biospecimen_api_routes_have_request_level_coverage():
@@ -58,7 +58,7 @@ def test_biospecimen_api_routes_have_request_level_coverage():
     app = FastAPI()
     app.include_router(create_biospecimen_router(registry=registry, get_customer_id=get_customer_id))
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url="https://testserver") as client:
         # Subjects
         assert client.get("/api/biospecimen/subjects").status_code != 404
         assert client.get("/api/biospecimen/subjects/subj-001").status_code != 404

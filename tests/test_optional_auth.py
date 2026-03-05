@@ -8,8 +8,8 @@ import pytest
 
 def test_api_without_auth():
     """Test that API can be created without authentication."""
-    from daylib.workset_api import create_app
-    from daylib.workset_state_db import WorksetStateDB
+    from daylily_ursa.workset_api import create_app
+    from daylily_ursa.workset_state_db import WorksetStateDB
     
     # Mock state_db
     state_db = MagicMock(spec=WorksetStateDB)
@@ -27,8 +27,8 @@ def test_api_without_auth():
 
 def test_api_with_auth_requires_cognito():
     """Test that API with auth requires cognito_auth parameter."""
-    from daylib.workset_api import create_app
-    from daylib.workset_state_db import WorksetStateDB
+    from daylily_ursa.workset_api import create_app
+    from daylily_ursa.workset_state_db import WorksetStateDB
     
     # Mock state_db
     state_db = MagicMock(spec=WorksetStateDB)
@@ -45,8 +45,8 @@ def test_api_with_auth_requires_cognito():
 def test_api_endpoints_work_without_auth():
     """Test that API endpoints work without authentication."""
     from fastapi.testclient import TestClient
-    from daylib.workset_api import create_app
-    from daylib.workset_state_db import WorksetStateDB
+    from daylily_ursa.workset_api import create_app
+    from daylily_ursa.workset_state_db import WorksetStateDB
     
     # Mock state_db
     state_db = MagicMock(spec=WorksetStateDB)
@@ -63,7 +63,7 @@ def test_api_endpoints_work_without_auth():
     )
     
     # Create test client
-    client = TestClient(app)
+    client = TestClient(app, base_url="https://testserver")
     
     # Test health endpoint
     response = client.get("/")

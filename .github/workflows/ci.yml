@@ -38,8 +38,8 @@ jobs:
 
       - name: Lint (ruff)
         run: |
-          ruff check daylib tests
+          ruff check daylily_ursa tests
 
       - name: Typecheck (mypy)
         run: |
-          mypy daylib
+          mypy daylily_ursa

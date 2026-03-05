@@ -71,7 +71,7 @@ Web-based form to generate `daylily_work.yaml`:
 ### 1. Bootstrap Customer Templates
 
 ```python
-from daylib.workset_customer import CustomerManager
+from daylily_ursa.workset_customer import CustomerManager
 
 manager = CustomerManager(
     region="us-west-2",
@@ -92,10 +92,10 @@ daycog add-user user@acme.com --password 'password123'
 ### 3. Start API with Authentication
 
 ```python
-from daylib.workset_api import create_app
-from daylib.workset_state_db import WorksetStateDB
+from daylily_ursa.workset_api import create_app
+from daylily_ursa.workset_state_db import WorksetStateDB
 from daylily_cognito.auth import CognitoAuth
-from daylib.workset_customer import CustomerManager
+from daylily_ursa.workset_customer import CustomerManager
 
 # Initialize components
 state_db = WorksetStateDB()

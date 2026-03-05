@@ -119,16 +119,24 @@ pip install daylily-ursa[dev]
 
 ```bash
 # Start the API server directly
-daylily-workset-api --host 0.0.0.0 --port 8914
+daylily-workset-api \
+  --host 0.0.0.0 \
+  --port 8914 \
+  --ssl-certfile ~/.config/ursa/certs/ursa-localhost.pem \
+  --ssl-keyfile ~/.config/ursa/certs/ursa-localhost-key.pem
 
 # Start the workset monitor
 daylily-workset-monitor config/workset-monitor-config.yaml
 ```
 
+Ursa enforces HTTPS at the app layer and returns `426 HTTPS Required` for insecure requests.
+If TLS is terminated at a reverse proxy, configure trusted proxy source IPs so
+`X-Forwarded-Proto: https` is honored.
+
 ## Architecture
 
 ```
-daylib/
+daylily_ursa/
 ├── workset_api.py          # FastAPI application entry point
 ├── workset_state_db.py     # TapDB state management
 ├── workset_monitor.py      # S3 workset monitoring daemon
@@ -200,6 +208,8 @@ WHITELIST_DOMAINS=all  # or comma-separated: company.com,partner.org
 # Server
 URSA_HOST=0.0.0.0
 URSA_PORT=8914
+HTTPS_TRUSTED_PROXY_IPS=127.0.0.1,::1
+HTTPS_HSTS_MAX_AGE=31536000
 
 # Multi-Region (optional)
 DAYLILY_MULTI_REGION=false
@@ -222,12 +232,12 @@ Web-based interface at `/portal/` providing:
 
 ### Cluster Creation (Admin Only)
 
-Ursa triggers cluster creation by running the external `daylily-ec` CLI (from `daylily-ephemeral-cluster`) as a background job.
+Ursa triggers cluster creation by running the `daylily-ec` CLI (from `daylily-ephemeral-cluster`) as a background job.
 
-Because `daylily-ephemeral-cluster` currently ships a top-level `daylib` package, **do not** install it into the same Python environment as Ursa. Instead:
+Install `daylily-ephemeral-cluster==0.7.605` in the same Ursa environment:
 
-1. Install `daylily-ephemeral-cluster` in a separate environment (for example, `DAY-EC`).
-2. Ensure `daylily-ec` is on your PATH for the Ursa server process, or set `URSA_DAYLILY_EC_BIN=/abs/path/to/daylily-ec`.
+1. `pip install daylily-ephemeral-cluster==0.7.605`
+2. Ensure `daylily-ec` is on PATH for the Ursa server process, or set `URSA_DAYLILY_EC_BIN=/abs/path/to/daylily-ec`.
 
 ### Storage Metrics
 

@@ -6,9 +6,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from daylib.workset_diagnostics import classify_error
-from daylib.workset_state_db import ErrorCategory, WorksetPriority, WorksetState, WorksetStateDB
-from daylib.workset_validation import WorksetValidator
+from daylily_ursa.workset_diagnostics import classify_error
+from daylily_ursa.workset_state_db import ErrorCategory, WorksetPriority, WorksetState, WorksetStateDB
+from daylily_ursa.workset_validation import WorksetValidator
 
 
 class _SessionCtx:
@@ -127,7 +127,7 @@ class TestWorksetLifecycle:
 
 class TestValidationToProcessing:
     def test_validation_before_registration(self, state_db: WorksetStateDB):
-        with patch("daylib.workset_validation.boto3.Session"):
+        with patch("daylily_ursa.workset_validation.boto3.Session"):
             WorksetValidator(region="us-west-2")
 
             config = {

@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 
 
 def test_customer_file_ops_routes_have_request_level_coverage():
-    from daylib.routes.files import FileDependencies, create_files_router
+    from daylily_ursa.routes.files import FileDependencies, create_files_router
 
     customer_manager = MagicMock()
     customer_manager.get_customer_config.return_value = SimpleNamespace(s3_bucket="cust-bucket")
@@ -35,8 +35,8 @@ def test_customer_file_ops_routes_have_request_level_coverage():
         ],
     }
 
-    with patch("daylib.routes.files.boto3.client", return_value=mock_s3):
-        with TestClient(app) as client:
+    with patch("daylily_ursa.routes.files.boto3.client", return_value=mock_s3):
+        with TestClient(app, base_url="https://testserver") as client:
             # Upload
             upload_resp = client.post(
                 "/api/customers/cust-001/files/upload",

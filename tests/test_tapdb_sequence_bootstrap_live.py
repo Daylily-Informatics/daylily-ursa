@@ -6,7 +6,7 @@ import os
 
 import pytest
 
-from daylib.tapdb_graph.backend import TapDBBackend
+from daylily_ursa.tapdb_graph.backend import TapDBBackend
 
 
 @pytest.mark.skipif(

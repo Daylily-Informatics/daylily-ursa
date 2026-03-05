@@ -2,7 +2,7 @@
 Tests for file_metadata.py - FASTQ parsing, pairing, and TSV generation.
 """
 
-from daylib.file_metadata import (
+from daylily_ursa.file_metadata import (
     AnalysisInput,
     LibraryPrep,
     SampleType,

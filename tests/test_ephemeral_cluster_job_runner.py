@@ -17,7 +17,7 @@ def _now_iso() -> str:
 
 
 def test_job_runner_executes_command_and_updates_job_file(tmp_path: Path) -> None:
-    from daylib.ephemeral_cluster import job_runner
+    from daylily_ursa.ephemeral_cluster import job_runner
 
     job_path = tmp_path / "job.json"
     log_path = tmp_path / "job.log"

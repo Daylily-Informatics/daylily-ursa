@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from daylib.workset_state_db import (
+from daylily_ursa.workset_state_db import (
     ErrorCategory,
     WorksetPriority,
     WorksetState,

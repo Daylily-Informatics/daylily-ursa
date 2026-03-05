@@ -12,7 +12,7 @@ from unittest.mock import MagicMock
 
 
 def test_monitor_create_cluster_uses_ephemeral_cluster_runner(monkeypatch) -> None:
-    from daylib.workset_monitor import WorksetMonitor
+    from daylily_ursa.workset_monitor import WorksetMonitor
 
     monitor = WorksetMonitor.__new__(WorksetMonitor)
     monitor.debug = False
@@ -27,7 +27,7 @@ def test_monitor_create_cluster_uses_ephemeral_cluster_runner(monkeypatch) -> No
 
     proc = subprocess.CompletedProcess(args=["daylily-ec"], returncode=0, stdout="ok", stderr="")
     run_mock = MagicMock(return_value=proc)
-    monkeypatch.setattr("daylib.ephemeral_cluster.runner.run_create_sync", run_mock)
+    monkeypatch.setattr("daylily_ursa.ephemeral_cluster.runner.run_create_sync", run_mock)
 
     cluster_name = monitor._create_cluster({"cluster_name": "test-cluster"})
     assert cluster_name == "test-cluster"

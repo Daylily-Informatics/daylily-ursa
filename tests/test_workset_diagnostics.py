@@ -2,7 +2,7 @@
 
 import pytest
 
-from daylib.workset_diagnostics import (
+from daylily_ursa.workset_diagnostics import (
     ErrorAnalyzer,
     ErrorSeverity,
     ErrorCategory,

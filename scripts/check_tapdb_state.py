@@ -9,7 +9,7 @@ import os
 import sys
 from typing import Any
 
-from daylib.workset_state_db import WorksetState, WorksetStateDB
+from daylily_ursa.workset_state_db import WorksetState, WorksetStateDB
 
 
 def _json_default(obj: Any):

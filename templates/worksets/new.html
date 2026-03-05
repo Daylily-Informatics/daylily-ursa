@@ -256,7 +256,7 @@
                     <table class="table table-sm" id="cluster-list-table">
                         <thead>
                             <tr>
-                                <th style="width: 30px;"></th>
+                                <th data-no-sort style="width: 30px;"></th>
                                 <th>Cluster Name</th>
                                 <th>Region</th>
                                 <th>Status</th>
@@ -368,4 +368,3 @@
 {% block extra_js %}
 <script src="/static/js/worksets.js?v={{ cache_bust | default('1') }}"></script>
 {% endblock %}
-

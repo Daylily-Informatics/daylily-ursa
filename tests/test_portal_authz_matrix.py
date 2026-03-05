@@ -19,8 +19,8 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi.testclient import TestClient
 
-from daylib.workset_api import create_app
-from daylib.workset_state_db import WorksetStateDB
+from daylily_ursa.workset_api import create_app
+from daylily_ursa.workset_state_db import WorksetStateDB
 
 
 _LAST_CLUSTER_SERVICE: Optional[MagicMock] = None
@@ -38,7 +38,7 @@ def _make_authenticated_client(mock_state_db: MagicMock, *, customer_id: str, is
         enable_auth=False,
         customer_manager=mock_customer_manager,
     )
-    client = TestClient(app)
+    client = TestClient(app, base_url="https://testserver")
     client.post("/portal/login", data={"email": "user@example.com", "password": "testpass"})
     return client
 
@@ -114,7 +114,7 @@ def _stub_cluster_services(monkeypatch: pytest.MonkeyPatch) -> None:
         def get_allowed_regions(self):
             return ["us-west-2"]
 
-    monkeypatch.setattr("daylib.ursa_config.get_ursa_config", lambda: _FakeUrsaConfig())
+    monkeypatch.setattr("daylily_ursa.ursa_config.get_ursa_config", lambda: _FakeUrsaConfig())
 
     class _FakeCluster:
         def to_dict(self, *, include_sensitive: bool = True):
@@ -152,7 +152,7 @@ def _stub_cluster_services(monkeypatch: pytest.MonkeyPatch) -> None:
     service = MagicMock()
     service.get_all_clusters_with_status.return_value = [_FakeCluster()]
     _LAST_CLUSTER_SERVICE = service
-    monkeypatch.setattr("daylib.cluster_service.get_cluster_service", lambda **kwargs: service)
+    monkeypatch.setattr("daylily_ursa.cluster_service.get_cluster_service", lambda **kwargs: service)
 
 
 @pytest.fixture
@@ -203,7 +203,7 @@ def mock_state_db() -> MagicMock:
 @pytest.fixture
 def unauthenticated_client(mock_state_db: MagicMock) -> TestClient:
   app = create_app(state_db=mock_state_db, enable_auth=False)
-  return TestClient(app)
+  return TestClient(app, base_url="https://testserver")
 
 
 @pytest.fixture

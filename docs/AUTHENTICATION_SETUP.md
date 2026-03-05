@@ -32,14 +32,14 @@ pip install -e .
 python examples/run_api_without_auth.py
 
 # Or using uvicorn directly
-uvicorn daylib.workset_api:app --host 0.0.0.0 --port 8914
+uvicorn daylily_ursa.workset_api:app --host 0.0.0.0 --port 8914
 ```
 
 ### Python Code Example
 
 ```python
-from daylib.workset_api import create_app
-from daylib.workset_state_db import WorksetStateDB
+from daylily_ursa.workset_api import create_app
+from daylily_ursa.workset_state_db import WorksetStateDB
 
 # Initialize components
 state_db = WorksetStateDB()
@@ -117,8 +117,8 @@ python examples/run_api_with_auth.py
 ### Python Code Example
 
 ```python
-from daylib.workset_api import create_app
-from daylib.workset_state_db import WorksetStateDB
+from daylily_ursa.workset_api import create_app
+from daylily_ursa.workset_state_db import WorksetStateDB
 from daylily_cognito.auth import CognitoAuth
 
 # Initialize components

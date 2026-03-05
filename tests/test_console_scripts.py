@@ -50,8 +50,8 @@ def test_console_script_entrypoints_are_importable_and_callable():
 
 
 def test_ursa_server_start_uses_packaged_entrypoint(monkeypatch):
-    from daylib.cli import server as server_mod
-    import daylib.ursa_config as ursa_config_mod
+    from daylily_ursa.cli import server as server_mod
+    import daylily_ursa.ursa_config as ursa_config_mod
 
     class DummyUrsaConfig:
         aws_profile = "test-profile"
@@ -94,7 +94,7 @@ def test_ursa_server_start_uses_packaged_entrypoint(monkeypatch):
 
     cmd = captured.get("cmd")
     assert isinstance(cmd, list)
-    assert cmd[:3] == [sys.executable, "-m", "daylib.workset_api_cli"]
+    assert cmd[:3] == [sys.executable, "-m", "daylily_ursa.workset_api_cli"]
     assert not any("bin/daylily-workset-api" in str(part) for part in cmd)
 
     kwargs = captured.get("kwargs")
@@ -104,7 +104,7 @@ def test_ursa_server_start_uses_packaged_entrypoint(monkeypatch):
 
 
 def test_validate_cognito_oauth_uris_detects_port_mismatch():
-    from daylib.cli import server as server_mod
+    from daylily_ursa.cli import server as server_mod
 
     errors = server_mod._validate_cognito_oauth_uris(
         app_client={
@@ -124,7 +124,7 @@ def test_validate_cognito_oauth_uris_detects_port_mismatch():
 
 
 def test_validate_cognito_oauth_uris_accepts_matching_port():
-    from daylib.cli import server as server_mod
+    from daylily_ursa.cli import server as server_mod
 
     errors = server_mod._validate_cognito_oauth_uris(
         app_client={
@@ -144,8 +144,8 @@ def test_validate_cognito_oauth_uris_accepts_matching_port():
 
 
 def test_ursa_server_start_auth_fails_when_cognito_uri_ports_mismatch(monkeypatch):
-    from daylib.cli import server as server_mod
-    import daylib.ursa_config as ursa_config_mod
+    from daylily_ursa.cli import server as server_mod
+    import daylily_ursa.ursa_config as ursa_config_mod
 
     class DummyUrsaConfig:
         aws_profile = "test-profile"
@@ -202,7 +202,7 @@ def test_ursa_server_start_auth_fails_when_cognito_uri_ports_mismatch(monkeypatc
 
 
 def test_validate_cognito_oauth_uris_rejects_default_redirect_not_in_callback_urls():
-    from daylib.cli import server as server_mod
+    from daylily_ursa.cli import server as server_mod
 
     errors = server_mod._validate_cognito_oauth_uris(
         app_client={
@@ -222,7 +222,7 @@ def test_validate_cognito_oauth_uris_rejects_default_redirect_not_in_callback_ur
 
 
 def test_validate_cognito_oauth_uris_rejects_client_name_mismatch():
-    from daylib.cli import server as server_mod
+    from daylily_ursa.cli import server as server_mod
 
     errors = server_mod._validate_cognito_oauth_uris(
         app_client={

@@ -6,8 +6,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from daylib.routes.dependencies import verify_workset_ownership
-from daylib.workset_customer import CustomerConfig, CustomerManager
+from daylily_ursa.routes.dependencies import verify_workset_ownership
+from daylily_ursa.workset_customer import CustomerConfig, CustomerManager
 
 
 class _SessionCtx:

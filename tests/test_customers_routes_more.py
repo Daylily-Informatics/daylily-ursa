@@ -11,7 +11,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 
 def test_customers_routes_have_request_level_coverage():
-    from daylib.routes.customers import CustomerDependencies, create_customers_router
+    from daylily_ursa.routes.customers import CustomerDependencies, create_customers_router
 
     customer_manager = MagicMock()
     config = SimpleNamespace(
@@ -47,7 +47,7 @@ def test_customers_routes_have_request_level_coverage():
 
     app.include_router(create_customers_router(CustomerDependencies(customer_manager=customer_manager, get_current_user=get_current_user)))
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url="https://testserver") as client:
         assert client.post(
             "/customers",
             json={"customer_name": "Acme", "email": "acme@example.com"},

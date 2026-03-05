@@ -7,8 +7,8 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi.testclient import TestClient
 
-from daylib.workset_state_db import WorksetStateDB, WorksetState
-from daylib.workset_api import create_app
+from daylily_ursa.workset_state_db import WorksetStateDB, WorksetState
+from daylily_ursa.workset_api import create_app
 
 
 @pytest.fixture
@@ -37,7 +37,7 @@ def client_and_mock(mock_state_db, mock_ursa_dir):
     Returns tuple of (client, mock_ursa_dir) for use in tests.
     """
     app = create_app(state_db=mock_state_db, enable_auth=False)
-    client = TestClient(app)
+    client = TestClient(app, base_url="https://testserver")
     # Perform login to set session
     client.post("/portal/login", data={"email": "test@example.com", "password": "testpass"})
     return client, mock_ursa_dir
@@ -47,7 +47,7 @@ def client_and_mock(mock_state_db, mock_ursa_dir):
 def authenticated_client(mock_state_db, mock_ursa_dir):
     """Create test client with authenticated session."""
     app = create_app(state_db=mock_state_db, enable_auth=False)
-    client = TestClient(app)
+    client = TestClient(app, base_url="https://testserver")
     # Perform login to set session
     client.post("/portal/login", data={"email": "test@example.com", "password": "testpass"})
     return client
@@ -67,7 +67,7 @@ def authenticated_non_admin_client(mock_state_db):
         enable_auth=False,
         customer_manager=mock_customer_manager,
     )
-    client = TestClient(app)
+    client = TestClient(app, base_url="https://testserver")
     client.post("/portal/login", data={"email": "user@example.com", "password": "testpass"})
     return client
 
@@ -135,7 +135,7 @@ class TestMonitorDashboardRoute:
     def test_monitor_page_unauthenticated_redirect(self, mock_state_db):
         """Test that unauthenticated users are redirected to login."""
         app = create_app(state_db=mock_state_db, enable_auth=False)
-        client = TestClient(app)
+        client = TestClient(app, base_url="https://testserver")
         # Don't login
         response = client.get("/portal/monitor", follow_redirects=False)
         assert response.status_code == 302

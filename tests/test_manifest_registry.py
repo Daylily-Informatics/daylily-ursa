@@ -1,10 +1,10 @@
-"""Unit tests for daylib.manifest_registry using TapDB graph semantics."""
+"""Unit tests for daylily_ursa.manifest_registry using TapDB graph semantics."""
 
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from daylib.manifest_registry import (
+from daylily_ursa.manifest_registry import (
     ManifestRegistry,
     ManifestTooLargeError,
     SavedManifest,
@@ -68,7 +68,7 @@ class TestSaveManifestEncoding:
         manifest_registry.backend.create_lineage.assert_called_once()
 
     def test_save_manifest_rejects_oversized_payload(self, manifest_registry: ManifestRegistry):
-        with patch("daylib.manifest_registry._gzip_b64_encode", return_value="x" * 340001):
+        with patch("daylily_ursa.manifest_registry._gzip_b64_encode", return_value="x" * 340001):
             with pytest.raises(ManifestTooLargeError):
                 manifest_registry.save_manifest(
                     customer_id="cust-001",

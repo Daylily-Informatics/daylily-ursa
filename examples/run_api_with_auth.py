@@ -47,14 +47,14 @@ import os
 import sys
 from pathlib import Path
 
-# Add parent directory to path to import daylib
+# Add parent directory to path to import daylily_ursa
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from daylib.workset_api import create_app
-from daylib.workset_state_db import WorksetStateDB
-from daylib.workset_scheduler import WorksetScheduler
-from daylib.workset_validation import WorksetValidator
-from daylib.workset_customer import CustomerManager
+from daylily_ursa.workset_api import create_app
+from daylily_ursa.workset_state_db import WorksetStateDB
+from daylily_ursa.workset_scheduler import WorksetScheduler
+from daylily_ursa.workset_validation import WorksetValidator
+from daylily_ursa.workset_customer import CustomerManager
 
 # Try to import authentication (requires python-jose)
 try:
@@ -68,7 +68,7 @@ except ImportError:
 
 # Try to import file management (optional)
 try:
-    from daylib.file_registry import FileRegistry
+    from daylily_ursa.file_registry import FileRegistry
     FILE_MANAGEMENT_AVAILABLE = True
 except ImportError:
     FILE_MANAGEMENT_AVAILABLE = False

@@ -1,4 +1,4 @@
-"""Graph-native tests for daylib.biospecimen."""
+"""Graph-native tests for daylily_ursa.biospecimen."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from daylib.biospecimen import (
+from daylily_ursa.biospecimen import (
     Biosample,
     Biospecimen,
     BiospecimenRegistry,

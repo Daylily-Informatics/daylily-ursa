@@ -8,9 +8,9 @@ import pytest
 from unittest.mock import MagicMock
 from fastapi.testclient import TestClient
 
-from daylib.workset_api import create_app
-from daylib.workset_state_db import WorksetStateDB
-from daylib.file_registry import FileRegistry
+from daylily_ursa.workset_api import create_app
+from daylily_ursa.workset_state_db import WorksetStateDB
+from daylily_ursa.file_registry import FileRegistry
 
 
 @pytest.fixture
@@ -49,7 +49,7 @@ def app_without_auth(mock_state_db, mock_file_registry):
 @pytest.fixture
 def client_without_auth(app_without_auth):
     """Test client without authentication."""
-    return TestClient(app_without_auth)
+    return TestClient(app_without_auth, base_url="https://testserver")
 
 
 class TestFileAPIIntegrationWithoutAuth:

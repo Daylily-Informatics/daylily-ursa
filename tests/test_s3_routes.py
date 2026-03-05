@@ -10,8 +10,8 @@ from fastapi.testclient import TestClient
 
 
 def test_s3_routes_have_request_level_coverage():
-    from daylib.routes.s3 import S3Dependencies, create_s3_router
-    from daylib.s3_bucket_validator import BucketValidationResult
+    from daylily_ursa.routes.s3 import S3Dependencies, create_s3_router
+    from daylily_ursa.s3_bucket_validator import BucketValidationResult
 
     settings = MagicMock()
     settings.get_effective_region.return_value = "us-west-2"
@@ -48,9 +48,9 @@ def test_s3_routes_have_request_level_coverage():
     mock_validator_instance.generate_iam_policy_for_bucket.return_value = {"Statement": []}
     mock_validator_instance.generate_customer_bucket_policy.return_value = {"Statement": []}
 
-    with patch("daylib.routes.s3.boto3.Session", return_value=mock_boto_session):
-        with patch("daylib.s3_bucket_validator.S3BucketValidator", return_value=mock_validator_instance):
-            with TestClient(app) as client:
+    with patch("daylily_ursa.routes.s3.boto3.Session", return_value=mock_boto_session):
+        with patch("daylily_ursa.s3_bucket_validator.S3BucketValidator", return_value=mock_validator_instance):
+            with TestClient(app, base_url="https://testserver") as client:
                 assert client.post("/api/s3/discover-samples", json={"bucket": "b", "prefix": ""}).status_code != 404
                 assert client.post("/api/s3/validate-bucket", json={"bucket": "example-bucket"}).status_code != 404
                 assert client.get("/api/s3/iam-policy/example-bucket").status_code != 404

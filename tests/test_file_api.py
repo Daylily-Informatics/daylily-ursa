@@ -7,11 +7,11 @@ from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
 from fastapi import FastAPI
 
-from daylib.file_api import (
+from daylily_ursa.file_api import (
     create_file_api_router,
 )
-from daylib.file_registry import FileRegistry, DiscoveredFile
-from daylib.s3_bucket_validator import (
+from daylily_ursa.file_registry import FileRegistry, DiscoveredFile
+from daylily_ursa.s3_bucket_validator import (
     S3BucketValidator,
     LinkedBucketManager,
     BucketValidationResult,
@@ -40,7 +40,7 @@ def mock_file_registry_with_get():
 
     # Mock get_file to return a file registration with a valid S3 URI so that
     # download and metadata update flows can exercise the happy path.
-    from daylib.file_registry import (
+    from daylily_ursa.file_registry import (
         FileRegistration,
         FileMetadata,
         SequencingMetadata,
@@ -80,7 +80,7 @@ def client_with_update(mock_file_registry_with_get):
     app = FastAPI()
     router = create_file_api_router(mock_file_registry_with_get)
     app.include_router(router)
-    return TestClient(app)
+    return TestClient(app, base_url="https://testserver")
 
 
 @pytest.fixture
@@ -95,7 +95,7 @@ def app_with_file_api(mock_file_registry):
 @pytest.fixture
 def client(app_with_file_api):
     """FastAPI test client."""
-    return TestClient(app_with_file_api)
+    return TestClient(app_with_file_api, base_url="https://testserver")
 
 
 class TestFileRegistrationEndpoint:
@@ -430,7 +430,7 @@ class TestBucketValidationEndpoint:
     @pytest.fixture
     def client_with_validation(self, app_with_bucket_validation):
         """FastAPI test client with bucket validation."""
-        return TestClient(app_with_bucket_validation)
+        return TestClient(app_with_bucket_validation, base_url="https://testserver")
 
     def test_validate_bucket_success(self, client_with_validation, mock_s3_validator):
         """Test successful bucket validation."""
@@ -568,7 +568,7 @@ class TestLinkBucketEndpoint:
     @pytest.fixture
     def client_with_linking(self, app_with_bucket_linking):
         """FastAPI test client with bucket linking."""
-        return TestClient(app_with_bucket_linking)
+        return TestClient(app_with_bucket_linking, base_url="https://testserver")
 
     def test_link_bucket_success(self, client_with_linking, mock_linked_bucket_manager):
         """Test successful bucket linking."""
@@ -710,7 +710,7 @@ class TestBucketAuthorizationEndpoints:
             s3_bucket_validator=s3_bucket_validator,
         )
         app.include_router(router)
-        return TestClient(app)
+        return TestClient(app, base_url="https://testserver")
 
     def test_link_bucket_enforces_customer_scope_mismatch(self, mock_file_registry, linked_bucket):
         manager = MagicMock(spec=LinkedBucketManager)
@@ -946,7 +946,7 @@ class TestBucketBrowseEndpoint:
             linked_bucket_manager=mock_linked_bucket_manager_browse,
         )
         app.include_router(router)
-        return TestClient(app)
+        return TestClient(app, base_url="https://testserver")
 
     @patch("boto3.Session")
     def test_browse_bucket_success(self, mock_session, client_with_browse, mock_linked_bucket_manager_browse):
@@ -1030,7 +1030,7 @@ class TestCreateFolderEndpoint:
             linked_bucket_manager=mock_linked_bucket_manager_folder,
         )
         app.include_router(router)
-        return TestClient(app)
+        return TestClient(app, base_url="https://testserver")
 
     @patch("boto3.Session")
     def test_create_folder_success(self, mock_session, client_with_folder):
@@ -1105,7 +1105,7 @@ class TestDeleteFileEndpoint:
             linked_bucket_manager=mock_linked_bucket_manager_delete,
         )
         app.include_router(router)
-        return TestClient(app)
+        return TestClient(app, base_url="https://testserver")
 
     @patch("boto3.Session")
     def test_delete_file_success(self, mock_session, client_with_delete, mock_file_registry):
@@ -1217,7 +1217,7 @@ class TestFileDownloadEndpoint:
 
         # The mock registry created in mock_file_registry_with_get already returns
         # a FileRegistration with a valid s3://bucket/key URI.
-        with patch("daylib.file_api.boto3.client") as mock_boto_client:
+        with patch("daylily_ursa.file_api.boto3.client") as mock_boto_client:
             mock_s3 = mock_boto_client.return_value
             mock_s3.generate_presigned_url.return_value = "https://signed-url"
 
@@ -1249,7 +1249,7 @@ class TestFileDownloadEndpoint:
     def test_get_file_download_url_custom_expiry(self, client_with_update, mock_file_registry_with_get):
         """Allow overriding URL expiry via query parameter."""
 
-        with patch("daylib.file_api.boto3.client") as mock_boto_client:
+        with patch("daylily_ursa.file_api.boto3.client") as mock_boto_client:
             mock_s3 = mock_boto_client.return_value
             mock_s3.generate_presigned_url.return_value = "https://signed-url"
 
@@ -1282,9 +1282,9 @@ class TestFileDownloadEndpoint:
             auth_dependency=fake_auth_mismatch,
         )
         app.include_router(router)
-        client = TestClient(app)
+        client = TestClient(app, base_url="https://testserver")
 
-        with patch("daylib.file_api.boto3.client") as mock_boto_client:
+        with patch("daylily_ursa.file_api.boto3.client") as mock_boto_client:
             response = client.get("/api/files/file-001/download")
 
         assert response.status_code == 403
@@ -1306,9 +1306,9 @@ class TestFileDownloadEndpoint:
             auth_dependency=fake_auth_match,
         )
         app.include_router(router)
-        client = TestClient(app)
+        client = TestClient(app, base_url="https://testserver")
 
-        with patch("daylib.file_api.boto3.client") as mock_boto_client:
+        with patch("daylily_ursa.file_api.boto3.client") as mock_boto_client:
             mock_s3 = mock_boto_client.return_value
             mock_s3.generate_presigned_url.return_value = "https://signed-url"
 
@@ -1332,9 +1332,9 @@ class TestFileDownloadEndpoint:
             auth_dependency=fake_auth_custom_claim,
         )
         app.include_router(router)
-        client = TestClient(app)
+        client = TestClient(app, base_url="https://testserver")
 
-        with patch("daylib.file_api.boto3.client") as mock_boto_client:
+        with patch("daylily_ursa.file_api.boto3.client") as mock_boto_client:
             mock_s3 = mock_boto_client.return_value
             mock_s3.generate_presigned_url.return_value = "https://signed-url"
 
@@ -1836,7 +1836,7 @@ class TestManifestGenerationEndpoints:
     @pytest.fixture
     def mock_file_registry_with_manifest(self):
         """Mock FileRegistry with manifest generation support."""
-        from daylib.file_registry import (
+        from daylily_ursa.file_registry import (
             FileRegistration,
             BiosampleMetadata,
             SequencingMetadata,
@@ -1886,7 +1886,7 @@ class TestManifestGenerationEndpoints:
             auth_dependency=None,
         )
         app.include_router(router)
-        return TestClient(app)
+        return TestClient(app, base_url="https://testserver")
 
     def test_generate_manifest_for_file_success(self, client_with_manifest, mock_file_registry_with_manifest):
         """Test generating manifest for a single file."""
@@ -1938,7 +1938,7 @@ class TestManifestGenerationEndpoints:
 
     def test_generate_manifest_for_fileset_success(self, client_with_manifest, mock_file_registry_with_manifest):
         """Test generating manifest for a fileset."""
-        from daylib.file_registry import FileSet
+        from daylily_ursa.file_registry import FileSet
 
         # Create a mock fileset
         mock_fileset = FileSet(
@@ -1979,7 +1979,7 @@ class TestManifestGenerationEndpoints:
 
     def test_generate_manifest_for_empty_fileset(self, client_with_manifest, mock_file_registry_with_manifest):
         """Test generating manifest for fileset with no files."""
-        from daylib.file_registry import FileSet
+        from daylily_ursa.file_registry import FileSet
 
         # Create a mock fileset with no files
         mock_fileset = FileSet(
@@ -2008,7 +2008,7 @@ def test_file_api_uncovered_routes_have_request_level_coverage(client, mock_file
     These calls are intentionally lightweight and should not require real AWS/TapDB.
     """
 
-    from daylib.file_registry import FileSet
+    from daylily_ursa.file_registry import FileSet
 
     # Ensure registry methods used by these endpoints return JSON-serializable values.
     mock_file_registry.list_customer_filesets.return_value = []

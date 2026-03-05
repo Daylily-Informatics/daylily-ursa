@@ -31,12 +31,12 @@ import os
 import sys
 from pathlib import Path
 
-# Add parent directory to path to import daylib
+# Add parent directory to path to import daylily_ursa
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # Check for required dependencies
 try:
-    from daylib.workset_api import create_app
+    from daylily_ursa.workset_api import create_app
 except ModuleNotFoundError as e:
     print("ERROR: Required dependencies not installed")
     print(f"Missing module: {e.name}")
@@ -47,14 +47,14 @@ except ModuleNotFoundError as e:
     print("Or install specific dependencies:")
     print("  pip install fastapi uvicorn boto3 pyyaml pydantic daylily-tapdb")
     sys.exit(1)
-from daylib.workset_state_db import WorksetStateDB
-from daylib.workset_scheduler import WorksetScheduler
-from daylib.workset_validation import WorksetValidator
-from daylib.workset_customer import CustomerManager
+from daylily_ursa.workset_state_db import WorksetStateDB
+from daylily_ursa.workset_scheduler import WorksetScheduler
+from daylily_ursa.workset_validation import WorksetValidator
+from daylily_ursa.workset_customer import CustomerManager
 
 # Try to import file management (optional)
 try:
-    from daylib.file_registry import FileRegistry
+    from daylily_ursa.file_registry import FileRegistry
     FILE_MANAGEMENT_AVAILABLE = True
 except ImportError:
     FILE_MANAGEMENT_AVAILABLE = False

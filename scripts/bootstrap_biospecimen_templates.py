@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Bootstrap TapDB templates for the biospecimen registry.
 
-This ensures the TapDB templates used by `daylib.biospecimen.BiospecimenRegistry`
+This ensures the TapDB templates used by `daylily_ursa.biospecimen.BiospecimenRegistry`
 exist in the configured TapDB namespace (strict namespace mode).
 
 Usage:
@@ -26,7 +26,7 @@ def main() -> int:
         os.environ.setdefault("AWS_REGION", args.region)
 
     try:
-        from daylib.biospecimen import BiospecimenRegistry
+        from daylily_ursa.biospecimen import BiospecimenRegistry
     except ImportError as exc:
         print(f"Error importing BiospecimenRegistry: {exc}")
         return 1

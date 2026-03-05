@@ -4,8 +4,8 @@ from unittest.mock import MagicMock, Mock
 
 import pytest
 
-from daylib.workset_concurrent_processor import ConcurrentWorksetProcessor, ProcessorConfig
-from daylib.workset_state_db import WorksetPriority, WorksetState
+from daylily_ursa.workset_concurrent_processor import ConcurrentWorksetProcessor, ProcessorConfig
+from daylily_ursa.workset_state_db import WorksetPriority, WorksetState
 
 
 @pytest.fixture

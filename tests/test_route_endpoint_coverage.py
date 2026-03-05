@@ -23,7 +23,7 @@ def _make_app_with_session(*, secret: str = "test-secret") -> FastAPI:
 
 def test_clusters_list_returns_actionable_error_when_no_regions_configured():
     """GET /api/clusters should not crash when no regions are configured."""
-    from daylib.routes.clusters import ClusterDependencies, create_clusters_router
+    from daylily_ursa.routes.clusters import ClusterDependencies, create_clusters_router
 
     settings = MagicMock()
     settings.aws_profile = None
@@ -39,10 +39,10 @@ def test_clusters_list_returns_actionable_error_when_no_regions_configured():
     # Ensure we don't depend on a developer's local ~/.config/ursa/ursa-config.yaml
     # being present (if it is, get_ursa_config() can return is_configured=True).
     with patch(
-        "daylib.ursa_config.get_ursa_config",
+        "daylily_ursa.ursa_config.get_ursa_config",
         return_value=SimpleNamespace(is_configured=False, aws_profile=None),
     ):
-        with TestClient(app) as client:
+        with TestClient(app, base_url="https://testserver") as client:
             resp = client.get("/api/clusters")
             assert resp.status_code == 200
             payload = resp.json()
@@ -53,7 +53,7 @@ def test_clusters_list_returns_actionable_error_when_no_regions_configured():
 
 def test_monitoring_command_log_endpoint_admin_success_parses_entries():
     """GET /api/admin/worksets/{id}/command-log should return parsed entries for admins."""
-    from daylib.routes.monitoring import MonitoringDependencies, create_monitoring_router
+    from daylily_ursa.routes.monitoring import MonitoringDependencies, create_monitoring_router
 
     state_db = MagicMock()
     state_db.get_workset.return_value = {
@@ -99,8 +99,8 @@ def test_monitoring_command_log_endpoint_admin_success_parses_entries():
     mock_session = MagicMock()
     mock_session.client.return_value = mock_s3
 
-    with patch("daylib.routes.monitoring.boto3.Session", return_value=mock_session):
-        with TestClient(app) as client:
+    with patch("daylily_ursa.routes.monitoring.boto3.Session", return_value=mock_session):
+        with TestClient(app, base_url="https://testserver") as client:
             assert client.get("/__test__/login-admin").status_code == 200
             resp = client.get("/api/admin/worksets/ws-123/command-log")
             assert resp.status_code == 200
@@ -113,7 +113,7 @@ def test_monitoring_command_log_endpoint_admin_success_parses_entries():
 
 def test_customers_list_endpoint_returns_customer_rows():
     """GET /customers should serialize CustomerResponse rows."""
-    from daylib.routes.customers import CustomerDependencies, create_customers_router
+    from daylily_ursa.routes.customers import CustomerDependencies, create_customers_router
 
     customer_manager = MagicMock()
     customer_manager.list_customers.return_value = [
@@ -136,7 +136,7 @@ def test_customers_list_endpoint_returns_customer_rows():
     app = FastAPI()
     app.include_router(create_customers_router(deps))
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url="https://testserver") as client:
         resp = client.get("/customers")
         assert resp.status_code == 200
         rows = resp.json()
@@ -147,7 +147,7 @@ def test_customers_list_endpoint_returns_customer_rows():
 
 def test_dashboard_cost_breakdown_endpoint_returns_categories_and_total():
     """GET /api/customers/{id}/dashboard/cost-breakdown should render a stable schema."""
-    from daylib.routes.dashboard import DashboardDependencies, create_dashboard_router
+    from daylily_ursa.routes.dashboard import DashboardDependencies, create_dashboard_router
 
     state_db = MagicMock()
     customer_manager = MagicMock()
@@ -172,8 +172,8 @@ def test_dashboard_cost_breakdown_endpoint_returns_categories_and_total():
         "storage_gb": 10.0,
         "rates": {},
     }
-    with patch("daylib.billing.calculate_customer_cost_breakdown", return_value=breakdown):
-        with TestClient(app) as client:
+    with patch("daylily_ursa.billing.calculate_customer_cost_breakdown", return_value=breakdown):
+        with TestClient(app, base_url="https://testserver") as client:
             resp = client.get("/api/customers/cust-001/dashboard/cost-breakdown")
             assert resp.status_code == 200
             payload = resp.json()
@@ -185,7 +185,7 @@ def test_dashboard_cost_breakdown_endpoint_returns_categories_and_total():
 
 def test_files_list_endpoint_returns_folders_and_files():
     """GET /api/customers/{id}/files should return both folder and file rows."""
-    from daylib.routes.files import FileDependencies, create_files_router
+    from daylily_ursa.routes.files import FileDependencies, create_files_router
 
     customer_manager = MagicMock()
     customer_manager.get_customer_config.return_value = SimpleNamespace(s3_bucket="cust-bucket")
@@ -202,8 +202,8 @@ def test_files_list_endpoint_returns_folders_and_files():
     app = FastAPI()
     app.include_router(create_files_router(FileDependencies(customer_manager=customer_manager)))
 
-    with patch("daylib.routes.files.boto3.client", return_value=mock_s3):
-        with TestClient(app) as client:
+    with patch("daylily_ursa.routes.files.boto3.client", return_value=mock_s3):
+        with TestClient(app, base_url="https://testserver") as client:
             resp = client.get("/api/customers/cust-001/files", params={"prefix": "data/"})
             assert resp.status_code == 200
             payload = resp.json()
@@ -215,7 +215,7 @@ def test_files_list_endpoint_returns_folders_and_files():
 
 def test_customer_worksets_list_filters_to_customer_id_ownership():
     """GET /api/customers/{id}/worksets should enforce customer_id ownership filtering."""
-    from daylib.routes.customer_worksets import CustomerWorksetDependencies, create_customer_worksets_router
+    from daylily_ursa.routes.customer_worksets import CustomerWorksetDependencies, create_customer_worksets_router
 
     customer_manager = MagicMock()
     customer_manager.get_customer_config.return_value = SimpleNamespace(customer_id="cust-001")
@@ -237,7 +237,7 @@ def test_customer_worksets_list_filters_to_customer_id_ownership():
     app = FastAPI()
     app.include_router(create_customer_worksets_router(deps))
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url="https://testserver") as client:
         resp = client.get("/api/customers/cust-001/worksets", params={"state": "ready", "limit": 20})
         assert resp.status_code == 200
         payload = resp.json()
@@ -248,8 +248,8 @@ def test_app_inline_utility_endpoints_have_request_level_coverage():
     """Ensure inline endpoints defined in create_app are exercised at request level."""
     from types import SimpleNamespace
 
-    from daylib.config import get_settings_for_testing
-    from daylib.workset_api import create_app
+    from daylily_ursa.config import get_settings_for_testing
+    from daylily_ursa.workset_api import create_app
 
     mock_state_db = MagicMock()
     mock_validator = MagicMock()
@@ -271,7 +271,7 @@ def test_app_inline_utility_endpoints_have_request_level_coverage():
         settings=get_settings_for_testing(),
     )
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url="https://testserver") as client:
         assert client.post("/api/estimate-cost", json={"pipeline_type": "germline"}).status_code != 404
         assert client.post(
             "/worksets/generate-yaml",
@@ -282,7 +282,7 @@ def test_app_inline_utility_endpoints_have_request_level_coverage():
 
 def test_dashboard_activity_and_cost_history_have_request_level_coverage():
     """GET /api/customers/{id}/dashboard/* should be reachable."""
-    from daylib.routes.dashboard import DashboardDependencies, create_dashboard_router
+    from daylily_ursa.routes.dashboard import DashboardDependencies, create_dashboard_router
 
     state_db = MagicMock()
     state_db.list_worksets_by_state.return_value = []
@@ -294,20 +294,20 @@ def test_dashboard_activity_and_cost_history_have_request_level_coverage():
     app = FastAPI()
     app.include_router(create_dashboard_router(deps))
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url="https://testserver") as client:
         assert client.get("/api/customers/cust-001/dashboard/activity").status_code != 404
         assert client.get("/api/customers/cust-001/dashboard/cost-history").status_code != 404
 
 
 def test_manifest_metadata_endpoint_is_registered_even_when_storage_not_configured():
     """GET /api/customers/{id}/manifests/{id} should exist (503 when registry is missing)."""
-    from daylib.routes.manifests import ManifestDependencies, create_manifests_router
+    from daylily_ursa.routes.manifests import ManifestDependencies, create_manifests_router
 
     customer_manager = MagicMock()
     deps = ManifestDependencies(customer_manager=customer_manager, manifest_registry=None)
     app = FastAPI()
     app.include_router(create_manifests_router(deps))
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url="https://testserver") as client:
         resp = client.get("/api/customers/cust-001/manifests/manifest-001")
         assert resp.status_code == 503

@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 
 
 def test_cluster_create_job_endpoints_have_request_level_coverage():
-    from daylib.routes.clusters import ClusterDependencies, create_clusters_router
+    from daylily_ursa.routes.clusters import ClusterDependencies, create_clusters_router
 
     settings = MagicMock()
     settings.aws_profile = None
@@ -47,12 +47,12 @@ def test_cluster_create_job_endpoints_have_request_level_coverage():
 
     mock_session.client.side_effect = _client
 
-    with patch("daylib.ursa_config.get_ursa_config", return_value=_FakeUrsaConfig()):
-        with patch("daylib.routes.clusters.boto3.Session", return_value=mock_session):
-            with patch("daylib.ephemeral_cluster.runner.list_cluster_create_jobs", return_value=[{"job_id": "ec-1"}]):
-                with patch("daylib.ephemeral_cluster.runner.read_cluster_create_job", return_value={"job_id": "ec-1"}):
-                    with patch("daylib.ephemeral_cluster.runner.tail_job_log", return_value="log"):
-                        with TestClient(app) as client:
+    with patch("daylily_ursa.ursa_config.get_ursa_config", return_value=_FakeUrsaConfig()):
+        with patch("daylily_ursa.routes.clusters.boto3.Session", return_value=mock_session):
+            with patch("daylily_ursa.ephemeral_cluster.runner.list_cluster_create_jobs", return_value=[{"job_id": "ec-1"}]):
+                with patch("daylily_ursa.ephemeral_cluster.runner.read_cluster_create_job", return_value={"job_id": "ec-1"}):
+                    with patch("daylily_ursa.ephemeral_cluster.runner.tail_job_log", return_value="log"):
+                        with TestClient(app, base_url="https://testserver") as client:
                             assert client.get("/api/clusters/create/jobs").status_code != 404
                             assert client.get("/api/clusters/create/jobs/ec-1").status_code != 404
                             assert client.get("/api/clusters/create/jobs/ec-1/logs").status_code != 404

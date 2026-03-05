@@ -25,26 +25,26 @@ Repos inspected locally:
 
 Key files inspected (representative):
 - Ursa app assembly and routes:
-  - `daylib/workset_api.py` (`create_app`)
-  - `daylib/workset_api_cli.py` (`main`)
-  - `daylib/routes/worksets.py` (`create_worksets_router`)
-  - `daylib/routes/customer_worksets.py` (`create_customer_worksets_router`)
-  - `daylib/routes/portal.py` (`create_portal_router`, `/portal/login`, `/auth/callback`, `/portal/register`, `/portal/search`, `/api/portal/search`)
-  - `daylib/routes/monitoring.py` (`create_monitoring_router`)
+  - `daylily_ursa/workset_api.py` (`create_app`)
+  - `daylily_ursa/workset_api_cli.py` (`main`)
+  - `daylily_ursa/routes/worksets.py` (`create_worksets_router`)
+  - `daylily_ursa/routes/customer_worksets.py` (`create_customer_worksets_router`)
+  - `daylily_ursa/routes/portal.py` (`create_portal_router`, `/portal/login`, `/auth/callback`, `/portal/register`, `/portal/search`, `/api/portal/search`)
+  - `daylily_ursa/routes/monitoring.py` (`create_monitoring_router`)
 - Ursa persistence/lifecycle:
-  - `daylib/workset_state_db.py` (`WorksetState`, `WorksetStateDB.register_workset`, `acquire_lock`, `release_lock`, `update_state`, `record_failure`, `get_retryable_worksets`, `reset_for_retry`, `list_worksets_by_customer`, `archive_workset`, `delete_workset`, `restore_workset`)
-  - `daylib/file_registry.py` (`register_file`, `create_fileset`, `list_customer_files`, `find_file_by_s3_uri`, `record_file_workset_usage`)
-  - `daylib/manifest_registry.py` (`save_manifest`, `list_customer_manifests`)
-  - `daylib/workset_customer.py` (`CustomerManager`, `onboard_customer`, `_save_customer_config`)
-  - `daylib/workset_monitor.py` (`WorksetMonitor.run`, `_attempt_acquire`, `_release_workset_lock`, `process_workset`)
-  - `daylib/workset_worker.py` (`process_workset`, `main`)
-  - `daylib/workset_concurrent_processor.py` (`process_cycle`, `_process_single_workset`)
-  - `daylib/workset_scheduler.py` (`WorksetScheduler.get_next_workset`, `schedule_workset`, `get_scheduling_stats`)
+  - `daylily_ursa/workset_state_db.py` (`WorksetState`, `WorksetStateDB.register_workset`, `acquire_lock`, `release_lock`, `update_state`, `record_failure`, `get_retryable_worksets`, `reset_for_retry`, `list_worksets_by_customer`, `archive_workset`, `delete_workset`, `restore_workset`)
+  - `daylily_ursa/file_registry.py` (`register_file`, `create_fileset`, `list_customer_files`, `find_file_by_s3_uri`, `record_file_workset_usage`)
+  - `daylily_ursa/manifest_registry.py` (`save_manifest`, `list_customer_manifests`)
+  - `daylily_ursa/workset_customer.py` (`CustomerManager`, `onboard_customer`, `_save_customer_config`)
+  - `daylily_ursa/workset_monitor.py` (`WorksetMonitor.run`, `_attempt_acquire`, `_release_workset_lock`, `process_workset`)
+  - `daylily_ursa/workset_worker.py` (`process_workset`, `main`)
+  - `daylily_ursa/workset_concurrent_processor.py` (`process_cycle`, `_process_single_workset`)
+  - `daylily_ursa/workset_scheduler.py` (`WorksetScheduler.get_next_workset`, `schedule_workset`, `get_scheduling_stats`)
 - Ursa config/startup/auth checks:
-  - `daylib/config.py` (`Settings`)
-  - `daylib/ursa_config.py` (`UrsaConfig` and region/cognito accessors)
-  - `daylib/cli/server.py` (`start`, `_validate_cognito_oauth_uris`, `_describe_cognito_app_client`)
-  - `daylib/routes/dependencies.py` (`verify_workset_ownership`, `verify_workset_access`)
+  - `daylily_ursa/config.py` (`Settings`)
+  - `daylily_ursa/ursa_config.py` (`UrsaConfig` and region/cognito accessors)
+  - `daylily_ursa/cli/server.py` (`start`, `_validate_cognito_oauth_uris`, `_describe_cognito_app_client`)
+  - `daylily_ursa/routes/dependencies.py` (`verify_workset_ownership`, `verify_workset_access`)
 - Atlas patterns:
   - `app/auth/rbac.py` (`Role`, `Permission`, `ROLE_PERMISSIONS`, `can_access_tenant`)
   - `app/auth/dependencies.py` (`CurrentUser`, `get_current_user`, `get_current_tenant`, `require_role`, `require_permission`, `get_bloom_integration_client`)
@@ -58,56 +58,56 @@ Atlas/TapDB local availability:
 - Available and inspected locally.
 
 Blocked/unverified areas:
-- No current Ursa implementation of Atlas status reporting for `lsmc_work_order` found in local Ursa sources (`rg` across `daylib`, `tests`, `docs` found no `lsmc_work_order` symbol).
+- No current Ursa implementation of Atlas status reporting for `lsmc_work_order` found in local Ursa sources (`rg` across `daylily_ursa`, `tests`, `docs` found no `lsmc_work_order` symbol).
 - No current Ursa internal endpoint/service-auth contract for Atlas-triggered direct analysis found; this is design-required and must be introduced.
 
 ## 3. Current Ursa architecture
 ### Framework/app shape
-- FastAPI app factory is in `daylib/workset_api.py:create_app`.
-- CLI startup path creates dependencies then app in `daylib/workset_api_cli.py:main` and serves via `uvicorn.run`.
-- Operational server command path is `daylib/cli/server.py:start` (HTTPS defaults, auth preflight, process management).
+- FastAPI app factory is in `daylily_ursa/workset_api.py:create_app`.
+- CLI startup path creates dependencies then app in `daylily_ursa/workset_api_cli.py:main` and serves via `uvicorn.run`.
+- Operational server command path is `daylily_ursa/cli/server.py:start` (HTTPS defaults, auth preflight, process management).
 
 ### Route and API surface
-- Core workset API surface: `daylib/routes/worksets.py:create_worksets_router` (`/worksets`, `/worksets/{id}`, `/worksets/{id}/lock`, `/queue/stats`, `/scheduler/stats`, `/worksets/next`).
-- Customer-scoped lifecycle API: `daylib/routes/customer_worksets.py:create_customer_worksets_router` (`/api/customers/{customer_id}/worksets`, retry/archive/delete/restore/logs/performance routes).
-- Portal/auth/API mix: `daylib/routes/portal.py:create_portal_router` (`/portal/login`, `/auth/callback`, `/portal/register`, `/portal/search`, `/api/portal/search`, admin/monitor pages).
-- Monitoring/admin route module: `daylib/routes/monitoring.py:create_monitoring_router`.
-- Versioned mirror route assembly under `/v1` in `daylib/workset_api.py:create_app`.
+- Core workset API surface: `daylily_ursa/routes/worksets.py:create_worksets_router` (`/worksets`, `/worksets/{id}`, `/worksets/{id}/lock`, `/queue/stats`, `/scheduler/stats`, `/worksets/next`).
+- Customer-scoped lifecycle API: `daylily_ursa/routes/customer_worksets.py:create_customer_worksets_router` (`/api/customers/{customer_id}/worksets`, retry/archive/delete/restore/logs/performance routes).
+- Portal/auth/API mix: `daylily_ursa/routes/portal.py:create_portal_router` (`/portal/login`, `/auth/callback`, `/portal/register`, `/portal/search`, `/api/portal/search`, admin/monitor pages).
+- Monitoring/admin route module: `daylily_ursa/routes/monitoring.py:create_monitoring_router`.
+- Versioned mirror route assembly under `/v1` in `daylily_ursa/workset_api.py:create_app`.
 
 ### Current persistence model
-- Primary workflow state in TapDB via `daylib/workset_state_db.py:WorksetStateDB`.
-- Customer records in TapDB via `daylib/workset_customer.py:CustomerManager` (`daylily-customers`).
-- File registry and filesets in TapDB via `daylib/file_registry.py:FileRegistry`.
-- Manifests in TapDB via `daylib/manifest_registry.py:ManifestRegistry`.
-- Current config surface still describes TapDB-first tables in `daylib/config.py:Settings` (`workset_table_name`, `customer_table_name`, `daylily_manifest_table`, `daylily_linked_buckets_table`).
+- Primary workflow state in TapDB via `daylily_ursa/workset_state_db.py:WorksetStateDB`.
+- Customer records in TapDB via `daylily_ursa/workset_customer.py:CustomerManager` (`daylily-customers`).
+- File registry and filesets in TapDB via `daylily_ursa/file_registry.py:FileRegistry`.
+- Manifests in TapDB via `daylily_ursa/manifest_registry.py:ManifestRegistry`.
+- Current config surface still describes TapDB-first tables in `daylily_ursa/config.py:Settings` (`workset_table_name`, `customer_table_name`, `daylily_manifest_table`, `daylily_linked_buckets_table`).
 
 ### State machine and lifecycle model
-- State enum includes `ready`, `in_progress`, `error`, `complete`, `retrying`, `failed`, `canceled`, `archived`, `deleted` in `daylib/workset_state_db.py:WorksetState`.
+- State enum includes `ready`, `in_progress`, `error`, `complete`, `retrying`, `failed`, `canceled`, `archived`, `deleted` in `daylily_ursa/workset_state_db.py:WorksetState`.
 - `register_workset` initializes `state_history` inline and uses conditional create (`ConditionExpression="attribute_not_exists(workset_id)"`).
 - `update_state` mutates current state and appends to inline `state_history` via `list_append`.
 - Retry logic is in `record_failure`, `get_retryable_worksets`, and `reset_for_retry`.
 - Archive/delete semantics are implemented by `archive_workset`, `delete_workset` (soft/hard), `restore_workset`.
 
 ### Scheduler/worker/monitor behavior
-- Scheduler (`daylib/workset_scheduler.py:WorksetScheduler`) pulls ready queue from `state_db`, chooses a workset/cluster, and reports queue stats.
-- Worker loop (`daylib/workset_worker.py:main`) claims ready worksets, calls `process_workset`, updates state, and releases locks.
-- Concurrent processor (`daylib/workset_concurrent_processor.py:_process_single_workset`) acquires lock, updates state, executes, records failure/complete, then releases lock.
-- Monitor daemon (`daylib/workset_monitor.py:WorksetMonitor.run`) uses S3 sentinel files plus TapDB locking/state updates and performs side effects (pipeline invocation, S3 exports, optional notifications).
+- Scheduler (`daylily_ursa/workset_scheduler.py:WorksetScheduler`) pulls ready queue from `state_db`, chooses a workset/cluster, and reports queue stats.
+- Worker loop (`daylily_ursa/workset_worker.py:main`) claims ready worksets, calls `process_workset`, updates state, and releases locks.
+- Concurrent processor (`daylily_ursa/workset_concurrent_processor.py:_process_single_workset`) acquires lock, updates state, executes, records failure/complete, then releases lock.
+- Monitor daemon (`daylily_ursa/workset_monitor.py:WorksetMonitor.run`) uses S3 sentinel files plus TapDB locking/state updates and performs side effects (pipeline invocation, S3 exports, optional notifications).
 
 ### Auth model
-- Ursa uses optional Cognito auth via daylily-cognito imports and combined auth dependency in `daylib/workset_api.py:create_app` (`get_current_user` supports session, JWT bearer, API key).
-- Portal hosted-UI login and callback logic is in `daylib/routes/portal.py` (`portal_login`, `portal_auth_callback`).
-- Startup preflight checks Cognito OAuth app-client name/URIs in `daylib/cli/server.py:_validate_cognito_oauth_uris` and `start`.
+- Ursa uses optional Cognito auth via daylily-cognito imports and combined auth dependency in `daylily_ursa/workset_api.py:create_app` (`get_current_user` supports session, JWT bearer, API key).
+- Portal hosted-UI login and callback logic is in `daylily_ursa/routes/portal.py` (`portal_login`, `portal_auth_callback`).
+- Startup preflight checks Cognito OAuth app-client name/URIs in `daylily_ursa/cli/server.py:_validate_cognito_oauth_uris` and `start`.
 
 ### Tenant model
 - Current tenant boundary is customer-centric (`customer_id` string), not Atlas UUID tenant model.
-- Ownership checks are customer-based in `daylib/routes/dependencies.py:verify_workset_ownership` and `verify_workset_access`.
+- Ownership checks are customer-based in `daylily_ursa/routes/dependencies.py:verify_workset_ownership` and `verify_workset_access`.
 - Route-level filtering in customer workset endpoints uses `verify_workset_ownership`.
 
 ### Integration surfaces
-- S3 sentinel and artifact interactions are pervasive in `daylib/workset_monitor.py` and `daylib/routes/portal.py`/`daylib/routes/customer_worksets.py`.
-- Optional SNS/Linear notifications in `daylib/workset_notifications.py`.
-- Cluster orchestration side effects use `pcluster` subprocess invocations in `daylib/workset_monitor.py`.
+- S3 sentinel and artifact interactions are pervasive in `daylily_ursa/workset_monitor.py` and `daylily_ursa/routes/portal.py`/`daylily_ursa/routes/customer_worksets.py`.
+- Optional SNS/Linear notifications in `daylily_ursa/workset_notifications.py`.
+- Cluster orchestration side effects use `pcluster` subprocess invocations in `daylily_ursa/workset_monitor.py`.
 - No current Atlas status outbox/event sync implementation found in Ursa source.
 
 ### Current testing coverage
@@ -413,7 +413,7 @@ Environment variables (new/changed likely):
 - New DB connectivity: `URSA_DB_URL` (or split host/port/db/user/password), `URSA_DB_POOL_SIZE`, `URSA_DB_MAX_OVERFLOW`.
 - New migration/runtime toggles: `URSA_WORKFLOW_BACKEND` (`tapdb|postgres`), `URSA_PARITY_MODE`, `URSA_OUTBOX_ENABLED`.
 - New Atlas integration: `URSA_ATLAS_BASE_URL`, `URSA_ATLAS_SERVICE_TOKEN` (or API key), `URSA_ATLAS_TIMEOUT_SECONDS`.
-- Existing settings likely retained temporarily: TapDB strict-namespace environment variables and auth/cognito settings in `daylib/config.py:Settings`.
+- Existing settings likely retained temporarily: TapDB strict-namespace environment variables and auth/cognito settings in `daylily_ursa/config.py:Settings`.
 
 Secrets:
 - Postgres credentials/DSN.
@@ -503,24 +503,24 @@ Explicit non-assumptions:
 
 ## 17. Exact files likely to change in implementation
 Current files likely to change:
-- `daylib/config.py`
-- `daylib/ursa_config.py`
-- `daylib/workset_api.py`
-- `daylib/workset_api_cli.py`
-- `daylib/cli/server.py`
-- `daylib/routes/worksets.py`
-- `daylib/routes/customer_worksets.py`
-- `daylib/routes/portal.py`
-- `daylib/routes/dependencies.py`
-- `daylib/routes/monitoring.py`
-- `daylib/workset_state_db.py`
-- `daylib/workset_scheduler.py`
-- `daylib/workset_worker.py`
-- `daylib/workset_concurrent_processor.py`
-- `daylib/workset_monitor.py`
-- `daylib/workset_customer.py`
-- `daylib/file_registry.py`
-- `daylib/manifest_registry.py`
+- `daylily_ursa/config.py`
+- `daylily_ursa/ursa_config.py`
+- `daylily_ursa/workset_api.py`
+- `daylily_ursa/workset_api_cli.py`
+- `daylily_ursa/cli/server.py`
+- `daylily_ursa/routes/worksets.py`
+- `daylily_ursa/routes/customer_worksets.py`
+- `daylily_ursa/routes/portal.py`
+- `daylily_ursa/routes/dependencies.py`
+- `daylily_ursa/routes/monitoring.py`
+- `daylily_ursa/workset_state_db.py`
+- `daylily_ursa/workset_scheduler.py`
+- `daylily_ursa/workset_worker.py`
+- `daylily_ursa/workset_concurrent_processor.py`
+- `daylily_ursa/workset_monitor.py`
+- `daylily_ursa/workset_customer.py`
+- `daylily_ursa/file_registry.py`
+- `daylily_ursa/manifest_registry.py`
 - `tests/test_workset_state_db.py`
 - `tests/test_workset_concurrent_processor.py`
 - `tests/test_workset_customer.py`
@@ -528,18 +528,18 @@ Current files likely to change:
 - `tests/test_optional_auth.py`
 
 Likely new files/directories:
-- `daylib/db/engine.py`
-- `daylib/db/session.py`
-- `daylib/db/models/workflow.py`
-- `daylib/db/repositories/workset_repository.py`
-- `daylib/db/repositories/analysis_request_repository.py`
-- `daylib/db/repositories/outbox_repository.py`
-- `daylib/services/rbac.py`
-- `daylib/services/tenant_mapping.py`
-- `daylib/services/atlas_client.py`
-- `daylib/routes/internal_atlas.py`
-- `daylib/workers/outbox_dispatcher.py`
-- `daylib/migrations/` (migration framework + revisions)
+- `daylily_ursa/db/engine.py`
+- `daylily_ursa/db/session.py`
+- `daylily_ursa/db/models/workflow.py`
+- `daylily_ursa/db/repositories/workset_repository.py`
+- `daylily_ursa/db/repositories/analysis_request_repository.py`
+- `daylily_ursa/db/repositories/outbox_repository.py`
+- `daylily_ursa/services/rbac.py`
+- `daylily_ursa/services/tenant_mapping.py`
+- `daylily_ursa/services/atlas_client.py`
+- `daylily_ursa/routes/internal_atlas.py`
+- `daylily_ursa/workers/outbox_dispatcher.py`
+- `daylily_ursa/migrations/` (migration framework + revisions)
 - `scripts/backfill_tapdb_to_postgres.py`
 - `scripts/verify_tapdb_postgres_parity.py`
 - `scripts/cutover_rehearsal.py`

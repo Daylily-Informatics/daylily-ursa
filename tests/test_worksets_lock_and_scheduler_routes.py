@@ -9,8 +9,8 @@ from fastapi.testclient import TestClient
 
 
 def test_worksets_lock_state_and_scheduler_routes_have_request_level_coverage():
-    from daylib.routes.worksets import create_worksets_router
-    from daylib.workset_state_db import WorksetStateDB
+    from daylily_ursa.routes.worksets import create_worksets_router
+    from daylily_ursa.workset_state_db import WorksetStateDB
 
     state_db = MagicMock(spec=WorksetStateDB)
     state_db.get_workset.return_value = {
@@ -30,7 +30,7 @@ def test_worksets_lock_state_and_scheduler_routes_have_request_level_coverage():
     app = FastAPI()
     app.include_router(create_worksets_router(state_db=state_db, scheduler=None))
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url="https://testserver") as client:
         assert client.put(
             "/worksets/ws-123/state",
             json={"state": "ready", "reason": "test"},

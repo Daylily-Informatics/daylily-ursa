@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from daylib.billing import (
+from daylily_ursa.billing import (
     BillingCalculator,
     BillingRates,
 )
@@ -354,7 +354,7 @@ class TestBillingAPIEndpoints:
     def test_billing_summary_endpoint(self, mock_app_dependencies):
         """Test /api/customers/{customer_id}/billing/summary endpoint."""
         from fastapi.testclient import TestClient
-        from daylib.workset_api import create_app
+        from daylily_ursa.workset_api import create_app
 
         mock_state_db, mock_customer_manager = mock_app_dependencies
         mock_state_db.list_worksets_by_customer.return_value = []
@@ -365,7 +365,7 @@ class TestBillingAPIEndpoints:
             state_db=mock_state_db,
             customer_manager=mock_customer_manager,
         )
-        client = TestClient(app)
+        client = TestClient(app, base_url="https://testserver")
 
         response = client.get("/api/customers/cust-001/billing/summary?days=30")
 
@@ -380,7 +380,7 @@ class TestBillingAPIEndpoints:
     def test_billing_invoice_endpoint(self, mock_app_dependencies):
         """Test /api/customers/{customer_id}/billing/invoice endpoint."""
         from fastapi.testclient import TestClient
-        from daylib.workset_api import create_app
+        from daylily_ursa.workset_api import create_app
 
         mock_state_db, mock_customer_manager = mock_app_dependencies
         mock_state_db.list_worksets_by_customer.return_value = []
@@ -391,7 +391,7 @@ class TestBillingAPIEndpoints:
             state_db=mock_state_db,
             customer_manager=mock_customer_manager,
         )
-        client = TestClient(app)
+        client = TestClient(app, base_url="https://testserver")
 
         response = client.get("/api/customers/cust-001/billing/invoice?days=30")
 
@@ -406,7 +406,7 @@ class TestBillingAPIEndpoints:
     def test_billing_workset_endpoint(self, mock_app_dependencies):
         """Test /api/customers/{customer_id}/billing/workset/{workset_id} endpoint."""
         from fastapi.testclient import TestClient
-        from daylib.workset_api import create_app
+        from daylily_ursa.workset_api import create_app
 
         mock_state_db, mock_customer_manager = mock_app_dependencies
         mock_state_db.get_workset.return_value = {
@@ -426,7 +426,7 @@ class TestBillingAPIEndpoints:
             state_db=mock_state_db,
             customer_manager=mock_customer_manager,
         )
-        client = TestClient(app)
+        client = TestClient(app, base_url="https://testserver")
 
         response = client.get("/api/customers/cust-001/billing/workset/ws-001")
 
@@ -440,7 +440,7 @@ class TestBillingAPIEndpoints:
     def test_billing_workset_not_found(self, mock_app_dependencies):
         """Test billing endpoint returns 404 for non-existent workset."""
         from fastapi.testclient import TestClient
-        from daylib.workset_api import create_app
+        from daylily_ursa.workset_api import create_app
 
         mock_state_db, mock_customer_manager = mock_app_dependencies
         mock_state_db.get_workset.return_value = None
@@ -449,7 +449,7 @@ class TestBillingAPIEndpoints:
             state_db=mock_state_db,
             customer_manager=mock_customer_manager,
         )
-        client = TestClient(app)
+        client = TestClient(app, base_url="https://testserver")
 
         response = client.get("/api/customers/cust-001/billing/workset/nonexistent")
 
@@ -458,7 +458,7 @@ class TestBillingAPIEndpoints:
     def test_billing_workset_wrong_customer(self, mock_app_dependencies):
         """Test billing endpoint returns 403 for wrong customer."""
         from fastapi.testclient import TestClient
-        from daylib.workset_api import create_app
+        from daylily_ursa.workset_api import create_app
 
         mock_state_db, mock_customer_manager = mock_app_dependencies
         mock_state_db.get_workset.return_value = {
@@ -471,7 +471,7 @@ class TestBillingAPIEndpoints:
             state_db=mock_state_db,
             customer_manager=mock_customer_manager,
         )
-        client = TestClient(app)
+        client = TestClient(app, base_url="https://testserver")
 
         response = client.get("/api/customers/cust-001/billing/workset/ws-001")
 
