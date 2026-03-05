@@ -26,6 +26,10 @@ def utc_now_iso() -> str:
     return dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def expected_ursa_database_name(env: str) -> str:
+    return f"daylily-ursa-{str(env or '').strip().lower()}"
+
+
 def _parse_template_code(template_code: str) -> tuple[str, str, str, str]:
     parts = template_code.strip("/").split("/")
     if len(parts) != 4:
@@ -90,6 +94,17 @@ class TapDBBackend:
                 "  tapdb config init --client-id local --database-name ursa --env dev\n"
                 "  tapdb bootstrap local\n"
             ) from exc
+
+        expected_db_name = expected_ursa_database_name(env)
+        configured_db_name = str(cfg.get("database") or "").strip()
+        if configured_db_name != expected_db_name:
+            raise RuntimeError(
+                "Invalid TapDB database name for Ursa.\n\n"
+                f"TAPDB_ENV={env!r} requires database {expected_db_name!r}, "
+                f"but config resolved to {configured_db_name!r}.\n\n"
+                "Update your TapDB config so environments.<env>.database matches "
+                "daylily-ursa-<env> for each Ursa environment."
+            )
 
         db_hostname = f"{cfg['host']}:{cfg['port']}"
         engine_type = (cfg.get("engine_type") or "local").strip().lower()

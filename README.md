@@ -185,6 +185,11 @@ TAPDB_CLIENT_ID=local
 TAPDB_DATABASE_NAME=ursa
 TAPDB_ENV=dev
 
+# Postgres DB naming convention enforced by Ursa runtime:
+# environments.dev.database: daylily-ursa-dev
+# environments.test.database: daylily-ursa-test
+# environments.prod.database: daylily-ursa-prod
+
 # Authentication (optional)
 ENABLE_AUTH=false
 COGNITO_USER_POOL_ID=us-west-2_xxxxxxxx

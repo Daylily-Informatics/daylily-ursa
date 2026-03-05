@@ -5,7 +5,9 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import MagicMock, call, patch
 
-from daylib.tapdb_graph.backend import TEMPLATE_DEFINITIONS, TapDBBackend
+import pytest
+
+from daylib.tapdb_graph.backend import TEMPLATE_DEFINITIONS, TapDBBackend, expected_ursa_database_name
 
 
 def test_ensure_templates_calls_sequence_readiness():
@@ -82,3 +84,59 @@ def test_get_missing_instance_sequences_reports_gaps():
     missing = backend.get_missing_instance_sequences(session)
 
     assert missing == ["ct_instance_seq"]
+
+
+def test_expected_ursa_database_name_uses_env_suffix():
+    assert expected_ursa_database_name("dev") == "daylily-ursa-dev"
+    assert expected_ursa_database_name("prod") == "daylily-ursa-prod"
+
+
+def test_init_rejects_non_ursa_database_name(monkeypatch):
+    monkeypatch.setenv("TAPDB_ENV", "dev")
+
+    cfg = {
+        "host": "db.example",
+        "port": "5432",
+        "database": "tapdb_dev",
+        "user": "tapdb_admin",
+        "password": "secret",
+        "engine_type": "aurora",
+        "region": "us-west-2",
+        "iam_auth": "true",
+    }
+
+    with (
+        patch("daylib.tapdb_graph.backend.resolve_context"),
+        patch("daylib.tapdb_graph.backend.get_db_config_for_env", return_value=cfg),
+        pytest.raises(RuntimeError) as excinfo,
+    ):
+        TapDBBackend(app_username="test")
+
+    message = str(excinfo.value)
+    assert "daylily-ursa-dev" in message
+    assert "tapdb_dev" in message
+
+
+def test_init_accepts_ursa_database_name(monkeypatch):
+    monkeypatch.setenv("TAPDB_ENV", "dev")
+
+    cfg = {
+        "host": "db.example",
+        "port": "5432",
+        "database": "daylily-ursa-dev",
+        "user": "tapdb_admin",
+        "password": "secret",
+        "engine_type": "aurora",
+        "region": "us-west-2",
+        "iam_auth": "true",
+    }
+
+    with (
+        patch("daylib.tapdb_graph.backend.resolve_context"),
+        patch("daylib.tapdb_graph.backend.get_db_config_for_env", return_value=cfg),
+        patch("daylib.tapdb_graph.backend.TAPDBConnection") as mock_conn_cls,
+    ):
+        TapDBBackend(app_username="test")
+
+    mock_conn_cls.assert_called_once()
+    assert mock_conn_cls.call_args.kwargs["db_name"] == "daylily-ursa-dev"
