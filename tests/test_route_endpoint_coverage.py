@@ -242,3 +242,72 @@ def test_customer_worksets_list_filters_to_customer_id_ownership():
         assert resp.status_code == 200
         payload = resp.json()
         assert [w["workset_id"] for w in payload["worksets"]] == ["ws-1"]
+
+
+def test_app_inline_utility_endpoints_have_request_level_coverage():
+    """Ensure inline endpoints defined in create_app are exercised at request level."""
+    from types import SimpleNamespace
+
+    from daylib.config import get_settings_for_testing
+    from daylib.workset_api import create_app
+
+    mock_state_db = MagicMock()
+    mock_validator = MagicMock()
+    mock_validator.validate_workset.return_value = SimpleNamespace(
+        is_valid=True,
+        errors=[],
+        warnings=[],
+        estimated_cost_usd=0.0,
+        estimated_duration_minutes=0,
+        estimated_vcpu_hours=0.0,
+        estimated_storage_gb=0.0,
+    )
+
+    app = create_app(
+        state_db=mock_state_db,
+        enable_auth=False,
+        customer_manager=None,
+        validator=mock_validator,
+        settings=get_settings_for_testing(),
+    )
+
+    with TestClient(app) as client:
+        assert client.post("/api/estimate-cost", json={"pipeline_type": "germline"}).status_code != 404
+        assert client.post(
+            "/worksets/generate-yaml",
+            json={"samples": [], "reference_genome": "GRCh38"},
+        ).status_code != 404
+        assert client.post("/worksets/validate?bucket=b&prefix=p").status_code != 404
+
+
+def test_dashboard_activity_and_cost_history_have_request_level_coverage():
+    """GET /api/customers/{id}/dashboard/* should be reachable."""
+    from daylib.routes.dashboard import DashboardDependencies, create_dashboard_router
+
+    state_db = MagicMock()
+    state_db.list_worksets_by_state.return_value = []
+
+    customer_manager = MagicMock()
+    customer_manager.get_customer_config.return_value = SimpleNamespace(customer_id="cust-001")
+
+    deps = DashboardDependencies(state_db=state_db, settings=MagicMock(), customer_manager=customer_manager)
+    app = FastAPI()
+    app.include_router(create_dashboard_router(deps))
+
+    with TestClient(app) as client:
+        assert client.get("/api/customers/cust-001/dashboard/activity").status_code != 404
+        assert client.get("/api/customers/cust-001/dashboard/cost-history").status_code != 404
+
+
+def test_manifest_metadata_endpoint_is_registered_even_when_storage_not_configured():
+    """GET /api/customers/{id}/manifests/{id} should exist (503 when registry is missing)."""
+    from daylib.routes.manifests import ManifestDependencies, create_manifests_router
+
+    customer_manager = MagicMock()
+    deps = ManifestDependencies(customer_manager=customer_manager, manifest_registry=None)
+    app = FastAPI()
+    app.include_router(create_manifests_router(deps))
+
+    with TestClient(app) as client:
+        resp = client.get("/api/customers/cust-001/manifests/manifest-001")
+        assert resp.status_code == 503

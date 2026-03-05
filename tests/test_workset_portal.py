@@ -3628,3 +3628,95 @@ class TestPortalAuthzSurfaces:
         assert payload["cluster_name"] == "test-cluster"
         assert payload["region"] == "us-west-2"
         assert payload["pcluster_command"] == "pcluster delete-cluster --region us-west-2 -n test-cluster"
+
+
+def test_portal_uncovered_routes_have_request_level_coverage(mock_state_db):
+    """Exercise request-level coverage for routes that are often missed in tests."""
+    app = create_app(state_db=mock_state_db, enable_auth=False)
+    client = TestClient(app)
+
+    # Public auth helpers
+    assert client.get("/portal/forgot-password").status_code == 200
+    assert client.post(
+        "/portal/forgot-password",
+        data={"email": "user@example.com"},
+        follow_redirects=False,
+    ).status_code == 302
+    assert client.get("/portal/reset-password").status_code == 200
+
+    # Logout is always a redirect (clears session, then goes to portal login or SSO logout).
+    logout_resp = client.get("/portal/logout", follow_redirects=False)
+    assert logout_resp.status_code == 302
+
+    # Change-password without an active challenge session redirects to login.
+    change_pw_resp = client.get("/portal/change-password", follow_redirects=False)
+    assert change_pw_resp.status_code == 302
+    assert "/portal/login" in change_pw_resp.headers.get("location", "")
+
+    # Legacy YAML generator page now redirects to manifest generator.
+    yaml_gen_resp = client.get("/portal/yaml-generator", follow_redirects=False)
+    assert yaml_gen_resp.status_code == 302
+    assert yaml_gen_resp.headers.get("location") == "/portal/manifest-generator"
+
+    # Protected portal pages should redirect to /portal/login when unauthenticated.
+    assert client.get("/portal/biospecimen", follow_redirects=False).status_code == 302
+    assert "/portal/login" in client.get("/portal/biospecimen", follow_redirects=False).headers.get("location", "")
+
+    assert client.get("/portal/feature-requests", follow_redirects=False).status_code == 302
+    assert "/portal/login" in client.get("/portal/feature-requests", follow_redirects=False).headers.get("location", "")
+
+    assert client.get("/portal/files/browser", follow_redirects=False).status_code == 302
+    assert "/portal/login" in client.get("/portal/files/browser", follow_redirects=False).headers.get("location", "")
+
+    assert client.get("/portal/files/browse/bucket-123", follow_redirects=False).status_code == 302
+    assert "/portal/login" in client.get("/portal/files/browse/bucket-123", follow_redirects=False).headers.get("location", "")
+
+    assert client.get("/portal/files/filesets", follow_redirects=False).status_code == 302
+    assert "/portal/login" in client.get("/portal/files/filesets", follow_redirects=False).headers.get("location", "")
+
+    assert client.get("/portal/files/filesets/fileset-001", follow_redirects=False).status_code == 302
+    assert "/portal/login" in client.get("/portal/files/filesets/fileset-001", follow_redirects=False).headers.get("location", "")
+
+    assert client.get("/portal/files/register", follow_redirects=False).status_code == 302
+    assert "/portal/login" in client.get("/portal/files/register", follow_redirects=False).headers.get("location", "")
+
+    assert client.get("/portal/files/upload", follow_redirects=False).status_code == 302
+    assert "/portal/login" in client.get("/portal/files/upload", follow_redirects=False).headers.get("location", "")
+
+    assert client.get("/portal/files/file-001/edit", follow_redirects=False).status_code == 302
+    assert "/portal/login" in client.get("/portal/files/file-001/edit", follow_redirects=False).headers.get("location", "")
+
+    assert client.get("/portal/worksets/archived", follow_redirects=False).status_code == 302
+    assert "/portal/login" in client.get("/portal/worksets/archived", follow_redirects=False).headers.get("location", "")
+
+    assert client.get("/portal/worksets/ws-123/download", follow_redirects=False).status_code == 302
+    assert "/portal/login" in client.get("/portal/worksets/ws-123/download", follow_redirects=False).headers.get("location", "")
+
+    assert client.get("/portal/worksets/ws-123/results/browse", follow_redirects=False).status_code == 302
+    assert "/portal/login" in client.get("/portal/worksets/ws-123/results/browse", follow_redirects=False).headers.get("location", "")
+
+    assert client.get("/portal/worksets/ws-123/results/download?key=results.txt", follow_redirects=False).status_code == 302
+    assert "/portal/login" in client.get("/portal/worksets/ws-123/results/download?key=results.txt", follow_redirects=False).headers.get("location", "")
+
+
+def test_portal_feature_requests_submit_authenticated_writes_under_tmp_home(
+    mock_state_db,
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    client = _make_authenticated_client(mock_state_db, customer_id="cust-001", is_admin=False)
+    resp = client.post(
+        "/portal/feature-requests",
+        json={
+            "title": "Search improvements",
+            "category": "ui",
+            "description": "Add global search facets",
+            "priority": "nice-to-have",
+        },
+    )
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["status"] == "ok"
+    assert payload["id"].startswith("fr-")

@@ -2000,3 +2000,115 @@ class TestManifestGenerationEndpoints:
         assert data["sample_count"] == 0
         assert data["file_count"] == 0
         assert len(data["warnings"]) > 0
+
+
+def test_file_api_uncovered_routes_have_request_level_coverage(client, mock_file_registry):
+    """Smoke test request-level coverage for historically-unexercised file_api routes.
+
+    These calls are intentionally lightweight and should not require real AWS/TapDB.
+    """
+
+    from daylib.file_registry import FileSet
+
+    # Ensure registry methods used by these endpoints return JSON-serializable values.
+    mock_file_registry.list_customer_filesets.return_value = []
+    mock_file_registry.get_fileset.return_value = FileSet(
+        fileset_id="fileset-001",
+        customer_id="cust-001",
+        name="Test FileSet",
+        description="",
+        file_ids=[],
+        tags=[],
+    )
+    mock_file_registry.get_fileset_files.return_value = []
+    mock_file_registry.update_fileset_metadata.return_value = True
+    mock_file_registry.add_files_to_fileset.return_value = True
+    mock_file_registry.remove_files_from_fileset.return_value = True
+    mock_file_registry.clone_fileset.return_value = FileSet(
+        fileset_id="fileset-002",
+        customer_id="cust-001",
+        name="Cloned FileSet",
+        description="",
+        file_ids=[],
+        tags=[],
+    )
+    mock_file_registry.search_files_by_tag.return_value = []
+    mock_file_registry.update_file_tags.return_value = True
+    mock_file_registry.record_file_workset_usage.return_value = True
+    mock_file_registry.get_file_workset_history.return_value = []
+    mock_file_registry.get_workset_files.return_value = []
+    mock_file_registry.get_files_for_workset_recreation.return_value = []
+    mock_file_registry.update_workset_usage_state.return_value = 0
+
+    # file_api (24) uncovered routes list
+    assert client.get("/api/files/customer/cust-001/filesets").status_code != 404
+    assert client.get("/api/files/files/file-001/workset-history").status_code != 404
+    assert client.get("/api/files/filesets?customer_id=cust-001").status_code != 404
+    assert client.get("/api/files/filesets/fileset-001").status_code != 404
+    assert client.get("/api/files/filesets/fileset-001/files").status_code != 404
+    assert client.get("/api/files/manifest/template").status_code != 404
+    assert client.get("/api/files/worksets/ws-123/files").status_code != 404
+    assert client.get("/api/files/worksets/ws-123/recreation-files").status_code != 404
+
+    assert client.patch("/api/files/filesets/fileset-001", json={"name": "New Name"}).status_code != 404
+
+    # Optional dependencies are intentionally not configured in this test app.
+    # These endpoints should return 501 rather than crashing.
+    assert client.post(
+        "/api/files/auto-register?customer_id=cust-001",
+        json={
+            "bucket_name": "example-bucket",
+            "prefix": "",
+            "biosample_id": "bio-001",
+            "subject_id": "HG002",
+            "sequencing_platform": "ILLUMINA_NOVASEQ_X",
+            "file_formats": ["fastq"],
+            "max_files": 10,
+        },
+    ).status_code in (501, 422)
+    assert client.post(
+        "/api/files/discover?customer_id=cust-001",
+        json={
+            "bucket_name": "example-bucket",
+            "prefix": "",
+            "file_formats": ["fastq"],
+            "max_files": 10,
+        },
+    ).status_code in (501, 422)
+
+    assert client.post("/api/files/filesets/fileset-001/add-files", json=["file-001"]).status_code != 404
+    assert client.post("/api/files/filesets/fileset-001/clone", json={"new_name": "Clone"}).status_code != 404
+    assert client.post("/api/files/filesets/fileset-001/remove-files", json=["file-001"]).status_code != 404
+
+    assert client.post("/api/files/manifest/generate?customer_id=cust-001", json={}).status_code != 404
+    assert client.post("/api/files/search?customer_id=cust-001", json={}).status_code != 404
+
+    assert client.post(
+        "/api/files/upload/multipart/abort?bucket_name=b&object_key=k&upload_id=u",
+    ).status_code in (501, 422)
+    assert client.post(
+        "/api/files/upload/multipart/complete",
+        json={"bucket_name": "b", "object_key": "k", "upload_id": "u", "parts": []},
+    ).status_code in (501, 422)
+    assert client.post(
+        "/api/files/upload/multipart/part-url",
+        json={"bucket_name": "b", "object_key": "k", "upload_id": "u", "part_number": 1},
+    ).status_code in (501, 422)
+    assert client.post(
+        "/api/files/upload/presigned-url?customer_id=cust-001",
+        json={"bucket_name": "b", "filename": "x.txt"},
+    ).status_code in (501, 422)
+    assert client.post(
+        "/api/files/upload/verify",
+        json={"bucket_name": "b", "object_key": "k"},
+    ).status_code in (501, 422)
+
+    assert client.post(
+        "/api/files/workset-usage/record",
+        json={"file_id": "file-001", "workset_id": "ws-123", "customer_id": "cust-001"},
+    ).status_code != 404
+    assert client.post(
+        "/api/files/worksets/ws-123/update-state",
+        json={"new_state": "ready"},
+    ).status_code != 404
+    assert client.put("/api/files/file-001/tags", json=["tag-a"]).status_code != 404
