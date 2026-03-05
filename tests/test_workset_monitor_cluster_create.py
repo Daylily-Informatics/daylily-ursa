@@ -25,7 +25,7 @@ def test_monitor_create_cluster_uses_ephemeral_cluster_runner(monkeypatch) -> No
         ),
     )
 
-    proc = subprocess.CompletedProcess(args=["daylily-create-ephemeral-cluster"], returncode=0, stdout="ok", stderr="")
+    proc = subprocess.CompletedProcess(args=["daylily-ec"], returncode=0, stdout="ok", stderr="")
     run_mock = MagicMock(return_value=proc)
     monkeypatch.setattr("daylib.ephemeral_cluster.runner.run_create_sync", run_mock)
 
@@ -40,4 +40,3 @@ def test_monitor_create_cluster_uses_ephemeral_cluster_runner(monkeypatch) -> No
     assert kwargs["pass_on_warn"] is False
     assert kwargs["debug"] is False
     assert kwargs["contact_email"] == "ops@example.com"
-

@@ -103,6 +103,63 @@ class TestPortalAdminUsers:
         response = client.get("/portal/admin/users")
         assert response.status_code == 200
         assert b"User Management" in response.content
+        assert b"/portal/admin/tapdb-metrics" in response.content
+
+    def test_admin_tapdb_metrics_unauthenticated_redirects_to_login(self, mock_state_db):
+        app = create_app(state_db=mock_state_db, enable_auth=False)
+        client = TestClient(app)
+        response = client.get("/portal/admin/tapdb-metrics", follow_redirects=False)
+        assert response.status_code == 302
+        assert "/portal/login" in response.headers["location"]
+
+    def test_admin_tapdb_metrics_non_admin_forbidden(self, mock_state_db, tmp_path, monkeypatch):
+        mock_customer_manager = MagicMock()
+        non_admin = MagicMock()
+        non_admin.customer_id = "cust-001"
+        non_admin.is_admin = False
+        non_admin.email = "user@example.com"
+        mock_customer_manager.get_customer_by_email.return_value = non_admin
+        mock_customer_manager.list_customers.return_value = [non_admin]
+
+        app = create_app(
+            state_db=mock_state_db,
+            enable_auth=False,
+            customer_manager=mock_customer_manager,
+        )
+        client = TestClient(app)
+        client.post("/portal/login", data={"email": non_admin.email, "password": "testpass"})
+
+        monkeypatch.setenv("TAPDB_ENV", "test")
+        monkeypatch.setenv("TAPDB_DB_METRICS_DIR", str(tmp_path / "tapdb-metrics"))
+        response = client.get("/portal/admin/tapdb-metrics")
+        assert response.status_code == 403
+        assert response.json()["detail"] == "Admin access required"
+
+    def test_admin_tapdb_metrics_admin_can_view(self, mock_state_db, tmp_path, monkeypatch):
+        mock_customer_manager = MagicMock()
+        admin = MagicMock()
+        admin.customer_id = "cust-admin"
+        admin.is_admin = True
+        admin.email = "admin@example.com"
+        admin.customer_name = "Admin"
+
+        mock_customer_manager.get_customer_by_email.side_effect = lambda e: admin if e == admin.email else None
+        mock_customer_manager.list_customers.return_value = [admin]
+
+        app = create_app(
+            state_db=mock_state_db,
+            enable_auth=False,
+            customer_manager=mock_customer_manager,
+        )
+        client = TestClient(app)
+        client.post("/portal/login", data={"email": admin.email, "password": "testpass"})
+
+        monkeypatch.setenv("TAPDB_ENV", "test")
+        monkeypatch.setenv("TAPDB_DB_METRICS_DIR", str(tmp_path / "tapdb-metrics"))
+        response = client.get("/portal/admin/tapdb-metrics")
+        assert response.status_code == 200
+        assert b"TapDB Metrics" in response.content
+        assert b"DB Metrics (TSV)" in response.content
 
     def test_admin_users_add_success_creates_customer(self, mock_state_db):
         mock_customer_manager = MagicMock()
@@ -3508,11 +3565,13 @@ class TestPortalAuthzSurfaces:
         admin_response = admin_client.get("/portal/clusters")
         assert admin_response.status_code == 200
         assert b"data-testid=\"create-cluster-btn\"" in admin_response.content
+        assert b"data-testid=\"spot-market-panel\"" in admin_response.content
 
         non_admin_client = _make_authenticated_client(mock_state_db, customer_id="cust-user", is_admin=False)
         non_admin_response = non_admin_client.get("/portal/clusters")
         assert non_admin_response.status_code == 200
         assert b"data-testid=\"create-cluster-btn\"" not in non_admin_response.content
+        assert b"data-testid=\"spot-market-panel\"" not in non_admin_response.content
 
     def test_api_delete_cluster_requires_admin(self, mock_state_db, monkeypatch):
         """DELETE /api/clusters/* must be admin-only."""

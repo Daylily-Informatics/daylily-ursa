@@ -108,13 +108,38 @@ class TapDBBackend:
             iam_auth=iam_auth,
             secret_arn=secret_arn,
         )
+        # Best-effort: attach TapDB's query metrics instrumentation so Ursa can render
+        # the same DB metrics page as the TapDB admin GUI.
+        try:
+            from admin.db_metrics import maybe_install_engine_metrics
+
+            maybe_install_engine_metrics(self.connection.engine, env_name=env)
+        except Exception:
+            # Metrics are optional; never break Ursa startup for instrumentation issues.
+            pass
         self.templates = TemplateManager()
         self.factory = InstanceFactory(self.templates)
 
     @contextmanager
     def session_scope(self, commit: bool = False) -> Generator[Session, None, None]:
-        with self.connection.session_scope(commit=commit) as session:
-            yield session
+        db_username_var = None
+        token = None
+        try:
+            from admin.db_metrics import db_username_var as _db_username_var
+
+            db_username_var = _db_username_var
+            token = db_username_var.set(str(getattr(self.connection, "app_username", "")) or "unknown")
+        except Exception:
+            pass
+        try:
+            with self.connection.session_scope(commit=commit) as session:
+                yield session
+        finally:
+            if db_username_var is not None and token is not None:
+                try:
+                    db_username_var.reset(token)
+                except Exception:
+                    pass
 
     @staticmethod
     def _normalize_prefix(prefix: str) -> str:

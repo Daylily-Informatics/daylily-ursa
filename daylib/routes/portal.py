@@ -3435,6 +3435,59 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
             ),
         )
 
+    @router.get("/portal/admin/tapdb-metrics", response_class=HTMLResponse)
+    async def portal_admin_tapdb_metrics(
+        request: Request,
+        limit: int = Query(5000, ge=1, le=20000),
+    ):
+        """Admin: view TapDB DB query metrics (same data as TapDB admin GUI)."""
+        auth_redirect = _require_portal_auth(request)
+        if auth_redirect:
+            return auth_redirect
+        _require_admin(request)
+
+        customer, _ = _get_customer_for_session(request, deps)
+
+        env_name = (os.environ.get("TAPDB_ENV") or "dev").strip().lower()
+        try:
+            from admin.db_metrics import build_metrics_page_context
+
+            metrics_ctx = build_metrics_page_context(env_name, limit=limit)
+        except Exception as exc:
+            ref = _new_error_ref("TAPDB-METRICS")
+            LOGGER.exception("TapDB metrics context error %s: %s", ref, exc)
+            metrics_ctx = {
+                "metrics_enabled": False,
+                "metrics_message": f"Failed to load TapDB metrics (ref {ref}). See server logs.",
+                "metrics_file": "",
+                "period_start_utc": "",
+                "limit": int(limit),
+                "dropped_count": 0,
+                "summary": {
+                    "count": 0,
+                    "p50_ms": 0.0,
+                    "p95_ms": 0.0,
+                    "p99_ms": 0.0,
+                    "max_ms": 0.0,
+                    "last_seen": "",
+                    "slowest": [],
+                    "by_path": [],
+                    "by_table": [],
+                },
+            }
+
+        return deps.templates.TemplateResponse(
+            request,
+            "admin/tapdb_metrics.html",
+            _get_template_context(
+                request,
+                deps,
+                customer=customer,
+                active_page="admin_users",
+                **metrics_ctx,
+            ),
+        )
+
     @router.post("/portal/admin/users/add")
     async def portal_admin_users_add(
         request: Request,

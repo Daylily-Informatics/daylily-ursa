@@ -13,6 +13,8 @@ from typing import Any, Dict, List, Optional
 
 import yaml
 
+_DAYLILY_EC_BIN_ENV = "URSA_DAYLILY_EC_BIN"
+
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -56,26 +58,38 @@ class ClusterCreateJob:
     status: str
 
 
-def resolve_create_script() -> Path:
-    """Resolve the daylily-ephemeral-cluster create wrapper.
+def resolve_daylily_ec() -> Path:
+    """Resolve the daylily-ec CLI binary used to create ephemeral clusters.
+
+    IMPORTANT: `daylily-ephemeral-cluster` currently ships a top-level `daylib`
+    package, which collides with Ursa's own `daylib`. For that reason, Ursa
+    must NOT import daylily-ephemeral-cluster as a Python library nor install it
+    into the same interpreter environment.
 
     Resolution order:
-    1) Installed script on PATH: daylily-create-ephemeral-cluster
-    2) Sibling repo: ../daylily-ephemeral-cluster/bin/daylily-create-ephemeral-cluster
+    1) Explicit override: `URSA_DAYLILY_EC_BIN=/abs/path/to/daylily-ec`
+    2) `daylily-ec` available on PATH
     """
-    exe = shutil.which("daylily-create-ephemeral-cluster")
+    override = os.environ.get(_DAYLILY_EC_BIN_ENV, "").strip()
+    if override:
+        p = Path(override).expanduser()
+        if not p.is_absolute():
+            p = (Path.cwd() / p).resolve()
+        if p.is_file():
+            return p
+        raise FileNotFoundError(f"{_DAYLILY_EC_BIN_ENV} points to a missing file: {p}")
+
+    exe = shutil.which("daylily-ec")
     if exe:
         return Path(exe)
 
-    ursa_repo_root = Path(__file__).resolve().parents[2]
-    sibling = ursa_repo_root.parent / "daylily-ephemeral-cluster" / "bin" / "daylily-create-ephemeral-cluster"
-    if sibling.is_file():
-        return sibling
-
     raise FileNotFoundError(
-        "daylily-create-ephemeral-cluster not found. "
-        "Install with: pip install 'daylily-ursa[cluster]' "
-        "or clone ../daylily-ephemeral-cluster next to this repo."
+        "daylily-ec not found.\n"
+        "Install `daylily-ephemeral-cluster` into a separate environment (e.g. DAY-EC)\n"
+        "and ensure the `daylily-ec` console script is on PATH, OR set:\n"
+        f"  {_DAYLILY_EC_BIN_ENV}=/abs/path/to/daylily-ec\n"
+        "Ursa does not support installing daylily-ephemeral-cluster into the same\n"
+        "Python environment because both projects ship a `daylib` package."
     )
 
 
@@ -115,14 +129,22 @@ def write_generated_ec_config(
 
 def _build_create_command(
     *,
-    script_path: Path,
+    daylily_ec_path: Path,
     region_az: str,
     aws_profile: Optional[str],
     config_path: Path,
     pass_on_warn: bool,
     debug: bool,
 ) -> List[str]:
-    cmd: List[str] = [str(script_path), "--region-az", region_az, "--config", str(config_path), "--non-interactive"]
+    cmd: List[str] = [
+        str(daylily_ec_path),
+        "create",
+        "--region-az",
+        region_az,
+        "--config",
+        str(config_path),
+        "--non-interactive",
+    ]
     if aws_profile:
         cmd.extend(["--profile", aws_profile])
     if pass_on_warn:
@@ -145,7 +167,7 @@ def start_create_job(
     debug: bool,
 ) -> ClusterCreateJob:
     """Start a background cluster create job and return job metadata."""
-    script_path = resolve_create_script()
+    daylily_ec_path = resolve_daylily_ec()
 
     job_id = f"ec_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex[:8]}"
     jobs_dir = _jobs_dir()
@@ -174,7 +196,7 @@ def start_create_job(
         )
 
     cmd = _build_create_command(
-        script_path=script_path,
+        daylily_ec_path=daylily_ec_path,
         region_az=region_az,
         aws_profile=aws_profile,
         config_path=cfg_path,
@@ -243,14 +265,14 @@ def run_create_sync(
     contact_email: Optional[str],
     cwd: Optional[Path] = None,
 ) -> subprocess.CompletedProcess[str]:
-    """Run daylily-create-ephemeral-cluster synchronously (for monitor usage)."""
-    script_path = resolve_create_script()
+    """Run daylily-ec synchronously (for monitor usage)."""
+    daylily_ec_path = resolve_daylily_ec()
     cfg_path = Path(config_path).expanduser()
     if not cfg_path.is_absolute():
         cfg_path = (Path.cwd() / cfg_path).resolve()
 
     cmd = _build_create_command(
-        script_path=script_path,
+        daylily_ec_path=daylily_ec_path,
         region_az=region_az,
         aws_profile=aws_profile,
         config_path=cfg_path,
@@ -314,5 +336,4 @@ def _tail_file(path: Path, *, lines: int) -> str:
         return "\n".join(data.splitlines()[-lines:])
     except Exception:
         return ""
-
 

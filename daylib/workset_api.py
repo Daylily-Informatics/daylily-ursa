@@ -250,6 +250,32 @@ def create_app(
         response.headers["X-Request-ID"] = request_id
         return response
 
+    # Best-effort: provide request attribution contextvars used by TapDB's DB metrics
+    # instrumentation (see daylily-tapdb admin/db_metrics.py).
+    try:
+        from admin.db_metrics import (
+            request_path_var as _tapdb_metrics_request_path_var,
+            request_method_var as _tapdb_metrics_request_method_var,
+        )
+    except Exception:
+        _tapdb_metrics_request_path_var = None
+        _tapdb_metrics_request_method_var = None
+
+    if _tapdb_metrics_request_path_var and _tapdb_metrics_request_method_var:
+
+        @app.middleware("http")
+        async def tapdb_metrics_request_context(request: Request, call_next):
+            token_path = _tapdb_metrics_request_path_var.set(request.url.path)
+            token_method = _tapdb_metrics_request_method_var.set(request.method)
+            try:
+                return await call_next(request)
+            finally:
+                try:
+                    _tapdb_metrics_request_path_var.reset(token_path)
+                    _tapdb_metrics_request_method_var.reset(token_method)
+                except Exception:
+                    pass
+
     # Setup authentication dependency if enabled
     if enable_auth:
         if not AUTH_AVAILABLE:
@@ -455,6 +481,13 @@ def create_app(
     cluster_router = create_clusters_router(cluster_deps)
     app.include_router(cluster_router)
     LOGGER.info("Cluster routes registered via create_clusters_router")
+
+    # Spot market tracker routes (routes/spot_market.py) - admin-only
+    from daylib.routes.spot_market import create_spot_market_router, SpotMarketDependencies
+    spot_deps = SpotMarketDependencies(settings=settings, get_current_user=get_current_user)
+    spot_router = create_spot_market_router(spot_deps)
+    app.include_router(spot_router)
+    LOGGER.info("Spot market routes registered via create_spot_market_router")
 
     # Customer routes (routes/customers.py) - only if customer_manager available
     if customer_manager:

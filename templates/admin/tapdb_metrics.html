@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+{% set active_page = 'admin_users' %}
+
+{% block title %}TapDB Metrics - Ursa Customer Portal{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="page-header">
+        <h1 class="page-title">TapDB Metrics</h1>
+        <p class="page-subtitle">DB query latency metrics (TSV-based), powered by <code>daylily-tapdb</code></p>
+        <div class="d-flex gap-sm" style="margin-top: 0.75rem;">
+            <a href="/portal/admin/users" class="btn btn-outline btn-sm">
+                <i class="fas fa-arrow-left"></i> Back to Admin
+            </a>
+        </div>
+    </div>
+
+    <div class="card mb-lg">
+        <h3 class="card-title"><i class="fas fa-database"></i> DB Metrics (TSV)</h3>
+        <div style="display: grid; gap: 0.35rem;">
+            <div>enabled: <code>{{ "yes" if metrics_enabled else "no" }}</code></div>
+            <div>period start (UTC): <code>{{ period_start_utc }}</code></div>
+            <div>file: <code>{{ metrics_file }}</code></div>
+            <div>dropped (process): <code>{{ dropped_count }}</code></div>
+        </div>
+        {% if metrics_message %}
+        <div class="text-muted" style="margin-top: 0.9rem;">
+            {{ metrics_message }}
+        </div>
+        {% endif %}
+        <form method="get" action="/portal/admin/tapdb-metrics" class="mb-md d-flex gap-sm" style="margin-top: 1rem;">
+            <label class="form-label" style="display: flex; align-items: center; gap: 0.5rem;">
+                Tail lines
+                <input type="number" name="limit" min="1" max="20000" value="{{ limit }}" class="form-control" style="max-width: 140px;">
+            </label>
+            <button type="submit" class="btn btn-outline">
+                <i class="fas fa-sync-alt"></i> Refresh
+            </button>
+        </form>
+    </div>
+
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 1rem; margin-bottom: 1.5rem;">
+        <div class="card">
+            <div style="font-size: 1.5rem; font-weight: 700;">{{ summary.count }}</div>
+            <div class="text-muted" style="font-size: 0.875rem;">Rows Parsed</div>
+        </div>
+        <div class="card">
+            <div style="font-size: 1.5rem; font-weight: 700;">{{ "%.1f"|format(summary.p50_ms) }}</div>
+            <div class="text-muted" style="font-size: 0.875rem;">p50 ms</div>
+        </div>
+        <div class="card">
+            <div style="font-size: 1.5rem; font-weight: 700;">{{ "%.1f"|format(summary.p95_ms) }}</div>
+            <div class="text-muted" style="font-size: 0.875rem;">p95 ms</div>
+        </div>
+        <div class="card">
+            <div style="font-size: 1.5rem; font-weight: 700;">{{ "%.1f"|format(summary.p99_ms) }}</div>
+            <div class="text-muted" style="font-size: 0.875rem;">p99 ms</div>
+        </div>
+        <div class="card">
+            <div style="font-size: 1.5rem; font-weight: 700;">{{ "%.1f"|format(summary.max_ms) }}</div>
+            <div class="text-muted" style="font-size: 0.875rem;">max ms</div>
+        </div>
+    </div>
+
+    <div class="card mb-lg">
+        <h3 class="card-title">Slowest Queries (Top 25)</h3>
+        <table class="job-table" style="width: 100%;">
+            <thead>
+                <tr>
+                    <th>ms</th>
+                    <th>ok</th>
+                    <th>op</th>
+                    <th>table</th>
+                    <th>path</th>
+                    <th>user</th>
+                    <th>error</th>
+                    <th>ts</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in summary.slowest %}
+                <tr>
+                    <td>{{ "%.3f"|format(row.duration_ms) }}</td>
+                    <td>{{ "1" if row.ok else "0" }}</td>
+                    <td>{{ row.op }}</td>
+                    <td>{{ row.table_hint }}</td>
+                    <td>{{ row.method }} {{ row.path }}</td>
+                    <td>{{ row.username }}</td>
+                    <td>{{ row.error_type }}</td>
+                    <td><code>{{ row.ts_utc }}</code></td>
+                </tr>
+                {% endfor %}
+                {% if not summary.slowest %}
+                <tr>
+                    <td colspan="8" class="text-center text-muted">No metrics rows yet.</td>
+                </tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+
+    <div class="grid grid-2 gap-xl">
+        <div class="card">
+            <h3 class="card-title">By Route (p95)</h3>
+            <table class="job-table" style="width: 100%;">
+                <thead>
+                    <tr>
+                        <th>route</th>
+                        <th>count</th>
+                        <th>p95 ms</th>
+                        <th>max ms</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in summary.by_path[:25] %}
+                    <tr>
+                        <td>{{ row.path }}</td>
+                        <td>{{ row.count }}</td>
+                        <td>{{ "%.3f"|format(row.p95_ms) }}</td>
+                        <td>{{ "%.3f"|format(row.max_ms) }}</td>
+                    </tr>
+                    {% endfor %}
+                    {% if not summary.by_path %}
+                    <tr>
+                        <td colspan="4" class="text-center text-muted">No route metrics yet.</td>
+                    </tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+
+        <div class="card">
+            <h3 class="card-title">By Table Hint (p95)</h3>
+            <table class="job-table" style="width: 100%;">
+                <thead>
+                    <tr>
+                        <th>table</th>
+                        <th>count</th>
+                        <th>p95 ms</th>
+                        <th>max ms</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in summary.by_table[:25] %}
+                    <tr>
+                        <td>{{ row.table_hint }}</td>
+                        <td>{{ row.count }}</td>
+                        <td>{{ "%.3f"|format(row.p95_ms) }}</td>
+                        <td>{{ "%.3f"|format(row.max_ms) }}</td>
+                    </tr>
+                    {% endfor %}
+                    {% if not summary.by_table %}
+                    <tr>
+                        <td colspan="4" class="text-center text-muted">No table metrics yet.</td>
+                    </tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
+

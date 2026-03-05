@@ -13,6 +13,7 @@ from daylib.cli.monitor import monitor_app
 from daylib.cli.aws import aws_app
 from daylib.cli.test import test_app
 from daylib.cli.env import env_app
+from daylib.cli.spot_market import spot_market_app
 
 console = Console()
 
@@ -85,6 +86,7 @@ app.add_typer(monitor_app, name="monitor", help="Workset monitor management")
 app.add_typer(aws_app, name="aws", help="AWS resource management")
 app.add_typer(test_app, name="test", help="Testing and code quality")
 app.add_typer(env_app, name="env", help="Environment and configuration")
+app.add_typer(spot_market_app, name="spot-market", help="Spot market tracker management")
 
 
 @app.command("version")

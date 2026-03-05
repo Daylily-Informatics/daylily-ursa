@@ -9,10 +9,9 @@ from daylib.ephemeral_cluster.runner import (  # noqa: F401
     ClusterCreateJob,
     list_cluster_create_jobs,
     read_cluster_create_job,
-    resolve_create_script,
+    resolve_daylily_ec,
     run_create_sync,
     start_create_job,
     tail_job_log,
     write_generated_ec_config,
 )
-

@@ -215,6 +215,15 @@ Web-based interface at `/portal/` providing:
 - Usage tracking and storage breakdown
 - Cluster management (admin only)
 
+### Cluster Creation (Admin Only)
+
+Ursa triggers cluster creation by running the external `daylily-ec` CLI (from `daylily-ephemeral-cluster`) as a background job.
+
+Because `daylily-ephemeral-cluster` currently ships a top-level `daylib` package, **do not** install it into the same Python environment as Ursa. Instead:
+
+1. Install `daylily-ephemeral-cluster` in a separate environment (for example, `DAY-EC`).
+2. Ensure `daylily-ec` is on your PATH for the Ursa server process, or set `URSA_DAYLILY_EC_BIN=/abs/path/to/daylily-ec`.
+
 ### Storage Metrics
 
 Workset directory sizes are automatically calculated during the pre-export phase and displayed throughout the UI:

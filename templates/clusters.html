@@ -44,7 +44,7 @@
                 <h3 class="card-title" style="margin-bottom: 0.25rem;">
                     <i class="fas fa-plus-circle"></i> Create Cluster
                 </h3>
-                <div class="text-sm text-muted">Runs `daylily-create-ephemeral-cluster` as a background job and streams logs</div>
+                <div class="text-sm text-muted">Runs <code>daylily-ec create</code> as a background job and streams logs</div>
             </div>
             <span class="badge badge-sm" style="background: var(--color-bg-secondary);">Admin only</span>
         </summary>
@@ -118,11 +118,11 @@
         </div>
     </details>
 
-    <div class="card mb-xl" id="cluster-create-jobs-card">
-        <div class="card-header d-flex justify-between align-center flex-wrap gap-md">
-            <div>
-                <h3 class="card-title" style="margin-bottom: 0.25rem;">
-                    <i class="fas fa-list"></i> Recent Cluster Create Jobs
+	    <div class="card mb-xl" id="cluster-create-jobs-card">
+	        <div class="card-header d-flex justify-between align-center flex-wrap gap-md">
+	            <div>
+	                <h3 class="card-title" style="margin-bottom: 0.25rem;">
+	                    <i class="fas fa-list"></i> Recent Cluster Create Jobs
                 </h3>
                 <div class="text-sm text-muted">View background job status and logs</div>
             </div>
@@ -152,13 +152,92 @@
                 <summary class="cursor-pointer text-sm text-muted">Job Logs</summary>
                 <pre class="mt-sm" id="cluster-create-log-text" style="max-height: 300px; overflow: auto; background: var(--color-bg-secondary); padding: 0.75rem; border-radius: 0.5rem;"></pre>
             </details>
-        </div>
-    </div>
-    {% endif %}
+	        </div>
+	    </div>
 
-    <!-- Summary Stats -->
-    <div class="grid grid-4 mb-xl">
-        <div class="stat-card">
+	    <!-- Spot Market Tracker (admin-only) -->
+	    <details class="card mb-xl" id="spot-market-panel" data-testid="spot-market-panel">
+	        <summary class="card-header cursor-pointer d-flex justify-between align-center">
+	            <div>
+	                <h3 class="card-title" style="margin-bottom: 0.25rem;">
+	                    <i class="fas fa-chart-line"></i> Spot Market Tracker
+	                </h3>
+	                <div class="text-sm text-muted">Stores snapshots under <code>~/.ursa/spot-market/</code> and plots best-zone estimated cost over time</div>
+	            </div>
+	            <span class="badge badge-sm" style="background: var(--color-bg-secondary);">Admin only</span>
+	        </summary>
+	        <div class="card-body">
+	            <div class="grid grid-2 gap-lg">
+	                <div>
+	                    <label class="form-label">Regions</label>
+	                    <div class="text-xs text-muted mb-xs">Defaults to the first 3 configured regions.</div>
+	                    <div id="spot-market-regions" class="d-flex flex-wrap gap-sm">
+	                        {% for r in regions %}
+	                        <label class="d-flex align-center gap-xs" style="margin-right: 0.75rem;">
+	                            <input type="checkbox" class="spot-market-region" value="{{ r }}" {% if loop.index0 < 3 %}checked{% endif %}>
+	                            <span class="text-sm">{{ r }}</span>
+	                        </label>
+	                        {% endfor %}
+	                    </div>
+	                </div>
+	                <div>
+	                    <label class="form-label">Poll Interval</label>
+	                    <select class="form-select" id="spot-market-interval">
+	                        <option value="6h">Every 6 hours</option>
+	                        <option value="12h">Every 12 hours</option>
+	                        <option value="1d">Daily</option>
+	                    </select>
+	                    <div class="text-xs text-muted mt-xs">Interval is used by the optional daemon (CLI) and as a UI hint.</div>
+	                </div>
+	            </div>
+
+	            <div class="d-flex gap-md mt-md flex-wrap">
+	                <button class="btn btn-outline" onclick="spotMarketSaveConfig()" id="spot-market-save-btn">
+	                    <i class="fas fa-save"></i> Save
+	                </button>
+	                <button class="btn btn-primary" onclick="spotMarketPollNow()" id="spot-market-now-btn">
+	                    <i class="fas fa-bolt"></i> Now
+	                </button>
+	                <button class="btn btn-outline" onclick="spotMarketRefreshAll()" id="spot-market-refresh-btn">
+	                    <i class="fas fa-sync-alt"></i> Refresh
+	                </button>
+	            </div>
+
+	            <div class="mt-md text-xs text-muted" id="spot-market-status">Loading…</div>
+
+	            <div class="mt-lg">
+	                <canvas id="spot-market-chart" height="120"></canvas>
+	            </div>
+
+	            <div class="mt-lg" id="spot-market-latest-card" style="display: none;">
+	                <h4 class="text-sm" style="margin-bottom: 0.5rem;"><i class="fas fa-table"></i> Latest Snapshot</h4>
+	                <div class="table-wrapper" style="overflow-x: auto;">
+	                    <table class="table" id="spot-market-latest-table">
+	                        <thead>
+	                            <tr>
+	                                <th>Region</th>
+	                                <th>Best AZ</th>
+	                                <th>Est Cost ($)</th>
+	                                <th>Instances</th>
+	                                <th>Timestamp</th>
+	                            </tr>
+	                        </thead>
+	                        <tbody id="spot-market-latest-tbody"></tbody>
+	                    </table>
+	                </div>
+	            </div>
+
+	            <details class="mt-md" id="spot-market-job-log-viewer" style="display: none;">
+	                <summary class="cursor-pointer text-sm text-muted">Job Logs</summary>
+	                <pre class="mt-sm" id="spot-market-job-log-text" style="max-height: 300px; overflow: auto; background: var(--color-bg-secondary); padding: 0.75rem; border-radius: 0.5rem;"></pre>
+	            </details>
+	        </div>
+	    </details>
+	    {% endif %}
+
+	    <!-- Summary Stats -->
+	    <div class="grid grid-4 mb-xl">
+	        <div class="stat-card">
             <div class="card-icon primary">
                 <i class="fas fa-server"></i>
             </div>
@@ -914,6 +993,309 @@ async function viewCreateJobLogs(jobId) {
     }
 }
 
+// ── Spot Market Tracker (admin-only) ─────────────────────────────────────────
+let _spotMarketChart = null;
+
+function _spotMarketGetSelectedRegions() {
+    const els = Array.from(document.querySelectorAll('input.spot-market-region'));
+    return els.filter(e => e && e.checked).map(e => String(e.value || '').trim()).filter(Boolean).slice(0, 3);
+}
+
+function _spotMarketSetStatus(text, type) {
+    const el = document.getElementById('spot-market-status');
+    if (!el) return;
+    el.textContent = text;
+    el.style.color = type === 'error' ? 'var(--color-danger)' : 'var(--color-text-muted)';
+}
+
+function _spotMarketColor(idx) {
+    const palette = ['#00d9a6', '#e94560', '#3b82f6', '#f59e0b', '#8b5cf6'];
+    return palette[idx % palette.length];
+}
+
+async function spotMarketLoadStatus() {
+    const panel = document.getElementById('spot-market-panel');
+    if (!panel) return;
+
+    try {
+        const resp = await fetch('/api/spot-market/status');
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) {
+            const detail = data.detail || data.error || 'Failed to load spot market status';
+            _spotMarketSetStatus(detail, 'error');
+            return;
+        }
+
+        const cfg = data.config || {};
+        const interval = String(cfg.interval || '6h');
+        const intervalEl = document.getElementById('spot-market-interval');
+        if (intervalEl) intervalEl.value = interval;
+
+        const configured = Array.isArray(cfg.regions) ? cfg.regions.map(String) : [];
+        const regionEls = Array.from(document.querySelectorAll('input.spot-market-region'));
+        if (configured.length) {
+            regionEls.forEach(e => {
+                e.checked = configured.includes(String(e.value || ''));
+            });
+        }
+
+        const lastSamples = data.last_samples || {};
+        const selected = _spotMarketGetSelectedRegions();
+        const parts = selected.map(r => {
+            const ts = lastSamples[r];
+            return ts ? `${r}: ${String(ts).slice(0, 19)}` : `${r}: (no samples)`;
+        });
+        _spotMarketSetStatus(parts.length ? parts.join(' | ') : 'No regions selected');
+    } catch (e) {
+        _spotMarketSetStatus(`Failed to load status: ${e.message || e}`, 'error');
+    }
+}
+
+async function spotMarketSaveConfig() {
+    const btn = document.getElementById('spot-market-save-btn');
+    const originalHtml = btn ? btn.innerHTML : null;
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving…';
+    }
+
+    try {
+        const regions = _spotMarketGetSelectedRegions();
+        if (!regions.length) {
+            showToast('Select at least one region', 'error');
+            return;
+        }
+        const intervalEl = document.getElementById('spot-market-interval');
+        const interval = intervalEl ? String(intervalEl.value || '6h') : '6h';
+
+        const resp = await fetch('/api/spot-market/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ regions, interval }),
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) {
+            const detail = data.detail || data.error || 'Failed to save config';
+            showToast(detail, 'error');
+            return;
+        }
+        showToast('Spot market config saved', 'success');
+        await spotMarketLoadStatus();
+        await spotMarketRefreshChart();
+    } catch (e) {
+        showToast(`Failed to save spot market config: ${e.message || e}`, 'error');
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = originalHtml;
+        }
+    }
+}
+
+async function spotMarketPollNow() {
+    const btn = document.getElementById('spot-market-now-btn');
+    const originalHtml = btn ? btn.innerHTML : null;
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Polling…';
+    }
+
+    try {
+        const regions = _spotMarketGetSelectedRegions();
+        if (!regions.length) {
+            showToast('Select at least one region', 'error');
+            return;
+        }
+        const resp = await fetch('/api/spot-market/poll', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ regions, mode: 'now' }),
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) {
+            const detail = data.detail || data.error || 'Failed to start spot market poll';
+            showToast(detail, 'error');
+            return;
+        }
+        const jobIds = Array.isArray(data.job_ids) ? data.job_ids : [];
+        showToast(jobIds.length ? `Spot market poll started (${jobIds.length} jobs)` : 'Spot market poll started', 'success');
+
+        // Best-effort: show logs for the first job after a short delay.
+        if (jobIds.length) {
+            setTimeout(() => spotMarketViewJobLogs(jobIds[0]), 500);
+        }
+
+        // Refresh chart after a short delay (jobs may still be running).
+        setTimeout(() => spotMarketRefreshAll(), 1500);
+    } catch (e) {
+        showToast(`Failed to poll spot market: ${e.message || e}`, 'error');
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = originalHtml;
+        }
+    }
+}
+
+async function spotMarketViewJobLogs(jobId) {
+    if (!jobId) return;
+    const viewer = document.getElementById('spot-market-job-log-viewer');
+    const pre = document.getElementById('spot-market-job-log-text');
+    if (!viewer || !pre) return;
+
+    viewer.style.display = '';
+    viewer.open = true;
+    pre.textContent = 'Loading…';
+
+    try {
+        const resp = await fetch(`/api/spot-market/jobs/${encodeURIComponent(jobId)}/logs?lines=200`);
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) {
+            const detail = data.detail || data.error || 'Failed to load logs';
+            pre.textContent = detail;
+            return;
+        }
+        pre.textContent = data.log || '';
+        viewer.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } catch (e) {
+        pre.textContent = `Failed to load logs: ${e.message || e}`;
+    }
+}
+
+async function spotMarketFetchSnapshots(region, limit) {
+    const resp = await fetch(`/api/spot-market/snapshots?region=${encodeURIComponent(region)}&limit=${limit || 200}`);
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+        const detail = data.detail || data.error || 'Failed to load snapshots';
+        throw new Error(detail);
+    }
+    return Array.isArray(data.snapshots) ? data.snapshots : [];
+}
+
+function _spotMarketRenderLatest(latestByRegion) {
+    const card = document.getElementById('spot-market-latest-card');
+    const tbody = document.getElementById('spot-market-latest-tbody');
+    if (!card || !tbody) return;
+
+    const rows = [];
+    Object.entries(latestByRegion).forEach(([region, snap]) => {
+        if (!snap) return;
+        const best = snap.best_zone || null;
+        rows.push({
+            region,
+            best_zone: best && best.zone ? String(best.zone) : '(none)',
+            est_cost: best && best.est_cost !== null && best.est_cost !== undefined ? Number(best.est_cost).toFixed(3) : '',
+            instances: best && best.instances !== null && best.instances !== undefined ? String(best.instances) : '',
+            timestamp: snap.timestamp ? String(snap.timestamp).slice(0, 19) : '',
+        });
+    });
+
+    if (!rows.length) {
+        card.style.display = 'none';
+        tbody.innerHTML = '';
+        return;
+    }
+
+    tbody.innerHTML = '';
+    rows.forEach(r => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td><code>${r.region}</code></td>
+            <td>${r.best_zone}</td>
+            <td>${r.est_cost}</td>
+            <td>${r.instances}</td>
+            <td>${r.timestamp}</td>
+        `;
+        tbody.appendChild(tr);
+    });
+    card.style.display = '';
+}
+
+async function spotMarketRefreshChart() {
+    const canvas = document.getElementById('spot-market-chart');
+    if (!canvas) return;
+
+    const regions = _spotMarketGetSelectedRegions();
+    if (!regions.length) {
+        _spotMarketSetStatus('No regions selected');
+        return;
+    }
+
+    const latestByRegion = {};
+    const snapshotsByRegion = {};
+    const allLabelsSet = new Set();
+
+    try {
+        for (const r of regions) {
+            const snaps = await spotMarketFetchSnapshots(r, 200);
+            snapshotsByRegion[r] = snaps;
+            latestByRegion[r] = snaps.length ? snaps[0] : null;
+            snaps.forEach(s => {
+                if (s && s.timestamp) allLabelsSet.add(String(s.timestamp).slice(0, 19));
+            });
+        }
+    } catch (e) {
+        _spotMarketSetStatus(e.message || String(e), 'error');
+        return;
+    }
+
+    _spotMarketRenderLatest(latestByRegion);
+
+    const labels = Array.from(allLabelsSet).sort();
+    const datasets = regions.map((r, idx) => {
+        const snaps = snapshotsByRegion[r] || [];
+        const map = {};
+        snaps.forEach(s => {
+            const ts = s && s.timestamp ? String(s.timestamp).slice(0, 19) : null;
+            const best = s && s.best_zone ? s.best_zone : null;
+            const cost = best && best.est_cost !== null && best.est_cost !== undefined ? Number(best.est_cost) : null;
+            if (ts) map[ts] = cost;
+        });
+        return {
+            label: r,
+            data: labels.map(ts => (Object.prototype.hasOwnProperty.call(map, ts) ? map[ts] : null)),
+            borderColor: _spotMarketColor(idx),
+            backgroundColor: _spotMarketColor(idx),
+            tension: 0.25,
+            spanGaps: true,
+        };
+    });
+
+    const ctx = canvas.getContext('2d');
+    if (!_spotMarketChart) {
+        _spotMarketChart = new Chart(ctx, {
+            type: 'line',
+            data: { labels, datasets },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: true },
+                    title: { display: false },
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        title: { display: true, text: 'Estimated cost ($)' },
+                    },
+                    x: {
+                        ticks: { maxTicksLimit: 8 },
+                    },
+                },
+            },
+        });
+    } else {
+        _spotMarketChart.data.labels = labels;
+        _spotMarketChart.data.datasets = datasets;
+        _spotMarketChart.update();
+    }
+}
+
+async function spotMarketRefreshAll() {
+    await spotMarketLoadStatus();
+    await spotMarketRefreshChart();
+}
+
 async function deleteCluster(buttonEl) {
     if (!buttonEl) return;
 
@@ -1032,6 +1414,7 @@ document.querySelectorAll('.expand-jobs-link').forEach(link => {
         loadCreateOptions();
     }
     refreshCreateJobs();
+    spotMarketRefreshAll();
 })();
 </script>
 {% endblock %}
