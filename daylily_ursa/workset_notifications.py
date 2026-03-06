@@ -21,6 +21,7 @@ LOGGER = logging.getLogger("daylily.workset_notifications")
 @dataclass
 class NotificationEvent:
     """Workset event to be notified."""
+
     workset_euid: str
     event_type: str  # state_change, error, completion, timeout
     state: str
@@ -33,14 +34,14 @@ class NotificationEvent:
 
 class NotificationChannel(ABC):
     """Abstract base class for notification channels."""
-    
+
     @abstractmethod
     def send(self, event: NotificationEvent) -> bool:
         """Send notification for an event.
-        
+
         Args:
             event: Event to notify about
-            
+
         Returns:
             True if sent successfully, False otherwise
         """
@@ -49,7 +50,7 @@ class NotificationChannel(ABC):
 
 class SNSNotificationChannel(NotificationChannel):
     """Send notifications via AWS SNS."""
-    
+
     def __init__(
         self,
         topic_arn: str,
@@ -57,7 +58,7 @@ class SNSNotificationChannel(NotificationChannel):
         profile: Optional[str] = None,
     ):
         """Initialize SNS notification channel.
-        
+
         Args:
             topic_arn: SNS topic ARN
             region: AWS region
@@ -66,14 +67,16 @@ class SNSNotificationChannel(NotificationChannel):
         session_kwargs = {"region_name": region}
         if profile:
             session_kwargs["profile_name"] = profile
-        
+
         session = boto3.Session(**session_kwargs)
         self.sns = session.client("sns")
         self.topic_arn = topic_arn
-    
+
     def send(self, event: NotificationEvent) -> bool:
         """Send SNS notification."""
-        subject = f"Daylily Workset {event.event_type.replace('_', ' ').title()}: {event.workset_euid}"
+        subject = (
+            f"Daylily Workset {event.event_type.replace('_', ' ').title()}: {event.workset_euid}"
+        )
 
         message_lines = [
             f"Workset: {event.workset_euid}",
@@ -83,26 +86,30 @@ class SNSNotificationChannel(NotificationChannel):
             "",
             event.message,
         ]
-        
+
         if event.cluster_name:
             message_lines.insert(4, f"Cluster: {event.cluster_name}")
-        
+
         if event.error_details:
-            message_lines.extend([
-                "",
-                "Error Details:",
-                event.error_details,
-            ])
-        
+            message_lines.extend(
+                [
+                    "",
+                    "Error Details:",
+                    event.error_details,
+                ]
+            )
+
         if event.details:
-            message_lines.extend([
-                "",
-                "Additional Details:",
-                json.dumps(event.details, indent=2),
-            ])
-        
+            message_lines.extend(
+                [
+                    "",
+                    "Additional Details:",
+                    json.dumps(event.details, indent=2),
+                ]
+            )
+
         message = "\n".join(message_lines)
-        
+
         try:
             self.sns.publish(
                 TopicArn=self.topic_arn,
@@ -124,7 +131,7 @@ class SNSNotificationChannel(NotificationChannel):
 
 class LinearNotificationChannel(NotificationChannel):
     """Send notifications to Linear project management tool."""
-    
+
     def __init__(
         self,
         api_key: str,
@@ -132,7 +139,7 @@ class LinearNotificationChannel(NotificationChannel):
         project_id: Optional[str] = None,
     ):
         """Initialize Linear notification channel.
-        
+
         Args:
             api_key: Linear API key
             team_id: Linear team ID
@@ -164,11 +171,13 @@ class LinearNotificationChannel(NotificationChannel):
             description_parts.insert(4, f"**Cluster:** {event.cluster_name}")
 
         if event.error_details:
-            description_parts.extend([
-                "",
-                "## Error Details",
-                f"```\n{event.error_details}\n```",
-            ])
+            description_parts.extend(
+                [
+                    "",
+                    "## Error Details",
+                    f"```\n{event.error_details}\n```",
+                ]
+            )
 
         description = "\n".join(description_parts)
 
@@ -308,4 +317,3 @@ class NotificationManager:
                 )
 
         return success_count
-

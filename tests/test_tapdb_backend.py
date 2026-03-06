@@ -7,7 +7,11 @@ from unittest.mock import MagicMock, call, patch
 
 import pytest
 
-from daylily_ursa.tapdb_graph.backend import TEMPLATE_DEFINITIONS, TapDBBackend, expected_ursa_database_name
+from daylily_ursa.tapdb_graph.backend import (
+    TEMPLATE_DEFINITIONS,
+    TapDBBackend,
+    expected_ursa_database_name,
+)
 
 
 def test_ensure_templates_calls_sequence_readiness():

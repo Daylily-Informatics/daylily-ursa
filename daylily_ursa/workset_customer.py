@@ -109,7 +109,9 @@ class CustomerManager:
     def _to_config(payload: Dict[str, Any]) -> CustomerConfig:
         return CustomerConfig(
             customer_id=payload["customer_id"],
-            customer_name=payload.get("customer_name") or payload.get("name") or payload["customer_id"],
+            customer_name=payload.get("customer_name")
+            or payload.get("name")
+            or payload["customer_id"],
             email=payload.get("email", ""),
             s3_bucket=payload.get("s3_bucket", ""),
             max_concurrent_worksets=int(payload.get("max_concurrent_worksets", 5)),
@@ -153,7 +155,9 @@ class CustomerManager:
             bucket_name = custom_s3_bucket
         else:
             bucket_name = f"{self.bucket_prefix}-{customer_id}"
-            self._create_customer_bucket(bucket_name, customer_id, cost_center, effective_bucket_region)
+            self._create_customer_bucket(
+                bucket_name, customer_id, cost_center, effective_bucket_region
+            )
 
         payload: Dict[str, Any] = {
             "customer_id": customer_id,
@@ -275,7 +279,7 @@ class CustomerManager:
                 "customer_id": customer_id,
                 "workset_count": len(worksets),
                 "active_worksets": len(active),
-                "storage_gb": round(storage_bytes / (1024 ** 3), 3),
+                "storage_gb": round(storage_bytes / (1024**3), 3),
                 "max_storage_gb": cfg.max_storage_gb,
                 "max_concurrent_worksets": cfg.max_concurrent_worksets,
             }
@@ -294,7 +298,9 @@ class CustomerManager:
     def add_api_token(self, customer_id: str, name: str, expiry_days: int) -> Dict[str, Any]:
         raw_token = secrets.token_urlsafe(32)
         now = dt.datetime.now(dt.timezone.utc)
-        expires_at = (now + dt.timedelta(days=max(expiry_days, 1))).isoformat().replace("+00:00", "Z")
+        expires_at = (
+            (now + dt.timedelta(days=max(expiry_days, 1))).isoformat().replace("+00:00", "Z")
+        )
         token_id = self._token_id(name)
         token_rec = {
             "id": token_id,
@@ -348,7 +354,9 @@ class CustomerManager:
                 expires_raw = token.get("expires_at")
                 if expires_raw:
                     try:
-                        expires_at = dt.datetime.fromisoformat(str(expires_raw).replace("Z", "+00:00"))
+                        expires_at = dt.datetime.fromisoformat(
+                            str(expires_raw).replace("Z", "+00:00")
+                        )
                         if expires_at <= now:
                             continue
                     except ValueError:

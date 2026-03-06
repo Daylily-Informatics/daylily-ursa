@@ -87,7 +87,9 @@ def parse_tsv_to_samples(tsv_content: str) -> List[Dict[str, Any]]:
     for line in lines[1:]:
         cols = line.split("\t")
         sample = {
-            "sample_id": cols[idx.get("SAMPLE_ID", -1)] if 0 <= idx.get("SAMPLE_ID", -1) < len(cols) else "",
+            "sample_id": cols[idx.get("SAMPLE_ID", -1)]
+            if 0 <= idx.get("SAMPLE_ID", -1) < len(cols)
+            else "",
             "r1_file": cols[idx.get("R1_FQ", -1)] if 0 <= idx.get("R1_FQ", -1) < len(cols) else "",
             "r2_file": cols[idx.get("R2_FQ", -1)] if 0 <= idx.get("R2_FQ", -1) < len(cols) else "",
             "run_id": cols[idx.get("RUN_ID", -1)] if 0 <= idx.get("RUN_ID", -1) < len(cols) else "",

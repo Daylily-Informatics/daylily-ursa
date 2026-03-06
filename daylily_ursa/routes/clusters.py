@@ -52,8 +52,12 @@ class ClusterCreateRequest(BaseModel):
     region_az: str = Field(..., description="Availability zone (e.g. us-west-2a)")
     cluster_name: str = Field(..., description="ParallelCluster name (max 60 chars, alnum + '-')")
     ssh_key_name: str = Field(..., description="EC2 keypair name to attach to headnode")
-    s3_bucket_name: str = Field(..., description="S3 bucket name used by daylily-ec for budget/reference config")
-    config_path: Optional[str] = Field(None, description="Optional existing daylily-ec config YAML path")
+    s3_bucket_name: str = Field(
+        ..., description="S3 bucket name used by daylily-ec for budget/reference config"
+    )
+    config_path: Optional[str] = Field(
+        None, description="Optional existing daylily-ec config YAML path"
+    )
     pass_on_warn: bool = Field(False, description="Proceed on warnings in daylily-ec validation")
     debug: bool = Field(False, description="Enable verbose daylily-ec debug output")
 
@@ -92,7 +96,9 @@ def create_clusters_router(deps: ClusterDependencies) -> APIRouter:
     async def list_clusters(
         request: Request,
         refresh: bool = Query(False, description="Force refresh cluster cache"),
-        fetch_status: bool = Query(False, description="Fetch SSH-based status (budget/jobs) for running headnodes"),
+        fetch_status: bool = Query(
+            False, description="Fetch SSH-based status (budget/jobs) for running headnodes"
+        ),
     ):
         """List all ParallelCluster instances across configured regions.
 
@@ -115,7 +121,8 @@ def create_clusters_router(deps: ClusterDependencies) -> APIRouter:
 
             if not allowed_regions:
                 return {
-                    "clusters": [], "regions": [],
+                    "clusters": [],
+                    "regions": [],
                     "error": "No regions configured. Create ~/.ursa/ursa-config.yaml with region definitions.",
                 }
 
@@ -126,13 +133,16 @@ def create_clusters_router(deps: ClusterDependencies) -> APIRouter:
             )
 
             all_clusters = service.get_all_clusters_with_status(
-                force_refresh=refresh, fetch_ssh_status=fetch_status,
+                force_refresh=refresh,
+                fetch_ssh_status=fetch_status,
             )
             clusters_dicts = [c.to_dict() for c in all_clusters]
 
             return {
-                "clusters": clusters_dicts, "regions": allowed_regions,
-                "total_count": len(clusters_dicts), "cached": not refresh,
+                "clusters": clusters_dicts,
+                "regions": allowed_regions,
+                "total_count": len(clusters_dicts),
+                "cached": not refresh,
                 "status_fetched": fetch_status,
             }
         except Exception as e:
@@ -282,7 +292,9 @@ def create_clusters_router(deps: ClusterDependencies) -> APIRouter:
                 detail="No regions configured. Create ~/.ursa/ursa-config.yaml with region definitions.",
             )
         if region not in allowed_regions:
-            raise HTTPException(status_code=400, detail=f"Region '{region}' is not configured for this deployment")
+            raise HTTPException(
+                status_code=400, detail=f"Region '{region}' is not configured for this deployment"
+            )
 
         sess = boto3.Session(profile_name=aws_profile) if aws_profile else boto3.Session()
 
@@ -353,7 +365,10 @@ def create_clusters_router(deps: ClusterDependencies) -> APIRouter:
                 )
 
             if region not in allowed_regions:
-                raise HTTPException(status_code=400, detail=f"Region '{region}' is not configured for this deployment")
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Region '{region}' is not configured for this deployment",
+                )
 
             service = get_cluster_service(
                 regions=allowed_regions,
@@ -363,14 +378,19 @@ def create_clusters_router(deps: ClusterDependencies) -> APIRouter:
 
             result = service.delete_cluster(cluster_name, region)
             if "error" in result:
-                raise HTTPException(status_code=500, detail=f"Failed to delete cluster: {result['error']}")
+                raise HTTPException(
+                    status_code=500, detail=f"Failed to delete cluster: {result['error']}"
+                )
 
             cmd = f"pcluster delete-cluster --region {region} -n {cluster_name}"
             aws_profile = ursa_config.aws_profile or settings.aws_profile
 
             return {
-                "success": True, "cluster_name": cluster_name, "region": region,
-                "pcluster_command": cmd, "aws_profile": aws_profile,
+                "success": True,
+                "cluster_name": cluster_name,
+                "region": region,
+                "pcluster_command": cmd,
+                "aws_profile": aws_profile,
                 "message": f"Cluster '{cluster_name}' deletion initiated",
             }
         except HTTPException:

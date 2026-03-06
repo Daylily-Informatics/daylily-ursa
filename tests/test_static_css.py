@@ -31,8 +31,7 @@ def test_main_css_table_cell_padding_reduced_and_tokenized():
     assert "--spacing-table-cell-compact-y: 0.3rem;" in css
     assert "--spacing-table-cell-compact-x: 0.6rem;" in css
     assert (
-        "padding: var(--spacing-table-cell-compact-y) var(--spacing-table-cell-compact-x);"
-        in css
+        "padding: var(--spacing-table-cell-compact-y) var(--spacing-table-cell-compact-x);" in css
     )
 
 
@@ -83,4 +82,3 @@ def test_main_js_tooltip_position_is_clamped_to_viewport():
     assert "Math.max" in js
     assert "Math.min" in js
     assert "rect.bottom" in js
-

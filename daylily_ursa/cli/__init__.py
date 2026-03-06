@@ -46,7 +46,9 @@ def _validate_aws_env() -> None:
             "   Or in config file:   [cyan]~/.config/ursa/ursa-config.yaml[/cyan] → [dim]aws_profile: your-profile[/dim]"
         )
     elif aws_profile_env == "default":
-        errors.append("AWS_PROFILE is 'default'. Use a named profile: [cyan]export AWS_PROFILE=your-profile[/cyan]")
+        errors.append(
+            "AWS_PROFILE is 'default'. Use a named profile: [cyan]export AWS_PROFILE=your-profile[/cyan]"
+        )
 
     # If we have a profile from config but not env, set it in environment for boto3/AWS CLI
     if not aws_profile_env and aws_profile_config:
@@ -91,11 +93,14 @@ app.add_typer(spot_market_app, name="spot-market", help="Spot market tracker man
 
 @app.command("version")
 def version(
-    ecosystem: bool = typer.Option(False, "--ecosystem", help="Show cross-repo version compatibility matrix"),
+    ecosystem: bool = typer.Option(
+        False, "--ecosystem", help="Show cross-repo version compatibility matrix"
+    ),
 ):
     """Show Ursa version and optional ecosystem compatibility matrix."""
     try:
         from daylily_ursa import __version__
+
         console.print(f"ursa [cyan]{__version__}[/cyan]")
     except ImportError:
         console.print("ursa [cyan]dev[/cyan]")
@@ -114,7 +119,9 @@ def _show_ecosystem_versions() -> None:
     versions_path = project_root / "config" / "ecosystem-versions.json"
 
     if not versions_path.exists():
-        console.print("[red]✗[/red] Ecosystem versions file not found: config/ecosystem-versions.json")
+        console.print(
+            "[red]✗[/red] Ecosystem versions file not found: config/ecosystem-versions.json"
+        )
         return
 
     try:
@@ -165,7 +172,9 @@ def _show_ecosystem_versions() -> None:
         console.print(combo_table)
 
     console.print()
-    console.print(f"[dim]Schema v{data.get('schema_version', '?')} · Last updated: {data.get('last_updated', '?')}[/dim]")
+    console.print(
+        f"[dim]Schema v{data.get('schema_version', '?')} · Last updated: {data.get('last_updated', '?')}[/dim]"
+    )
 
 
 def _format_value_with_source(value: Optional[str], source: str) -> str:
@@ -196,6 +205,7 @@ def info():
     # Version
     try:
         from daylily_ursa import __version__
+
         table.add_row("Version", __version__)
     except ImportError:
         table.add_row("Version", "dev")
@@ -221,8 +231,12 @@ def info():
     # Regions config
     if ursa_config.is_configured:
         regions = ursa_config.get_allowed_regions()
-        table.add_row("Scan Regions", f"[green]{len(regions)}[/green] [dim]({', '.join(regions)})[/dim]")
-        table.add_row("Bucket Source", "[dim]cluster tags (aws-parallelcluster-monitor-bucket)[/dim]")
+        table.add_row(
+            "Scan Regions", f"[green]{len(regions)}[/green] [dim]({', '.join(regions)})[/dim]"
+        )
+        table.add_row(
+            "Bucket Source", "[dim]cluster tags (aws-parallelcluster-monitor-bucket)[/dim]"
+        )
     else:
         table.add_row("Scan Regions", "[yellow]none configured[/yellow]")
 
@@ -232,6 +246,7 @@ def info():
         try:
             pid = int(pid_file.read_text().strip())
             import os as os_mod
+
             os_mod.kill(pid, 0)
             table.add_row("API Server", f"[green]Running[/green] (PID {pid})")
         except (ValueError, ProcessLookupError, PermissionError):
@@ -245,6 +260,7 @@ def info():
         try:
             pid = int(monitor_pid_file.read_text().strip())
             import os as os_mod
+
             os_mod.kill(pid, 0)
             table.add_row("Monitor", f"[green]Running[/green] (PID {pid})")
         except (ValueError, ProcessLookupError, PermissionError):

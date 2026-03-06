@@ -66,13 +66,26 @@ def _find_default_config() -> Optional[Path]:
 
 @monitor_app.command("start")
 def start(
-    config: Optional[Path] = typer.Option(None, "--config", "-c", help="Path to monitor config YAML"),
+    config: Optional[Path] = typer.Option(
+        None, "--config", "-c", help="Path to monitor config YAML"
+    ),
     once: bool = typer.Option(False, "--once", help="Run single iteration and exit"),
-    verbose: bool = typer.Option(True, "--verbose/--quiet", "-v/-q", help="Enable verbose logging (default: on)"),
+    verbose: bool = typer.Option(
+        True, "--verbose/--quiet", "-v/-q", help="Enable verbose logging (default: on)"
+    ),
     dry_run: bool = typer.Option(False, "--dry-run", help="Do not mutate S3 or execute commands"),
-    background: bool = typer.Option(True, "--background/--foreground", "-b/-f", help="Run in background"),
-    enable_tapdb: bool = typer.Option(True, "--enable-tapdb/--no-tapdb", help="Enable TapDB state tracking (default: on)"),
-    parallel: Optional[int] = typer.Option(None, "--parallel", "-p", help="Maximum number of worksets to run in parallel (overrides config file)"),
+    background: bool = typer.Option(
+        True, "--background/--foreground", "-b/-f", help="Run in background"
+    ),
+    enable_tapdb: bool = typer.Option(
+        True, "--enable-tapdb/--no-tapdb", help="Enable TapDB state tracking (default: on)"
+    ),
+    parallel: Optional[int] = typer.Option(
+        None,
+        "--parallel",
+        "-p",
+        help="Maximum number of worksets to run in parallel (overrides config file)",
+    ),
 ):
     """Start the workset monitor daemon."""
     _ensure_dir()
@@ -89,13 +102,16 @@ def start(
 
     if config is None or not config.exists():
         console.print("[red]✗[/red]  No monitor config file found")
-        console.print("   Provide one with: [cyan]ursa monitor start --config path/to/config.yaml[/cyan]")
+        console.print(
+            "   Provide one with: [cyan]ursa monitor start --config path/to/config.yaml[/cyan]"
+        )
         console.print("   Or create: [cyan]~/.ursa/monitor-config.yaml[/cyan]")
         console.print("   Or create: [cyan]./config/workset-monitor-config.yaml[/cyan]")
         raise typer.Exit(1)
 
     # Check ursa-config.yaml for region configuration
     from daylily_ursa.ursa_config import get_ursa_config, DEFAULT_CONFIG_PATH
+
     ursa_config = get_ursa_config()
     if not ursa_config.is_configured:
         console.print(f"[yellow]⚠[/yellow]  No regions configured in {DEFAULT_CONFIG_PATH}")
@@ -240,9 +256,15 @@ def logs(
 @monitor_app.command("grep")
 def grep_logs(
     pattern: str = typer.Argument(..., help="Pattern to search for in logs"),
-    all_logs: bool = typer.Option(False, "--all", "-a", help="Search all log files, not just the latest"),
-    ignore_case: bool = typer.Option(True, "--ignore-case/--case-sensitive", "-i/-s", help="Case-insensitive search (default)"),
-    context: int = typer.Option(0, "--context", "-C", help="Lines of context before and after match"),
+    all_logs: bool = typer.Option(
+        False, "--all", "-a", help="Search all log files, not just the latest"
+    ),
+    ignore_case: bool = typer.Option(
+        True, "--ignore-case/--case-sensitive", "-i/-s", help="Case-insensitive search (default)"
+    ),
+    context: int = typer.Option(
+        0, "--context", "-C", help="Lines of context before and after match"
+    ),
     count: bool = typer.Option(False, "--count", "-c", help="Only show count of matching lines"),
 ):
     """Search monitor logs for a pattern.

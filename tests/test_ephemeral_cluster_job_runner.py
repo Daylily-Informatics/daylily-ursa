@@ -51,4 +51,3 @@ def test_job_runner_executes_command_and_updates_job_file(tmp_path: Path) -> Non
 
     content = log_path.read_text(encoding="utf-8")
     assert "ok" in content
-

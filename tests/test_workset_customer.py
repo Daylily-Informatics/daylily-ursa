@@ -68,7 +68,9 @@ def test_create_customer_bucket_handles_us_east_1(customer_manager: CustomerMana
     east.put_bucket_tagging.assert_called_once()
 
 
-def test_create_customer_bucket_uses_location_constraint_for_non_east(customer_manager: CustomerManager):
+def test_create_customer_bucket_uses_location_constraint_for_non_east(
+    customer_manager: CustomerManager,
+):
     west = MagicMock()
     customer_manager._session.client.side_effect = lambda service, region_name=None: west
 
@@ -161,7 +163,9 @@ def test_update_customer_writes_payload(customer_manager: CustomerManager):
     )
     customer_manager.backend.find_instance_by_external_id.return_value = row
 
-    updated = customer_manager.update_customer("cust-001", customer_name="New", cost_center="CC-NEW")
+    updated = customer_manager.update_customer(
+        "cust-001", customer_name="New", cost_center="CC-NEW"
+    )
 
     assert updated is not None
     assert updated.customer_name == "New"

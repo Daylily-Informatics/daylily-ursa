@@ -30,7 +30,9 @@ class _SessionCtx:
         return False
 
 
-def _instance(payload: dict, *, euid: str = "euid-1", template_uuid: int = 1, bstatus: str = "active"):
+def _instance(
+    payload: dict, *, euid: str = "euid-1", template_uuid: int = 1, bstatus: str = "active"
+):
     row = MagicMock()
     row.json_addl = dict(payload)
     row.euid = euid
@@ -84,7 +86,9 @@ def test_detect_file_format_and_id_generation():
     assert fid1.startswith("file-")
 
 
-def test_register_file_creates_customer_and_file(file_registry: FileRegistry, sample_registration: FileRegistration):
+def test_register_file_creates_customer_and_file(
+    file_registry: FileRegistry, sample_registration: FileRegistration
+):
     customer_row = _instance({"customer_id": "cust-001"}, euid="cust-euid")
     file_row = _instance({"file_id": "file-001", "customer_id": "cust-001"}, euid="file-euid")
 
@@ -102,7 +106,9 @@ def test_register_file_creates_customer_and_file(file_registry: FileRegistry, sa
     file_registry.backend.create_lineage.assert_called_once()
 
 
-def test_register_file_updates_existing(file_registry: FileRegistry, sample_registration: FileRegistration):
+def test_register_file_updates_existing(
+    file_registry: FileRegistry, sample_registration: FileRegistration
+):
     existing = _instance({"file_id": "file-001"}, euid="file-old")
     file_registry.backend.find_instance_by_external_id.return_value = existing
 
@@ -145,7 +151,9 @@ def test_get_file_returns_registration(file_registry: FileRegistry):
         },
         "tags": ["wgs"],
     }
-    file_registry.backend.find_instance_by_external_id.return_value = _instance(payload, euid="file-euid")
+    file_registry.backend.find_instance_by_external_id.return_value = _instance(
+        payload, euid="file-euid"
+    )
 
     reg = file_registry.get_file("file-001")
 
@@ -202,7 +210,9 @@ def test_list_customer_files(file_registry: FileRegistry):
 
 
 def test_update_file_tags(file_registry: FileRegistry):
-    row = _instance({"file_id": "file-001", "customer_id": "cust-001", "tags": []}, euid="file-euid")
+    row = _instance(
+        {"file_id": "file-001", "customer_id": "cust-001", "tags": []}, euid="file-euid"
+    )
     file_registry.backend.find_instance_by_external_id.return_value = row
 
     ok = file_registry.update_file_tags("file-001", ["tumor", "wgs"])
@@ -219,8 +229,8 @@ def test_create_fileset_links_customer_and_files(file_registry: FileRegistry):
     file_row_2 = _instance({"file_id": "file-002"}, euid="file-002")
 
     file_registry.backend.find_instance_by_external_id.side_effect = [
-        None,   # existing fileset
-        None,   # customer
+        None,  # existing fileset
+        None,  # customer
         file_row_1,
         file_row_2,
     ]
@@ -252,12 +262,22 @@ def test_get_file_by_euid(file_registry: FileRegistry):
             "created_at": "2026-01-01T00:00:00Z",
         },
         "sequencing_metadata": {
-            "platform": "ILLUMINA_NOVASEQ_X", "vendor": "ILMN", "run_id": "run-001",
-            "lane": 1, "barcode_id": "S1", "flowcell_id": None, "run_date": None,
+            "platform": "ILLUMINA_NOVASEQ_X",
+            "vendor": "ILMN",
+            "run_id": "run-001",
+            "lane": 1,
+            "barcode_id": "S1",
+            "flowcell_id": None,
+            "run_date": None,
         },
         "biosample_metadata": {
-            "biosample_id": "bio-001", "subject_id": "subj-001", "sample_type": "blood",
-            "tissue_type": None, "collection_date": None, "preservation_method": None, "tumor_fraction": None,
+            "biosample_id": "bio-001",
+            "subject_id": "subj-001",
+            "sample_type": "blood",
+            "tissue_type": None,
+            "collection_date": None,
+            "preservation_method": None,
+            "tumor_fraction": None,
         },
         "tags": [],
     }
@@ -417,7 +437,9 @@ def test_get_files_for_workset_recreation_deduplicates(file_registry: FileRegist
     out_reg = FileRegistration(
         file_id="file-001",
         customer_id="cust-001",
-        file_metadata=FileMetadata(file_id="file-001", s3_uri="s3://bucket/f1.fastq.gz", file_size_bytes=1),
+        file_metadata=FileMetadata(
+            file_id="file-001", s3_uri="s3://bucket/f1.fastq.gz", file_size_bytes=1
+        ),
         sequencing_metadata=SequencingMetadata(run_id="run"),
         biosample_metadata=BiosampleMetadata(biosample_id="bio-001", subject_id="subj-001"),
     )

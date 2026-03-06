@@ -25,4 +25,3 @@ def test_live_bootstrap_ensures_required_instance_sequences():
         missing = backend.get_missing_instance_sequences(session)
 
     assert missing == []
-

@@ -132,7 +132,9 @@ def test_customers_list_endpoint_returns_customer_rows():
     def get_current_user():
         return None
 
-    deps = CustomerDependencies(customer_manager=customer_manager, get_current_user=get_current_user)
+    deps = CustomerDependencies(
+        customer_manager=customer_manager, get_current_user=get_current_user
+    )
     app = FastAPI()
     app.include_router(create_customers_router(deps))
 
@@ -153,7 +155,9 @@ def test_dashboard_cost_breakdown_endpoint_returns_categories_and_total():
     customer_manager = MagicMock()
     customer_manager.get_customer_config.return_value = SimpleNamespace(customer_id="cust-001")
 
-    deps = DashboardDependencies(state_db=state_db, settings=MagicMock(), customer_manager=customer_manager)
+    deps = DashboardDependencies(
+        state_db=state_db, settings=MagicMock(), customer_manager=customer_manager
+    )
     app = FastAPI()
     app.include_router(create_dashboard_router(deps))
 
@@ -195,7 +199,11 @@ def test_files_list_endpoint_returns_folders_and_files():
         "CommonPrefixes": [{"Prefix": "data/folder-a/"}],
         "Contents": [
             {"Key": "data/", "Size": 0, "LastModified": dt.datetime.now(dt.timezone.utc)},
-            {"Key": "data/readme.txt", "Size": 12, "LastModified": dt.datetime.now(dt.timezone.utc)},
+            {
+                "Key": "data/readme.txt",
+                "Size": 12,
+                "LastModified": dt.datetime.now(dt.timezone.utc),
+            },
         ],
     }
 
@@ -215,7 +223,10 @@ def test_files_list_endpoint_returns_folders_and_files():
 
 def test_customer_worksets_list_filters_to_customer_id_ownership():
     """GET /api/v2/customers/{id}/worksets should enforce customer_id ownership filtering."""
-    from daylily_ursa.routes.customer_worksets import CustomerWorksetDependencies, create_customer_worksets_router
+    from daylily_ursa.routes.customer_worksets import (
+        CustomerWorksetDependencies,
+        create_customer_worksets_router,
+    )
 
     customer_manager = MagicMock()
     customer_manager.get_customer_config.return_value = SimpleNamespace(customer_id="cust-001")
@@ -238,7 +249,9 @@ def test_customer_worksets_list_filters_to_customer_id_ownership():
     app.include_router(create_customer_worksets_router(deps))
 
     with TestClient(app, base_url="https://testserver") as client:
-        resp = client.get("/api/v2/customers/cust-001/worksets", params={"state": "ready", "limit": 20})
+        resp = client.get(
+            "/api/v2/customers/cust-001/worksets", params={"state": "ready", "limit": 20}
+        )
         assert resp.status_code == 200
         payload = resp.json()
         assert [w["workset_id"] for w in payload["worksets"]] == ["ws-1"]
@@ -272,11 +285,17 @@ def test_app_inline_utility_endpoints_have_request_level_coverage():
     )
 
     with TestClient(app, base_url="https://testserver") as client:
-        assert client.post("/api/v2/estimate-cost", json={"pipeline_type": "germline"}).status_code != 404
-        assert client.post(
-            "/api/v2/worksets/generate-yaml",
-            json={"samples": [], "reference_genome": "GRCh38"},
-        ).status_code != 404
+        assert (
+            client.post("/api/v2/estimate-cost", json={"pipeline_type": "germline"}).status_code
+            != 404
+        )
+        assert (
+            client.post(
+                "/api/v2/worksets/generate-yaml",
+                json={"samples": [], "reference_genome": "GRCh38"},
+            ).status_code
+            != 404
+        )
         assert client.post("/api/v2/worksets/validate?bucket=b&prefix=p").status_code != 404
 
 
@@ -290,7 +309,9 @@ def test_dashboard_activity_and_cost_history_have_request_level_coverage():
     customer_manager = MagicMock()
     customer_manager.get_customer_config.return_value = SimpleNamespace(customer_id="cust-001")
 
-    deps = DashboardDependencies(state_db=state_db, settings=MagicMock(), customer_manager=customer_manager)
+    deps = DashboardDependencies(
+        state_db=state_db, settings=MagicMock(), customer_manager=customer_manager
+    )
     app = FastAPI()
     app.include_router(create_dashboard_router(deps))
 

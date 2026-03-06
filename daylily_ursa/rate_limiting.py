@@ -24,6 +24,7 @@ LOGGER = logging.getLogger("daylily.rate_limiting")
 @dataclass
 class RateLimitState:
     """State for a single rate limit bucket."""
+
     tokens: float
     last_update: float
 
@@ -42,12 +43,12 @@ class InMemoryStorage:
         window_seconds: int = 60,
     ) -> Tuple[bool, int, int, int]:
         """Check if request is within rate limit.
-        
+
         Args:
             key: Unique identifier (IP, user ID, etc.)
             limit: Maximum requests per window
             window_seconds: Time window in seconds
-            
+
         Returns:
             Tuple of (allowed, remaining, limit, reset_time)
         """
@@ -79,7 +80,7 @@ class InMemoryStorage:
 
     def cleanup_old_buckets(self, max_age_seconds: int = 3600) -> int:
         """Remove old buckets to prevent memory growth.
-        
+
         Returns number of buckets removed.
         """
         now = time.time()
@@ -92,6 +93,7 @@ class InMemoryStorage:
 
 class RateLimitCategory:
     """Rate limit category identifiers."""
+
     AUTH = "auth"
     READ = "read"
     WRITE = "write"
@@ -117,7 +119,7 @@ class RateLimiter:
 
     def get_identifier(self, request: Request, category: str) -> str:
         """Get rate limit identifier based on category.
-        
+
         AUTH endpoints: use IP address
         Other endpoints: use user ID if authenticated, else IP
         """
@@ -144,7 +146,7 @@ class RateLimiter:
         category: str,
     ) -> Tuple[bool, Dict[str, str]]:
         """Check rate limit and return headers.
-        
+
         Returns:
             Tuple of (allowed, headers_dict)
         """
@@ -152,7 +154,7 @@ class RateLimiter:
             return True, {}
 
         identifier = self.get_identifier(request, category)
-        
+
         # Check whitelist
         raw_id = identifier.split(":", 1)[1] if ":" in identifier else identifier
         if self.settings.is_rate_limit_whitelisted(raw_id):
@@ -177,7 +179,9 @@ class RateLimiter:
             headers["Retry-After"] = str(max(1, reset_time - int(time.time())))
             LOGGER.warning(
                 "Rate limit exceeded for %s (category=%s, limit=%d)",
-                identifier, category, limit_val
+                identifier,
+                category,
+                limit_val,
             )
 
         return allowed, headers
@@ -254,4 +258,3 @@ rate_limit_auth = create_rate_limit_dependency(RateLimitCategory.AUTH)
 rate_limit_read = create_rate_limit_dependency(RateLimitCategory.READ)
 rate_limit_write = create_rate_limit_dependency(RateLimitCategory.WRITE)
 rate_limit_admin = create_rate_limit_dependency(RateLimitCategory.ADMIN)
-

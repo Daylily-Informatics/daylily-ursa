@@ -145,8 +145,6 @@ def create_dashboard_router(deps: DashboardDependencies) -> APIRouter:
             },
         }
 
-
-
     @router.get("/api/v2/customers/{customer_id}/dashboard/cost-history")
     async def get_dashboard_cost_history(
         customer_id: str,
@@ -198,7 +196,11 @@ def create_dashboard_router(deps: DashboardDependencies) -> APIRouter:
                 if cost == 0:
                     metadata = ws.get("metadata", {})
                     if isinstance(metadata, dict):
-                        cost = float(metadata.get("cost_usd", 0) or metadata.get("estimated_cost_usd", 0) or 0)
+                        cost = float(
+                            metadata.get("cost_usd", 0)
+                            or metadata.get("estimated_cost_usd", 0)
+                            or 0
+                        )
 
             if cost == 0:
                 continue
@@ -211,7 +213,9 @@ def create_dashboard_router(deps: DashboardDependencies) -> APIRouter:
                     ts = entry.get("timestamp")
                     if ts:
                         try:
-                            completion_date = datetime.fromisoformat(ts.replace("Z", "+00:00")).date()
+                            completion_date = datetime.fromisoformat(
+                                ts.replace("Z", "+00:00")
+                            ).date()
                         except (ValueError, AttributeError):
                             pass
                     break
@@ -221,7 +225,9 @@ def create_dashboard_router(deps: DashboardDependencies) -> APIRouter:
                 updated = ws.get("updated_at")
                 if updated:
                     try:
-                        completion_date = datetime.fromisoformat(updated.replace("Z", "+00:00")).date()
+                        completion_date = datetime.fromisoformat(
+                            updated.replace("Z", "+00:00")
+                        ).date()
                     except (ValueError, AttributeError):
                         continue
                 else:
@@ -317,15 +323,9 @@ def create_dashboard_router(deps: DashboardDependencies) -> APIRouter:
             "compute_cost_usd": breakdown["compute_cost_usd"],
             "storage_cost_usd": breakdown["storage_cost_usd"],
             "transfer_cost_usd": breakdown["transfer_cost_usd"],
-            "transfer_intra_region_cost_usd": breakdown.get(
-                "transfer_intra_region_cost_usd", 0.0
-            ),
-            "transfer_cross_region_cost_usd": breakdown.get(
-                "transfer_cross_region_cost_usd", 0.0
-            ),
-            "transfer_internet_cost_usd": breakdown.get(
-                "transfer_internet_cost_usd", 0.0
-            ),
+            "transfer_intra_region_cost_usd": breakdown.get("transfer_intra_region_cost_usd", 0.0),
+            "transfer_cross_region_cost_usd": breakdown.get("transfer_cross_region_cost_usd", 0.0),
+            "transfer_internet_cost_usd": breakdown.get("transfer_internet_cost_usd", 0.0),
             "transfer_intra_region_gb": breakdown.get("transfer_intra_region_gb", 0.0),
             "transfer_cross_region_gb": breakdown.get("transfer_cross_region_gb", 0.0),
             "transfer_internet_gb": breakdown.get("transfer_internet_gb", 0.0),

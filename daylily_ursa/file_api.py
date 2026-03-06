@@ -183,6 +183,7 @@ def verify_file_ownership(file: Optional[FileRegistration], customer_id: str) ->
 # Pydantic models for API requests/responses
 class FileMetadataRequest(BaseModel):
     """Request model for file metadata."""
+
     s3_uri: str = Field(..., description="Full S3 URI")
     file_size_bytes: int = Field(..., description="File size in bytes")
     md5_checksum: Optional[str] = None
@@ -191,6 +192,7 @@ class FileMetadataRequest(BaseModel):
 
 class BiosampleMetadataRequest(BaseModel):
     """Request model for biosample metadata."""
+
     biosample_id: str
     subject_id: str
     sample_type: str = "blood"
@@ -202,6 +204,7 @@ class BiosampleMetadataRequest(BaseModel):
 
 class SequencingMetadataRequest(BaseModel):
     """Request model for sequencing metadata."""
+
     platform: str = "ILLUMINA_NOVASEQ_X"
     vendor: str = "ILMN"
     run_id: str = ""
@@ -213,6 +216,7 @@ class SequencingMetadataRequest(BaseModel):
 
 class FileRegistrationRequest(BaseModel):
     """Request model for file registration."""
+
     file_metadata: FileMetadataRequest
     sequencing_metadata: SequencingMetadataRequest
     biosample_metadata: BiosampleMetadataRequest
@@ -228,6 +232,7 @@ class FileRegistrationRequest(BaseModel):
 
 class FileRegistrationResponse(BaseModel):
     """Response model for file registration."""
+
     file_id: str
     euid: Optional[str] = None
     customer_id: str
@@ -240,6 +245,7 @@ class FileRegistrationResponse(BaseModel):
 
 class FileSetRequest(BaseModel):
     """Request model for file set creation."""
+
     name: str
     description: Optional[str] = None
     biosample_metadata: Optional[BiosampleMetadataRequest] = None
@@ -249,6 +255,7 @@ class FileSetRequest(BaseModel):
 
 class FileSetResponse(BaseModel):
     """Response model for file set."""
+
     fileset_id: str
     euid: Optional[str] = None
     customer_id: str
@@ -259,6 +266,7 @@ class FileSetResponse(BaseModel):
 
 class BulkImportRequest(BaseModel):
     """Request model for bulk file import."""
+
     files: List[FileRegistrationRequest]
     fileset_name: Optional[str] = None
     fileset_description: Optional[str] = None
@@ -272,6 +280,7 @@ class AddFileToFilesetRequest(BaseModel):
 
 class BulkImportResponse(BaseModel):
     """Response model for bulk import."""
+
     imported_count: int
     failed_count: int
     fileset_id: Optional[str] = None
@@ -282,17 +291,23 @@ class BulkImportResponse(BaseModel):
 # Bucket management models
 class LinkBucketRequest(BaseModel):
     """Request model for linking an S3 bucket."""
+
     bucket_name: str = Field(..., description="S3 bucket name")
-    bucket_type: str = Field("secondary", description="Bucket type: primary, secondary, archive, shared")
+    bucket_type: str = Field(
+        "secondary", description="Bucket type: primary, secondary, archive, shared"
+    )
     display_name: Optional[str] = Field(None, description="User-friendly display name")
     description: Optional[str] = Field(None, description="Description of bucket purpose")
-    prefix_restriction: Optional[str] = Field(None, description="Restrict access to specific prefix")
+    prefix_restriction: Optional[str] = Field(
+        None, description="Restrict access to specific prefix"
+    )
     read_only: bool = Field(False, description="If true, prevent writes to this bucket")
     validate_access: bool = Field(True, description="Whether to validate bucket access")
 
 
 class LinkedBucketResponse(BaseModel):
     """Response model for linked bucket."""
+
     bucket_id: str
     customer_id: str
     bucket_name: str
@@ -308,6 +323,7 @@ class LinkedBucketResponse(BaseModel):
 
 class BucketValidationResponse(BaseModel):
     """Response model for bucket validation."""
+
     bucket_name: str
     exists: bool
     accessible: bool
@@ -324,6 +340,7 @@ class BucketValidationResponse(BaseModel):
 
 class DiscoveredFileResponse(BaseModel):
     """Response model for discovered file."""
+
     s3_uri: str
     bucket_name: str
     key: str
@@ -336,15 +353,19 @@ class DiscoveredFileResponse(BaseModel):
 
 class DiscoverFilesRequest(BaseModel):
     """Request model for file discovery."""
+
     bucket_name: str = Field(..., description="S3 bucket name to scan")
     prefix: str = Field("", description="Optional prefix to filter files")
-    file_formats: Optional[List[str]] = Field(None, description="Filter by formats: fastq, bam, vcf, etc.")
+    file_formats: Optional[List[str]] = Field(
+        None, description="Filter by formats: fastq, bam, vcf, etc."
+    )
     max_files: int = Field(1000, ge=1, le=10000, description="Maximum files to return")
     check_registration: bool = Field(True, description="Check if files are already registered")
 
 
 class DiscoverFilesResponse(BaseModel):
     """Response model for file discovery."""
+
     bucket_name: str
     prefix: str
     total_files: int
@@ -355,6 +376,7 @@ class DiscoverFilesResponse(BaseModel):
 
 class AutoRegisterRequest(BaseModel):
     """Request model for auto-registering discovered files."""
+
     bucket_name: str = Field(..., description="S3 bucket name")
     prefix: str = Field("", description="Prefix to scan")
     file_formats: Optional[List[str]] = Field(None, description="Filter by formats")
@@ -366,6 +388,7 @@ class AutoRegisterRequest(BaseModel):
 
 class AutoRegisterResponse(BaseModel):
     """Response model for auto-registration."""
+
     registered_count: int
     skipped_count: int
     errors: List[str]
@@ -376,6 +399,7 @@ class AutoRegisterResponse(BaseModel):
 
 class BrowseItem(BaseModel):
     """A file or folder in the S3 bucket browse view."""
+
     name: str = Field(..., description="File or folder name")
     key: str = Field(..., description="Full S3 key/path")
     is_folder: bool = Field(..., description="True if this is a folder (prefix)")
@@ -388,6 +412,7 @@ class BrowseItem(BaseModel):
 
 class BrowseBucketResponse(BaseModel):
     """Response model for bucket browsing."""
+
     bucket_id: str
     bucket_name: str
     display_name: str
@@ -402,11 +427,13 @@ class BrowseBucketResponse(BaseModel):
 
 class CreateFolderRequest(BaseModel):
     """Request model for creating a folder."""
+
     folder_name: str = Field(..., min_length=1, max_length=255, description="New folder name")
 
 
 class CreateFolderResponse(BaseModel):
     """Response model for folder creation."""
+
     success: bool
     folder_key: str = Field(..., description="Full S3 key of created folder")
     message: str
@@ -414,11 +441,13 @@ class CreateFolderResponse(BaseModel):
 
 class DeleteFileRequest(BaseModel):
     """Request model for deleting a file."""
+
     file_key: str = Field(..., description="S3 key of file to delete")
 
 
 class DeleteFileResponse(BaseModel):
     """Response model for file deletion."""
+
     success: bool
     deleted_key: str
     message: str
@@ -426,12 +455,19 @@ class DeleteFileResponse(BaseModel):
 
 class FileSearchRequest(BaseModel):
     """Request model for file search."""
-    search: Optional[str] = Field(None, description="General search term (filename, subject, biosample, tags)")
+
+    search: Optional[str] = Field(
+        None, description="General search term (filename, subject, biosample, tags)"
+    )
     tag: Optional[str] = Field(None, description="Search by tag")
     biosample_id: Optional[str] = Field(None, description="Search by biosample ID")
     subject_id: Optional[str] = Field(None, description="Search by subject ID")
-    file_format: Optional[str] = Field(None, description="Filter by file format (fastq, bam, vcf, etc.)")
-    sample_type: Optional[str] = Field(None, description="Filter by sample type (blood, saliva, etc.)")
+    file_format: Optional[str] = Field(
+        None, description="Filter by file format (fastq, bam, vcf, etc.)"
+    )
+    sample_type: Optional[str] = Field(
+        None, description="Filter by sample type (blood, saliva, etc.)"
+    )
     platform: Optional[str] = Field(None, description="Filter by sequencing platform")
     date_from: Optional[str] = Field(None, description="Filter by registration date (from)")
     date_to: Optional[str] = Field(None, description="Filter by registration date (to)")
@@ -440,6 +476,7 @@ class FileSearchRequest(BaseModel):
 # Upload models
 class PresignedUploadRequest(BaseModel):
     """Request model for presigned upload URL."""
+
     bucket_name: str = Field(..., description="Target S3 bucket")
     filename: str = Field(..., description="Original filename")
     content_type: str = Field("application/octet-stream", description="MIME type")
@@ -450,6 +487,7 @@ class PresignedUploadRequest(BaseModel):
 
 class PresignedUploadResponse(BaseModel):
     """Response model for presigned upload URL."""
+
     upload_url: str
     object_key: str
     bucket_name: str
@@ -461,6 +499,7 @@ class PresignedUploadResponse(BaseModel):
 
 class MultipartUploadPartRequest(BaseModel):
     """Request model for multipart upload part URL."""
+
     bucket_name: str
     object_key: str
     upload_id: str
@@ -469,6 +508,7 @@ class MultipartUploadPartRequest(BaseModel):
 
 class CompleteMultipartRequest(BaseModel):
     """Request model for completing multipart upload."""
+
     bucket_name: str
     object_key: str
     upload_id: str
@@ -477,6 +517,7 @@ class CompleteMultipartRequest(BaseModel):
 
 class VerifyUploadRequest(BaseModel):
     """Request model for verifying upload."""
+
     bucket_name: str
     object_key: str
     expected_size: Optional[int] = None
@@ -485,6 +526,7 @@ class VerifyUploadRequest(BaseModel):
 
 class VerifyUploadResponse(BaseModel):
     """Response model for upload verification."""
+
     is_valid: bool
     size: Optional[int]
     etag: Optional[str]
@@ -496,6 +538,7 @@ class VerifyUploadResponse(BaseModel):
 # Manifest generation models
 class ManifestGenerationRequest(BaseModel):
     """Request model for manifest generation from registered files."""
+
     file_ids: Optional[List[str]] = Field(None, description="Specific file IDs to include")
     fileset_id: Optional[str] = Field(None, description="Generate from a file set")
     biosample_id: Optional[str] = Field(None, description="Filter by biosample ID")
@@ -506,6 +549,7 @@ class ManifestGenerationRequest(BaseModel):
 
 class ManifestGenerationResponse(BaseModel):
     """Response model for manifest generation."""
+
     tsv_content: str
     sample_count: int
     file_count: int
@@ -537,10 +581,12 @@ def create_file_api_router(
 
     # Create a dummy auth dependency if none provided
     if auth_dependency is None:
+
         async def no_auth() -> Optional[Dict]:
             return None
+
         auth_dependency = no_auth
-    
+
     @router.post("/register", response_model=FileRegistrationResponse)
     async def register_file(
         customer_id: str = Query(..., description="Customer ID"),
@@ -563,8 +609,7 @@ def create_file_api_router(
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail=(
-                        "File with this S3 URI is already registered "
-                        f"(file_id={existing.file_id})."
+                        f"File with this S3 URI is already registered (file_id={existing.file_id})."
                     ),
                 )
 
@@ -579,7 +624,7 @@ def create_file_api_router(
                 md5_checksum=request.file_metadata.md5_checksum,
                 file_format=request.file_metadata.file_format,
             )
-            
+
             seq_meta = SequencingMetadata(
                 platform=request.sequencing_metadata.platform,
                 vendor=request.sequencing_metadata.vendor,
@@ -589,7 +634,7 @@ def create_file_api_router(
                 flowcell_id=request.sequencing_metadata.flowcell_id,
                 run_date=request.sequencing_metadata.run_date,
             )
-            
+
             bio_meta = BiosampleMetadata(
                 biosample_id=request.biosample_metadata.biosample_id,
                 subject_id=request.biosample_metadata.subject_id,
@@ -599,7 +644,7 @@ def create_file_api_router(
                 preservation_method=request.biosample_metadata.preservation_method,
                 tumor_fraction=request.biosample_metadata.tumor_fraction,
             )
-            
+
             registration = FileRegistration(
                 file_id=file_id,
                 customer_id=customer_id,
@@ -615,7 +660,7 @@ def create_file_api_router(
                 is_negative_control=request.is_negative_control,
                 tags=request.tags,
             )
-            
+
             file_euid = file_registry.register_file(registration)
             if not file_euid:
                 raise HTTPException(
@@ -640,7 +685,7 @@ def create_file_api_router(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Failed to register file: {str(e)}",
             )
-    
+
     @router.get("/list")
     async def list_customer_files(
         customer_id: str = Query(..., description="Customer ID"),
@@ -673,7 +718,7 @@ def create_file_api_router(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Failed to list files: {str(e)}",
             )
-    
+
     @router.post("/filesets", response_model=FileSetResponse)
     async def create_fileset(
         customer_id: str = Query(..., description="Customer ID"),
@@ -783,9 +828,9 @@ def create_file_api_router(
         failed_count = 0
         errors = []
         fileset_id = None
-        
+
         file_ids = []
-        
+
         for idx, file_req in enumerate(request.files):
             try:
                 file_id = generate_file_id(file_req.file_metadata.s3_uri, customer_id)
@@ -797,7 +842,7 @@ def create_file_api_router(
                     md5_checksum=file_req.file_metadata.md5_checksum,
                     file_format=file_req.file_metadata.file_format,
                 )
-                
+
                 seq_meta = SequencingMetadata(
                     platform=file_req.sequencing_metadata.platform,
                     vendor=file_req.sequencing_metadata.vendor,
@@ -807,7 +852,7 @@ def create_file_api_router(
                     flowcell_id=file_req.sequencing_metadata.flowcell_id,
                     run_date=file_req.sequencing_metadata.run_date,
                 )
-                
+
                 bio_meta = BiosampleMetadata(
                     biosample_id=file_req.biosample_metadata.biosample_id,
                     subject_id=file_req.biosample_metadata.subject_id,
@@ -817,7 +862,7 @@ def create_file_api_router(
                     preservation_method=file_req.biosample_metadata.preservation_method,
                     tumor_fraction=file_req.biosample_metadata.tumor_fraction,
                 )
-                
+
                 registration = FileRegistration(
                     file_id=file_id,
                     customer_id=customer_id,
@@ -833,26 +878,30 @@ def create_file_api_router(
                     is_negative_control=file_req.is_negative_control,
                     tags=file_req.tags,
                 )
-                
+
                 file_euid = file_registry.register_file(registration)
                 if file_euid:
                     imported_count += 1
                     file_ids.append(file_id)
                 else:
                     failed_count += 1
-                    errors.append({
-                        "index": idx,
-                        "s3_uri": file_req.file_metadata.s3_uri,
-                        "error": "File registration failed",
-                    })
+                    errors.append(
+                        {
+                            "index": idx,
+                            "s3_uri": file_req.file_metadata.s3_uri,
+                            "error": "File registration failed",
+                        }
+                    )
             except Exception as e:
                 failed_count += 1
-                errors.append({
-                    "index": idx,
-                    "s3_uri": file_req.file_metadata.s3_uri,
-                    "error": str(e),
-                })
-        
+                errors.append(
+                    {
+                        "index": idx,
+                        "s3_uri": file_req.file_metadata.s3_uri,
+                        "error": str(e),
+                    }
+                )
+
         # Create fileset if requested
         fileset_euid = None
         if request.fileset_name and file_ids:
@@ -868,7 +917,7 @@ def create_file_api_router(
                 fileset_id = fileset.fileset_id
             except Exception as e:
                 LOGGER.error("Failed to create fileset: %s", str(e))
-        
+
         return BulkImportResponse(
             imported_count=imported_count,
             failed_count=failed_count,
@@ -904,12 +953,17 @@ def create_file_api_router(
 
             LOGGER.info(
                 "Linking bucket: customer_id=%s, bucket_name=%s, bucket_type=%s, display_name=%s",
-                customer_id, request.bucket_name, request.bucket_type, request.display_name
+                customer_id,
+                request.bucket_name,
+                request.bucket_type,
+                request.display_name,
             )
             if LOGGER.isEnabledFor(logging.DEBUG):
                 LOGGER.debug(
                     "Link bucket request details: prefix_restriction=%s, read_only=%s, validate_access=%s",
-                    request.prefix_restriction, request.read_only, request.validate_access
+                    request.prefix_restriction,
+                    request.read_only,
+                    request.validate_access,
                 )
 
             linked_bucket, validation_result = linked_bucket_manager.link_bucket(
@@ -925,7 +979,9 @@ def create_file_api_router(
 
             LOGGER.info(
                 "Successfully linked bucket: bucket_id=%s, is_validated=%s, can_write=%s",
-                linked_bucket.bucket_id, linked_bucket.is_validated, linked_bucket.can_write
+                linked_bucket.bucket_id,
+                linked_bucket.is_validated,
+                linked_bucket.can_write,
             )
 
             return LinkedBucketResponse(
@@ -1150,7 +1206,9 @@ def create_file_api_router(
         bucket_id: str,
         display_name: Optional[str] = Body(None, description="New display name"),
         description: Optional[str] = Body(None, description="New description"),
-        bucket_type: Optional[str] = Body(None, description="Bucket type: primary, secondary, archive, shared"),
+        bucket_type: Optional[str] = Body(
+            None, description="Bucket type: primary, secondary, archive, shared"
+        ),
         prefix_restriction: Optional[str] = Body(None, description="Prefix restriction"),
         read_only: Optional[bool] = Body(None, description="Read-only mode"),
         current_user: Optional[Dict] = Depends(auth_dependency),
@@ -1271,7 +1329,9 @@ def create_file_api_router(
         bucket_id: str,
         customer_id: str = Query(..., description="Customer ID"),
         prefix: str = Query("", description="Optional prefix to filter files"),
-        file_formats: Optional[str] = Query(None, description="Comma-separated formats: fastq,bam,vcf"),
+        file_formats: Optional[str] = Query(
+            None, description="Comma-separated formats: fastq,bam,vcf"
+        ),
         max_files: int = Query(1000, ge=1, le=10000, description="Maximum files to return"),
         current_user: Optional[Dict] = Depends(auth_dependency),
     ):
@@ -1294,7 +1354,9 @@ def create_file_api_router(
                 operation="discover bucket files",
             )
 
-            LOGGER.debug(f"discover_bucket_files: Starting discovery for bucket_id={bucket_id}, customer_id={customer_id}")
+            LOGGER.debug(
+                f"discover_bucket_files: Starting discovery for bucket_id={bucket_id}, customer_id={customer_id}"
+            )
 
             # Get the bucket to verify it exists and get bucket name
             LOGGER.debug(f"discover_bucket_files: Getting bucket info for {bucket_id}")
@@ -1331,7 +1393,10 @@ def create_file_api_router(
 
             LOGGER.info(
                 "Discovering files in bucket %s (prefix=%s, formats=%s, max_files=%d)",
-                bucket.bucket_name, effective_prefix, formats_list, max_files
+                bucket.bucket_name,
+                effective_prefix,
+                formats_list,
+                max_files,
             )
 
             LOGGER.debug("discover_bucket_files: Calling bucket_file_discovery.discover_files()")
@@ -1351,19 +1416,31 @@ def create_file_api_router(
                     discovered = bucket_file_discovery.check_registration_status(
                         discovered, file_registry, customer_id
                     )
-                    LOGGER.info("discover_bucket_files: Successfully checked registration status for all files")
+                    LOGGER.info(
+                        "discover_bucket_files: Successfully checked registration status for all files"
+                    )
                 except Exception as e:
                     # Don't use exc_info=True as it causes deepcopy issues with boto3 objects
-                    LOGGER.error("discover_bucket_files: Error checking registration status: %s", str(e))
-                    LOGGER.warning("discover_bucket_files: Continuing without registration status check")
+                    LOGGER.error(
+                        "discover_bucket_files: Error checking registration status: %s", str(e)
+                    )
+                    LOGGER.warning(
+                        "discover_bucket_files: Continuing without registration status check"
+                    )
             else:
-                LOGGER.warning("discover_bucket_files: file_registry is None, skipping registration status check")
+                LOGGER.warning(
+                    "discover_bucket_files: file_registry is None, skipping registration status check"
+                )
 
             registered_count = sum(1 for f in discovered if f.is_registered)
 
             LOGGER.info(
                 "Discovered %d files in bucket %s (prefix=%s): %d registered, %d unregistered",
-                len(discovered), bucket.bucket_name, effective_prefix, registered_count, len(discovered) - registered_count
+                len(discovered),
+                bucket.bucket_name,
+                effective_prefix,
+                registered_count,
+                len(discovered) - registered_count,
             )
 
             return DiscoverFilesResponse(
@@ -1541,47 +1618,67 @@ def create_file_api_router(
             # Apply biosample filter
             if request.biosample_id:
                 biosample_lower = request.biosample_id.lower()
-                results = [f for f in results
-                          if f.biosample_metadata and
-                          biosample_lower in f.biosample_metadata.biosample_id.lower()]
+                results = [
+                    f
+                    for f in results
+                    if f.biosample_metadata
+                    and biosample_lower in f.biosample_metadata.biosample_id.lower()
+                ]
 
             # Apply subject filter
             if request.subject_id:
                 subject_lower = request.subject_id.lower()
-                results = [f for f in results
-                          if f.biosample_metadata and
-                          subject_lower in f.biosample_metadata.subject_id.lower()]
+                results = [
+                    f
+                    for f in results
+                    if f.biosample_metadata
+                    and subject_lower in f.biosample_metadata.subject_id.lower()
+                ]
 
             # Apply file format filter
             if request.file_format:
                 format_lower = request.file_format.lower()
-                results = [f for f in results
-                          if f.file_metadata and
-                          f.file_metadata.file_format.lower() == format_lower]
+                results = [
+                    f
+                    for f in results
+                    if f.file_metadata and f.file_metadata.file_format.lower() == format_lower
+                ]
 
             # Apply sample type filter
             if request.sample_type:
                 sample_lower = request.sample_type.lower()
-                results = [f for f in results
-                          if f.biosample_metadata and
-                          f.biosample_metadata.sample_type and
-                          f.biosample_metadata.sample_type.lower() == sample_lower]
+                results = [
+                    f
+                    for f in results
+                    if f.biosample_metadata
+                    and f.biosample_metadata.sample_type
+                    and f.biosample_metadata.sample_type.lower() == sample_lower
+                ]
 
             # Apply platform filter
             if request.platform:
                 platform_lower = request.platform.lower()
-                results = [f for f in results
-                          if f.sequencing_metadata and
-                          f.sequencing_metadata.platform and
-                          platform_lower in f.sequencing_metadata.platform.lower()]
+                results = [
+                    f
+                    for f in results
+                    if f.sequencing_metadata
+                    and f.sequencing_metadata.platform
+                    and platform_lower in f.sequencing_metadata.platform.lower()
+                ]
 
             # Apply date range filter
             if request.date_from:
-                results = [f for f in results
-                          if f.registered_at and str(f.registered_at) >= request.date_from]
+                results = [
+                    f
+                    for f in results
+                    if f.registered_at and str(f.registered_at) >= request.date_from
+                ]
             if request.date_to:
-                results = [f for f in results
-                          if f.registered_at and str(f.registered_at) <= request.date_to]
+                results = [
+                    f
+                    for f in results
+                    if f.registered_at and str(f.registered_at) <= request.date_to
+                ]
 
             # Apply general search (searches across multiple fields)
             if request.search:
@@ -1589,16 +1686,22 @@ def create_file_api_router(
                 filtered = []
                 for f in results:
                     # Check filename
-                    filename = f.file_metadata.s3_uri.split('/')[-1] if f.file_metadata else ''
+                    filename = f.file_metadata.s3_uri.split("/")[-1] if f.file_metadata else ""
                     if search_lower in filename.lower():
                         filtered.append(f)
                         continue
                     # Check subject ID
-                    if f.biosample_metadata and search_lower in f.biosample_metadata.subject_id.lower():
+                    if (
+                        f.biosample_metadata
+                        and search_lower in f.biosample_metadata.subject_id.lower()
+                    ):
                         filtered.append(f)
                         continue
                     # Check biosample ID
-                    if f.biosample_metadata and search_lower in f.biosample_metadata.biosample_id.lower():
+                    if (
+                        f.biosample_metadata
+                        and search_lower in f.biosample_metadata.biosample_id.lower()
+                    ):
                         filtered.append(f)
                         continue
                     # Check tags
@@ -1610,16 +1713,20 @@ def create_file_api_router(
             # Build response with full file details
             def format_file(f):
                 s3_uri = f.file_metadata.s3_uri if f.file_metadata else ""
-                filename = s3_uri.split('/')[-1] if s3_uri else ""
+                filename = s3_uri.split("/")[-1] if s3_uri else ""
                 return {
                     "file_id": f.file_id,
                     "s3_uri": s3_uri,
                     "filename": filename,
                     "file_format": f.file_metadata.file_format if f.file_metadata else "unknown",
                     "file_size_bytes": f.file_metadata.file_size_bytes if f.file_metadata else 0,
-                    "biosample_id": f.biosample_metadata.biosample_id if f.biosample_metadata else None,
+                    "biosample_id": f.biosample_metadata.biosample_id
+                    if f.biosample_metadata
+                    else None,
                     "subject_id": f.biosample_metadata.subject_id if f.biosample_metadata else None,
-                    "sample_type": f.biosample_metadata.sample_type if f.biosample_metadata else None,
+                    "sample_type": f.biosample_metadata.sample_type
+                    if f.biosample_metadata
+                    else None,
                     "platform": f.sequencing_metadata.platform if f.sequencing_metadata else None,
                     "tags": f.tags or [],
                     "registered_at": str(f.registered_at) if f.registered_at else None,
@@ -1661,7 +1768,6 @@ def create_file_api_router(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Failed to update file tags: {str(e)}",
             )
-
 
     @router.get("/{file_id}/download")
     async def get_file_download_url(
@@ -1798,7 +1904,9 @@ def create_file_api_router(
                     "biosample_id": updated_file.biosample_metadata.biosample_id,
                     "subject_id": updated_file.biosample_metadata.subject_id,
                     "updated_at": updated_file.updated_at,
-                } if updated_file else None,
+                }
+                if updated_file
+                else None,
             }
         except HTTPException:
             raise
@@ -1869,7 +1977,10 @@ def create_file_api_router(
             raise
         except Exception as e:
             LOGGER.error(
-                "Failed to add file %s to fileset %s: %s", file_id, request.fileset_id, str(e),
+                "Failed to add file %s to fileset %s: %s",
+                file_id,
+                request.fileset_id,
+                str(e),
             )
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -2479,9 +2590,15 @@ def create_file_api_router(
                         sample_id=biosample_id,
                         external_sample_id=bio_meta.subject_id,
                         run_id=request.run_id,
-                        sample_type=SampleType(bio_meta.sample_type) if bio_meta.sample_type in [e.value for e in SampleType] else SampleType.BLOOD,
-                        seq_platform=SequencingPlatform(seq_meta.platform) if seq_meta.platform in [e.value for e in SequencingPlatform] else SequencingPlatform.ILLUMINA_NOVASEQ_X,
-                        seq_vendor=SequencingVendor(seq_meta.vendor) if seq_meta.vendor in [e.value for e in SequencingVendor] else SequencingVendor.ILLUMINA,
+                        sample_type=SampleType(bio_meta.sample_type)
+                        if bio_meta.sample_type in [e.value for e in SampleType]
+                        else SampleType.BLOOD,
+                        seq_platform=SequencingPlatform(seq_meta.platform)
+                        if seq_meta.platform in [e.value for e in SequencingPlatform]
+                        else SequencingPlatform.ILLUMINA_NOVASEQ_X,
+                        seq_vendor=SequencingVendor(seq_meta.vendor)
+                        if seq_meta.vendor in [e.value for e in SequencingVendor]
+                        else SequencingVendor.ILLUMINA,
                         lane=seq_meta.lane,
                         barcode_id=seq_meta.barcode_id,
                         r1_fastq=r1.file_metadata.s3_uri,
@@ -2566,9 +2683,15 @@ def create_file_api_router(
                 sample_id=bio_meta.biosample_id,
                 external_sample_id=bio_meta.subject_id,
                 run_id=run_id,
-                sample_type=SampleType(bio_meta.sample_type) if bio_meta.sample_type in [e.value for e in SampleType] else SampleType.BLOOD,
-                seq_platform=SequencingPlatform(seq_meta.platform) if seq_meta.platform in [e.value for e in SequencingPlatform] else SequencingPlatform.ILLUMINA_NOVASEQ_X,
-                seq_vendor=SequencingVendor(seq_meta.vendor) if seq_meta.vendor in [e.value for e in SequencingVendor] else SequencingVendor.ILLUMINA,
+                sample_type=SampleType(bio_meta.sample_type)
+                if bio_meta.sample_type in [e.value for e in SampleType]
+                else SampleType.BLOOD,
+                seq_platform=SequencingPlatform(seq_meta.platform)
+                if seq_meta.platform in [e.value for e in SequencingPlatform]
+                else SequencingPlatform.ILLUMINA_NOVASEQ_X,
+                seq_vendor=SequencingVendor(seq_meta.vendor)
+                if seq_meta.vendor in [e.value for e in SequencingVendor]
+                else SequencingVendor.ILLUMINA,
                 lane=seq_meta.lane,
                 barcode_id=seq_meta.barcode_id,
                 r1_fastq=file.file_metadata.s3_uri,
@@ -2668,9 +2791,15 @@ def create_file_api_router(
                         sample_id=biosample_id,
                         external_sample_id=bio_meta.subject_id,
                         run_id=run_id,
-                        sample_type=SampleType(bio_meta.sample_type) if bio_meta.sample_type in [e.value for e in SampleType] else SampleType.BLOOD,
-                        seq_platform=SequencingPlatform(seq_meta.platform) if seq_meta.platform in [e.value for e in SequencingPlatform] else SequencingPlatform.ILLUMINA_NOVASEQ_X,
-                        seq_vendor=SequencingVendor(seq_meta.vendor) if seq_meta.vendor in [e.value for e in SequencingVendor] else SequencingVendor.ILLUMINA,
+                        sample_type=SampleType(bio_meta.sample_type)
+                        if bio_meta.sample_type in [e.value for e in SampleType]
+                        else SampleType.BLOOD,
+                        seq_platform=SequencingPlatform(seq_meta.platform)
+                        if seq_meta.platform in [e.value for e in SequencingPlatform]
+                        else SequencingPlatform.ILLUMINA_NOVASEQ_X,
+                        seq_vendor=SequencingVendor(seq_meta.vendor)
+                        if seq_meta.vendor in [e.value for e in SequencingVendor]
+                        else SequencingVendor.ILLUMINA,
                         lane=seq_meta.lane,
                         barcode_id=seq_meta.barcode_id,
                         r1_fastq=r1.file_metadata.s3_uri,
@@ -2785,16 +2914,18 @@ def create_file_api_router(
                     folder_name = folder_prefix.rstrip("/").split("/")[-1]
                     if folder_name and folder_prefix not in folders_seen:
                         folders_seen.add(folder_prefix)
-                        items.append(BrowseItem(
-                            name=folder_name,
-                            key=folder_prefix,
-                            is_folder=True,
-                            size_bytes=None,
-                            last_modified=None,
-                            file_format=None,
-                            is_registered=False,
-                            file_id=None,
-                        ))
+                        items.append(
+                            BrowseItem(
+                                name=folder_name,
+                                key=folder_prefix,
+                                is_folder=True,
+                                size_bytes=None,
+                                last_modified=None,
+                                file_format=None,
+                                is_registered=False,
+                                file_id=None,
+                            )
+                        )
 
                 # Add files
                 for obj in page.get("Contents", []):
@@ -2815,16 +2946,20 @@ def create_file_api_router(
                         existing = file_registry.get_file(file_id)
                         is_registered = existing is not None
 
-                    items.append(BrowseItem(
-                        name=file_name,
-                        key=key,
-                        is_folder=False,
-                        size_bytes=obj["Size"],
-                        last_modified=obj["LastModified"].isoformat() if obj.get("LastModified") else None,
-                        file_format=detected_format,
-                        is_registered=is_registered,
-                        file_id=file_id if is_registered else None,
-                    ))
+                    items.append(
+                        BrowseItem(
+                            name=file_name,
+                            key=key,
+                            is_folder=False,
+                            size_bytes=obj["Size"],
+                            last_modified=obj["LastModified"].isoformat()
+                            if obj.get("LastModified")
+                            else None,
+                            file_format=detected_format,
+                            is_registered=is_registered,
+                            file_id=file_id if is_registered else None,
+                        )
+                    )
 
             # Sort: folders first, then files alphabetically
             items.sort(key=lambda x: (not x.is_folder, x.name.lower()))
@@ -2977,7 +3112,9 @@ def create_file_api_router(
 
             LOGGER.info(
                 "Created folder %s in bucket %s for customer %s (with .hold file)",
-                folder_key, bucket.bucket_name, customer_id
+                folder_key,
+                bucket.bucket_name,
+                customer_id,
             )
 
             return CreateFolderResponse(
@@ -3082,7 +3219,9 @@ def create_file_api_router(
 
             LOGGER.info(
                 "Deleted file %s from bucket %s for customer %s",
-                file_key, bucket.bucket_name, customer_id
+                file_key,
+                bucket.bucket_name,
+                customer_id,
             )
 
             return DeleteFileResponse(

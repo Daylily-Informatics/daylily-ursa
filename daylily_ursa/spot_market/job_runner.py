@@ -6,7 +6,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict
 
-from daylily_ursa.spot_market.runner import _atomic_write_json, _read_json, compute_and_store_snapshot
+from daylily_ursa.spot_market.runner import (
+    _atomic_write_json,
+    _read_json,
+    compute_and_store_snapshot,
+)
 
 
 def _now_iso() -> str:
@@ -37,7 +41,9 @@ def main(argv: list[str] | None = None) -> int:
     try:
         with open(log_path, "a", buffering=1, encoding="utf-8") as log_f:
             log_f.write(f"[{_now_iso()}] Ursa spot-market poll started\\n")
-            log_f.write(f"job_id={job.get('job_id')} region={region} aws_profile={aws_profile}\\n\\n")
+            log_f.write(
+                f"job_id={job.get('job_id')} region={region} aws_profile={aws_profile}\\n\\n"
+            )
 
             snapshot_path = compute_and_store_snapshot(
                 region=region,
@@ -65,4 +71,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(main())
-

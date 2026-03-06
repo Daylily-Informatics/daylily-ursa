@@ -14,7 +14,10 @@ def _make_state_db() -> MagicMock:
 
 def test_change_password_challenge_rejects_short_password() -> None:
     cognito_auth = MagicMock()
-    cognito_auth.authenticate.return_value = {"challenge": "NEW_PASSWORD_REQUIRED", "session": "sess"}
+    cognito_auth.authenticate.return_value = {
+        "challenge": "NEW_PASSWORD_REQUIRED",
+        "session": "sess",
+    }
 
     customer_manager = MagicMock()
     customer = MagicMock()
@@ -62,7 +65,12 @@ def test_reset_password_rejects_short_password() -> None:
 
     resp = client.post(
         "/portal/reset-password",
-        data={"email": "user@example.com", "code": "123456", "password": "1234567", "confirm_password": "1234567"},
+        data={
+            "email": "user@example.com",
+            "code": "123456",
+            "password": "1234567",
+            "confirm_password": "1234567",
+        },
         follow_redirects=False,
     )
     assert resp.status_code == 302
@@ -110,11 +118,22 @@ def test_api_tokens_endpoints_work_for_authenticated_session() -> None:
     customer_manager.get_customer_by_email.return_value = customer
 
     customer_manager.list_api_tokens.return_value = [
-        {"id": "t1", "name": "Token 1", "created_at": "2024-01-01T00:00:00Z", "expires_at": None, "revoked": False},
+        {
+            "id": "t1",
+            "name": "Token 1",
+            "created_at": "2024-01-01T00:00:00Z",
+            "expires_at": None,
+            "revoked": False,
+        },
     ]
     customer_manager.add_api_token.return_value = {
         "secret": "sekret",
-        "token": {"id": "t2", "name": "New", "created_at": "2024-01-01T00:00:00Z", "expires_at": None},
+        "token": {
+            "id": "t2",
+            "name": "New",
+            "created_at": "2024-01-01T00:00:00Z",
+            "expires_at": None,
+        },
     }
     customer_manager.revoke_api_token.return_value = True
 

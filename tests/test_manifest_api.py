@@ -9,7 +9,11 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi.testclient import TestClient
 
-from daylily_ursa.manifest_registry import ManifestTooLargeError, SavedManifest, parse_tsv_to_samples
+from daylily_ursa.manifest_registry import (
+    ManifestTooLargeError,
+    SavedManifest,
+    parse_tsv_to_samples,
+)
 from daylily_ursa.workset_api import create_app
 from daylily_ursa.workset_state_db import WorksetStateDB
 
@@ -196,7 +200,9 @@ def test_save_customer_manifest_413_when_too_large(client, mock_manifest_registr
     assert resp.status_code == 413
 
 
-def test_manifest_storage_not_configured_returns_503(mock_state_db, mock_customer_manager, monkeypatch):
+def test_manifest_storage_not_configured_returns_503(
+    mock_state_db, mock_customer_manager, monkeypatch
+):
     import daylily_ursa.workset_api as workset_api
 
     # Ensure create_app does not auto-initialize manifest registry.
@@ -245,7 +251,9 @@ def client_with_integration(
     mock_cluster_service = MagicMock()
     mock_cluster_service.get_cluster_by_name.return_value = mock_cluster_info
 
-    with patch("daylily_ursa.cluster_service.get_cluster_service", return_value=mock_cluster_service):
+    with patch(
+        "daylily_ursa.cluster_service.get_cluster_service", return_value=mock_cluster_service
+    ):
         app = create_app(
             state_db=mock_state_db,
             customer_manager=mock_customer_manager,
@@ -351,5 +359,3 @@ def test_create_workset_from_raw_manifest_tsv_content(client_with_integration, m
     prefix = call_kwargs["prefix"]
     assert prefix.startswith("worksets/hg002-wgs-")
     assert prefix.endswith("/")
-
-

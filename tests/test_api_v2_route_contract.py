@@ -23,10 +23,7 @@ def _collect_api_paths(app):
             route.path
             for route in app.routes
             if isinstance(route, APIRoute)
-            and (
-                route.path.startswith(api_like_prefixes)
-                or route.path in api_like_exact_paths
-            )
+            and (route.path.startswith(api_like_prefixes) or route.path in api_like_exact_paths)
         }
     )
 
@@ -38,8 +35,7 @@ def test_all_api_routes_are_v2_versioned():
 
     non_v2_paths = [path for path in api_paths if not path.startswith("/api/v2/")]
     assert not non_v2_paths, (
-        "Found non-v2 API routes that violate the /api/v2 contract: "
-        f"{non_v2_paths}"
+        f"Found non-v2 API routes that violate the /api/v2 contract: {non_v2_paths}"
     )
 
 

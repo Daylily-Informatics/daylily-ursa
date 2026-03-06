@@ -149,7 +149,9 @@ def save_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
 
 def interval_label_to_seconds(label: str) -> int:
     if label not in _INTERVAL_LABEL_TO_SECONDS:
-        raise ValueError(f"Invalid interval: {label} (expected one of {sorted(_INTERVAL_LABEL_TO_SECONDS)})")
+        raise ValueError(
+            f"Invalid interval: {label} (expected one of {sorted(_INTERVAL_LABEL_TO_SECONDS)})"
+        )
     return _INTERVAL_LABEL_TO_SECONDS[label]
 
 
@@ -174,7 +176,9 @@ def get_daylily_ec_resources_dir() -> Path:
     )
     if proc.returncode != 0:
         stderr = (proc.stderr or "").strip()
-        raise RuntimeError(f"Failed to locate daylily-ec resources-dir (rc={proc.returncode}): {stderr}")
+        raise RuntimeError(
+            f"Failed to locate daylily-ec resources-dir (rc={proc.returncode}): {stderr}"
+        )
     p = Path((proc.stdout or "").strip()).expanduser()
     if not p.is_dir():
         raise RuntimeError(f"daylily-ec resources-dir returned a non-directory path: {p}")
@@ -184,7 +188,9 @@ def get_daylily_ec_resources_dir() -> Path:
 def _load_prod_cluster_yaml(*, resources_dir: Path) -> Dict[str, Any]:
     cfg_path = resources_dir / "config" / "day_cluster" / "prod_cluster.yaml"
     if not cfg_path.is_file():
-        raise FileNotFoundError(f"daylily-ec prod_cluster.yaml not found under resources dir: {cfg_path}")
+        raise FileNotFoundError(
+            f"daylily-ec prod_cluster.yaml not found under resources dir: {cfg_path}"
+        )
     data = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
         raise ValueError(f"Invalid YAML structure in {cfg_path}")
@@ -246,7 +252,9 @@ def _harmonic_mean(data: List[float]) -> float:
     return len(vals) / math.fsum(1 / v for v in vals)
 
 
-def _calculate_vcpu_mins(*, x_coverage: float, align: float, snvcall: float, svcall: float, other: float) -> float:
+def _calculate_vcpu_mins(
+    *, x_coverage: float, align: float, snvcall: float, svcall: float, other: float
+) -> float:
     return x_coverage * (align + snvcall + svcall + other)
 
 

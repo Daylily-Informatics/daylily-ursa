@@ -32,10 +32,13 @@ def test_worksets_lock_state_and_scheduler_routes_have_request_level_coverage():
     app.include_router(create_worksets_router(state_db=state_db, scheduler=None))
 
     with TestClient(app, base_url="https://testserver") as client:
-        assert client.put(
-            "/api/v2/worksets/ws-123/state",
-            json={"state": "ready", "reason": "test"},
-        ).status_code != 404
+        assert (
+            client.put(
+                "/api/v2/worksets/ws-123/state",
+                json={"state": "ready", "reason": "test"},
+            ).status_code
+            != 404
+        )
         assert client.post("/api/v2/worksets/ws-123/lock?owner_id=worker-1").status_code != 404
         assert client.delete("/api/v2/worksets/ws-123/lock?owner_id=worker-1").status_code != 404
 
@@ -44,4 +47,3 @@ def test_worksets_lock_state_and_scheduler_routes_have_request_level_coverage():
 
         # No ready worksets -> null payload (200)
         assert client.get("/api/v2/worksets/next").status_code != 404
-

@@ -9,7 +9,7 @@ from typing import Any
 
 # Control characters (0x00-0x1f except tab, and 0x7f-0x9f) that could be
 # used for log injection or terminal escape sequences.
-_LOG_UNSAFE_PATTERN = re.compile(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]')
+_LOG_UNSAFE_PATTERN = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
 
 
 def sanitize_for_log(value: Any, max_length: int = 200) -> str:
@@ -32,14 +32,13 @@ def sanitize_for_log(value: Any, max_length: int = 200) -> str:
     s = str(value)
 
     # Replace newlines with visible escape sequences
-    s = s.replace('\r\n', '\\r\\n').replace('\n', '\\n').replace('\r', '\\r')
+    s = s.replace("\r\n", "\\r\\n").replace("\n", "\\n").replace("\r", "\\r")
 
     # Replace other control characters with hex representation
-    s = _LOG_UNSAFE_PATTERN.sub(lambda m: f'\\x{ord(m.group(0)):02x}', s)
+    s = _LOG_UNSAFE_PATTERN.sub(lambda m: f"\\x{ord(m.group(0)):02x}", s)
 
     # Truncate if too long
     if len(s) > max_length:
         s = s[:max_length] + "..."
 
     return s
-

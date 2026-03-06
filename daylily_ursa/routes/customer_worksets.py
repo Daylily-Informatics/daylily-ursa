@@ -27,6 +27,7 @@ from daylily_ursa.routes.dependencies import verify_workset_ownership
 # Pipeline status monitoring
 try:
     from daylily_ursa.pipeline_status import PipelineStatusFetcher, PipelineStatus
+
     PIPELINE_STATUS_AVAILABLE = True
 except ImportError:
     PIPELINE_STATUS_AVAILABLE = False
@@ -36,6 +37,7 @@ except ImportError:
 # Optional integration layer import
 try:
     from daylily_ursa.workset_integration import WorksetIntegration
+
     INTEGRATION_AVAILABLE = True
 except ImportError:
     INTEGRATION_AVAILABLE = False
@@ -44,6 +46,7 @@ except ImportError:
 # Manifest storage imports
 try:
     from daylily_ursa.manifest_registry import ManifestRegistry, ManifestTooLargeError
+
     MANIFEST_STORAGE_AVAILABLE = True
 except ImportError:
     MANIFEST_STORAGE_AVAILABLE = False
@@ -134,10 +137,7 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
                 all_worksets.extend(batch)
 
         # SECURITY: Filter to only this customer's worksets (by customer_id, not bucket)
-        customer_worksets = [
-            w for w in all_worksets
-            if verify_workset_ownership(w, customer_id)
-        ]
+        customer_worksets = [w for w in all_worksets if verify_workset_ownership(w, customer_id)]
 
         return {"worksets": customer_worksets[:limit]}
 
@@ -159,10 +159,7 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
 
         # SECURITY: Filter archived worksets by customer_id ownership (not bucket)
         all_archived = state_db.list_archived_worksets(limit=500)
-        customer_archived = [
-            w for w in all_archived
-            if verify_workset_ownership(w, customer_id)
-        ]
+        customer_archived = [w for w in all_archived if verify_workset_ownership(w, customer_id)]
         return customer_archived
 
     @router.get("/api/v2/customers/{customer_id}/worksets/{euid}")
@@ -259,10 +256,13 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
 
         # Generate a unique workset name from the user-provided name with date suffix
         import datetime as dt
+
         safe_name = workset_name.replace(" ", "-").lower()[:30]
         now_utc = dt.datetime.now(dt.timezone.utc)
         date_suffix = now_utc.strftime("%Y%m%d")
-        time_hash = hashlib.sha256(f"{safe_name}-{now_utc.isoformat()}-{customer_id}".encode()).hexdigest()[:8]
+        time_hash = hashlib.sha256(
+            f"{safe_name}-{now_utc.isoformat()}-{customer_id}".encode()
+        ).hexdigest()[:8]
         ws_name = f"{safe_name}-{time_hash}-{date_suffix}"
 
         # Determine bucket from cluster tags (aws-parallelcluster-monitor-bucket)
@@ -275,12 +275,13 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="A cluster must be selected for workset creation. "
-                       "The S3 bucket is derived from the cluster's aws-parallelcluster-monitor-bucket tag.",
+                "The S3 bucket is derived from the cluster's aws-parallelcluster-monitor-bucket tag.",
             )
 
         # Look up cluster to get region and bucket from tags
         try:
             from daylily_ursa.cluster_service import get_cluster_service, ClusterInfo
+
             service = get_cluster_service(
                 regions=ursa_config.get_allowed_regions() or settings.get_allowed_regions(),
                 aws_profile=ursa_config.aws_profile or settings.aws_profile,
@@ -297,20 +298,22 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
                 if bucket:
                     LOGGER.info(
                         "Using bucket %s from cluster %s tag (region %s)",
-                        sanitize_for_log(bucket), sanitize_for_log(preferred_cluster), cluster_region
+                        sanitize_for_log(bucket),
+                        sanitize_for_log(preferred_cluster),
+                        cluster_region,
                     )
                 else:
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail=f"Cluster '{preferred_cluster}' does not have a monitor bucket tag set. "
-                               f"Clusters must have the '{ClusterInfo.MONITOR_BUCKET_TAG}' tag "
-                               f"with the S3 bucket URI (e.g., s3://your-bucket).",
+                        f"Clusters must have the '{ClusterInfo.MONITOR_BUCKET_TAG}' tag "
+                        f"with the S3 bucket URI (e.g., s3://your-bucket).",
                     )
             else:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail=f"Cluster '{preferred_cluster}' not found in configured regions. "
-                           f"Scanned regions: {', '.join(ursa_config.get_allowed_regions() or settings.get_allowed_regions())}",
+                    f"Scanned regions: {', '.join(ursa_config.get_allowed_regions() or settings.get_allowed_regions())}",
                 )
         except HTTPException:
             raise
@@ -347,7 +350,9 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                     detail="Manifest storage not configured; cannot use manifest_id",
                 )
-            tsv = manifest_registry.get_manifest_tsv(customer_id=customer_id, manifest_id=manifest_id)
+            tsv = manifest_registry.get_manifest_tsv(
+                customer_id=customer_id, manifest_id=manifest_id
+            )
             if not tsv:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
@@ -355,13 +360,17 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
                 )
             # Import parse function
             from daylily_ursa.manifest_registry import parse_tsv_to_samples
+
             workset_samples = parse_tsv_to_samples(tsv)
             manifest_tsv_for_s3 = tsv
-            LOGGER.info("Loaded %d samples from saved manifest %s", len(workset_samples), manifest_id)
+            LOGGER.info(
+                "Loaded %d samples from saved manifest %s", len(workset_samples), manifest_id
+            )
 
         # Try manifest_tsv_content next
         if manifest_tsv_content and not workset_samples:
             from daylily_ursa.manifest_registry import parse_tsv_to_samples
+
             workset_samples = parse_tsv_to_samples(manifest_tsv_content)
             manifest_tsv_for_s3 = manifest_tsv_content
             LOGGER.info("Parsed %d samples from provided TSV content", len(workset_samples))
@@ -380,7 +389,9 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
         for sample in workset_samples:
             if isinstance(sample, dict):
                 normalized = {
-                    "sample_id": sample.get("sample_id") or sample.get("id") or sample.get("name", "unknown"),
+                    "sample_id": sample.get("sample_id")
+                    or sample.get("id")
+                    or sample.get("name", "unknown"),
                     "r1_file": sample.get("r1_file") or sample.get("r1") or sample.get("fq1", ""),
                     "r2_file": sample.get("r2_file") or sample.get("r2") or sample.get("fq2", ""),
                     "status": sample.get("status", "pending"),
@@ -396,6 +407,7 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
 
         # Parse workset_type with fallback to RUO
         from daylily_ursa.workset_state_db import WorksetType
+
         try:
             ws_type = WorksetType(workset_type.lower())
         except ValueError:
@@ -436,7 +448,9 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
         # If no global integration exists but we have a bucket, create one ad-hoc
         effective_integration = integration
         if not effective_integration and bucket and INTEGRATION_AVAILABLE:
-            LOGGER.info("Creating ad-hoc integration for bucket %s (region %s)", bucket, cluster_region)
+            LOGGER.info(
+                "Creating ad-hoc integration for bucket %s (region %s)", bucket, cluster_region
+            )
             effective_integration = WorksetIntegration(
                 state_db=state_db,
                 bucket=bucket,
@@ -588,7 +602,9 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
         # Generate new workset name with new datetime suffix
         now_utc = dt.datetime.now(dt.timezone.utc)
         date_suffix = now_utc.strftime("%Y%m%d")
-        time_hash = hashlib.sha256(f"{base_name}-{now_utc.isoformat()}-{customer_id}".encode()).hexdigest()[:8]
+        time_hash = hashlib.sha256(
+            f"{base_name}-{now_utc.isoformat()}-{customer_id}".encode()
+        ).hexdigest()[:8]
         new_ws_name = f"{base_name}-{time_hash}-{date_suffix}"
 
         # Clone metadata from original workset
@@ -734,9 +750,7 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
             )
 
         # Archive the workset
-        success = state_db.archive_workset(
-            euid, archived_by=customer_id, archive_reason=reason
-        )
+        success = state_db.archive_workset(euid, archived_by=customer_id, archive_reason=reason)
         if not success:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -828,7 +842,7 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
                     if objects_to_delete:
                         # Delete in batches of 1000 (S3 limit)
                         for i in range(0, len(objects_to_delete), 1000):
-                            batch = objects_to_delete[i:i + 1000]
+                            batch = objects_to_delete[i : i + 1000]
                             s3.delete_objects(
                                 Bucket=bucket,
                                 Delete={"Objects": batch},
@@ -982,11 +996,14 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
                     ssh_key = settings.pipeline_ssh_identity_file
                     try:
                         from daylily_ursa.ursa_config import get_ursa_config
+
                         ursa_cfg = get_ursa_config()
                         region_key = ursa_cfg.get_ssh_key_for_region(workset_region)
                         if region_key:
                             ssh_key = region_key
-                            LOGGER.debug("Using region-specific SSH key for %s: %s", workset_region, ssh_key)
+                            LOGGER.debug(
+                                "Using region-specific SSH key for %s: %s", workset_region, ssh_key
+                            )
                     except Exception as e:
                         LOGGER.debug("Could not load ursa_config for region SSH key: %s", e)
 
@@ -1029,7 +1046,9 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
     async def get_customer_workset_performance_metrics(
         customer_id: str,
         euid: str,
-        force_refresh: bool = Query(False, description="Force refresh from headnode even if cached"),
+        force_refresh: bool = Query(
+            False, description="Force refresh from headnode even if cached"
+        ),
     ):
         """Get performance metrics for a customer's workset.
 
@@ -1081,15 +1100,9 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
                 if isinstance(cached_metrics, dict):
                     post_export_metrics = cached_metrics.get("post_export_metrics")
                     if isinstance(post_export_metrics, dict):
-                        post_export_metrics.setdefault(
-                            "data_transfer_intra_region_bytes", 0
-                        )
-                        post_export_metrics.setdefault(
-                            "data_transfer_cross_region_bytes", 0
-                        )
-                        post_export_metrics.setdefault(
-                            "data_transfer_internet_bytes", 0
-                        )
+                        post_export_metrics.setdefault("data_transfer_intra_region_bytes", 0)
+                        post_export_metrics.setdefault("data_transfer_cross_region_bytes", 0)
+                        post_export_metrics.setdefault("data_transfer_internet_bytes", 0)
                 # Have final cached metrics - return them
                 return {
                     "euid": euid,
@@ -1119,6 +1132,7 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
             ssh_key = settings.pipeline_ssh_identity_file
             try:
                 from daylily_ursa.ursa_config import get_ursa_config
+
                 ursa_cfg = get_ursa_config()
                 region_key = ursa_cfg.get_ssh_key_for_region(workset_region)
                 if region_key:
@@ -1137,9 +1151,7 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
             # Try headnode first (for running worksets) - use IP from TapDB
             if headnode_ip and workset_name and not is_terminal_state:
                 try:
-                    metrics_data = fetcher.fetch_performance_metrics(
-                        headnode_ip, workset_name
-                    )
+                    metrics_data = fetcher.fetch_performance_metrics(headnode_ip, workset_name)
                     if metrics_data and any(metrics_data.values()):
                         metrics_source = "headnode"
                 except Exception as e:
@@ -1152,9 +1164,7 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
             # Fall back to S3 if headnode didn't work or workset is complete
             if not metrics_data or not any(metrics_data.values()):
                 if results_s3_uri:
-                    LOGGER.debug(
-                        "Attempting S3 fallback for metrics: %s", results_s3_uri
-                    )
+                    LOGGER.debug("Attempting S3 fallback for metrics: %s", results_s3_uri)
                     try:
                         metrics_data = fetcher.fetch_performance_metrics_from_s3(
                             results_s3_uri,
@@ -1177,6 +1187,7 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
             if force_refresh and results_s3_uri and is_terminal_state:
                 try:
                     from urllib.parse import urlparse
+
                     parsed = urlparse(results_s3_uri)
                     s3_bucket = parsed.netloc
                     s3_prefix = parsed.path.lstrip("/")
@@ -1259,16 +1270,23 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
                 post_export_metrics.setdefault("data_transfer_internet_bytes", 0)
 
             # Cache with is_final=True if workset is in terminal state
-            state_db.update_performance_metrics(
-                euid, metrics_data, is_final=is_terminal_state
-            )
+            state_db.update_performance_metrics(euid, metrics_data, is_final=is_terminal_state)
 
         return {
             "euid": euid,
             "cached": False,
             "is_final": is_terminal_state,
             "source": metrics_source,
-            **(metrics_data or {"alignment_stats": None, "benchmark_data": None, "cost_summary": None, "duration_info": None, "post_export_metrics": None}),
+            **(
+                metrics_data
+                or {
+                    "alignment_stats": None,
+                    "benchmark_data": None,
+                    "cost_summary": None,
+                    "duration_info": None,
+                    "post_export_metrics": None,
+                }
+            ),
         }
 
     @router.get(
@@ -1355,6 +1373,7 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
         ssh_key = settings.pipeline_ssh_identity_file
         try:
             from daylily_ursa.ursa_config import get_ursa_config
+
             ursa_cfg = get_ursa_config()
             region_key = ursa_cfg.get_ssh_key_for_region(workset_region)
             if region_key:

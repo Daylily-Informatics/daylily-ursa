@@ -36,7 +36,9 @@ def manifest_registry() -> ManifestRegistry:
 
 
 class TestSaveManifestEncoding:
-    def test_save_manifest_encodes_tsv_and_stores_metadata(self, manifest_registry: ManifestRegistry):
+    def test_save_manifest_encodes_tsv_and_stores_metadata(
+        self, manifest_registry: ManifestRegistry
+    ):
         tsv_content = "RUN_ID\tSAMPLE_ID\nR0\tHG002\n"
 
         customer = MagicMock(uuid=101, euid="cust-euid")
@@ -59,7 +61,9 @@ class TestSaveManifestEncoding:
         assert _gzip_b64_decode(saved.tsv_gzip_b64) == tsv_content
         assert saved.manifest_euid == "manifest-euid"
 
-        manifest_payload = manifest_registry.backend.create_instance.call_args_list[1].kwargs["json_addl"]
+        manifest_payload = manifest_registry.backend.create_instance.call_args_list[1].kwargs[
+            "json_addl"
+        ]
         assert manifest_payload["customer_id"] == "cust-001"
         assert manifest_payload["sample_count"] == saved.sample_count
         assert manifest_payload["tsv_sha256"] == saved.tsv_sha256
@@ -110,7 +114,9 @@ class TestListCustomerManifests:
         assert m["sample_count"] == 3
         assert m["manifest_euid"] == "manifest-euid"
 
-    def test_list_customer_manifests_empty_when_customer_missing(self, manifest_registry: ManifestRegistry):
+    def test_list_customer_manifests_empty_when_customer_missing(
+        self, manifest_registry: ManifestRegistry
+    ):
         manifest_registry.backend.find_instance_by_external_id.return_value = None
         assert manifest_registry.list_customer_manifests("cust-404") == []
 
@@ -146,7 +152,9 @@ class TestGetManifestAndTsv:
         assert saved.sample_count == 1
         assert saved.tsv_sha256 == _sha256_hex(tsv_content)
 
-        round_tripped = manifest_registry.get_manifest_tsv(customer_id="cust-001", manifest_id="m-1")
+        round_tripped = manifest_registry.get_manifest_tsv(
+            customer_id="cust-001", manifest_id="m-1"
+        )
         assert round_tripped == tsv_content
 
     def test_get_manifest_returns_none_when_not_found(self, manifest_registry: ManifestRegistry):
@@ -154,7 +162,9 @@ class TestGetManifestAndTsv:
         result = manifest_registry.get_manifest(customer_id="cust-001", manifest_id="m-missing")
         assert result is None
 
-    def test_get_manifest_returns_none_for_customer_mismatch(self, manifest_registry: ManifestRegistry):
+    def test_get_manifest_returns_none_for_customer_mismatch(
+        self, manifest_registry: ManifestRegistry
+    ):
         row = MagicMock(
             euid="manifest-euid",
             name="Run 1",
@@ -211,4 +221,6 @@ class TestGetManifestByEuid:
 class TestBootstrap:
     def test_bootstrap_ensures_templates(self, manifest_registry: ManifestRegistry):
         manifest_registry.bootstrap()
-        manifest_registry.backend.ensure_templates.assert_called_once_with(manifest_registry._session)
+        manifest_registry.backend.ensure_templates.assert_called_once_with(
+            manifest_registry._session
+        )

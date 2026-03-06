@@ -44,7 +44,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--host",
-        default="0.0.0.0",
+        default="0.0.0.0",  # nosec B104 - server CLI default bind address
         help="Host to bind to",
     )
     parser.add_argument(
@@ -172,15 +172,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             or os.getenv("COGNITO_APP_CLIENT_ID")
             or ursa_config.cognito_app_client_id
         )
-        app_client_secret = (
-            os.getenv("COGNITO_APP_CLIENT_SECRET")
-            or getattr(ursa_config, "cognito_app_client_secret", None)
+        app_client_secret = os.getenv("COGNITO_APP_CLIENT_SECRET") or getattr(
+            ursa_config, "cognito_app_client_secret", None
         )
-        cognito_region = (
-            os.getenv("COGNITO_REGION")
-            or ursa_config.cognito_region
-            or args.region
-        )
+        cognito_region = os.getenv("COGNITO_REGION") or ursa_config.cognito_region or args.region
 
         if not user_pool_id or not app_client_id:
             LOGGER.error(

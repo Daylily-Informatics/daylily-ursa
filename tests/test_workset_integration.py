@@ -38,9 +38,7 @@ def mock_s3_client():
     """Create mock S3 client."""
     mock_s3 = MagicMock()
     mock_s3.put_object.return_value = {}
-    mock_s3.get_object.return_value = {
-        "Body": MagicMock(read=lambda: b"2024-01-15T10:00:00Z")
-    }
+    mock_s3.get_object.return_value = {"Body": MagicMock(read=lambda: b"2024-01-15T10:00:00Z")}
     mock_s3.delete_object.return_value = {}
     mock_s3.list_objects_v2.return_value = {"Contents": [], "KeyCount": 0}
     return mock_s3
@@ -295,7 +293,9 @@ class TestBuildWorkYaml:
         }
 
         # Returns string now, not dict
-        work_yaml_content = integration._build_work_yaml("test-ws", metadata, "test-bucket", "worksets/test-ws/")
+        work_yaml_content = integration._build_work_yaml(
+            "test-ws", metadata, "test-bucket", "worksets/test-ws/"
+        )
 
         # Should be a string (YAML content)
         assert isinstance(work_yaml_content, str)
@@ -317,10 +317,12 @@ class TestBuildWorkYaml:
             "export_uri": "s3://export-bucket/results/",
         }
 
-        work_yaml_content = integration._build_work_yaml("test-ws", metadata, "test-bucket", "worksets/test-ws/")
+        work_yaml_content = integration._build_work_yaml(
+            "test-ws", metadata, "test-bucket", "worksets/test-ws/"
+        )
 
         # Should contain the custom export_uri
-        assert 's3://export-bucket/results/' in work_yaml_content
+        assert "s3://export-bucket/results/" in work_yaml_content
 
     def test_build_work_yaml_default_export_uri(self, integration):
         """Test that default export URI uses customer bucket."""
@@ -329,10 +331,12 @@ class TestBuildWorkYaml:
             "reference_genome": "GRCh38",
         }
 
-        work_yaml_content = integration._build_work_yaml("test-ws", metadata, "customer-bucket", "worksets/test-ws/")
+        work_yaml_content = integration._build_work_yaml(
+            "test-ws", metadata, "customer-bucket", "worksets/test-ws/"
+        )
 
         # Should contain the default export_uri with customer bucket
-        assert 's3://customer-bucket/worksets/test-ws/results/' in work_yaml_content
+        assert "s3://customer-bucket/worksets/test-ws/results/" in work_yaml_content
 
 
 class TestSyncTapDBToS3:
@@ -525,7 +529,9 @@ class TestMonitorReconcileTapDBState:
         call_kwargs = monitor.state_db.update_state.call_args.kwargs
         assert call_kwargs["euid"] == "euid-test-ws-002"
 
-    def test_reconcile_does_not_overwrite_terminal_tapdb_state(self, mock_monitor_for_reconciliation):
+    def test_reconcile_does_not_overwrite_terminal_tapdb_state(
+        self, mock_monitor_for_reconciliation
+    ):
         """Test that terminal states in TapDB are not overwritten."""
         from daylily_ursa.workset_monitor import Workset
 
@@ -988,8 +994,14 @@ class TestCollectPostExportMetrics:
         mock_paginator.paginate.return_value = [
             {
                 "Contents": [
-                    {"Key": "prefix/workset/results/day/hg38/RUN001_SAMPLE1_EXP001.cram", "Size": 5368709120},
-                    {"Key": "prefix/workset/results/day/hg38/RUN001_SAMPLE2_EXP002.cram", "Size": 4294967296},
+                    {
+                        "Key": "prefix/workset/results/day/hg38/RUN001_SAMPLE1_EXP001.cram",
+                        "Size": 5368709120,
+                    },
+                    {
+                        "Key": "prefix/workset/results/day/hg38/RUN001_SAMPLE2_EXP002.cram",
+                        "Size": 4294967296,
+                    },
                 ]
             }
         ]
@@ -1123,10 +1135,7 @@ class TestParseBenchmarkCosts:
         workset = MagicMock()
         workset.name = "test-ws-003"
 
-        benchmark_content = (
-            b"rule\tsample\truntime\n"
-            b"align\tSAMPLE1\t100\n"
-        )
+        benchmark_content = b"rule\tsample\truntime\nalign\tSAMPLE1\t100\n"
 
         cat_result = subprocess.CompletedProcess(
             args=[], returncode=0, stdout=benchmark_content, stderr=b""
@@ -1134,9 +1143,7 @@ class TestParseBenchmarkCosts:
 
         mock_monitor._run_headnode_command = MagicMock(return_value=cat_result)
 
-        result = mock_monitor._parse_benchmark_costs(
-            workset, "test-cluster", "/fsx/path.tsv", {}
-        )
+        result = mock_monitor._parse_benchmark_costs(workset, "test-cluster", "/fsx/path.tsv", {})
 
         assert result is None
 
@@ -1165,7 +1172,9 @@ class TestHeadnodeAnalysisPath:
             monitor._local_state_dir = MagicMock(return_value=state_dir)
             monitor._save_metrics = MagicMock()
 
-            location = PurePosixPath("/fsx/analysis_results/ubuntu/test-ws-path-001/daylily-omics-analysis")
+            location = PurePosixPath(
+                "/fsx/analysis_results/ubuntu/test-ws-path-001/daylily-omics-analysis"
+            )
             monitor._record_pipeline_location(workset, location)
 
             # Verify TapDB was called with headnode_analysis_path
@@ -1254,7 +1263,10 @@ class TestUpdateExecutionEnvironmentHeadnodePath:
             headnode_analysis_path="/fsx/analysis_results/ubuntu/test-ws-001/daylily-omics-analysis",
         )
 
-        assert ws.json_addl["headnode_analysis_path"] == "/fsx/analysis_results/ubuntu/test-ws-001/daylily-omics-analysis"
+        assert (
+            ws.json_addl["headnode_analysis_path"]
+            == "/fsx/analysis_results/ubuntu/test-ws-001/daylily-omics-analysis"
+        )
         assert "updated_at" in ws.json_addl
         session.flush.assert_called_once()
 
@@ -1337,7 +1349,9 @@ class TestStageReferenceBucket:
 
     def test_substitutes_region_suffix_eu_central_1_to_us_west_2(self, mock_monitor):
         """Test region suffix substitution from eu-central-1 to us-west-2."""
-        mock_monitor.config.pipeline.reference_bucket = "s3://lsmc-dayoa-omics-analysis-eu-central-1/"
+        mock_monitor.config.pipeline.reference_bucket = (
+            "s3://lsmc-dayoa-omics-analysis-eu-central-1/"
+        )
 
         result = mock_monitor._stage_reference_bucket(region="us-west-2")
 
@@ -1516,7 +1530,9 @@ class TestBucketNormalizationAtIngress:
         )
         assert integration.bucket == "my-bucket-with-prefix"
 
-    def test_register_workset_normalizes_bucket_param(self, integration, mock_state_db, mock_s3_client):
+    def test_register_workset_normalizes_bucket_param(
+        self, integration, mock_state_db, mock_s3_client
+    ):
         """Test register_workset normalizes bucket parameter with s3:// prefix."""
         result = integration.register_workset(
             name="test-ws-norm",
@@ -1649,6 +1665,7 @@ class TestRegionThreadingInExportResults:
         # Mock Path.exists to return False (no fsx_export.yaml)
         with patch.object(Path, "exists", return_value=False):
             from daylily_ursa.workset_monitor import MonitorError
+
             try:
                 monitor._export_results(
                     workset=workset,
@@ -1690,6 +1707,7 @@ class TestRegionThreadingInExportResults:
 
         with patch.object(Path, "exists", return_value=False):
             from daylily_ursa.workset_monitor import MonitorError
+
             try:
                 monitor._export_results(
                     workset=workset,
@@ -1787,8 +1805,7 @@ class TestRegionAwareS3Client:
             assert client.profile == "my-profile"
             # Both region and profile are passed to Session
             mock_boto3.Session.assert_called_with(
-                region_name="eu-central-1",
-                profile_name="my-profile"
+                region_name="eu-central-1", profile_name="my-profile"
             )
 
     def test_get_bucket_region_us_east_1_returns_none(self):
@@ -1871,7 +1888,9 @@ class TestRegionAwareS3Client:
             mock_boto3.Session.side_effect = session_factory
 
             # Default client is used for GetBucketLocation
-            us_west_2_client.get_bucket_location.return_value = {"LocationConstraint": "eu-central-1"}
+            us_west_2_client.get_bucket_location.return_value = {
+                "LocationConstraint": "eu-central-1"
+            }
 
             client = RegionAwareS3Client(default_region="us-west-2")
             regional_client = client.get_client_for_bucket("eu-bucket")
@@ -1925,7 +1944,9 @@ class TestRegionAwareS3Client:
             client = RegionAwareS3Client(default_region="us-west-2")
             client.put_object(Bucket="eu-bucket", Key="test.txt", Body=b"content")
 
-            eu_client.put_object.assert_called_once_with(Bucket="eu-bucket", Key="test.txt", Body=b"content")
+            eu_client.put_object.assert_called_once_with(
+                Bucket="eu-bucket", Key="test.txt", Body=b"content"
+            )
 
     def test_get_paginator_returns_region_aware_paginator(self):
         """Test that get_paginator returns a RegionAwarePaginator."""
@@ -2253,8 +2274,12 @@ class TestListWorksetsByCustomerGSI:
         query.order_by.return_value = query
         query.limit.return_value = query
         query.all.return_value = [
-            MagicMock(json_addl={"workset_id": "ws-001", "customer_id": "cust-123", "state": "ready"}),
-            MagicMock(json_addl={"workset_id": "ws-002", "customer_id": "cust-123", "state": "complete"}),
+            MagicMock(
+                json_addl={"workset_id": "ws-001", "customer_id": "cust-123", "state": "ready"}
+            ),
+            MagicMock(
+                json_addl={"workset_id": "ws-002", "customer_id": "cust-123", "state": "complete"}
+            ),
         ]
 
         class _Ctx:
@@ -2835,7 +2860,9 @@ class TestCostReportIntegration:
 
         with patch.object(monitor, "_get_s3_directory_size", return_value=1073741824):
             with patch.object(monitor, "_collect_s3_file_metrics"):
-                with patch("daylily_ursa.pipeline_status.PipelineStatusFetcher") as mock_fetcher_class:
+                with patch(
+                    "daylily_ursa.pipeline_status.PipelineStatusFetcher"
+                ) as mock_fetcher_class:
                     mock_fetcher = MagicMock()
                     mock_fetcher.fetch_performance_metrics_from_s3.return_value = mock_perf_metrics
                     mock_fetcher_class.return_value = mock_fetcher
@@ -2872,7 +2899,9 @@ class TestCostReportIntegration:
 
         with patch.object(monitor, "_get_s3_directory_size", return_value=1000):
             with patch.object(monitor, "_collect_s3_file_metrics"):
-                with patch("daylily_ursa.pipeline_status.PipelineStatusFetcher") as mock_fetcher_class:
+                with patch(
+                    "daylily_ursa.pipeline_status.PipelineStatusFetcher"
+                ) as mock_fetcher_class:
                     mock_fetcher = MagicMock()
                     mock_fetcher.fetch_performance_metrics_from_s3.return_value = mock_perf_metrics
                     mock_fetcher_class.return_value = mock_fetcher
@@ -2929,7 +2958,9 @@ class TestStorageMetricsIntegration:
 
         with patch.object(monitor, "_get_s3_directory_size", return_value=storage_bytes):
             with patch.object(monitor, "_collect_s3_file_metrics"):
-                with patch("daylily_ursa.pipeline_status.PipelineStatusFetcher") as mock_fetcher_class:
+                with patch(
+                    "daylily_ursa.pipeline_status.PipelineStatusFetcher"
+                ) as mock_fetcher_class:
                     mock_fetcher = MagicMock()
                     mock_fetcher.fetch_performance_metrics_from_s3.return_value = {}
                     mock_fetcher_class.return_value = mock_fetcher
@@ -2957,7 +2988,9 @@ class TestStorageMetricsIntegration:
 
         with patch.object(monitor, "_get_s3_directory_size", return_value=0):
             with patch.object(monitor, "_collect_s3_file_metrics"):
-                with patch("daylily_ursa.pipeline_status.PipelineStatusFetcher") as mock_fetcher_class:
+                with patch(
+                    "daylily_ursa.pipeline_status.PipelineStatusFetcher"
+                ) as mock_fetcher_class:
                     mock_fetcher = MagicMock()
                     mock_fetcher.fetch_performance_metrics_from_s3.return_value = {}
                     mock_fetcher_class.return_value = mock_fetcher
@@ -2982,7 +3015,9 @@ class TestStorageMetricsIntegration:
 
         with patch.object(monitor, "_get_s3_directory_size", return_value=1000):
             with patch.object(monitor, "_collect_s3_file_metrics"):
-                with patch("daylily_ursa.pipeline_status.PipelineStatusFetcher") as mock_fetcher_class:
+                with patch(
+                    "daylily_ursa.pipeline_status.PipelineStatusFetcher"
+                ) as mock_fetcher_class:
                     mock_fetcher = MagicMock()
                     mock_fetcher.fetch_performance_metrics_from_s3.return_value = {}
                     mock_fetcher_class.return_value = mock_fetcher
@@ -3017,7 +3052,9 @@ class TestStorageMetricsIntegration:
 
         with patch.object(monitor, "_get_s3_directory_size", return_value=storage_bytes):
             with patch.object(monitor, "_collect_s3_file_metrics"):
-                with patch("daylily_ursa.pipeline_status.PipelineStatusFetcher") as mock_fetcher_class:
+                with patch(
+                    "daylily_ursa.pipeline_status.PipelineStatusFetcher"
+                ) as mock_fetcher_class:
                     mock_fetcher = MagicMock()
                     mock_fetcher.fetch_performance_metrics_from_s3.return_value = mock_perf_metrics
                     mock_fetcher_class.return_value = mock_fetcher
@@ -3196,7 +3233,9 @@ class TestSchedulerIntegration:
         worksets = [
             Workset(name="ws-low", prefix="p1/", sentinels={}, bucket="b", euid="euid-ws-low"),
             Workset(name="ws-high", prefix="p2/", sentinels={}, bucket="b", euid="euid-ws-high"),
-            Workset(name="ws-normal", prefix="p3/", sentinels={}, bucket="b", euid="euid-ws-normal"),
+            Workset(
+                name="ws-normal", prefix="p3/", sentinels={}, bucket="b", euid="euid-ws-normal"
+            ),
         ]
 
         # Scheduler returns in priority order
@@ -3426,7 +3465,9 @@ class TestConcurrentProcessorIntegration:
         """Test run_with_concurrent_processor creates and starts processor."""
         monitor, mock_state_db, mock_scheduler = monitor_with_all_components
 
-        with patch("daylily_ursa.workset_concurrent_processor.ConcurrentWorksetProcessor") as mock_processor_class:
+        with patch(
+            "daylily_ursa.workset_concurrent_processor.ConcurrentWorksetProcessor"
+        ) as mock_processor_class:
             mock_processor = MagicMock()
             # Make start() raise to exit immediately
             mock_processor.start.side_effect = KeyboardInterrupt()
@@ -3450,7 +3491,9 @@ class TestConcurrentProcessorIntegration:
         """Test ConcurrentWorksetProcessor config matches monitor config."""
         monitor, _, _ = monitor_with_all_components
 
-        with patch("daylily_ursa.workset_concurrent_processor.ConcurrentWorksetProcessor") as mock_processor_class:
+        with patch(
+            "daylily_ursa.workset_concurrent_processor.ConcurrentWorksetProcessor"
+        ) as mock_processor_class:
             mock_processor = MagicMock()
             mock_processor.start.side_effect = KeyboardInterrupt()
             mock_processor_class.return_value = mock_processor
@@ -3593,7 +3636,9 @@ class TestWorksetRetrySemantics:
 
         state_db.backend.session_scope.return_value = _Ctx()
         state_db._serialize_metadata = lambda x: x
-        ws = MagicMock(json_addl={"metadata": {"samples": [{"sample_id": "S1"}], "existing_field": "value"}})
+        ws = MagicMock(
+            json_addl={"metadata": {"samples": [{"sample_id": "S1"}], "existing_field": "value"}}
+        )
         state_db._find_workset = MagicMock(return_value=ws)
 
         result = state_db.update_metadata("test-ws", {"retried_as": "new-ws-id"})

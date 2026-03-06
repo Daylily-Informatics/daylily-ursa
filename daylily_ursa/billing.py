@@ -29,22 +29,23 @@ LOGGER = logging.getLogger(__name__)
 @dataclass
 class BillingRates:
     """Configurable billing rates.
-    
+
     All rates are in USD.
     """
+
     # Storage rates (per GB per month)
     s3_storage_per_gb_month: float = 0.023  # S3 Standard
-    
+
     # Transfer rates (per GB)
     # NOTE: Internet egress uses `data_egress_per_gb` for backwards-compatibility.
     data_egress_per_gb: float = 0.09  # AWS data transfer out
     data_transfer_intra_region_per_gb: float = 0.00
     data_transfer_cross_region_per_gb: float = 0.02
-    
+
     # Platform fees
     platform_fee_per_sample: float = 0.0  # Optional per-sample fee
     platform_fee_percentage: float = 0.0  # Optional percentage markup (0.10 = 10%)
-    
+
     # Minimum charges
     minimum_compute_charge: float = 0.0
     minimum_storage_charge: float = 0.0
@@ -53,20 +54,21 @@ class BillingRates:
 @dataclass
 class WorksetBillingItem:
     """Billing details for a single workset."""
+
     workset_euid: str
     customer_id: str
     completed_at: Optional[str] = None
-    
+
     # Compute costs (from Snakemake benchmark)
     compute_cost_usd: float = 0.0
     sample_count: int = 0
     rule_count: int = 0
-    
+
     # Storage costs
     storage_bytes: int = 0
     storage_gb: float = 0.0
     storage_cost_usd: float = 0.0
-    
+
     # Transfer costs (metered when available; otherwise estimated)
     transfer_intra_region_bytes: int = 0
     transfer_intra_region_gb: float = 0.0
@@ -83,13 +85,13 @@ class WorksetBillingItem:
     # Backwards-compatible aggregate view
     transfer_gb: float = 0.0
     transfer_cost_usd: float = 0.0
-    
+
     # Platform fees
     platform_fee_usd: float = 0.0
-    
+
     # Totals
     total_cost_usd: float = 0.0
-    
+
     # Source flags
     has_actual_compute_cost: bool = False
     has_actual_storage: bool = False
@@ -98,33 +100,34 @@ class WorksetBillingItem:
 @dataclass
 class CustomerBillingSummary:
     """Aggregated billing summary for a customer."""
+
     customer_id: str
     period_start: str
     period_end: str
-    
+
     # Workset counts
     total_worksets: int = 0
     billable_worksets: int = 0
-    
+
     # Sample counts
     total_samples: int = 0
-    
+
     # Cost breakdown
     total_compute_cost_usd: float = 0.0
     total_storage_cost_usd: float = 0.0
     total_transfer_cost_usd: float = 0.0
     total_platform_fee_usd: float = 0.0
-    
+
     # Storage totals
     total_storage_bytes: int = 0
     total_storage_gb: float = 0.0
-    
+
     # Grand total
     grand_total_usd: float = 0.0
-    
+
     # Line items
     workset_items: List[WorksetBillingItem] = field(default_factory=list)
-    
+
     # Accuracy flags
     has_actual_costs: bool = False
     estimated_worksets: int = 0
@@ -132,34 +135,34 @@ class CustomerBillingSummary:
 
 class BillingCalculator:
     """Calculate billing for worksets and customers.
-    
+
     Uses actual cost data from Snakemake benchmark reports (Phase 5B)
     and storage metrics (Phase 5C) when available, falling back to
     estimates when actual data is not present.
     """
-    
+
     def __init__(
         self,
         state_db: "WorksetStateDB",
         rates: Optional[BillingRates] = None,
     ):
         """Initialize billing calculator.
-        
+
         Args:
             state_db: WorksetStateDB instance for data access
             rates: Optional custom billing rates (defaults to standard rates)
         """
         self.state_db = state_db
         self.rates = rates or BillingRates()
-    
+
     def _round_currency(self, value: float, places: int = 4) -> float:
         """Round currency value to specified decimal places."""
         d = Decimal(str(value))
         return float(d.quantize(Decimal(10) ** -places, rounding=ROUND_HALF_UP))
-    
+
     def _bytes_to_gb(self, bytes_val: int) -> float:
         """Convert bytes to gigabytes."""
-        return bytes_val / (1024 ** 3)
+        return bytes_val / (1024**3)
 
     def calculate_workset_billing(
         self,
@@ -206,8 +209,7 @@ class BillingCalculator:
                 metadata = workset.get("metadata", {})
                 if isinstance(metadata, dict):
                     item.compute_cost_usd = float(
-                        metadata.get("cost_usd", 0) or
-                        metadata.get("estimated_cost_usd", 0) or 0
+                        metadata.get("cost_usd", 0) or metadata.get("estimated_cost_usd", 0) or 0
                     )
                     item.sample_count = int(metadata.get("sample_count", 0))
 
@@ -301,10 +303,10 @@ class BillingCalculator:
 
         # Calculate total
         item.total_cost_usd = self._round_currency(
-            item.compute_cost_usd +
-            item.storage_cost_usd +
-            item.transfer_cost_usd +
-            item.platform_fee_usd
+            item.compute_cost_usd
+            + item.storage_cost_usd
+            + item.transfer_cost_usd
+            + item.platform_fee_usd
         )
 
         return item
@@ -395,10 +397,10 @@ class BillingCalculator:
         # Calculate totals
         summary.total_storage_gb = self._bytes_to_gb(summary.total_storage_bytes)
         summary.grand_total_usd = self._round_currency(
-            summary.total_compute_cost_usd +
-            summary.total_storage_cost_usd +
-            summary.total_transfer_cost_usd +
-            summary.total_platform_fee_usd
+            summary.total_compute_cost_usd
+            + summary.total_storage_cost_usd
+            + summary.total_transfer_cost_usd
+            + summary.total_platform_fee_usd
         )
 
         # Round individual totals
@@ -429,12 +431,22 @@ class BillingCalculator:
                     "compute_usd": self._round_currency(item.compute_cost_usd, 2),
                     "storage_gb": self._round_currency(item.storage_gb, 2),
                     "storage_usd": self._round_currency(item.storage_cost_usd, 2),
-                    "transfer_intra_region_gb": self._round_currency(item.transfer_intra_region_gb, 2),
-                    "transfer_intra_region_usd": self._round_currency(item.transfer_intra_region_cost_usd, 2),
-                    "transfer_cross_region_gb": self._round_currency(item.transfer_cross_region_gb, 2),
-                    "transfer_cross_region_usd": self._round_currency(item.transfer_cross_region_cost_usd, 2),
+                    "transfer_intra_region_gb": self._round_currency(
+                        item.transfer_intra_region_gb, 2
+                    ),
+                    "transfer_intra_region_usd": self._round_currency(
+                        item.transfer_intra_region_cost_usd, 2
+                    ),
+                    "transfer_cross_region_gb": self._round_currency(
+                        item.transfer_cross_region_gb, 2
+                    ),
+                    "transfer_cross_region_usd": self._round_currency(
+                        item.transfer_cross_region_cost_usd, 2
+                    ),
                     "transfer_internet_gb": self._round_currency(item.transfer_internet_gb, 2),
-                    "transfer_internet_usd": self._round_currency(item.transfer_internet_cost_usd, 2),
+                    "transfer_internet_usd": self._round_currency(
+                        item.transfer_internet_cost_usd, 2
+                    ),
                     "transfer_usd": self._round_currency(item.transfer_cost_usd, 2),
                     "platform_fee_usd": self._round_currency(item.platform_fee_usd, 2),
                     "total_usd": self._round_currency(item.total_cost_usd, 2),
@@ -448,9 +460,7 @@ class BillingCalculator:
 
         return {
             "customer_id": customer_id,
-            "invoice_date": dt.datetime.now(dt.timezone.utc)
-            .isoformat()
-            .replace("+00:00", "Z"),
+            "invoice_date": dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z"),
             "period_start": summary.period_start,
             "period_end": summary.period_end,
             "summary": {
@@ -559,4 +569,3 @@ def calculate_customer_cost_breakdown(
             "data_transfer_cross_region_per_gb": calculator.rates.data_transfer_cross_region_per_gb,
         },
     }
-

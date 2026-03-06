@@ -181,7 +181,9 @@ class BucketFileDiscovery:
                             bucket_name=bucket_name,
                             key=key,
                             file_size_bytes=int(obj.get("Size", 0)),
-                            last_modified=last_modified.isoformat() if hasattr(last_modified, "isoformat") else str(last_modified or ""),
+                            last_modified=last_modified.isoformat()
+                            if hasattr(last_modified, "isoformat")
+                            else str(last_modified or ""),
                             etag=str(obj.get("ETag", "")).strip('"'),
                             detected_format=detected,
                         )
@@ -230,7 +232,9 @@ class BucketFileDiscovery:
                 skipped += 1
                 continue
             file_id = generate_file_id(discovered.s3_uri, customer_id)
-            read_number = 2 if any(token in discovered.key for token in ("_R2", "_2.fastq", "_2.fq")) else 1
+            read_number = (
+                2 if any(token in discovered.key for token in ("_R2", "_2.fastq", "_2.fq")) else 1
+            )
             registration = FileRegistration(
                 file_id=file_id,
                 customer_id=customer_id,
@@ -280,7 +284,9 @@ class FileRegistry:
     @staticmethod
     def _norm_file_id(file_id: str) -> str:
         if not file_id:
-            raise ValueError("file_id is required; use generate_file_id() to create a deterministic name")
+            raise ValueError(
+                "file_id is required; use generate_file_id() to create a deterministic name"
+            )
         return file_id
 
     def _ensure_customer(self, session, customer_id: str):
@@ -355,7 +361,9 @@ class FileRegistry:
         """Register a file. Returns the EUID of the created/updated file, or None on failure."""
         registration.file_id = self._norm_file_id(registration.file_id)
         if not registration.file_metadata.file_format:
-            registration.file_metadata.file_format = detect_file_format(registration.file_metadata.s3_uri)
+            registration.file_metadata.file_format = detect_file_format(
+                registration.file_metadata.s3_uri
+            )
 
         with self.backend.session_scope(commit=True) as session:
             existing = self.backend.find_instance_by_external_id(
@@ -469,7 +477,9 @@ class FileRegistry:
                 out.append(reg)
         return out
 
-    def search_files_by_biosample(self, customer_id: str, biosample_id: str) -> List[FileRegistration]:
+    def search_files_by_biosample(
+        self, customer_id: str, biosample_id: str
+    ) -> List[FileRegistration]:
         out = []
         for reg in self.list_customer_files(customer_id, limit=10000):
             if reg.biosample_metadata.biosample_id == biosample_id:
@@ -483,8 +493,12 @@ class FileRegistry:
             "customer_id": fileset.customer_id,
             "name": fileset.name,
             "description": fileset.description,
-            "biosample_metadata": asdict(fileset.biosample_metadata) if fileset.biosample_metadata else None,
-            "sequencing_metadata": asdict(fileset.sequencing_metadata) if fileset.sequencing_metadata else None,
+            "biosample_metadata": asdict(fileset.biosample_metadata)
+            if fileset.biosample_metadata
+            else None,
+            "sequencing_metadata": asdict(fileset.sequencing_metadata)
+            if fileset.sequencing_metadata
+            else None,
             "file_ids": list(fileset.file_ids),
             "tags": list(fileset.tags),
             "created_at": fileset.created_at,
@@ -500,8 +514,12 @@ class FileRegistry:
             customer_id=payload["customer_id"],
             name=payload.get("name", payload["fileset_id"]),
             description=payload.get("description"),
-            biosample_metadata=BiosampleMetadata(**biosample_metadata) if biosample_metadata else None,
-            sequencing_metadata=SequencingMetadata(**sequencing_metadata) if sequencing_metadata else None,
+            biosample_metadata=BiosampleMetadata(**biosample_metadata)
+            if biosample_metadata
+            else None,
+            sequencing_metadata=SequencingMetadata(**sequencing_metadata)
+            if sequencing_metadata
+            else None,
             file_ids=list(payload.get("file_ids", [])),
             tags=list(payload.get("tags", [])),
             created_at=payload.get("created_at", _utc_now_iso()),
@@ -532,7 +550,9 @@ class FileRegistry:
                 json_addl=payload,
                 bstatus="active",
             )
-            self.backend.create_lineage(session, parent=customer, child=row, relationship_type="owns")
+            self.backend.create_lineage(
+                session, parent=customer, child=row, relationship_type="owns"
+            )
             for fid in fileset.file_ids:
                 file_row = self.backend.find_instance_by_external_id(
                     session,
@@ -541,7 +561,9 @@ class FileRegistry:
                     value=fid,
                 )
                 if file_row is not None:
-                    self.backend.create_lineage(session, parent=row, child=file_row, relationship_type="contains")
+                    self.backend.create_lineage(
+                        session, parent=row, child=file_row, relationship_type="contains"
+                    )
             return row.euid
 
     def get_fileset(self, fileset_id: str) -> Optional[FileSet]:
@@ -614,7 +636,9 @@ class FileRegistry:
                     value=fid,
                 )
                 if file_row is not None:
-                    self.backend.create_lineage(session, parent=fileset_row, child=file_row, relationship_type="contains")
+                    self.backend.create_lineage(
+                        session, parent=fileset_row, child=file_row, relationship_type="contains"
+                    )
         return True
 
     def remove_files_from_fileset(self, fileset_id: str, file_ids: List[str]) -> bool:
@@ -660,7 +684,9 @@ class FileRegistry:
             session.flush()
             return True
 
-    def clone_fileset(self, fileset_id: str, *, new_fileset_id: Optional[str] = None, name: Optional[str] = None) -> Optional[FileSet]:
+    def clone_fileset(
+        self, fileset_id: str, *, new_fileset_id: Optional[str] = None, name: Optional[str] = None
+    ) -> Optional[FileSet]:
         src = self.get_fileset(fileset_id)
         if src is None:
             return None

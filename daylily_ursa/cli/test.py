@@ -139,4 +139,3 @@ def all_checks():
         raise typer.Exit(1)
     else:
         console.print("\n[green]✓[/green]  All checks passed")
-

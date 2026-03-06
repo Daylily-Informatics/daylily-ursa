@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from fastapi import FastAPI
@@ -20,7 +19,11 @@ def test_cluster_create_job_endpoints_have_request_level_coverage():
         return {"is_admin": True, "email": "admin@example.com"}
 
     app = FastAPI()
-    app.include_router(create_clusters_router(ClusterDependencies(settings=settings, get_current_user=get_current_user)))
+    app.include_router(
+        create_clusters_router(
+            ClusterDependencies(settings=settings, get_current_user=get_current_user)
+        )
+    )
 
     class _FakeUrsaConfig:
         is_configured = True
@@ -49,12 +52,29 @@ def test_cluster_create_job_endpoints_have_request_level_coverage():
 
     with patch("daylily_ursa.ursa_config.get_ursa_config", return_value=_FakeUrsaConfig()):
         with patch("daylily_ursa.routes.clusters.boto3.Session", return_value=mock_session):
-            with patch("daylily_ursa.ephemeral_cluster.runner.list_cluster_create_jobs", return_value=[{"job_id": "ec-1"}]):
-                with patch("daylily_ursa.ephemeral_cluster.runner.read_cluster_create_job", return_value={"job_id": "ec-1"}):
-                    with patch("daylily_ursa.ephemeral_cluster.runner.tail_job_log", return_value="log"):
+            with patch(
+                "daylily_ursa.ephemeral_cluster.runner.list_cluster_create_jobs",
+                return_value=[{"job_id": "ec-1"}],
+            ):
+                with patch(
+                    "daylily_ursa.ephemeral_cluster.runner.read_cluster_create_job",
+                    return_value={"job_id": "ec-1"},
+                ):
+                    with patch(
+                        "daylily_ursa.ephemeral_cluster.runner.tail_job_log", return_value="log"
+                    ):
                         with TestClient(app, base_url="https://testserver") as client:
                             assert client.get("/api/v2/clusters/create/jobs").status_code != 404
-                            assert client.get("/api/v2/clusters/create/jobs/ec-1").status_code != 404
-                            assert client.get("/api/v2/clusters/create/jobs/ec-1/logs").status_code != 404
-                            assert client.get("/api/v2/clusters/create/options?region=us-west-2").status_code != 404
-
+                            assert (
+                                client.get("/api/v2/clusters/create/jobs/ec-1").status_code != 404
+                            )
+                            assert (
+                                client.get("/api/v2/clusters/create/jobs/ec-1/logs").status_code
+                                != 404
+                            )
+                            assert (
+                                client.get(
+                                    "/api/v2/clusters/create/options?region=us-west-2"
+                                ).status_code
+                                != 404
+                            )

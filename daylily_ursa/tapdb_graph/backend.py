@@ -4,10 +4,7 @@ import os
 import datetime as dt
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any, Dict, Generator, List, Optional
-
-# Canonical EUID type alias — use this everywhere outside TapDB internals
-Euid = str
+from typing import Any, Dict, Generator, Optional
 
 from sqlalchemy import and_, text
 from sqlalchemy.orm import Session
@@ -23,6 +20,9 @@ from daylily_tapdb import (
 from daylily_tapdb.cli.context import resolve_context
 from daylily_tapdb.cli.db_config import get_db_config_for_env
 from daylily_tapdb.sequences import ensure_instance_prefix_sequence
+
+# Canonical EUID type alias — use this everywhere outside TapDB internals
+Euid = str
 
 
 def utc_now_iso() -> str:
@@ -50,19 +50,55 @@ class TemplateDefinition:
 
 
 TEMPLATE_DEFINITIONS: tuple[TemplateDefinition, ...] = (
-    TemplateDefinition("actor/customer/account/1.0/", "actor_template", "actor_instance", "CT", "Customer"),
+    TemplateDefinition(
+        "actor/customer/account/1.0/", "actor_template", "actor_instance", "CT", "Customer"
+    ),
     TemplateDefinition("actor/user/account/1.0/", "actor_template", "actor_instance", "AG", "User"),
-    TemplateDefinition("workflow/workset/analysis/1.0/", "workflow_template", "workflow_instance", "WS", "Workset"),
-    TemplateDefinition("action/workset/state-transition/1.0/", "action_template", "action_instance", "ST", "State Transition"),
-    TemplateDefinition("action/workset/lock-event/1.0/", "action_template", "action_instance", "CK", "Lock Event"),
-    TemplateDefinition("file/object/registered/1.0/", "file_template", "file_instance", "FF", "Registered File"),
-    TemplateDefinition("container/fileset/group/1.0/", "container_template", "container_instance", "FT", "Fileset"),
-    TemplateDefinition("content/manifest/stage-samples/1.0/", "content_template", "content_instance", "MF", "Manifest"),
-    TemplateDefinition("subject/person/participant/1.0/", "subject_template", "subject_instance", "SJ", "Subject"),
-    TemplateDefinition("content/biospecimen/entity/1.0/", "content_template", "content_instance", "BP", "Biospecimen"),
-    TemplateDefinition("content/biosample/entity/1.0/", "content_template", "content_instance", "BS", "Biosample"),
-    TemplateDefinition("content/library/entity/1.0/", "content_template", "content_instance", "BR", "Library"),
-    TemplateDefinition("data/storage/s3-bucket-link/1.0/", "data_template", "data_instance", "BK", "Linked Bucket"),
+    TemplateDefinition(
+        "workflow/workset/analysis/1.0/", "workflow_template", "workflow_instance", "WS", "Workset"
+    ),
+    TemplateDefinition(
+        "action/workset/state-transition/1.0/",
+        "action_template",
+        "action_instance",
+        "ST",
+        "State Transition",
+    ),
+    TemplateDefinition(
+        "action/workset/lock-event/1.0/", "action_template", "action_instance", "CK", "Lock Event"
+    ),
+    TemplateDefinition(
+        "file/object/registered/1.0/", "file_template", "file_instance", "FF", "Registered File"
+    ),
+    TemplateDefinition(
+        "container/fileset/group/1.0/", "container_template", "container_instance", "FT", "Fileset"
+    ),
+    TemplateDefinition(
+        "content/manifest/stage-samples/1.0/",
+        "content_template",
+        "content_instance",
+        "MF",
+        "Manifest",
+    ),
+    TemplateDefinition(
+        "subject/person/participant/1.0/", "subject_template", "subject_instance", "SJ", "Subject"
+    ),
+    TemplateDefinition(
+        "content/biospecimen/entity/1.0/",
+        "content_template",
+        "content_instance",
+        "BP",
+        "Biospecimen",
+    ),
+    TemplateDefinition(
+        "content/biosample/entity/1.0/", "content_template", "content_instance", "BS", "Biosample"
+    ),
+    TemplateDefinition(
+        "content/library/entity/1.0/", "content_template", "content_instance", "BR", "Library"
+    ),
+    TemplateDefinition(
+        "data/storage/s3-bucket-link/1.0/", "data_template", "data_instance", "BK", "Linked Bucket"
+    ),
 )
 
 
@@ -76,9 +112,7 @@ class TapDBBackend:
         env = (os.environ.get("TAPDB_ENV") or "").strip()
         if not env:
             raise RuntimeError(
-                "TAPDB_ENV is required (dev|test|prod).\n"
-                "Example:\n"
-                "  export TAPDB_ENV=dev\n"
+                "TAPDB_ENV is required (dev|test|prod).\nExample:\n  export TAPDB_ENV=dev\n"
             )
 
         try:
@@ -146,7 +180,9 @@ class TapDBBackend:
             from admin.db_metrics import db_username_var as _db_username_var
 
             db_username_var = _db_username_var
-            token = db_username_var.set(str(getattr(self.connection, "app_username", "")) or "unknown")
+            token = db_username_var.set(
+                str(getattr(self.connection, "app_username", "")) or "unknown"
+            )
         except Exception:
             pass
         try:
@@ -185,7 +221,9 @@ class TapDBBackend:
         return sorted(prefixes)
 
     def _required_instance_sequence_names(self, session: Session) -> list[str]:
-        return [f"{prefix.lower()}_instance_seq" for prefix in self._required_instance_prefixes(session)]
+        return [
+            f"{prefix.lower()}_instance_seq" for prefix in self._required_instance_prefixes(session)
+        ]
 
     def list_required_instance_sequences(self, session: Session) -> list[str]:
         return self._required_instance_sequence_names(session)
@@ -280,7 +318,9 @@ class TapDBBackend:
         session.flush()
         return instance
 
-    def update_instance_json(self, session: Session, instance: generic_instance, updates: Dict[str, Any]) -> None:
+    def update_instance_json(
+        self, session: Session, instance: generic_instance, updates: Dict[str, Any]
+    ) -> None:
         payload = dict(instance.json_addl or {})
         payload.update(updates)
         instance.json_addl = payload
@@ -294,12 +334,9 @@ class TapDBBackend:
         for_update: bool = False,
     ) -> Optional[generic_instance]:
         """Look up a non-deleted instance by its TapDB EUID."""
-        query = (
-            session.query(generic_instance)
-            .filter(
-                generic_instance.euid == euid,
-                generic_instance.is_deleted.is_(False),
-            )
+        query = session.query(generic_instance).filter(
+            generic_instance.euid == euid,
+            generic_instance.is_deleted.is_(False),
         )
         if for_update:
             query = query.with_for_update()
@@ -480,15 +517,30 @@ def from_json_addl(instance: generic_instance) -> Dict[str, Any]:
     # ALWAYS use the instance-level euid — never trust json_addl["euid"]
     payload["euid"] = instance.euid
     payload.setdefault("name", instance.name)
-    payload.setdefault("created_at", instance.created_dt.isoformat().replace("+00:00", "Z") if instance.created_dt else utc_now_iso())
-    payload.setdefault("updated_at", instance.modified_dt.isoformat().replace("+00:00", "Z") if instance.modified_dt else payload["created_at"])
+    payload.setdefault(
+        "created_at",
+        instance.created_dt.isoformat().replace("+00:00", "Z")
+        if instance.created_dt
+        else utc_now_iso(),
+    )
+    payload.setdefault(
+        "updated_at",
+        instance.modified_dt.isoformat().replace("+00:00", "Z")
+        if instance.modified_dt
+        else payload["created_at"],
+    )
     payload.setdefault("state", instance.bstatus)
     return payload
 
 
 def to_action_history_entry(instance: generic_instance) -> Dict[str, Any]:
     payload = dict(instance.json_addl or {})
-    payload.setdefault("timestamp", instance.created_dt.isoformat().replace("+00:00", "Z") if instance.created_dt else utc_now_iso())
+    payload.setdefault(
+        "timestamp",
+        instance.created_dt.isoformat().replace("+00:00", "Z")
+        if instance.created_dt
+        else utc_now_iso(),
+    )
     payload.setdefault("event_euid", instance.euid)
     payload.setdefault("event_name", instance.name)
     return payload

@@ -12,17 +12,15 @@ runner = CliRunner()
 
 class TestAwsSetup:
     def test_setup_bootstraps_components(self):
-        with patch("daylily_ursa.cli.aws._effective_region", return_value="us-west-2"), patch(
-            "daylily_ursa.biospecimen.BiospecimenRegistry"
-        ) as mock_bio, patch("daylily_ursa.file_registry.FileRegistry") as mock_files, patch(
-            "daylily_ursa.manifest_registry.ManifestRegistry"
-        ) as mock_manifest, patch(
-            "daylily_ursa.s3_bucket_validator.LinkedBucketManager"
-        ) as mock_bucket, patch(
-            "daylily_ursa.workset_customer.CustomerManager"
-        ) as mock_customer, patch(
-            "daylily_ursa.workset_state_db.WorksetStateDB"
-        ) as mock_state:
+        with (
+            patch("daylily_ursa.cli.aws._effective_region", return_value="us-west-2"),
+            patch("daylily_ursa.biospecimen.BiospecimenRegistry") as mock_bio,
+            patch("daylily_ursa.file_registry.FileRegistry") as mock_files,
+            patch("daylily_ursa.manifest_registry.ManifestRegistry") as mock_manifest,
+            patch("daylily_ursa.s3_bucket_validator.LinkedBucketManager") as mock_bucket,
+            patch("daylily_ursa.workset_customer.CustomerManager") as mock_customer,
+            patch("daylily_ursa.workset_state_db.WorksetStateDB") as mock_state,
+        ):
             result = runner.invoke(aws_app, ["setup"])
 
         assert result.exit_code == 0
@@ -35,9 +33,10 @@ class TestAwsSetup:
         mock_bucket.return_value.bootstrap.assert_called_once()
 
     def test_setup_returns_nonzero_on_component_failure(self):
-        with patch("daylily_ursa.cli.aws._effective_region", return_value="us-west-2"), patch(
-            "daylily_ursa.workset_state_db.WorksetStateDB"
-        ) as mock_state:
+        with (
+            patch("daylily_ursa.cli.aws._effective_region", return_value="us-west-2"),
+            patch("daylily_ursa.workset_state_db.WorksetStateDB") as mock_state,
+        ):
             mock_state.return_value.bootstrap.side_effect = RuntimeError("boom")
             result = runner.invoke(aws_app, ["setup"])
 
@@ -62,8 +61,9 @@ class TestAwsStatus:
         fake_backend.get_missing_instance_sequences.return_value = []
         fake_backend.list_required_instance_sequences.return_value = ["ws_instance_seq"]
 
-        with patch("daylily_ursa.tapdb_graph.backend.TEMPLATE_DEFINITIONS", [fake_template]), patch(
-            "daylily_ursa.tapdb_graph.backend.TapDBBackend", return_value=fake_backend
+        with (
+            patch("daylily_ursa.tapdb_graph.backend.TEMPLATE_DEFINITIONS", [fake_template]),
+            patch("daylily_ursa.tapdb_graph.backend.TapDBBackend", return_value=fake_backend),
         ):
             result = runner.invoke(aws_app, ["status"])
 
@@ -88,8 +88,9 @@ class TestAwsStatus:
         fake_backend.get_missing_instance_sequences.return_value = ["ct_instance_seq"]
         fake_backend.list_required_instance_sequences.return_value = ["ct_instance_seq"]
 
-        with patch("daylily_ursa.tapdb_graph.backend.TEMPLATE_DEFINITIONS", [fake_template]), patch(
-            "daylily_ursa.tapdb_graph.backend.TapDBBackend", return_value=fake_backend
+        with (
+            patch("daylily_ursa.tapdb_graph.backend.TEMPLATE_DEFINITIONS", [fake_template]),
+            patch("daylily_ursa.tapdb_graph.backend.TapDBBackend", return_value=fake_backend),
         ):
             result = runner.invoke(aws_app, ["status"])
 

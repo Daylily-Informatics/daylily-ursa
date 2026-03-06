@@ -41,6 +41,7 @@ def _send_notification(
 @dataclass
 class ProcessorConfig:
     """Configuration for concurrent processor."""
+
     max_concurrent_worksets: int = 10
     max_workers: int = 5
     poll_interval_seconds: int = 30
@@ -207,11 +208,13 @@ class ConcurrentWorksetProcessor:
             # Update workset with estimates
             if result.estimated_cost_usd:
                 metadata = workset.get("metadata", {})
-                metadata.update({
-                    "estimated_cost_usd": result.estimated_cost_usd,
-                    "estimated_duration_minutes": result.estimated_duration_minutes,
-                    "estimated_vcpu_hours": result.estimated_vcpu_hours,
-                })
+                metadata.update(
+                    {
+                        "estimated_cost_usd": result.estimated_cost_usd,
+                        "estimated_duration_minutes": result.estimated_duration_minutes,
+                        "estimated_vcpu_hours": result.estimated_vcpu_hours,
+                    }
+                )
                 # Note: Would need to add update_metadata method to state_db
 
             if result.warnings:
@@ -358,5 +361,3 @@ class ConcurrentWorksetProcessor:
         # For now, just simulate success
         time.sleep(1)
         return True
-
-

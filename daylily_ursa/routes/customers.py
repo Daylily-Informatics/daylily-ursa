@@ -52,7 +52,9 @@ def create_customers_router(deps: CustomerDependencies) -> APIRouter:
     customer_manager = deps.customer_manager
     get_current_user = deps.get_current_user
 
-    @router.post("/api/v2/customers", response_model=CustomerResponse, status_code=status.HTTP_201_CREATED)
+    @router.post(
+        "/api/v2/customers", response_model=CustomerResponse, status_code=status.HTTP_201_CREATED
+    )
     async def create_customer(
         customer: CustomerCreate,
         current_user: Optional[Dict] = Depends(get_current_user),
@@ -115,7 +117,9 @@ def create_customers_router(deps: CustomerDependencies) -> APIRouter:
         Admins can update any account.
         """
         # Get session customer for authorization check
-        session_customer_id = request.session.get("customer_id") if hasattr(request, "session") else None
+        session_customer_id = (
+            request.session.get("customer_id") if hasattr(request, "session") else None
+        )
         session_email = request.session.get("user_email") if hasattr(request, "session") else None
 
         # Check if user is admin

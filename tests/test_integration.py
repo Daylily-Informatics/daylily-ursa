@@ -7,7 +7,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from daylily_ursa.workset_diagnostics import classify_error
-from daylily_ursa.workset_state_db import ErrorCategory, WorksetPriority, WorksetState, WorksetStateDB
+from daylily_ursa.workset_state_db import (
+    ErrorCategory,
+    WorksetPriority,
+    WorksetState,
+    WorksetStateDB,
+)
 from daylily_ursa.workset_validation import WorksetValidator
 
 
@@ -23,7 +28,14 @@ class _SessionCtx:
 
 
 class _Instance:
-    def __init__(self, *, name: str = "ws", bstatus: str = "ready", json_addl: dict | None = None, euid: str | None = None):
+    def __init__(
+        self,
+        *,
+        name: str = "ws",
+        bstatus: str = "ready",
+        json_addl: dict | None = None,
+        euid: str | None = None,
+    ):
         self.name = name
         self.bstatus = bstatus
         self.json_addl = dict(json_addl or {})
@@ -102,7 +114,11 @@ class TestWorksetLifecycle:
         assert ws.json_addl["state"] == WorksetState.COMPLETE.value
 
     def test_register_to_error_to_retry_workflow(self, state_db: WorksetStateDB):
-        ws = _Instance(name="error-ws-001", bstatus="in_progress", json_addl={"state": "in_progress", "retry_count": 0, "max_retries": 3})
+        ws = _Instance(
+            name="error-ws-001",
+            bstatus="in_progress",
+            json_addl={"state": "in_progress", "retry_count": 0, "max_retries": 3},
+        )
         state_db.get_workset = MagicMock(return_value={"retry_count": 0, "max_retries": 3})
         state_db._find_workset.return_value = ws
 
@@ -116,7 +132,11 @@ class TestWorksetLifecycle:
         assert ws.json_addl["state"] == WorksetState.RETRYING.value
 
     def test_permanent_failure_workflow(self, state_db: WorksetStateDB):
-        ws = _Instance(name="perm-error-ws-001", bstatus="retrying", json_addl={"state": "retrying", "retry_count": 3, "max_retries": 3})
+        ws = _Instance(
+            name="perm-error-ws-001",
+            bstatus="retrying",
+            json_addl={"state": "retrying", "retry_count": 3, "max_retries": 3},
+        )
         state_db.get_workset = MagicMock(return_value={"retry_count": 3, "max_retries": 3})
         state_db._find_workset.return_value = ws
 
@@ -145,7 +165,11 @@ class TestValidationToProcessing:
 
             jsonschema.validate(config, WorksetValidator.WORK_YAML_SCHEMA)
 
-            ws = _Instance(name="validated-ws-001", bstatus="ready", json_addl={"workset_id": "validated-ws-001", "state": "ready"})
+            ws = _Instance(
+                name="validated-ws-001",
+                bstatus="ready",
+                json_addl={"workset_id": "validated-ws-001", "state": "ready"},
+            )
             state_db.backend.create_instance.return_value = ws
             state_db._find_workset.side_effect = [None]
 
@@ -168,11 +192,17 @@ class TestDiagnosticsIntegration:
         assert classification["category"] == "resource"
         assert classification["retryable"] is True
 
-        ws = _Instance(name="diag-ws-001", bstatus="in_progress", json_addl={"state": "in_progress", "retry_count": 0, "max_retries": 3})
+        ws = _Instance(
+            name="diag-ws-001",
+            bstatus="in_progress",
+            json_addl={"state": "in_progress", "retry_count": 0, "max_retries": 3},
+        )
         state_db.get_workset = MagicMock(return_value={"retry_count": 0, "max_retries": 3})
         state_db._find_workset.return_value = ws
 
-        error_category = ErrorCategory.TRANSIENT if classification["retryable"] else ErrorCategory.PERMANENT
+        error_category = (
+            ErrorCategory.TRANSIENT if classification["retryable"] else ErrorCategory.PERMANENT
+        )
         should_retry = state_db.record_failure(
             euid="diag-ws-001",
             error_details=error_text,
@@ -188,7 +218,11 @@ class TestDiagnosticsIntegration:
         assert classification["error_code"] == "WS-DAT-001"
         assert classification["retryable"] is False
 
-        ws = _Instance(name="data-error-ws-001", bstatus="in_progress", json_addl={"state": "in_progress", "retry_count": 0, "max_retries": 3})
+        ws = _Instance(
+            name="data-error-ws-001",
+            bstatus="in_progress",
+            json_addl={"state": "in_progress", "retry_count": 0, "max_retries": 3},
+        )
         state_db.get_workset = MagicMock(return_value={"retry_count": 0, "max_retries": 3})
         state_db._find_workset.return_value = ws
 
@@ -203,14 +237,22 @@ class TestDiagnosticsIntegration:
 
 class TestConcurrentProcessingIntegration:
     def test_state_db_concurrency_limits(self, state_db: WorksetStateDB):
-        state_db.list_worksets_by_state = MagicMock(return_value=[{"workset_id": f"ws-{i}"} for i in range(5)])
-        state_db.list_locked_worksets = MagicMock(return_value=[{"workset_id": f"l-{i}"} for i in range(5)])
+        state_db.list_worksets_by_state = MagicMock(
+            return_value=[{"workset_id": f"ws-{i}"} for i in range(5)]
+        )
+        state_db.list_locked_worksets = MagicMock(
+            return_value=[{"workset_id": f"l-{i}"} for i in range(5)]
+        )
 
         can_start = state_db.can_start_new_workset(max_concurrent=5)
         assert can_start is False
 
     def test_state_db_cluster_affinity(self, state_db: WorksetStateDB):
-        ws = _Instance(name="test-ws-001", bstatus="ready", json_addl={"workset_id": "test-ws-001", "state": "ready"})
+        ws = _Instance(
+            name="test-ws-001",
+            bstatus="ready",
+            json_addl={"workset_id": "test-ws-001", "state": "ready"},
+        )
         state_db._find_workset.return_value = ws
 
         assert state_db.set_cluster_affinity("test-ws-001", "test-cluster") is True

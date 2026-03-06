@@ -103,7 +103,9 @@ def generate_biospecimen_id(customer_id: str, identifier: str) -> str:
 
 
 def generate_biosample_id(customer_id: str, identifier: str) -> str:
-    return f"bio-{hashlib.sha256(f'{customer_id}:biosample:{identifier}'.encode()).hexdigest()[:16]}"
+    return (
+        f"bio-{hashlib.sha256(f'{customer_id}:biosample:{identifier}'.encode()).hexdigest()[:16]}"
+    )
 
 
 def generate_library_id(customer_id: str, identifier: str) -> str:
@@ -151,7 +153,16 @@ class BiospecimenRegistry:
             )
         return customer
 
-    def _create_or_update(self, session, *, template_code: str, key: str, value: str, name: str, payload: Dict[str, Any]):
+    def _create_or_update(
+        self,
+        session,
+        *,
+        template_code: str,
+        key: str,
+        value: str,
+        name: str,
+        payload: Dict[str, Any],
+    ):
         row = self.backend.find_instance_by_external_id(
             session,
             template_code=template_code,
@@ -199,12 +210,16 @@ class BiospecimenRegistry:
                 name=subject.display_name or subject.subject_id,
                 payload=payload,
             )
-            self.backend.create_lineage(session, parent=customer, child=row, relationship_type="owns")
+            self.backend.create_lineage(
+                session, parent=customer, child=row, relationship_type="owns"
+            )
             return True
 
     def get_subject(self, subject_id: str) -> Optional[Subject]:
         with self.backend.session_scope(commit=False) as session:
-            row = self.backend.find_instance_by_external_id(session, template_code=self.SUBJECT_TEMPLATE, key="subject_id", value=subject_id)
+            row = self.backend.find_instance_by_external_id(
+                session, template_code=self.SUBJECT_TEMPLATE, key="subject_id", value=subject_id
+            )
             if row is None:
                 return None
             return self._to_subject(from_json_addl(row))
@@ -214,17 +229,30 @@ class BiospecimenRegistry:
 
     def list_subjects(self, customer_id: str, limit: int = 100) -> List[Subject]:
         with self.backend.session_scope(commit=False) as session:
-            customer = self.backend.find_instance_by_external_id(session, template_code=self.CUSTOMER_TEMPLATE, key="customer_id", value=customer_id)
+            customer = self.backend.find_instance_by_external_id(
+                session, template_code=self.CUSTOMER_TEMPLATE, key="customer_id", value=customer_id
+            )
             if customer is None:
                 return []
-            rows = self.backend.get_customer_owned(session, customer=customer, template_code=self.SUBJECT_TEMPLATE, relationship_type="owns", limit=limit)
+            rows = self.backend.get_customer_owned(
+                session,
+                customer=customer,
+                template_code=self.SUBJECT_TEMPLATE,
+                relationship_type="owns",
+                limit=limit,
+            )
             return [self._to_subject(from_json_addl(row)) for row in rows]
 
     def create_biospecimen(self, biospecimen: Biospecimen) -> bool:
         payload = asdict(biospecimen)
         payload["updated_at"] = utc_now_iso()
         with self.backend.session_scope(commit=True) as session:
-            subject = self.backend.find_instance_by_external_id(session, template_code=self.SUBJECT_TEMPLATE, key="subject_id", value=biospecimen.subject_id)
+            subject = self.backend.find_instance_by_external_id(
+                session,
+                template_code=self.SUBJECT_TEMPLATE,
+                key="subject_id",
+                value=biospecimen.subject_id,
+            )
             if subject is None:
                 return False
             row = self._create_or_update(
@@ -235,12 +263,19 @@ class BiospecimenRegistry:
                 name=biospecimen.biospecimen_id,
                 payload=payload,
             )
-            self.backend.create_lineage(session, parent=subject, child=row, relationship_type="has_biospecimen")
+            self.backend.create_lineage(
+                session, parent=subject, child=row, relationship_type="has_biospecimen"
+            )
             return True
 
     def get_biospecimen(self, biospecimen_id: str) -> Optional[Biospecimen]:
         with self.backend.session_scope(commit=False) as session:
-            row = self.backend.find_instance_by_external_id(session, template_code=self.BIOSPECIMEN_TEMPLATE, key="biospecimen_id", value=biospecimen_id)
+            row = self.backend.find_instance_by_external_id(
+                session,
+                template_code=self.BIOSPECIMEN_TEMPLATE,
+                key="biospecimen_id",
+                value=biospecimen_id,
+            )
             if row is None:
                 return None
             return self._to_biospecimen(from_json_addl(row))
@@ -250,10 +285,14 @@ class BiospecimenRegistry:
 
     def list_biospecimens_for_subject(self, subject_id: str) -> List[Biospecimen]:
         with self.backend.session_scope(commit=False) as session:
-            subject = self.backend.find_instance_by_external_id(session, template_code=self.SUBJECT_TEMPLATE, key="subject_id", value=subject_id)
+            subject = self.backend.find_instance_by_external_id(
+                session, template_code=self.SUBJECT_TEMPLATE, key="subject_id", value=subject_id
+            )
             if subject is None:
                 return []
-            children = self.backend.list_children(session, parent=subject, relationship_type="has_biospecimen")
+            children = self.backend.list_children(
+                session, parent=subject, relationship_type="has_biospecimen"
+            )
             out = []
             for row in children:
                 payload = from_json_addl(row)
@@ -273,7 +312,12 @@ class BiospecimenRegistry:
         payload = asdict(biosample)
         payload["updated_at"] = utc_now_iso()
         with self.backend.session_scope(commit=True) as session:
-            parent = self.backend.find_instance_by_external_id(session, template_code=self.BIOSPECIMEN_TEMPLATE, key="biospecimen_id", value=biosample.biospecimen_id)
+            parent = self.backend.find_instance_by_external_id(
+                session,
+                template_code=self.BIOSPECIMEN_TEMPLATE,
+                key="biospecimen_id",
+                value=biosample.biospecimen_id,
+            )
             if parent is None:
                 return False
             row = self._create_or_update(
@@ -284,12 +328,19 @@ class BiospecimenRegistry:
                 name=biosample.biosample_id,
                 payload=payload,
             )
-            self.backend.create_lineage(session, parent=parent, child=row, relationship_type="has_biosample")
+            self.backend.create_lineage(
+                session, parent=parent, child=row, relationship_type="has_biosample"
+            )
             return True
 
     def get_biosample(self, biosample_id: str) -> Optional[Biosample]:
         with self.backend.session_scope(commit=False) as session:
-            row = self.backend.find_instance_by_external_id(session, template_code=self.BIOSAMPLE_TEMPLATE, key="biosample_id", value=biosample_id)
+            row = self.backend.find_instance_by_external_id(
+                session,
+                template_code=self.BIOSAMPLE_TEMPLATE,
+                key="biosample_id",
+                value=biosample_id,
+            )
             if row is None:
                 return None
             return self._to_biosample(from_json_addl(row))
@@ -313,10 +364,17 @@ class BiospecimenRegistry:
 
     def list_biosamples_for_biospecimen(self, biospecimen_id: str) -> List[Biosample]:
         with self.backend.session_scope(commit=False) as session:
-            parent = self.backend.find_instance_by_external_id(session, template_code=self.BIOSPECIMEN_TEMPLATE, key="biospecimen_id", value=biospecimen_id)
+            parent = self.backend.find_instance_by_external_id(
+                session,
+                template_code=self.BIOSPECIMEN_TEMPLATE,
+                key="biospecimen_id",
+                value=biospecimen_id,
+            )
             if parent is None:
                 return []
-            children = self.backend.list_children(session, parent=parent, relationship_type="has_biosample")
+            children = self.backend.list_children(
+                session, parent=parent, relationship_type="has_biosample"
+            )
             out = []
             for row in children:
                 payload = from_json_addl(row)
@@ -328,7 +386,12 @@ class BiospecimenRegistry:
         payload = asdict(library)
         payload["updated_at"] = utc_now_iso()
         with self.backend.session_scope(commit=True) as session:
-            parent = self.backend.find_instance_by_external_id(session, template_code=self.BIOSAMPLE_TEMPLATE, key="biosample_id", value=library.biosample_id)
+            parent = self.backend.find_instance_by_external_id(
+                session,
+                template_code=self.BIOSAMPLE_TEMPLATE,
+                key="biosample_id",
+                value=library.biosample_id,
+            )
             if parent is None:
                 return False
             row = self._create_or_update(
@@ -339,12 +402,16 @@ class BiospecimenRegistry:
                 name=library.library_id,
                 payload=payload,
             )
-            self.backend.create_lineage(session, parent=parent, child=row, relationship_type="has_library")
+            self.backend.create_lineage(
+                session, parent=parent, child=row, relationship_type="has_library"
+            )
             return True
 
     def get_library(self, library_id: str) -> Optional[Library]:
         with self.backend.session_scope(commit=False) as session:
-            row = self.backend.find_instance_by_external_id(session, template_code=self.LIBRARY_TEMPLATE, key="library_id", value=library_id)
+            row = self.backend.find_instance_by_external_id(
+                session, template_code=self.LIBRARY_TEMPLATE, key="library_id", value=library_id
+            )
             if row is None:
                 return None
             return self._to_library(from_json_addl(row))
@@ -362,10 +429,17 @@ class BiospecimenRegistry:
 
     def list_libraries_for_biosample(self, biosample_id: str) -> List[Library]:
         with self.backend.session_scope(commit=False) as session:
-            parent = self.backend.find_instance_by_external_id(session, template_code=self.BIOSAMPLE_TEMPLATE, key="biosample_id", value=biosample_id)
+            parent = self.backend.find_instance_by_external_id(
+                session,
+                template_code=self.BIOSAMPLE_TEMPLATE,
+                key="biosample_id",
+                value=biosample_id,
+            )
             if parent is None:
                 return []
-            children = self.backend.list_children(session, parent=parent, relationship_type="has_library")
+            children = self.backend.list_children(
+                session, parent=parent, relationship_type="has_library"
+            )
             out = []
             for row in children:
                 payload = from_json_addl(row)
@@ -389,7 +463,10 @@ class BiospecimenRegistry:
                 libs.append(
                     {
                         "biosample": asdict(bs),
-                        "libraries": [asdict(lib) for lib in self.list_libraries_for_biosample(bs.biosample_id)],
+                        "libraries": [
+                            asdict(lib)
+                            for lib in self.list_libraries_for_biosample(bs.biosample_id)
+                        ],
                     }
                 )
             hierarchy["biospecimens"].append({"biospecimen": asdict(bspec), "biosamples": libs})

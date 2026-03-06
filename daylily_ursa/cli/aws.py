@@ -126,8 +126,7 @@ def status() -> None:
     console.print(sequence_table)
     if missing_templates or missing_sequences:
         console.print(
-            "[yellow]Remediation:[/yellow] run "
-            "`ursa aws setup` then `ursa aws repair-sequences`."
+            "[yellow]Remediation:[/yellow] run `ursa aws setup` then `ursa aws repair-sequences`."
         )
         raise typer.Exit(1)
 
@@ -138,7 +137,7 @@ def repair_sequences(
         False,
         "--dry-run",
         help="Show missing sequences without applying changes",
-    )
+    ),
 ) -> None:
     """Repair missing TapDB instance-prefix sequences required by Ursa templates."""
     from daylily_ursa.tapdb_graph.backend import TapDBBackend

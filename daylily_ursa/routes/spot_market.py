@@ -23,7 +23,9 @@ class SpotMarketConfigUpdate(BaseModel):
 
 
 class SpotMarketPollRequest(BaseModel):
-    regions: Optional[List[str]] = Field(None, description="Optional override regions for this poll")
+    regions: Optional[List[str]] = Field(
+        None, description="Optional override regions for this poll"
+    )
     mode: str = Field("now", description="Currently only 'now' is supported")
 
 
@@ -76,7 +78,9 @@ def create_spot_market_router(deps: SpotMarketDependencies) -> APIRouter:
             "aws_profile": aws_profile,
             "config": {
                 **cfg,
-                "interval": sm_runner.interval_seconds_to_label(int(cfg.get("interval_seconds") or 0)),
+                "interval": sm_runner.interval_seconds_to_label(
+                    int(cfg.get("interval_seconds") or 0)
+                ),
             },
             "last_samples": last_samples,
             "running_jobs": running_jobs,
@@ -106,7 +110,9 @@ def create_spot_market_router(deps: SpotMarketDependencies) -> APIRouter:
             raise HTTPException(status_code=400, detail="regions must contain at least one region")
         for r in regions:
             if r not in allowed_regions:
-                raise HTTPException(status_code=400, detail=f"Region '{r}' is not configured for this deployment")
+                raise HTTPException(
+                    status_code=400, detail=f"Region '{r}' is not configured for this deployment"
+                )
 
         try:
             interval_seconds = sm_runner.interval_label_to_seconds(update.interval)
@@ -121,7 +127,9 @@ def create_spot_market_router(deps: SpotMarketDependencies) -> APIRouter:
         return {
             "config": {
                 **cfg,
-                "interval": sm_runner.interval_seconds_to_label(int(cfg.get("interval_seconds") or 0)),
+                "interval": sm_runner.interval_seconds_to_label(
+                    int(cfg.get("interval_seconds") or 0)
+                ),
             }
         }
 
@@ -149,7 +157,9 @@ def create_spot_market_router(deps: SpotMarketDependencies) -> APIRouter:
             raise HTTPException(status_code=400, detail="No regions configured to poll")
         for r in regions:
             if r not in allowed_regions:
-                raise HTTPException(status_code=400, detail=f"Region '{r}' is not configured for this deployment")
+                raise HTTPException(
+                    status_code=400, detail=f"Region '{r}' is not configured for this deployment"
+                )
 
         running_jobs = sm_runner.list_running_jobs(limit=20)
         if running_jobs:
@@ -168,7 +178,9 @@ def create_spot_market_router(deps: SpotMarketDependencies) -> APIRouter:
                 raise HTTPException(status_code=500, detail=str(e))
             except Exception as e:
                 LOGGER.exception("Failed to start spot-market poll job for %s: %s", r, e)
-                raise HTTPException(status_code=500, detail=f"Failed to start spot-market poll for {r}: {e}")
+                raise HTTPException(
+                    status_code=500, detail=f"Failed to start spot-market poll for {r}: {e}"
+                )
 
         return {"jobs": jobs, "job_ids": [j.get("job_id") for j in jobs]}
 
@@ -226,7 +238,9 @@ def create_spot_market_router(deps: SpotMarketDependencies) -> APIRouter:
 
         allowed_regions, _aws_profile = _get_allowed_regions_and_profile()
         if region not in allowed_regions:
-            raise HTTPException(status_code=400, detail=f"Region '{region}' is not configured for this deployment")
+            raise HTTPException(
+                status_code=400, detail=f"Region '{region}' is not configured for this deployment"
+            )
 
         return {"region": region, "snapshots": sm_runner.list_snapshots(region=region, limit=limit)}
 

@@ -45,17 +45,24 @@ def test_customer_file_ops_routes_have_request_level_coverage():
             assert upload_resp.status_code != 404
 
             # Create folder
-            assert client.post(
-                "/api/v2/customers/cust-001/files/create-folder",
-                json={"folder_path": "data/test"},
-            ).status_code != 404
+            assert (
+                client.post(
+                    "/api/v2/customers/cust-001/files/create-folder",
+                    json={"folder_path": "data/test"},
+                ).status_code
+                != 404
+            )
 
             # Preview
-            assert client.get("/api/v2/customers/cust-001/files/readme.txt/preview").status_code != 404
+            assert (
+                client.get("/api/v2/customers/cust-001/files/readme.txt/preview").status_code != 404
+            )
 
             # Presigned download URL
-            assert client.get("/api/v2/customers/cust-001/files/readme.txt/download-url").status_code != 404
+            assert (
+                client.get("/api/v2/customers/cust-001/files/readme.txt/download-url").status_code
+                != 404
+            )
 
             # Delete
             assert client.delete("/api/v2/customers/cust-001/files/readme.txt").status_code != 404
-

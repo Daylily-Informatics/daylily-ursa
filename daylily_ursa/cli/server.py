@@ -37,7 +37,7 @@ def _require_auth_dependencies() -> None:
         import jose  # noqa: F401
     except ImportError:
         console.print("[red]✗[/red]  Authentication requested but python-jose is not installed")
-        console.print("   Install with: [cyan]python -m pip install -e \".[auth]\"[/cyan]")
+        console.print('   Install with: [cyan]python -m pip install -e ".[auth]"[/cyan]')
         raise typer.Exit(1)
 
 
@@ -85,10 +85,12 @@ def _resolve_https_cert_paths(host: str) -> tuple[str, str]:
         raise typer.Exit(1)
 
     # Install local root CA (idempotent), then generate a localhost cert.
-    subprocess.run([mkcert_bin, "-install"], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.run(
+        [mkcert_bin, "-install"], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+    )
 
     san_hosts = ["localhost", "127.0.0.1", "::1"]
-    if host not in ("0.0.0.0", "::", "127.0.0.1", "localhost"):
+    if host not in ("0.0.0.0", "::", "127.0.0.1", "localhost"):  # nosec B104 - checking bind address
         san_hosts.insert(0, host)
 
     try:
@@ -114,7 +116,7 @@ def _resolve_https_cert_paths(host: str) -> tuple[str, str]:
 
 def _runtime_oauth_host(host: str) -> str:
     """Resolve runtime callback host for browser-facing URLs."""
-    if host in ("0.0.0.0", "::"):
+    if host in ("0.0.0.0", "::"):  # nosec B104 - checking bind address
         return "localhost"
     return host
 
@@ -241,7 +243,9 @@ def _validate_cognito_oauth_uris(
     normalized_logouts = {_normalize_uri(u) for u in logout_urls}
     normalized_expected_callback = _normalize_uri(expected_callback_url)
     normalized_expected_logout = _normalize_uri(expected_logout_url)
-    normalized_default_redirect = _normalize_uri(default_redirect_uri) if default_redirect_uri else ""
+    normalized_default_redirect = (
+        _normalize_uri(default_redirect_uri) if default_redirect_uri else ""
+    )
 
     if normalized_expected_callback not in normalized_callbacks:
         errors.append(
@@ -250,13 +254,11 @@ def _validate_cognito_oauth_uris(
         )
     if normalized_expected_logout not in normalized_logouts:
         errors.append(
-            "Expected logout URI is not configured in Cognito app client: "
-            f"{expected_logout_url}"
+            f"Expected logout URI is not configured in Cognito app client: {expected_logout_url}"
         )
     if default_redirect_uri and normalized_default_redirect not in normalized_callbacks:
         errors.append(
-            "Cognito app client DefaultRedirectURI is not in CallbackURLs: "
-            f"{default_redirect_uri}"
+            f"Cognito app client DefaultRedirectURI is not in CallbackURLs: {default_redirect_uri}"
         )
 
     errors.extend(
@@ -337,10 +339,12 @@ def _source_env_file() -> bool:
 @server_app.command("start")
 def start(
     port: int = typer.Option(8914, "--port", "-p", help="Port to run the server on"),
-    host: str = typer.Option("0.0.0.0", "--host", "-h", help="Host to bind to"),
+    host: str = typer.Option("0.0.0.0", "--host", "-h", help="Host to bind to"),  # nosec B104 - server CLI default
     auth: bool = typer.Option(True, "--auth/--no-auth", help="Enable Cognito authentication"),
     reload: bool = typer.Option(False, "--reload", "-r", help="Enable auto-reload (foreground)"),
-    background: bool = typer.Option(True, "--background/--foreground", "-b/-f", help="Run in background"),
+    background: bool = typer.Option(
+        True, "--background/--foreground", "-b/-f", help="Run in background"
+    ),
 ):
     """Start the Ursa API server."""
     _ensure_dir()
@@ -362,6 +366,7 @@ def start(
 
     # Check AWS_PROFILE (from env or config file)
     from daylily_ursa.ursa_config import get_ursa_config, DEFAULT_CONFIG_PATH
+
     ursa_config = get_ursa_config()
 
     aws_profile = os.environ.get("AWS_PROFILE") or ursa_config.aws_profile
@@ -425,11 +430,17 @@ def start(
         _require_auth_dependencies()
         env["DAYLILY_ENABLE_AUTH"] = "true"
         # Pass Cognito config from ursa config to environment if not already set
-        if getattr(ursa_config, "cognito_user_pool_id", None) and not os.environ.get("COGNITO_USER_POOL_ID"):
+        if getattr(ursa_config, "cognito_user_pool_id", None) and not os.environ.get(
+            "COGNITO_USER_POOL_ID"
+        ):
             env["COGNITO_USER_POOL_ID"] = str(ursa_config.cognito_user_pool_id)
-        if getattr(ursa_config, "cognito_app_client_id", None) and not os.environ.get("COGNITO_APP_CLIENT_ID"):
+        if getattr(ursa_config, "cognito_app_client_id", None) and not os.environ.get(
+            "COGNITO_APP_CLIENT_ID"
+        ):
             env["COGNITO_APP_CLIENT_ID"] = str(ursa_config.cognito_app_client_id)
-        if getattr(ursa_config, "cognito_app_client_secret", None) and not os.environ.get("COGNITO_APP_CLIENT_SECRET"):
+        if getattr(ursa_config, "cognito_app_client_secret", None) and not os.environ.get(
+            "COGNITO_APP_CLIENT_SECRET"
+        ):
             env["COGNITO_APP_CLIENT_SECRET"] = str(ursa_config.cognito_app_client_secret)
         if getattr(ursa_config, "cognito_domain", None) and not os.environ.get("COGNITO_DOMAIN"):
             env["COGNITO_DOMAIN"] = str(ursa_config.cognito_domain)
@@ -450,7 +461,9 @@ def start(
             raise typer.Exit(1)
 
         oauth_host = _runtime_oauth_host(host)
-        expected_callback_url = env.get("COGNITO_CALLBACK_URL") or f"https://{oauth_host}:{port}/auth/callback"
+        expected_callback_url = (
+            env.get("COGNITO_CALLBACK_URL") or f"https://{oauth_host}:{port}/auth/callback"
+        )
         expected_logout_url = env.get("COGNITO_LOGOUT_URL") or f"https://{oauth_host}:{port}/"
 
         user_pool_id = str(env["COGNITO_USER_POOL_ID"])
@@ -466,7 +479,9 @@ def start(
             )
         except (ClientError, ValueError) as exc:
             console.print("[red]✗[/red]  Failed Cognito OAuth preflight check")
-            console.print(f"   Could not describe app client [cyan]{app_client_id}[/cyan] in pool [cyan]{user_pool_id}[/cyan]")
+            console.print(
+                f"   Could not describe app client [cyan]{app_client_id}[/cyan] in pool [cyan]{user_pool_id}[/cyan]"
+            )
             console.print(f"   Error: {exc}")
             raise typer.Exit(1)
 
@@ -577,7 +592,7 @@ def status():
     pid = _get_pid()
     if pid:
         port = os.environ.get("URSA_PORT", "8914")
-        host = os.environ.get("URSA_HOST", "0.0.0.0")
+        host = os.environ.get("URSA_HOST", "0.0.0.0")  # nosec B104 - server default bind
         log_file = _get_latest_log()
         console.print(f"[green]●[/green]  Server is [green]running[/green] (PID {pid})")
         console.print(f"   URL: [cyan]https://{host}:{port}[/cyan]")
@@ -619,7 +634,7 @@ def logs(
 @server_app.command("restart")
 def restart(
     port: int = typer.Option(8914, "--port", "-p", help="Port to run the server on"),
-    host: str = typer.Option("0.0.0.0", "--host", "-h", help="Host to bind to"),
+    host: str = typer.Option("0.0.0.0", "--host", "-h", help="Host to bind to"),  # nosec B104 - server CLI default
     auth: bool = typer.Option(True, "--auth/--no-auth", help="Enable Cognito authentication"),
 ):
     """Restart the Ursa API server."""

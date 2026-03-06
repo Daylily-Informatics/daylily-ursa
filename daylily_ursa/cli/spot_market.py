@@ -50,7 +50,9 @@ def _get_pid() -> Optional[int]:
 
 @spot_market_app.command("start")
 def start(
-    background: bool = typer.Option(True, "--background/--foreground", "-b/-f", help="Run in background"),
+    background: bool = typer.Option(
+        True, "--background/--foreground", "-b/-f", help="Run in background"
+    ),
 ):
     """Start the spot market tracker daemon."""
     _ensure_dir()
@@ -166,4 +168,3 @@ def logs(
         subprocess.run(["tail", "-f", "-n", str(lines), str(log_file)])
     except KeyboardInterrupt:
         console.print("\n")
-

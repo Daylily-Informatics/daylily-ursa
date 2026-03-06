@@ -53,7 +53,9 @@ def create_files_router(deps: FileDependencies) -> APIRouter:
         """List files in customer's S3 bucket."""
         config = customer_manager.get_customer_config(customer_id)
         if not config:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Customer {customer_id} not found")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail=f"Customer {customer_id} not found"
+            )
 
         try:
             s3 = boto3.client("s3")
@@ -63,10 +65,17 @@ def create_files_router(deps: FileDependencies) -> APIRouter:
             for cp in response.get("CommonPrefixes", []):
                 folder_path = cp["Prefix"]
                 folder_name = folder_path.rstrip("/").split("/")[-1]
-                files.append({
-                    "key": folder_path, "name": folder_name, "type": "folder",
-                    "size": 0, "size_formatted": "-", "modified": None, "icon": "folder",
-                })
+                files.append(
+                    {
+                        "key": folder_path,
+                        "name": folder_name,
+                        "type": "folder",
+                        "size": 0,
+                        "size_formatted": "-",
+                        "modified": None,
+                        "icon": "folder",
+                    }
+                )
             for obj in response.get("Contents", []):
                 key = obj["Key"]
                 if key == prefix:
@@ -75,12 +84,19 @@ def create_files_router(deps: FileDependencies) -> APIRouter:
                 if not name:
                     continue
                 size = obj["Size"]
-                files.append({
-                    "key": key, "name": name, "type": "file", "size": size,
-                    "size_formatted": _format_file_size(size),
-                    "modified": obj["LastModified"].isoformat() if obj.get("LastModified") else None,
-                    "icon": _get_file_icon(name),
-                })
+                files.append(
+                    {
+                        "key": key,
+                        "name": name,
+                        "type": "file",
+                        "size": size,
+                        "size_formatted": _format_file_size(size),
+                        "modified": obj["LastModified"].isoformat()
+                        if obj.get("LastModified")
+                        else None,
+                        "icon": _get_file_icon(name),
+                    }
+                )
             return {"files": files, "prefix": prefix, "bucket": config.s3_bucket}
         except Exception as e:
             LOGGER.error("Failed to list files: %s", str(e))
@@ -91,14 +107,20 @@ def create_files_router(deps: FileDependencies) -> APIRouter:
         """Upload a file to customer's S3 bucket."""
         config = customer_manager.get_customer_config(customer_id)
         if not config:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Customer {customer_id} not found")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail=f"Customer {customer_id} not found"
+            )
 
         try:
             s3 = boto3.client("s3")
             key = f"{prefix}{file.filename}" if prefix else file.filename
             content = await file.read()
-            s3.put_object(Bucket=config.s3_bucket, Key=key, Body=content,
-                          ContentType=file.content_type or "application/octet-stream")
+            s3.put_object(
+                Bucket=config.s3_bucket,
+                Key=key,
+                Body=content,
+                ContentType=file.content_type or "application/octet-stream",
+            )
             LOGGER.info(f"Uploaded {key} to bucket {config.s3_bucket}")
             return {"success": True, "key": key, "bucket": config.s3_bucket}
         except Exception as e:
@@ -110,7 +132,9 @@ def create_files_router(deps: FileDependencies) -> APIRouter:
         """Create a folder in customer's S3 bucket."""
         config = customer_manager.get_customer_config(customer_id)
         if not config:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Customer {customer_id} not found")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail=f"Customer {customer_id} not found"
+            )
 
         try:
             s3 = boto3.client("s3")
@@ -118,12 +142,13 @@ def create_files_router(deps: FileDependencies) -> APIRouter:
             s3.put_object(Bucket=config.s3_bucket, Key=folder_key, Body=b"")
             hold_file_key = folder_key.rstrip("/") + "/.hold"
             s3.put_object(Bucket=config.s3_bucket, Key=hold_file_key, Body=b"")
-            LOGGER.info(f"Created folder {folder_key} in bucket {config.s3_bucket} (with .hold file)")
+            LOGGER.info(
+                f"Created folder {folder_key} in bucket {config.s3_bucket} (with .hold file)"
+            )
             return {"success": True, "folder": folder_key}
         except Exception as e:
             LOGGER.error("Failed to create folder: %s", str(e))
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
-
 
     @router.get("/api/v2/customers/{customer_id}/files/{file_key:path}/preview")
     async def preview_file(customer_id: str, file_key: str, lines: int = 20):
@@ -135,7 +160,9 @@ def create_files_router(deps: FileDependencies) -> APIRouter:
         """
         config = customer_manager.get_customer_config(customer_id)
         if not config:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Customer {customer_id} not found")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail=f"Customer {customer_id} not found"
+            )
 
         try:
             s3 = boto3.client("s3")
@@ -149,10 +176,41 @@ def create_files_router(deps: FileDependencies) -> APIRouter:
             is_zip = file_lower.endswith(".zip")
 
             text_extensions = {
-                ".txt", ".log", ".csv", ".tsv", ".json", ".xml", ".html", ".htm",
-                ".yaml", ".yml", ".md", ".rst", ".py", ".js", ".ts", ".sh", ".bash",
-                ".r", ".R", ".pl", ".rb", ".java", ".c", ".cpp", ".h", ".hpp",
-                ".fastq", ".fq", ".fasta", ".fa", ".sam", ".vcf", ".bed", ".gff", ".gtf",
+                ".txt",
+                ".log",
+                ".csv",
+                ".tsv",
+                ".json",
+                ".xml",
+                ".html",
+                ".htm",
+                ".yaml",
+                ".yml",
+                ".md",
+                ".rst",
+                ".py",
+                ".js",
+                ".ts",
+                ".sh",
+                ".bash",
+                ".r",
+                ".R",
+                ".pl",
+                ".rb",
+                ".java",
+                ".c",
+                ".cpp",
+                ".h",
+                ".hpp",
+                ".fastq",
+                ".fq",
+                ".fasta",
+                ".fa",
+                ".sam",
+                ".vcf",
+                ".bed",
+                ".gff",
+                ".gtf",
             }
 
             base_name = file_key
@@ -164,7 +222,9 @@ def create_files_router(deps: FileDependencies) -> APIRouter:
 
             max_download = 10 * 1024 * 1024
             if file_size > max_download:
-                response = s3.get_object(Bucket=config.s3_bucket, Key=file_key, Range=f"bytes=0-{max_download}")
+                response = s3.get_object(
+                    Bucket=config.s3_bucket, Key=file_key, Range=f"bytes=0-{max_download}"
+                )
             else:
                 response = s3.get_object(Bucket=config.s3_bucket, Key=file_key)
 
@@ -177,7 +237,9 @@ def create_files_router(deps: FileDependencies) -> APIRouter:
                 try:
                     with tarfile.open(fileobj=io.BytesIO(body), mode="r:gz") as tar:
                         members = tar.getnames()[:20]
-                        preview_lines.append(f"=== Archive contents ({len(tar.getnames())} files) ===")
+                        preview_lines.append(
+                            f"=== Archive contents ({len(tar.getnames())} files) ==="
+                        )
                         for m in members:
                             preview_lines.append(m)
                         if len(tar.getnames()) > 20:
@@ -197,7 +259,9 @@ def create_files_router(deps: FileDependencies) -> APIRouter:
                 try:
                     with zipfile.ZipFile(io.BytesIO(body)) as zf:
                         names = zf.namelist()[:20]
-                        preview_lines.append(f"=== Archive contents ({len(zf.namelist())} files) ===")
+                        preview_lines.append(
+                            f"=== Archive contents ({len(zf.namelist())} files) ==="
+                        )
                         for name in names:
                             preview_lines.append(name)
                         if len(zf.namelist()) > 20:
@@ -225,7 +289,9 @@ def create_files_router(deps: FileDependencies) -> APIRouter:
             }
 
         except s3.exceptions.NoSuchKey:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"File not found: {file_key}")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail=f"File not found: {file_key}"
+            )
         except Exception as e:
             LOGGER.error("Failed to preview file: %s", str(e))
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
@@ -235,7 +301,9 @@ def create_files_router(deps: FileDependencies) -> APIRouter:
         """Get presigned URL for file download."""
         config = customer_manager.get_customer_config(customer_id)
         if not config:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Customer {customer_id} not found")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail=f"Customer {customer_id} not found"
+            )
 
         try:
             s3 = boto3.client("s3")
@@ -254,7 +322,9 @@ def create_files_router(deps: FileDependencies) -> APIRouter:
         """Delete a file from customer's S3 bucket."""
         config = customer_manager.get_customer_config(customer_id)
         if not config:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Customer {customer_id} not found")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail=f"Customer {customer_id} not found"
+            )
 
         try:
             s3 = boto3.client("s3")

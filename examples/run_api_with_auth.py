@@ -59,6 +59,7 @@ from daylily_ursa.workset_customer import CustomerManager
 # Try to import authentication (requires python-jose)
 try:
     from daylily_cognito.auth import CognitoAuth
+
     AUTH_AVAILABLE = True
 except ImportError:
     AUTH_AVAILABLE = False
@@ -69,6 +70,7 @@ except ImportError:
 # Try to import file management (optional)
 try:
     from daylily_ursa.file_registry import FileRegistry
+
     FILE_MANAGEMENT_AVAILABLE = True
 except ImportError:
     FILE_MANAGEMENT_AVAILABLE = False
@@ -107,7 +109,8 @@ Examples:
         """,
     )
     parser.add_argument(
-        "--port", "-p",
+        "--port",
+        "-p",
         type=int,
         default=8914,
         help="Port to run the server on (default: 8914)",
@@ -263,6 +266,7 @@ def main():
 
     # Run the server
     import uvicorn
+
     uvicorn_kwargs = {
         "app": app,
         "host": args.host,

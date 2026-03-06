@@ -476,4 +476,3 @@ class TestBillingAPIEndpoints:
         response = client.get("/api/v2/customers/cust-001/billing/workset/ws-001")
 
         assert response.status_code == 403
-

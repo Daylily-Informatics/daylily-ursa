@@ -361,7 +361,9 @@ def _extract_workset_metrics(workset: Dict[str, Any]) -> Dict[str, Any]:
     # Populate storage fields
     workset["storage_bytes"] = size_bytes
     workset["storage_gb"] = round(size_bytes / (1024**3), 2) if size_bytes > 0 else 0
-    workset["storage_human"] = size_human if size_human else (_format_bytes(size_bytes) if size_bytes > 0 else "")
+    workset["storage_human"] = (
+        size_human if size_human else (_format_bytes(size_bytes) if size_bytes > 0 else "")
+    )
     workset["storage_available"] = size_bytes > 0
 
     # Calculate storage costs (S3 Standard: $0.023/GB/month)
@@ -389,7 +391,9 @@ def _extract_workset_metrics(workset: Dict[str, Any]) -> Dict[str, Any]:
             storage_days = 1
 
     workset["storage_days"] = storage_days
-    workset["storage_cost_total"] = round(workset["storage_cost_daily"] * storage_days, 2) if storage_days > 0 else 0
+    workset["storage_cost_total"] = (
+        round(workset["storage_cost_daily"] * storage_days, 2) if storage_days > 0 else 0
+    )
     workset["storage_class"] = "S3 Standard"  # Default for recent exports
 
     # Calculate transfer costs based on storage size
@@ -398,9 +402,15 @@ def _extract_workset_metrics(workset: Dict[str, Any]) -> Dict[str, Any]:
     TRANSFER_CROSS_REGION_PER_GB = 0.02  # Data transfer to different AWS region
     TRANSFER_SAME_REGION_PER_GB = 0.01  # Data transfer within same region
 
-    workset["transfer_cost_internet"] = round(storage_gb * TRANSFER_INTERNET_PER_GB, 4) if storage_gb > 0 else 0
-    workset["transfer_cost_cross_region"] = round(storage_gb * TRANSFER_CROSS_REGION_PER_GB, 4) if storage_gb > 0 else 0
-    workset["transfer_cost_same_region"] = round(storage_gb * TRANSFER_SAME_REGION_PER_GB, 4) if storage_gb > 0 else 0
+    workset["transfer_cost_internet"] = (
+        round(storage_gb * TRANSFER_INTERNET_PER_GB, 4) if storage_gb > 0 else 0
+    )
+    workset["transfer_cost_cross_region"] = (
+        round(storage_gb * TRANSFER_CROSS_REGION_PER_GB, 4) if storage_gb > 0 else 0
+    )
+    workset["transfer_cost_same_region"] = (
+        round(storage_gb * TRANSFER_SAME_REGION_PER_GB, 4) if storage_gb > 0 else 0
+    )
 
     # Extract vCPU hours and memory GB-hours from benchmark_data
     vcpu_hours = 0.0
@@ -605,8 +615,14 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                     batch = deps.state_db.list_worksets_by_state(ws_state, limit=100)
 
                     # SECURITY: portal dashboard must only show worksets the user can access.
-                    session_user_email = request.session.get("user_email") if hasattr(request, "session") else None
-                    session_is_admin = bool(request.session.get("is_admin", False)) if hasattr(request, "session") else False
+                    session_user_email = (
+                        request.session.get("user_email") if hasattr(request, "session") else None
+                    )
+                    session_is_admin = (
+                        bool(request.session.get("is_admin", False))
+                        if hasattr(request, "session")
+                        else False
+                    )
                     batch = [
                         ws
                         for ws in batch
@@ -620,10 +636,18 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                     all_worksets.extend(batch)
                 worksets = all_worksets[:10]
 
-                stats["in_progress_worksets"] = len([w for w in all_worksets if w.get("state") == "in_progress"])
-                stats["ready_worksets"] = len([w for w in all_worksets if w.get("state") == "ready"])
-                stats["completed_worksets"] = len([w for w in all_worksets if w.get("state") == "complete"])
-                stats["error_worksets"] = len([w for w in all_worksets if w.get("state") == "error"])
+                stats["in_progress_worksets"] = len(
+                    [w for w in all_worksets if w.get("state") == "in_progress"]
+                )
+                stats["ready_worksets"] = len(
+                    [w for w in all_worksets if w.get("state") == "ready"]
+                )
+                stats["completed_worksets"] = len(
+                    [w for w in all_worksets if w.get("state") == "complete"]
+                )
+                stats["error_worksets"] = len(
+                    [w for w in all_worksets if w.get("state") == "error"]
+                )
                 stats["active_worksets"] = stats["in_progress_worksets"]
 
                 # Calculate actual costs and storage from completed worksets with performance metrics
@@ -641,12 +665,18 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                         if cost_summary and isinstance(cost_summary, dict):
                             total_actual_cost += float(cost_summary.get("total_cost", 0))
                         # Aggregate workset storage (try post_export_metrics first, fall back to pre_export_metrics)
-                        export_metrics = pm.get("post_export_metrics", {}) or pm.get("pre_export_metrics", {})
+                        export_metrics = pm.get("post_export_metrics", {}) or pm.get(
+                            "pre_export_metrics", {}
+                        )
                         if export_metrics and isinstance(export_metrics, dict):
-                            total_workset_storage_bytes += int(export_metrics.get("analysis_directory_size_bytes", 0) or 0)
+                            total_workset_storage_bytes += int(
+                                export_metrics.get("analysis_directory_size_bytes", 0) or 0
+                            )
                     else:
                         # Fall back to estimated cost if no performance metrics
-                        total_actual_cost += float(ws.get("cost_usd", 0) or ws.get("metadata", {}).get("cost_usd", 0) or 0)
+                        total_actual_cost += float(
+                            ws.get("cost_usd", 0) or ws.get("metadata", {}).get("cost_usd", 0) or 0
+                        )
 
                 # Calculate cost breakdown
                 workset_storage_gb = total_workset_storage_bytes / (1024**3)
@@ -665,9 +695,15 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
 
                 if deps.file_registry:
                     try:
-                        customer_files = deps.file_registry.list_customer_files(customer_id, limit=1000)
+                        customer_files = deps.file_registry.list_customer_files(
+                            customer_id, limit=1000
+                        )
                         stats["registered_files"] = len(customer_files)
-                        total_bytes = sum(f.file_metadata.file_size_bytes for f in customer_files if f.file_metadata)
+                        total_bytes = sum(
+                            f.file_metadata.file_size_bytes
+                            for f in customer_files
+                            if f.file_metadata
+                        )
                         stats["total_file_size_bytes"] = total_bytes
                         stats["total_file_size_gb"] = round(total_bytes / (1024**3), 2)
                     except Exception as e:
@@ -679,7 +715,14 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         return deps.templates.TemplateResponse(
             request,
             "dashboard.html",
-            _get_template_context(request, deps, customer=customer, worksets=worksets, stats=stats, active_page="dashboard"),
+            _get_template_context(
+                request,
+                deps,
+                customer=customer,
+                worksets=worksets,
+                stats=stats,
+                active_page="dashboard",
+            ),
         )
 
     # ========== Global Search Routes ==========
@@ -844,12 +887,16 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         """Handle Cognito Hosted UI callback and establish a portal session."""
         if not deps.enable_auth or not deps.cognito_auth:
             _clear_portal_auth_session(request)
-            return RedirectResponse(url="/portal/login?error=Authentication+not+configured", status_code=302)
+            return RedirectResponse(
+                url="/portal/login?error=Authentication+not+configured", status_code=302
+            )
 
         if error:
             detail = error_description or error
             _clear_portal_auth_session(request)
-            return RedirectResponse(url=f"/portal/login?error={quote_plus(detail)}", status_code=302)
+            return RedirectResponse(
+                url=f"/portal/login?error={quote_plus(detail)}", status_code=302
+            )
 
         expected_state = request.session.pop("oauth_state", None)
         if not expected_state or state != expected_state:
@@ -862,10 +909,14 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         callback_url = _get_effective_callback_url(request)
         if not domain or not client_id:
             _clear_portal_auth_session(request)
-            return RedirectResponse(url="/portal/login?error=Cognito+OAuth+not+configured", status_code=302)
+            return RedirectResponse(
+                url="/portal/login?error=Cognito+OAuth+not+configured", status_code=302
+            )
         if not code:
             _clear_portal_auth_session(request)
-            return RedirectResponse(url="/portal/login?error=Missing+authorization+code", status_code=302)
+            return RedirectResponse(
+                url="/portal/login?error=Missing+authorization+code", status_code=302
+            )
 
         try:
             token_result = exchange_authorization_code(
@@ -878,14 +929,18 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         except Exception as e:
             LOGGER.error("OAuth code exchange failed: %s", e)
             _clear_portal_auth_session(request)
-            return RedirectResponse(url="/portal/login?error=Token+exchange+failed", status_code=302)
+            return RedirectResponse(
+                url="/portal/login?error=Token+exchange+failed", status_code=302
+            )
 
         access_token = token_result.get("access_token")
         id_token = token_result.get("id_token")
         if not access_token or not id_token:
             LOGGER.error("OAuth callback missing required tokens")
             _clear_portal_auth_session(request)
-            return RedirectResponse(url="/portal/login?error=Invalid+token+response", status_code=302)
+            return RedirectResponse(
+                url="/portal/login?error=Invalid+token+response", status_code=302
+            )
 
         try:
             # Validate access token against Cognito JWKS + app client audience.
@@ -915,15 +970,23 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
 
         # Fallback claims from access token if id_token claims are unavailable.
         if not email:
-            email = access_claims.get("email") or access_claims.get("username") or access_claims.get("cognito:username")
+            email = (
+                access_claims.get("email")
+                or access_claims.get("username")
+                or access_claims.get("cognito:username")
+            )
         if not token_customer_id:
-            token_customer_id = access_claims.get("custom:customer_id") or access_claims.get("customer_id")
+            token_customer_id = access_claims.get("custom:customer_id") or access_claims.get(
+                "customer_id"
+            )
 
         if not email:
             _clear_portal_auth_session(request)
             return RedirectResponse(url="/portal/login?error=Email+claim+missing", status_code=302)
 
-        customer = deps.customer_manager.get_customer_by_email(email) if deps.customer_manager else None
+        customer = (
+            deps.customer_manager.get_customer_by_email(email) if deps.customer_manager else None
+        )
         if not customer and deps.customer_manager and token_customer_id:
             customer = deps.customer_manager.get_customer_config(str(token_customer_id))
 
@@ -937,19 +1000,25 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         if not customer and not token_customer_id:
             LOGGER.warning("OAuth login for %s missing customer_id claim", sanitize_for_log(email))
             _clear_portal_auth_session(request)
-            return RedirectResponse(url="/portal/login?error=Missing+customer+mapping", status_code=302)
+            return RedirectResponse(
+                url="/portal/login?error=Missing+customer+mapping", status_code=302
+            )
 
         request.session["access_token"] = access_token
         request.session["user_email"] = email
         request.session["user_authenticated"] = True
-        request.session["customer_id"] = customer.customer_id if customer else str(token_customer_id)
+        request.session["customer_id"] = (
+            customer.customer_id if customer else str(token_customer_id)
+        )
         request.session["is_admin"] = bool(customer.is_admin) if customer else False
 
         LOGGER.info("OAuth login successful for %s", sanitize_for_log(email))
         return RedirectResponse(url="/portal/", status_code=302)
 
     @router.post("/portal/login")
-    async def portal_login_submit(request: Request, email: str = Form(...), password: str = Form(...)):
+    async def portal_login_submit(
+        request: Request, email: str = Form(...), password: str = Form(...)
+    ):
         """Handle login form submission with proper authentication."""
         LOGGER.debug(f"portal_login_submit: Login attempt for email: {email}")
 
@@ -957,23 +1026,31 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         domain_valid, domain_error = deps.settings.validate_email_domain(email)
         if not domain_valid:
             LOGGER.warning(f"Login blocked for {email}: {domain_error}")
-            return RedirectResponse(url=f"/portal/login?error={domain_error.replace(' ', '+')}", status_code=302)
+            return RedirectResponse(
+                url=f"/portal/login?error={domain_error.replace(' ', '+')}", status_code=302
+            )
 
         if not deps.customer_manager:
             if not deps.enable_auth:
-                LOGGER.warning("portal_login_submit: No customer manager; creating demo session for %s", email)
+                LOGGER.warning(
+                    "portal_login_submit: No customer manager; creating demo session for %s", email
+                )
                 request.session["user_email"] = email
                 request.session["user_authenticated"] = True
                 request.session["customer_id"] = "demo-customer"
                 request.session["is_admin"] = True
                 return RedirectResponse(url="/portal/", status_code=302)
             LOGGER.error("portal_login_submit: Customer manager not configured")
-            return RedirectResponse(url="/portal/login?error=Authentication+not+configured", status_code=302)
+            return RedirectResponse(
+                url="/portal/login?error=Authentication+not+configured", status_code=302
+            )
 
         customer = deps.customer_manager.get_customer_by_email(email)
         if not customer:
             LOGGER.warning(f"portal_login_submit: Login attempt for non-existent customer: {email}")
-            return RedirectResponse(url="/portal/login?error=Invalid+email+or+password", status_code=302)
+            return RedirectResponse(
+                url="/portal/login?error=Invalid+email+or+password", status_code=302
+            )
 
         if deps.cognito_auth:
             try:
@@ -982,32 +1059,52 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
 
                 if "challenge" in auth_result:
                     challenge_name = auth_result["challenge"]
-                    LOGGER.info(f"portal_login_submit: Challenge required for {email}: {challenge_name}")
+                    LOGGER.info(
+                        f"portal_login_submit: Challenge required for {email}: {challenge_name}"
+                    )
                     if challenge_name == "NEW_PASSWORD_REQUIRED":
                         request.session["challenge_session"] = auth_result["session"]
                         request.session["challenge_email"] = email
-                        return RedirectResponse(url="/portal/change-password?reason=temporary", status_code=302)
+                        return RedirectResponse(
+                            url="/portal/change-password?reason=temporary", status_code=302
+                        )
                     else:
-                        LOGGER.error(f"portal_login_submit: Unsupported challenge: {challenge_name}")
-                        return RedirectResponse(url=f"/portal/login?error=Authentication+challenge+required:+{challenge_name}", status_code=302)
+                        LOGGER.error(
+                            f"portal_login_submit: Unsupported challenge: {challenge_name}"
+                        )
+                        return RedirectResponse(
+                            url=f"/portal/login?error=Authentication+challenge+required:+{challenge_name}",
+                            status_code=302,
+                        )
 
                 request.session["access_token"] = auth_result["access_token"]
                 LOGGER.info(f"portal_login_submit: Cognito authentication successful for: {email}")
             except ValueError as e:
-                LOGGER.warning(f"portal_login_submit: Cognito authentication failed for {email}: {e}")
-                return RedirectResponse(url="/portal/login?error=Invalid+email+or+password", status_code=302)
+                LOGGER.warning(
+                    f"portal_login_submit: Cognito authentication failed for {email}: {e}"
+                )
+                return RedirectResponse(
+                    url="/portal/login?error=Invalid+email+or+password", status_code=302
+                )
             except Exception as e:
                 LOGGER.error(f"portal_login_submit: Cognito authentication error for {email}: {e}")
-                return RedirectResponse(url="/portal/login?error=Authentication+service+error", status_code=302)
+                return RedirectResponse(
+                    url="/portal/login?error=Authentication+service+error", status_code=302
+                )
         else:
-            LOGGER.warning("portal_login_submit: Cognito not configured - allowing login for registered customer %s WITHOUT password validation", email)
+            LOGGER.warning(
+                "portal_login_submit: Cognito not configured - allowing login for registered customer %s WITHOUT password validation",
+                email,
+            )
 
         LOGGER.debug(f"portal_login_submit: Setting session for authenticated user: {email}")
         request.session["user_email"] = email
         request.session["user_authenticated"] = True
         request.session["customer_id"] = customer.customer_id
         request.session["is_admin"] = customer.is_admin
-        LOGGER.info(f"portal_login_submit: Login successful for customer {customer.customer_id} ({email})")
+        LOGGER.info(
+            f"portal_login_submit: Login successful for customer {customer.customer_id} ({email})"
+        )
         return RedirectResponse(url="/portal/", status_code=302)
 
     @router.get("/portal/logout", response_class=RedirectResponse)
@@ -1038,10 +1135,14 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
             )
             return RedirectResponse(url=logout_url, status_code=302)
 
-        return RedirectResponse(url="/portal/login?success=You+have+been+logged+out", status_code=302)
+        return RedirectResponse(
+            url="/portal/login?success=You+have+been+logged+out", status_code=302
+        )
 
     @router.get("/portal/forgot-password", response_class=HTMLResponse)
-    async def portal_forgot_password(request: Request, error: Optional[str] = None, success: Optional[str] = None):
+    async def portal_forgot_password(
+        request: Request, error: Optional[str] = None, success: Optional[str] = None
+    ):
         """Forgot password page."""
         return deps.templates.TemplateResponse(
             request,
@@ -1053,7 +1154,9 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
     async def portal_forgot_password_submit(request: Request, email: str = Form(...)):
         """Handle forgot password form submission."""
         if not deps.cognito_auth:
-            return RedirectResponse(url="/portal/forgot-password?error=Password+reset+not+available", status_code=302)
+            return RedirectResponse(
+                url="/portal/forgot-password?error=Password+reset+not+available", status_code=302
+            )
         try:
             deps.cognito_auth.forgot_password(email)
             LOGGER.info(f"Password reset initiated for {email}")
@@ -1063,10 +1166,17 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
             return RedirectResponse(url=f"/portal/forgot-password?error={str(e)}", status_code=302)
         except Exception as e:
             LOGGER.error(f"Forgot password error for {email}: {e}")
-            return RedirectResponse(url="/portal/forgot-password?error=Password+reset+failed", status_code=302)
+            return RedirectResponse(
+                url="/portal/forgot-password?error=Password+reset+failed", status_code=302
+            )
 
     @router.get("/portal/reset-password", response_class=HTMLResponse)
-    async def portal_reset_password(request: Request, email: Optional[str] = None, error: Optional[str] = None, success: Optional[str] = None):
+    async def portal_reset_password(
+        request: Request,
+        email: Optional[str] = None,
+        error: Optional[str] = None,
+        success: Optional[str] = None,
+    ):
         """Reset password page."""
         return deps.templates.TemplateResponse(
             request,
@@ -1075,10 +1185,18 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         )
 
     @router.post("/portal/reset-password")
-    async def portal_reset_password_submit(request: Request, email: str = Form(...), code: str = Form(...), password: str = Form(...), confirm_password: str = Form(...)):
+    async def portal_reset_password_submit(
+        request: Request,
+        email: str = Form(...),
+        code: str = Form(...),
+        password: str = Form(...),
+        confirm_password: str = Form(...),
+    ):
         """Handle reset password form submission."""
         if not deps.cognito_auth:
-            return RedirectResponse(url="/portal/reset-password?error=Password+reset+not+available", status_code=302)
+            return RedirectResponse(
+                url="/portal/reset-password?error=Password+reset+not+available", status_code=302
+            )
         min_len_error = _validate_password_min_length(password)
         if min_len_error:
             return RedirectResponse(
@@ -1086,39 +1204,66 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                 status_code=302,
             )
         if password != confirm_password:
-            return RedirectResponse(url=f"/portal/reset-password?email={quote_plus(email)}&error=Passwords+do+not+match", status_code=302)
+            return RedirectResponse(
+                url=f"/portal/reset-password?email={quote_plus(email)}&error=Passwords+do+not+match",
+                status_code=302,
+            )
         try:
             deps.cognito_auth.confirm_forgot_password(email, code, password)
             LOGGER.info("Password reset successful for %s", sanitize_for_log(email))
-            return RedirectResponse(url="/portal/login?success=Password+reset+successful.+Please+log+in", status_code=302)
+            return RedirectResponse(
+                url="/portal/login?success=Password+reset+successful.+Please+log+in",
+                status_code=302,
+            )
         except ValueError as e:
             LOGGER.warning("Reset password error for %s: %s", sanitize_for_log(email), e)
-            return RedirectResponse(url=f"/portal/reset-password?email={quote_plus(email)}&error={quote_plus(str(e))}", status_code=302)
+            return RedirectResponse(
+                url=f"/portal/reset-password?email={quote_plus(email)}&error={quote_plus(str(e))}",
+                status_code=302,
+            )
         except Exception as e:
             LOGGER.error(f"Reset password error for {email}: {e}")
-            return RedirectResponse(url=f"/portal/reset-password?email={email}&error=Password+reset+failed", status_code=302)
+            return RedirectResponse(
+                url=f"/portal/reset-password?email={email}&error=Password+reset+failed",
+                status_code=302,
+            )
 
     @router.get("/portal/change-password", response_class=HTMLResponse)
-    async def portal_change_password(request: Request, reason: Optional[str] = None, error: Optional[str] = None, success: Optional[str] = None):
+    async def portal_change_password(
+        request: Request,
+        reason: Optional[str] = None,
+        error: Optional[str] = None,
+        success: Optional[str] = None,
+    ):
         """Change password page (for NEW_PASSWORD_REQUIRED challenge)."""
         if not request.session.get("challenge_session"):
-            return RedirectResponse(url="/portal/login?error=Session+expired.+Please+log+in+again", status_code=302)
+            return RedirectResponse(
+                url="/portal/login?error=Session+expired.+Please+log+in+again", status_code=302
+            )
         email = request.session.get("challenge_email", "")
         return deps.templates.TemplateResponse(
             request,
             "auth/change_password.html",
-            _get_template_context(request, deps, email=email, reason=reason, error=error, success=success),
+            _get_template_context(
+                request, deps, email=email, reason=reason, error=error, success=success
+            ),
         )
 
     @router.post("/portal/change-password")
-    async def portal_change_password_submit(request: Request, new_password: str = Form(...), confirm_password: str = Form(...)):
+    async def portal_change_password_submit(
+        request: Request, new_password: str = Form(...), confirm_password: str = Form(...)
+    ):
         """Handle change password form submission (NEW_PASSWORD_REQUIRED challenge)."""
         if not deps.cognito_auth:
-            return RedirectResponse(url="/portal/login?error=Authentication+not+available", status_code=302)
+            return RedirectResponse(
+                url="/portal/login?error=Authentication+not+available", status_code=302
+            )
         session = request.session.get("challenge_session")
         email = request.session.get("challenge_email")
         if not session or not email:
-            return RedirectResponse(url="/portal/login?error=Session+expired.+Please+log+in+again", status_code=302)
+            return RedirectResponse(
+                url="/portal/login?error=Session+expired.+Please+log+in+again", status_code=302
+            )
         min_len_error = _validate_password_min_length(new_password)
         if min_len_error:
             return RedirectResponse(
@@ -1126,36 +1271,56 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                 status_code=302,
             )
         if new_password != confirm_password:
-            return RedirectResponse(url="/portal/change-password?error=Passwords+do+not+match", status_code=302)
+            return RedirectResponse(
+                url="/portal/change-password?error=Passwords+do+not+match", status_code=302
+            )
         try:
-            tokens = deps.cognito_auth.respond_to_new_password_challenge(email, new_password, session)
+            tokens = deps.cognito_auth.respond_to_new_password_challenge(
+                email, new_password, session
+            )
             request.session.pop("challenge_session", None)
             request.session.pop("challenge_email", None)
-            customer = deps.customer_manager.get_customer_by_email(email) if deps.customer_manager else None
+            customer = (
+                deps.customer_manager.get_customer_by_email(email)
+                if deps.customer_manager
+                else None
+            )
             if not customer:
                 LOGGER.error(f"Customer not found for {email} after password change")
-                return RedirectResponse(url="/portal/login?error=Account+not+found", status_code=302)
+                return RedirectResponse(
+                    url="/portal/login?error=Account+not+found", status_code=302
+                )
             request.session["access_token"] = tokens["access_token"]
             request.session["user_email"] = email
             request.session["user_authenticated"] = True
             request.session["customer_id"] = customer.customer_id
             request.session["is_admin"] = customer.is_admin
             LOGGER.info(f"Password changed successfully for {email}, user logged in")
-            return RedirectResponse(url="/portal/?success=Password+changed+successfully", status_code=302)
+            return RedirectResponse(
+                url="/portal/?success=Password+changed+successfully", status_code=302
+            )
         except ValueError as e:
             LOGGER.warning(f"Password change error for {email}: {e}")
             return RedirectResponse(url=f"/portal/change-password?error={str(e)}", status_code=302)
         except Exception as e:
             LOGGER.error(f"Password change error for {email}: {e}")
-            return RedirectResponse(url="/portal/change-password?error=Password+change+failed", status_code=302)
+            return RedirectResponse(
+                url="/portal/change-password?error=Password+change+failed", status_code=302
+            )
 
     @router.get("/portal/register", response_class=HTMLResponse)
-    async def portal_register(request: Request, error: Optional[str] = None, success: Optional[str] = None):
+    async def portal_register(
+        request: Request, error: Optional[str] = None, success: Optional[str] = None
+    ):
         """Registration page."""
         # Registration region selection is intentionally limited to a curated set.
         allowed_regions = PORTAL_REGISTRATION_REGIONS
-        configured_region = deps.settings.get_effective_region() if deps.settings else allowed_regions[0]
-        default_region = configured_region if configured_region in allowed_regions else allowed_regions[0]
+        configured_region = (
+            deps.settings.get_effective_region() if deps.settings else allowed_regions[0]
+        )
+        default_region = (
+            configured_region if configured_region in allowed_regions else allowed_regions[0]
+        )
         pending_signup_email = request.session.get("pending_signup_email")
         if deps.enable_auth and deps.cognito_auth and not pending_signup_email:
             return RedirectResponse(url="/portal/login?error=Please+sign+in+first", status_code=302)
@@ -1163,7 +1328,8 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
             request,
             "auth/register.html",
             _get_template_context(
-                request, deps,
+                request,
+                deps,
                 error=error,
                 success=success,
                 allowed_regions=allowed_regions,
@@ -1188,7 +1354,8 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         """Handle registration form submission."""
         if not deps.customer_manager:
             return deps.templates.TemplateResponse(
-                request, "auth/register.html",
+                request,
+                "auth/register.html",
                 _get_template_context(request, deps, error="Customer management not configured"),
             )
 
@@ -1196,7 +1363,9 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         if deps.enable_auth and deps.cognito_auth:
             resolved_email = str(request.session.get("pending_signup_email") or "").strip()
             if not resolved_email:
-                return RedirectResponse(url="/portal/login?error=Please+sign+in+first", status_code=302)
+                return RedirectResponse(
+                    url="/portal/login?error=Please+sign+in+first", status_code=302
+                )
         if not resolved_email:
             return deps.templates.TemplateResponse(
                 request,
@@ -1216,7 +1385,8 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         if not domain_valid:
             LOGGER.warning(f"Registration blocked for {resolved_email}: {domain_error}")
             return deps.templates.TemplateResponse(
-                request, "auth/register.html",
+                request,
+                "auth/register.html",
                 _get_template_context(
                     request,
                     deps,
@@ -1230,7 +1400,10 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         try:
             custom_bucket = None
             effective_bucket_region = bucket_region if s3_option == "auto" else None
-            if effective_bucket_region and effective_bucket_region not in PORTAL_REGISTRATION_REGIONS:
+            if (
+                effective_bucket_region
+                and effective_bucket_region not in PORTAL_REGISTRATION_REGIONS
+            ):
                 return deps.templates.TemplateResponse(
                     request,
                     "auth/register.html",
@@ -1247,12 +1420,14 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                 custom_bucket = custom_s3_bucket.strip()
                 if custom_bucket:
                     from daylily_ursa.s3_bucket_validator import S3BucketValidator
+
                     validator = S3BucketValidator(region=deps.region, profile=deps.profile)
                     result = validator.validate_bucket(custom_bucket)
                     if not result.is_valid:
                         error_msg = f"S3 bucket validation failed: {'; '.join(result.errors)}"
                         return deps.templates.TemplateResponse(
-                            request, "auth/register.html",
+                            request,
+                            "auth/register.html",
                             _get_template_context(request, deps, error=error_msg),
                         )
             config = deps.customer_manager.onboard_customer(
@@ -1265,19 +1440,30 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                 custom_s3_bucket=custom_bucket,
                 bucket_region=effective_bucket_region,
             )
-            LOGGER.info(f"Registration: enable_auth={deps.enable_auth}, cognito_auth={'SET' if deps.cognito_auth else 'NONE'}")
+            LOGGER.info(
+                f"Registration: enable_auth={deps.enable_auth}, cognito_auth={'SET' if deps.cognito_auth else 'NONE'}"
+            )
             if deps.enable_auth and deps.cognito_auth:
-                LOGGER.info("Registration: Cognito account already exists for %s; skipping user creation", resolved_email)
+                LOGGER.info(
+                    "Registration: Cognito account already exists for %s; skipping user creation",
+                    resolved_email,
+                )
             else:
-                LOGGER.warning(f"Skipping Cognito user creation: enable_auth={deps.enable_auth}, cognito_auth={'SET' if deps.cognito_auth else 'NONE'}")
+                LOGGER.warning(
+                    f"Skipping Cognito user creation: enable_auth={deps.enable_auth}, cognito_auth={'SET' if deps.cognito_auth else 'NONE'}"
+                )
             bucket_info = f" Your S3 bucket: {config.s3_bucket}." if config.s3_bucket else ""
             if not deps.enable_auth:
-                LOGGER.info(f"Auto-logging in new customer {config.customer_id} ({resolved_email}) in no-auth mode")
+                LOGGER.info(
+                    f"Auto-logging in new customer {config.customer_id} ({resolved_email}) in no-auth mode"
+                )
                 request.session["user_email"] = resolved_email
                 request.session["user_authenticated"] = True
                 request.session["customer_id"] = config.customer_id
                 request.session["is_admin"] = False
-                success_msg = f"✅ Account created! Customer ID: {config.customer_id}.{bucket_info} Welcome!"
+                success_msg = (
+                    f"✅ Account created! Customer ID: {config.customer_id}.{bucket_info} Welcome!"
+                )
                 return RedirectResponse(url=f"/portal/?success={success_msg}", status_code=302)
             else:
                 request.session.pop("pending_signup_email", None)
@@ -1295,7 +1481,8 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                 sanitize_for_log(resolved_email),
             )
             return deps.templates.TemplateResponse(
-                request, "auth/register.html",
+                request,
+                "auth/register.html",
                 _get_template_context(
                     request,
                     deps,
@@ -1314,7 +1501,10 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         """Change the current user's password via portal session."""
         _require_portal_api_session(request)
         if not deps.cognito_auth:
-            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Password change not available")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Password change not available",
+            )
         access_token = request.session.get("access_token")
         if not access_token:
             raise HTTPException(status_code=401, detail="Session expired; please log in again")
@@ -1339,7 +1529,10 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         """List API tokens for the current customer (metadata only)."""
         customer_id = _require_portal_api_session(request)
         if not deps.customer_manager:
-            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Token management not configured")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Token management not configured",
+            )
         return deps.customer_manager.list_api_tokens(customer_id)
 
     @router.post("/api/v2/auth/tokens")
@@ -1347,10 +1540,15 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         """Create a new API token and return the secret once."""
         customer_id = _require_portal_api_session(request)
         if not deps.customer_manager:
-            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Token management not configured")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Token management not configured",
+            )
 
         try:
-            result = deps.customer_manager.add_api_token(customer_id, name=payload.name, expiry_days=payload.expiry_days)
+            result = deps.customer_manager.add_api_token(
+                customer_id, name=payload.name, expiry_days=payload.expiry_days
+            )
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
 
@@ -1361,7 +1559,10 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         """Revoke an API token for the current customer."""
         customer_id = _require_portal_api_session(request)
         if not deps.customer_manager:
-            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Token management not configured")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Token management not configured",
+            )
 
         revoked = deps.customer_manager.revoke_api_token(customer_id, token_id)
         if not revoked:
@@ -1452,7 +1653,8 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                 request,
                 "worksets/list.html",
                 _get_template_context(
-                    request, deps,
+                    request,
+                    deps,
                     customer=customer,
                     worksets=[],
                     current_page=1,
@@ -1487,8 +1689,12 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                 worksets.extend(batch)
 
         # SECURITY: Filter to only worksets the user can access
-        session_user_email = request.session.get("user_email") if hasattr(request, "session") else None
-        session_is_admin = bool(request.session.get("is_admin", False)) if hasattr(request, "session") else False
+        session_user_email = (
+            request.session.get("user_email") if hasattr(request, "session") else None
+        )
+        session_is_admin = (
+            bool(request.session.get("is_admin", False)) if hasattr(request, "session") else False
+        )
         worksets = [
             w
             for w in worksets
@@ -1524,14 +1730,16 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
 
             # Apply search filter
             if search_lower:
-                searchable = " ".join([
-                    ws.get("workset_id", ""),
-                    ws.get("name", ""),
-                    ws.get("workset_type", ""),
-                    ws.get("pipeline_type", ""),
-                    str(metadata.get("workset_name", "")),
-                    str(metadata.get("notification_email", "")),
-                ]).lower()
+                searchable = " ".join(
+                    [
+                        ws.get("workset_id", ""),
+                        ws.get("name", ""),
+                        ws.get("workset_type", ""),
+                        ws.get("pipeline_type", ""),
+                        str(metadata.get("workset_name", "")),
+                        str(metadata.get("notification_email", "")),
+                    ]
+                ).lower()
                 if search_lower not in searchable:
                     continue
 
@@ -1559,7 +1767,9 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
             if compute_cost == 0:
                 compute_cost = float(ws.get("cost_usd", 0) or 0)
                 if compute_cost == 0 and isinstance(metadata, dict):
-                    compute_cost = float(metadata.get("cost_usd", 0) or metadata.get("estimated_cost_usd", 0) or 0)
+                    compute_cost = float(
+                        metadata.get("cost_usd", 0) or metadata.get("estimated_cost_usd", 0) or 0
+                    )
 
             ws["compute_cost"] = compute_cost
             ws["is_actual_cost"] = is_actual_cost
@@ -1594,7 +1804,8 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
             request,
             "worksets/list.html",
             _get_template_context(
-                request, deps,
+                request,
+                deps,
                 customer=customer,
                 worksets=paginated_worksets,
                 current_page=page,
@@ -1640,8 +1851,14 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
             LOGGER.info("Found %d total archived worksets in TapDB", len(all_archived))
 
             # SECURITY: Filter to only worksets the user can access
-            session_user_email = request.session.get("user_email") if hasattr(request, "session") else None
-            session_is_admin = bool(request.session.get("is_admin", False)) if hasattr(request, "session") else False
+            session_user_email = (
+                request.session.get("user_email") if hasattr(request, "session") else None
+            )
+            session_is_admin = (
+                bool(request.session.get("is_admin", False))
+                if hasattr(request, "session")
+                else False
+            )
             archived_worksets = [
                 w
                 for w in all_archived
@@ -1671,7 +1888,9 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         return deps.templates.TemplateResponse(
             request,
             "worksets/archived.html",
-            _get_template_context(request, deps, customer=customer, worksets=archived_worksets, active_page="worksets"),
+            _get_template_context(
+                request, deps, customer=customer, worksets=archived_worksets, active_page="worksets"
+            ),
         )
 
     @router.get("/portal/worksets/{workset_id}", response_class=HTMLResponse)
@@ -1686,8 +1905,12 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         customer, _ = _get_customer_for_session(request, deps)
 
         # SECURITY: Verify workset access before displaying
-        session_user_email = request.session.get("user_email") if hasattr(request, "session") else None
-        session_is_admin = bool(request.session.get("is_admin", False)) if hasattr(request, "session") else False
+        session_user_email = (
+            request.session.get("user_email") if hasattr(request, "session") else None
+        )
+        session_is_admin = (
+            bool(request.session.get("is_admin", False)) if hasattr(request, "session") else False
+        )
         if customer and not verify_workset_access(
             workset,
             customer_id=customer.customer_id,
@@ -1705,7 +1928,15 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         if metadata:
             if "samples" in metadata and "samples" not in workset:
                 workset["samples"] = metadata["samples"]
-            for field in ["workset_name", "pipeline_type", "reference_genome", "notification_email", "enable_qc", "archive_results", "sample_count"]:
+            for field in [
+                "workset_name",
+                "pipeline_type",
+                "reference_genome",
+                "notification_email",
+                "enable_qc",
+                "archive_results",
+                "sample_count",
+            ]:
                 if field in metadata and field not in workset:
                     workset[field] = metadata[field]
 
@@ -1718,7 +1949,9 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         return deps.templates.TemplateResponse(
             request,
             "worksets/detail.html",
-            _get_template_context(request, deps, customer=customer, workset=workset, active_page="worksets"),
+            _get_template_context(
+                request, deps, customer=customer, workset=workset, active_page="worksets"
+            ),
         )
 
     @router.get("/portal/worksets/{workset_id}/download")
@@ -1733,8 +1966,12 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
 
         # SECURITY: Verify workset access before allowing download
         customer, _ = _get_customer_for_session(request, deps)
-        session_user_email = request.session.get("user_email") if hasattr(request, "session") else None
-        session_is_admin = bool(request.session.get("is_admin", False)) if hasattr(request, "session") else False
+        session_user_email = (
+            request.session.get("user_email") if hasattr(request, "session") else None
+        )
+        session_is_admin = (
+            bool(request.session.get("is_admin", False)) if hasattr(request, "session") else False
+        )
         if customer and not verify_workset_access(
             workset,
             customer_id=customer.customer_id,
@@ -1748,7 +1985,6 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
             )
             raise HTTPException(status_code=404, detail="Workset not found")
 
-
         if workset.get("state") != "complete":
             raise HTTPException(
                 status_code=400,
@@ -1757,11 +1993,12 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
 
         bucket = workset.get("bucket")
         if not bucket or not isinstance(bucket, str):
-            raise HTTPException(status_code=400, detail="No results bucket available for this workset")
+            raise HTTPException(
+                status_code=400, detail="No results bucket available for this workset"
+            )
         prefix = workset.get("prefix", "").rstrip("/")
         results_prefix = f"{prefix}/results/" if prefix else "results/"
         try:
-
             response = _portal_s3_client.list_objects_v2(
                 Bucket=bucket,
                 Prefix=results_prefix,
@@ -1772,9 +2009,13 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                 key = obj["Key"]
                 filename = key.split("/")[-1]
                 if filename and not filename.startswith("."):
-                    result_files.append({"key": key, "filename": filename, "size": obj.get("Size", 0)})
+                    result_files.append(
+                        {"key": key, "filename": filename, "size": obj.get("Size", 0)}
+                    )
             if not result_files:
-                raise HTTPException(status_code=404, detail="No result files found for this workset")
+                raise HTTPException(
+                    status_code=404, detail="No result files found for this workset"
+                )
 
             main_results = [
                 f
@@ -1810,8 +2051,12 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
             raise HTTPException(status_code=404, detail="Workset not found")
 
         # SECURITY: Verify workset access before allowing browse
-        session_user_email = request.session.get("user_email") if hasattr(request, "session") else None
-        session_is_admin = bool(request.session.get("is_admin", False)) if hasattr(request, "session") else False
+        session_user_email = (
+            request.session.get("user_email") if hasattr(request, "session") else None
+        )
+        session_is_admin = (
+            bool(request.session.get("is_admin", False)) if hasattr(request, "session") else False
+        )
         if customer and not verify_workset_access(
             workset,
             customer_id=customer.customer_id,
@@ -1828,7 +2073,9 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         # Get results S3 URI
         results_uri = workset.get("results_s3_uri")
         if not results_uri:
-            raise HTTPException(status_code=400, detail="No results location available for this workset")
+            raise HTTPException(
+                status_code=400, detail="No results location available for this workset"
+            )
 
         # Parse S3 URI: s3://bucket/prefix/path
         if not results_uri.startswith("s3://"):
@@ -1860,17 +2107,23 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                 for cp in page.get("CommonPrefixes", []):
                     folder_key = cp["Prefix"]
                     # Get relative name from base_prefix
-                    relative_key = folder_key[len(base_prefix):] if folder_key.startswith(base_prefix) else folder_key
+                    relative_key = (
+                        folder_key[len(base_prefix) :]
+                        if folder_key.startswith(base_prefix)
+                        else folder_key
+                    )
                     folder_name = relative_key.rstrip("/").split("/")[-1]
                     if folder_name and not folder_name.startswith("."):
-                        items.append({
-                            "name": folder_name,
-                            "key": relative_key,
-                            "is_folder": True,
-                            "size_bytes": None,
-                            "last_modified": None,
-                            "file_format": None,
-                        })
+                        items.append(
+                            {
+                                "name": folder_name,
+                                "key": relative_key,
+                                "is_folder": True,
+                                "size_bytes": None,
+                                "last_modified": None,
+                                "file_format": None,
+                            }
+                        )
 
                 # Add files
                 for obj in page.get("Contents", []):
@@ -1878,7 +2131,7 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                     # Skip the prefix itself
                     if key == current_prefix:
                         continue
-                    relative_key = key[len(base_prefix):] if key.startswith(base_prefix) else key
+                    relative_key = key[len(base_prefix) :] if key.startswith(base_prefix) else key
                     filename = key.split("/")[-1]
                     if filename and not filename.startswith("."):
                         # Determine file format
@@ -1898,15 +2151,19 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                         elif filename.endswith((".tsv", ".csv")):
                             file_format = "table"
 
-                        items.append({
-                            "name": filename,
-                            "key": relative_key,
-                            "full_key": key,
-                            "is_folder": False,
-                            "size_bytes": obj.get("Size", 0),
-                            "last_modified": obj.get("LastModified").isoformat() if obj.get("LastModified") else None,
-                            "file_format": file_format,
-                        })
+                        items.append(
+                            {
+                                "name": filename,
+                                "key": relative_key,
+                                "full_key": key,
+                                "is_folder": False,
+                                "size_bytes": obj.get("Size", 0),
+                                "last_modified": obj.get("LastModified").isoformat()
+                                if obj.get("LastModified")
+                                else None,
+                                "file_format": file_format,
+                            }
+                        )
         except Exception as e:
             LOGGER.warning(f"Failed to browse results for {workset_id}: {e}")
 
@@ -1914,7 +2171,7 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         if prefix:
             parts = prefix.rstrip("/").split("/")
             for i, part in enumerate(parts):
-                breadcrumbs.append({"name": part, "prefix": "/".join(parts[:i + 1]) + "/"})
+                breadcrumbs.append({"name": part, "prefix": "/".join(parts[: i + 1]) + "/"})
 
         _inject_workset_id_compat(workset)
 
@@ -1922,7 +2179,8 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
             request,
             "worksets/results_browse.html",
             _get_template_context(
-                request, deps,
+                request,
+                deps,
                 customer=customer,
                 workset=workset,
                 items=items,
@@ -1935,7 +2193,9 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         )
 
     @router.get("/portal/worksets/{workset_id}/results/download")
-    async def portal_workset_results_download(request: Request, workset_id: str, key: str = Query(...)):
+    async def portal_workset_results_download(
+        request: Request, workset_id: str, key: str = Query(...)
+    ):
         """Download a file from workset results."""
         auth_redirect = _require_portal_auth(request)
         if auth_redirect:
@@ -1946,8 +2206,12 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
 
         # SECURITY: Verify workset access before allowing download
         customer, _ = _get_customer_for_session(request, deps)
-        session_user_email = request.session.get("user_email") if hasattr(request, "session") else None
-        session_is_admin = bool(request.session.get("is_admin", False)) if hasattr(request, "session") else False
+        session_user_email = (
+            request.session.get("user_email") if hasattr(request, "session") else None
+        )
+        session_is_admin = (
+            bool(request.session.get("is_admin", False)) if hasattr(request, "session") else False
+        )
         if customer and not verify_workset_access(
             workset,
             customer_id=customer.customer_id,
@@ -1974,7 +2238,6 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
 
         # Full S3 key
         full_key = base_prefix + key
-
 
         try:
             filename = key.split("/")[-1]
@@ -2015,7 +2278,9 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
     # ========== Files Routes ==========
 
     @router.get("/portal/files", response_class=HTMLResponse)
-    async def portal_files(request: Request, prefix: str = "", subject_id: str = "", biosample_id: str = ""):
+    async def portal_files(
+        request: Request, prefix: str = "", subject_id: str = "", biosample_id: str = ""
+    ):
         """File registry page - main file management interface."""
         auth_redirect = _require_portal_auth(request)
         if auth_redirect:
@@ -2028,12 +2293,18 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
             customer_id = customer.customer_id
             try:
                 if subject_id:
-                    files = deps.file_registry.search_files_by_tag(customer_id, f"subject:{subject_id}")
+                    files = deps.file_registry.search_files_by_tag(
+                        customer_id, f"subject:{subject_id}"
+                    )
                 elif biosample_id:
-                    files = deps.file_registry.search_files_by_tag(customer_id, f"biosample:{biosample_id}")
+                    files = deps.file_registry.search_files_by_tag(
+                        customer_id, f"biosample:{biosample_id}"
+                    )
                 else:
                     # Fetch all files (use high limit to get complete list for display/filtering)
-                    file_registrations = deps.file_registry.list_customer_files(customer_id, limit=10000)
+                    file_registrations = deps.file_registry.list_customer_files(
+                        customer_id, limit=10000
+                    )
 
                     def parse_s3_uri(s3_uri):
                         """Parse s3://bucket/key into (bucket, key)."""
@@ -2049,46 +2320,88 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                         registered_at = f.registered_at
                         if isinstance(registered_at, str):
                             registered_at_str = registered_at
-                        elif hasattr(registered_at, 'isoformat'):
+                        elif hasattr(registered_at, "isoformat"):
                             registered_at_str = registered_at.isoformat()
                         else:
                             registered_at_str = None
-                        files.append({
-                            "file_id": f.file_id,
-                            "customer_id": f.customer_id,
-                            "s3_bucket": bucket,
-                            "s3_key": key,
-                            "s3_uri": s3_uri,
-                            "filename": key.split("/")[-1] if key else "",
-                            "file_size_bytes": f.file_metadata.file_size_bytes if f.file_metadata else 0,
-                            "size": f.file_metadata.file_size_bytes if f.file_metadata else 0,
-                            "size_formatted": format_file_size(f.file_metadata.file_size_bytes) if f.file_metadata else "0 B",
-                            "file_format": f.file_metadata.file_format if f.file_metadata else "unknown",
-                            "file_type": f.file_metadata.file_format if f.file_metadata else "unknown",
-                            "subject_id": f.biosample_metadata.subject_id if f.biosample_metadata else None,
-                            "biosample_id": f.biosample_metadata.biosample_id if f.biosample_metadata else None,
-                            "sample_type": f.biosample_metadata.sample_type if f.biosample_metadata else None,
-                            "sequencing_platform": f.sequencing_metadata.platform if f.sequencing_metadata else None,
-                            "tags": f.tags if f.tags else [],
-                            "registered_at": registered_at_str,
-                            "workset_count": 0,  # TODO: Add workset count lookup
-                        })
+                        files.append(
+                            {
+                                "file_id": f.file_id,
+                                "customer_id": f.customer_id,
+                                "s3_bucket": bucket,
+                                "s3_key": key,
+                                "s3_uri": s3_uri,
+                                "filename": key.split("/")[-1] if key else "",
+                                "file_size_bytes": f.file_metadata.file_size_bytes
+                                if f.file_metadata
+                                else 0,
+                                "size": f.file_metadata.file_size_bytes if f.file_metadata else 0,
+                                "size_formatted": format_file_size(f.file_metadata.file_size_bytes)
+                                if f.file_metadata
+                                else "0 B",
+                                "file_format": f.file_metadata.file_format
+                                if f.file_metadata
+                                else "unknown",
+                                "file_type": f.file_metadata.file_format
+                                if f.file_metadata
+                                else "unknown",
+                                "subject_id": f.biosample_metadata.subject_id
+                                if f.biosample_metadata
+                                else None,
+                                "biosample_id": f.biosample_metadata.biosample_id
+                                if f.biosample_metadata
+                                else None,
+                                "sample_type": f.biosample_metadata.sample_type
+                                if f.biosample_metadata
+                                else None,
+                                "sequencing_platform": f.sequencing_metadata.platform
+                                if f.sequencing_metadata
+                                else None,
+                                "tags": f.tags if f.tags else [],
+                                "registered_at": registered_at_str,
+                                "workset_count": 0,  # TODO: Add workset count lookup
+                            }
+                        )
                 stats["total_files"] = len(files)
                 stats["total_size"] = sum(f.get("size", 0) for f in files)
-                stats["unique_subjects"] = len(set(f.get("subject_id") for f in files if f.get("subject_id")))
-                stats["unique_biosamples"] = len(set(f.get("biosample_id") for f in files if f.get("biosample_id")))
+                stats["unique_subjects"] = len(
+                    set(f.get("subject_id") for f in files if f.get("subject_id"))
+                )
+                stats["unique_biosamples"] = len(
+                    set(f.get("biosample_id") for f in files if f.get("biosample_id"))
+                )
             except Exception as e:
                 LOGGER.warning(f"Failed to load files: {e}")
         if deps.linked_bucket_manager and customer:
             try:
-                linked_buckets = deps.linked_bucket_manager.list_customer_buckets(customer.customer_id)
-                buckets = [{"bucket_id": b.bucket_id, "bucket_name": b.bucket_name, "display_name": b.display_name} for b in linked_buckets]
+                linked_buckets = deps.linked_bucket_manager.list_customer_buckets(
+                    customer.customer_id
+                )
+                buckets = [
+                    {
+                        "bucket_id": b.bucket_id,
+                        "bucket_name": b.bucket_name,
+                        "display_name": b.display_name,
+                    }
+                    for b in linked_buckets
+                ]
             except Exception as e:
                 LOGGER.warning(f"Failed to load buckets: {e}")
         return deps.templates.TemplateResponse(
             request,
             "files/index.html",
-            _get_template_context(request, deps, customer=customer, files=files, stats=stats, buckets=buckets, prefix=prefix, subject_id=subject_id, biosample_id=biosample_id, active_page="files"),
+            _get_template_context(
+                request,
+                deps,
+                customer=customer,
+                files=files,
+                stats=stats,
+                buckets=buckets,
+                prefix=prefix,
+                subject_id=subject_id,
+                biosample_id=biosample_id,
+                active_page="files",
+            ),
         )
 
     @router.get("/portal/files/buckets", response_class=HTMLResponse)
@@ -2101,13 +2414,27 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         buckets = []
         if deps.linked_bucket_manager and customer:
             try:
-                linked_buckets = deps.linked_bucket_manager.list_customer_buckets(customer.customer_id)
+                linked_buckets = deps.linked_bucket_manager.list_customer_buckets(
+                    customer.customer_id
+                )
                 buckets = [
-                    {"bucket_id": b.bucket_id, "bucket_name": b.bucket_name, "bucket_type": b.bucket_type, "display_name": b.display_name,
-                     "description": b.description, "is_validated": b.is_validated, "can_read": b.can_read, "can_write": b.can_write,
-                     "can_list": b.can_list, "read_only": b.read_only, "region": b.region,
-                     "prefix_restriction": b.prefix_restriction,
-                     "linked_at": b.linked_at.isoformat() if hasattr(b.linked_at, 'isoformat') else b.linked_at}
+                    {
+                        "bucket_id": b.bucket_id,
+                        "bucket_name": b.bucket_name,
+                        "bucket_type": b.bucket_type,
+                        "display_name": b.display_name,
+                        "description": b.description,
+                        "is_validated": b.is_validated,
+                        "can_read": b.can_read,
+                        "can_write": b.can_write,
+                        "can_list": b.can_list,
+                        "read_only": b.read_only,
+                        "region": b.region,
+                        "prefix_restriction": b.prefix_restriction,
+                        "linked_at": b.linked_at.isoformat()
+                        if hasattr(b.linked_at, "isoformat")
+                        else b.linked_at,
+                    }
                     for b in linked_buckets
                 ]
             except Exception as e:
@@ -2115,7 +2442,9 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         return deps.templates.TemplateResponse(
             request,
             "files/buckets.html",
-            _get_template_context(request, deps, customer=customer, buckets=buckets, active_page="files"),
+            _get_template_context(
+                request, deps, customer=customer, buckets=buckets, active_page="files"
+            ),
         )
 
     @router.get("/portal/files/browse/{bucket_id}", response_class=HTMLResponse)
@@ -2131,7 +2460,9 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                 if customers:
                     customer = convert_customer_for_template(customers[0])
         if not customer:
-            return RedirectResponse(url="/portal/login?error=No+customer+account+found", status_code=302)
+            return RedirectResponse(
+                url="/portal/login?error=No+customer+account+found", status_code=302
+            )
         bucket = None
         items = []
         breadcrumbs = [{"name": "/", "prefix": ""}]  # Root breadcrumb
@@ -2145,10 +2476,17 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         if deps.linked_bucket_manager:
             bucket_obj = deps.linked_bucket_manager.get_bucket(bucket_id)
             if bucket_obj:
-                LOGGER.debug(f"Bucket browse: bucket.customer_id={bucket_obj.customer_id}, user.customer_id={customer.customer_id}")
+                LOGGER.debug(
+                    f"Bucket browse: bucket.customer_id={bucket_obj.customer_id}, user.customer_id={customer.customer_id}"
+                )
                 if bucket_obj.customer_id != customer.customer_id:
-                    LOGGER.warning(f"Access denied: bucket {bucket_id} belongs to {bucket_obj.customer_id}, not {customer.customer_id}")
-                    return RedirectResponse(url="/portal/files/buckets?error=Access+denied+to+this+bucket", status_code=302)
+                    LOGGER.warning(
+                        f"Access denied: bucket {bucket_id} belongs to {bucket_obj.customer_id}, not {customer.customer_id}"
+                    )
+                    return RedirectResponse(
+                        url="/portal/files/buckets?error=Access+denied+to+this+bucket",
+                        status_code=302,
+                    )
                 bucket = {
                     "bucket_id": bucket_obj.bucket_id,
                     "bucket_name": bucket_obj.bucket_name,
@@ -2168,32 +2506,36 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                     for cp in response.get("CommonPrefixes", []):
                         folder_path = cp["Prefix"]
                         folder_name = folder_path.rstrip("/").split("/")[-1]
-                        items.append({
-                            "name": folder_name,
-                            "is_folder": True,
-                            "key": folder_path,
-                            "size_bytes": None,
-                            "last_modified": None,
-                            "file_format": None,
-                            "is_registered": False,
-                        })
+                        items.append(
+                            {
+                                "name": folder_name,
+                                "is_folder": True,
+                                "key": folder_path,
+                                "size_bytes": None,
+                                "last_modified": None,
+                                "file_format": None,
+                                "is_registered": False,
+                            }
+                        )
                     for obj in response.get("Contents", []):
                         if obj["Key"] == current_prefix:
                             continue
                         filename = obj["Key"].split("/")[-1]
                         if filename:
                             file_format = _detect_file_format(filename)
-                            items.append({
-                                "name": filename,
-                                "is_folder": False,
-                                "key": obj["Key"],
-                                "size_bytes": obj.get("Size", 0),
-                                "file_format": file_format,
-                                "last_modified": obj.get("LastModified").isoformat()
-                                if obj.get("LastModified")
-                                else None,
-                                "is_registered": False,
-                            })
+                            items.append(
+                                {
+                                    "name": filename,
+                                    "is_folder": False,
+                                    "key": obj["Key"],
+                                    "size_bytes": obj.get("Size", 0),
+                                    "file_format": file_format,
+                                    "last_modified": obj.get("LastModified").isoformat()
+                                    if obj.get("LastModified")
+                                    else None,
+                                    "is_registered": False,
+                                }
+                            )
                 except Exception as e:
                     LOGGER.warning(f"Failed to browse bucket {bucket_id}: {e}")
         if current_prefix:
@@ -2203,8 +2545,17 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         return deps.templates.TemplateResponse(
             request,
             "files/browse.html",
-            _get_template_context(request, deps, customer=customer, bucket=bucket, items=items, breadcrumbs=breadcrumbs,
-                                  current_prefix=current_prefix, parent_prefix=parent_prefix, active_page="files"),
+            _get_template_context(
+                request,
+                deps,
+                customer=customer,
+                bucket=bucket,
+                items=items,
+                breadcrumbs=breadcrumbs,
+                current_prefix=current_prefix,
+                parent_prefix=parent_prefix,
+                active_page="files",
+            ),
         )
 
     @router.get("/portal/files/register", response_class=HTMLResponse)
@@ -2218,22 +2569,39 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         if deps.linked_bucket_manager and customer:
             try:
                 LOGGER.info(f"Loading buckets for customer: {customer.customer_id}")
-                linked_buckets = deps.linked_bucket_manager.list_customer_buckets(customer.customer_id)
-                LOGGER.info(f"Found {len(linked_buckets)} linked buckets for {customer.customer_id}")
-                buckets = [{"bucket_id": b.bucket_id, "bucket_name": b.bucket_name, "display_name": b.display_name,
-                            "is_validated": b.is_validated, "can_read": b.can_read, "can_write": b.can_write, "can_list": b.can_list}
-                           for b in linked_buckets]
+                linked_buckets = deps.linked_bucket_manager.list_customer_buckets(
+                    customer.customer_id
+                )
+                LOGGER.info(
+                    f"Found {len(linked_buckets)} linked buckets for {customer.customer_id}"
+                )
+                buckets = [
+                    {
+                        "bucket_id": b.bucket_id,
+                        "bucket_name": b.bucket_name,
+                        "display_name": b.display_name,
+                        "is_validated": b.is_validated,
+                        "can_read": b.can_read,
+                        "can_write": b.can_write,
+                        "can_list": b.can_list,
+                    }
+                    for b in linked_buckets
+                ]
                 LOGGER.info(f"Buckets for dropdown: {buckets}")
             except Exception as e:
                 LOGGER.warning(f"Failed to load buckets: {e}")
         return deps.templates.TemplateResponse(
             request,
             "files/register.html",
-            _get_template_context(request, deps, customer=customer, buckets=buckets, active_page="files"),
+            _get_template_context(
+                request, deps, customer=customer, buckets=buckets, active_page="files"
+            ),
         )
 
     @router.post("/portal/files/register", response_model=PortalFileAutoRegisterResponse)
-    async def portal_files_register_submit(request: Request, payload: PortalFileAutoRegisterRequest):
+    async def portal_files_register_submit(
+        request: Request, payload: PortalFileAutoRegisterRequest
+    ):
         """Register selected discovered files from a linked bucket."""
         user_email = request.session.get("user_email")
         LOGGER.debug(f"portal_files_register_submit: Session user_email: '{user_email}'")
@@ -2244,12 +2612,17 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
             raise HTTPException(status_code=401, detail="No customer account found")
         customer_id = customer.customer_id
         if not deps.file_registry or not deps.linked_bucket_manager:
-            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="File management not configured")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="File management not configured",
+            )
         bucket_name = None
         if payload.bucket_id:
             bucket_obj = deps.linked_bucket_manager.get_bucket(payload.bucket_id)
             if not bucket_obj:
-                raise HTTPException(status_code=404, detail=f"Bucket ID {payload.bucket_id} not found")
+                raise HTTPException(
+                    status_code=404, detail=f"Bucket ID {payload.bucket_id} not found"
+                )
             if bucket_obj.customer_id != customer_id:
                 raise HTTPException(status_code=403, detail="Access denied to this bucket")
             bucket_name = bucket_obj.bucket_name
@@ -2260,6 +2633,7 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
 
         # Discover files first
         from daylily_ursa.file_registry import BucketFileDiscovery
+
         discovery = BucketFileDiscovery(region=deps.settings.get_effective_region())
         formats = payload.file_formats or ["fastq", "bam", "vcf", "cram"]
         discovered_files = discovery.discover_files(
@@ -2273,13 +2647,19 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         # Filter to selected keys if provided
         if payload.selected_keys:
             selected_set = set(payload.selected_keys)
-            LOGGER.debug(f"Selected keys from request ({len(selected_set)}): {list(selected_set)[:5]}...")
+            LOGGER.debug(
+                f"Selected keys from request ({len(selected_set)}): {list(selected_set)[:5]}..."
+            )
             discovered_keys = {f.key for f in discovered_files}
-            LOGGER.debug(f"Discovered keys ({len(discovered_keys)}): {list(discovered_keys)[:5]}...")
+            LOGGER.debug(
+                f"Discovered keys ({len(discovered_keys)}): {list(discovered_keys)[:5]}..."
+            )
             matching_keys = selected_set & discovered_keys
             LOGGER.debug(f"Matching keys ({len(matching_keys)}): {list(matching_keys)[:5]}...")
             discovered_files = [f for f in discovered_files if f.key in selected_set]
-            LOGGER.info(f"Filtered to {len(discovered_files)} selected files (requested {len(payload.selected_keys)})")
+            LOGGER.info(
+                f"Filtered to {len(discovered_files)} selected files (requested {len(payload.selected_keys)})"
+            )
 
         # Check registration status
         discovered_files = discovery.check_registration_status(
@@ -2297,9 +2677,13 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
             subject_id=payload.subject_id,
             sequencing_platform=payload.sequencing_platform,
         )
-        LOGGER.info(f"Auto-registration complete: {registered} registered, {skipped} skipped, {len(errors)} errors")
+        LOGGER.info(
+            f"Auto-registration complete: {registered} registered, {skipped} skipped, {len(errors)} errors"
+        )
 
-        return PortalFileAutoRegisterResponse(registered_count=registered, skipped_count=skipped, errors=errors)
+        return PortalFileAutoRegisterResponse(
+            registered_count=registered, skipped_count=skipped, errors=errors
+        )
 
     @router.get("/portal/files/upload", response_class=HTMLResponse)
     async def portal_files_upload(request: Request):
@@ -2311,16 +2695,28 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         buckets = []
         if deps.linked_bucket_manager and customer:
             try:
-                linked_buckets = deps.linked_bucket_manager.list_customer_buckets(customer.customer_id)
-                buckets = [{"bucket_id": b.bucket_id, "bucket_name": b.bucket_name, "display_name": b.display_name,
-                            "is_validated": b.is_validated, "can_read": b.can_read, "can_write": b.can_write}
-                           for b in linked_buckets]
+                linked_buckets = deps.linked_bucket_manager.list_customer_buckets(
+                    customer.customer_id
+                )
+                buckets = [
+                    {
+                        "bucket_id": b.bucket_id,
+                        "bucket_name": b.bucket_name,
+                        "display_name": b.display_name,
+                        "is_validated": b.is_validated,
+                        "can_read": b.can_read,
+                        "can_write": b.can_write,
+                    }
+                    for b in linked_buckets
+                ]
             except Exception as e:
                 LOGGER.warning(f"Failed to load buckets: {e}")
         return deps.templates.TemplateResponse(
             request,
             "files/upload.html",
-            _get_template_context(request, deps, customer=customer, buckets=buckets, active_page="files"),
+            _get_template_context(
+                request, deps, customer=customer, buckets=buckets, active_page="files"
+            ),
         )
 
     @router.post("/portal/files/upload")
@@ -2337,7 +2733,10 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         if not user_email or not customer_id:
             raise HTTPException(status_code=401, detail="Not authenticated")
         if not deps.linked_bucket_manager:
-            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="File management not configured")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="File management not configured",
+            )
         LOGGER.info(f"Upload request from {user_email}: {file.filename} to bucket {bucket_id}")
         bucket_obj = deps.linked_bucket_manager.get_bucket(bucket_id)
         if not bucket_obj:
@@ -2382,7 +2781,9 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                         str(head_err),
                     )
 
-                read_number = 2 if any(token in filename for token in ("_R2", "_2.fastq", "_2.fq")) else 1
+                read_number = (
+                    2 if any(token in filename for token in ("_R2", "_2.fastq", "_2.fq")) else 1
+                )
                 registration = _FileRegistration(
                     file_id=file_id,
                     customer_id=customer_id,
@@ -2422,7 +2823,9 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                     sanitize_for_log(customer_id),
                 )
                 response_payload["registered"] = False
-                response_payload["warning"] = "File uploaded but registry is unavailable; file list may not update."
+                response_payload["warning"] = (
+                    "File uploaded but registry is unavailable; file list may not update."
+                )
             else:
                 response_payload["registered"] = False
 
@@ -2471,8 +2874,14 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
             try:
                 fileset_objs = deps.file_registry.list_customer_filesets(customer.customer_id)
                 filesets = [
-                    {"fileset_id": fs.fileset_id, "customer_id": fs.customer_id, "name": fs.name, "description": fs.description,
-                     "file_count": len(fs.file_ids), "created_at": fs.created_at.isoformat() if fs.created_at else None}
+                    {
+                        "fileset_id": fs.fileset_id,
+                        "customer_id": fs.customer_id,
+                        "name": fs.name,
+                        "description": fs.description,
+                        "file_count": len(fs.file_ids),
+                        "created_at": fs.created_at.isoformat() if fs.created_at else None,
+                    }
                     for fs in fileset_objs
                 ]
             except Exception as e:
@@ -2480,7 +2889,9 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         return deps.templates.TemplateResponse(
             request,
             "files/filesets.html",
-            _get_template_context(request, deps, customer=customer, filesets=filesets, active_page="files"),
+            _get_template_context(
+                request, deps, customer=customer, filesets=filesets, active_page="files"
+            ),
         )
 
     @router.get("/portal/files/filesets/{fileset_id}", response_class=HTMLResponse)
@@ -2501,11 +2912,25 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                 LOGGER.warning(f"Failed to load fileset: {e}")
         if not fileset:
             raise HTTPException(status_code=404, detail="File set not found")
-        unique_subjects = len(set(f.biosample_metadata.subject_id for f in files if f.biosample_metadata and f.biosample_metadata.subject_id))
+        unique_subjects = len(
+            set(
+                f.biosample_metadata.subject_id
+                for f in files
+                if f.biosample_metadata and f.biosample_metadata.subject_id
+            )
+        )
         return deps.templates.TemplateResponse(
             request,
             "files/fileset_detail.html",
-            _get_template_context(request, deps, customer=customer, fileset=fileset, files=files, unique_subjects=unique_subjects, active_page="files"),
+            _get_template_context(
+                request,
+                deps,
+                customer=customer,
+                fileset=fileset,
+                files=files,
+                unique_subjects=unique_subjects,
+                active_page="files",
+            ),
         )
 
     @router.get("/portal/files/{file_id}", response_class=HTMLResponse)
@@ -2529,7 +2954,14 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         return deps.templates.TemplateResponse(
             request,
             "files/detail.html",
-            _get_template_context(request, deps, customer=customer, file=file, workset_history=workset_history, active_page="files"),
+            _get_template_context(
+                request,
+                deps,
+                customer=customer,
+                file=file,
+                workset_history=workset_history,
+                active_page="files",
+            ),
         )
 
     @router.get("/portal/files/{file_id}/edit", response_class=HTMLResponse)
@@ -2585,23 +3017,31 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                             continue
                         filename = obj["Key"].split("/")[-1]
                         if filename:
-                            files.append({
-                                "name": filename,
-                                "key": obj["Key"],
-                                "size": obj.get("Size", 0),
-                                "size_formatted": format_file_size(obj.get("Size", 0)),
-                                "last_modified": obj.get("LastModified").isoformat()
-                                if obj.get("LastModified")
-                                else None,
-                            })
+                            files.append(
+                                {
+                                    "name": filename,
+                                    "key": obj["Key"],
+                                    "size": obj.get("Size", 0),
+                                    "size_formatted": format_file_size(obj.get("Size", 0)),
+                                    "last_modified": obj.get("LastModified").isoformat()
+                                    if obj.get("LastModified")
+                                    else None,
+                                }
+                            )
                 except Exception as e:
                     LOGGER.warning(f"Failed to browse S3: {e}")
         return deps.templates.TemplateResponse(
             request,
             "files/browser.html",
-            _get_template_context(request, deps, customer=customer, storage=storage, prefix=prefix, active_page="files"),
+            _get_template_context(
+                request,
+                deps,
+                customer=customer,
+                storage=storage,
+                prefix=prefix,
+                active_page="files",
+            ),
         )
-
 
     # ========== Usage Routes ==========
 
@@ -2637,7 +3077,10 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         # Generate usage details from completed worksets for *this customer*
         if deps.state_db and customer_id:
             try:
-                from daylily_ursa.billing import BillingCalculator, calculate_customer_cost_breakdown
+                from daylily_ursa.billing import (
+                    BillingCalculator,
+                    calculate_customer_cost_breakdown,
+                )
 
                 breakdown = calculate_customer_cost_breakdown(deps.state_db, customer_id, limit=500)
                 usage["compute_cost_usd"] = breakdown["compute_cost_usd"]
@@ -2646,8 +3089,12 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                 usage["total_cost"] = breakdown["total"]
 
                 # Transfer breakdown (3-way)
-                usage["transfer_intra_region_cost_usd"] = breakdown["transfer_intra_region_cost_usd"]
-                usage["transfer_cross_region_cost_usd"] = breakdown["transfer_cross_region_cost_usd"]
+                usage["transfer_intra_region_cost_usd"] = breakdown[
+                    "transfer_intra_region_cost_usd"
+                ]
+                usage["transfer_cross_region_cost_usd"] = breakdown[
+                    "transfer_cross_region_cost_usd"
+                ]
                 usage["transfer_internet_cost_usd"] = breakdown["transfer_internet_cost_usd"]
                 usage["transfer_intra_region_gb"] = breakdown["transfer_intra_region_gb"]
                 usage["transfer_cross_region_gb"] = breakdown["transfer_cross_region_gb"]
@@ -2676,7 +3123,9 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
 
                 for ws in completed_worksets:
                     item = calculator.calculate_workset_billing(ws)
-                    completed_at = item.completed_at or ws.get("updated_at", ws.get("created_at", ""))
+                    completed_at = item.completed_at or ws.get(
+                        "updated_at", ws.get("created_at", "")
+                    )
                     completed_date = completed_at[:10] if completed_at else "-"
 
                     if item.compute_cost_usd > 0:
@@ -2912,7 +3361,11 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         if auth_redirect:
             return auth_redirect
         customer, _ = _get_customer_for_session(request, deps)
-        customer_id = customer.customer_id if customer else request.session.get("customer_id", "default-customer")
+        customer_id = (
+            customer.customer_id
+            if customer
+            else request.session.get("customer_id", "default-customer")
+        )
         subjects: List[Dict[str, Any]] = []
         stats = {"subjects": 0, "biosamples": 0, "libraries": 0}
 
@@ -2932,7 +3385,9 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                     }
                     # Count biosamples for this subject
                     try:
-                        biosamples = deps.biospecimen_registry.list_biosamples_for_subject(subj.subject_id)
+                        biosamples = deps.biospecimen_registry.list_biosamples_for_subject(
+                            subj.subject_id
+                        )
                         subj_dict["biosample_count"] = len(biosamples)
                     except Exception:
                         pass
@@ -2940,12 +3395,16 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                 stats["subjects"] = len(subjects)
                 # Get total biosamples and libraries counts
                 try:
-                    all_biosamples = deps.biospecimen_registry.list_biosamples(customer_id, limit=1000)
+                    all_biosamples = deps.biospecimen_registry.list_biosamples(
+                        customer_id, limit=1000
+                    )
                     stats["biosamples"] = len(all_biosamples)
                 except Exception:
                     pass
                 try:
-                    all_libraries = deps.biospecimen_registry.list_libraries(customer_id, limit=1000)
+                    all_libraries = deps.biospecimen_registry.list_libraries(
+                        customer_id, limit=1000
+                    )
                     stats["libraries"] = len(all_libraries)
                 except Exception:
                     pass
@@ -3032,7 +3491,15 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         return deps.templates.TemplateResponse(
             request,
             "account.html",
-            _get_template_context(request, deps, customer=customer, active_page="account", env_vars=env_vars, session_info=session_info, db_customer_id=db_customer_id),
+            _get_template_context(
+                request,
+                deps,
+                customer=customer,
+                active_page="account",
+                env_vars=env_vars,
+                session_info=session_info,
+                db_customer_id=db_customer_id,
+            ),
         )
 
     # ========== Static Pages ==========
@@ -3141,8 +3608,14 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         if tapdb_cfg:
             persistence_rows.extend(
                 [
-                    {"key": "Config path", "value": str(tapdb_cfg.get("config_path") or "") or "Unknown"},
-                    {"key": "Engine type", "value": str(tapdb_cfg.get("engine_type") or "") or "Unknown"},
+                    {
+                        "key": "Config path",
+                        "value": str(tapdb_cfg.get("config_path") or "") or "Unknown",
+                    },
+                    {
+                        "key": "Engine type",
+                        "value": str(tapdb_cfg.get("engine_type") or "") or "Unknown",
+                    },
                     {"key": "Host", "value": str(tapdb_cfg.get("host") or "") or "Unknown"},
                     {"key": "Port", "value": str(tapdb_cfg.get("port") or "") or "Unknown"},
                     {"key": "Database", "value": str(tapdb_cfg.get("database") or "") or "Unknown"},
@@ -3182,6 +3655,7 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         if requests_file.exists():
             try:
                 import json
+
                 with open(requests_file) as f:
                     requests = json.load(f)
                 # Sort by date descending
@@ -3192,7 +3666,9 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         return deps.templates.TemplateResponse(
             request,
             "feature_requests.html",
-            _get_template_context(request, deps, customer=customer, requests=requests, active_page="feature_requests"),
+            _get_template_context(
+                request, deps, customer=customer, requests=requests, active_page="feature_requests"
+            ),
         )
 
     @router.post("/portal/feature-requests")
@@ -3330,6 +3806,7 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         # The monitor logs: "Poll interval: %ds, continuous: %s, max parallel: %d"
         # Note: With verbose boto logging, this message can appear 100+ lines into the log
         import re
+
         if latest_log_path and latest_log_path.exists():
             try:
                 with latest_log_path.open("r", encoding="utf-8", errors="replace") as f:
@@ -3340,7 +3817,9 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                         match = re.search(r"max parallel:\s*(\d+)", line, re.IGNORECASE)
                         if match:
                             max_concurrent_runtime = int(match.group(1))
-                            LOGGER.debug(f"Found max parallel in log line {i}: {max_concurrent_runtime}")
+                            LOGGER.debug(
+                                f"Found max parallel in log line {i}: {max_concurrent_runtime}"
+                            )
                             break
             except Exception as e:
                 LOGGER.warning(f"Failed to parse log file for max parallel: {e}")
@@ -3394,7 +3873,8 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
             request,
             "monitor/dashboard.html",
             _get_template_context(
-                request, deps,
+                request,
+                deps,
                 customer=customer,
                 monitor_running=monitor_running,
                 monitor_pid=monitor_pid,
@@ -3547,7 +4027,9 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
             )
 
         try:
-            config = deps.customer_manager.onboard_customer(customer_name=customer_name, email=email)
+            config = deps.customer_manager.onboard_customer(
+                customer_name=customer_name, email=email
+            )
         except Exception as e:
             LOGGER.error("Failed to onboard customer for %s: %s", sanitize_for_log(email), e)
             return RedirectResponse(
@@ -3565,7 +4047,9 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                 )
                 cognito_note = "Cognito invite sent"
             except ValueError as e:
-                LOGGER.warning("Cognito user creation skipped for %s: %s", sanitize_for_log(email), e)
+                LOGGER.warning(
+                    "Cognito user creation skipped for %s: %s", sanitize_for_log(email), e
+                )
                 cognito_note = "Cognito user not created"
             except Exception as e:
                 LOGGER.error("Failed to create Cognito user for %s: %s", sanitize_for_log(email), e)
@@ -3579,7 +4063,6 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
             url="/portal/admin/users?success=" + quote_plus(msg),
             status_code=302,
         )
-
 
     @router.post("/portal/admin/users/set-admin")
     async def portal_admin_users_set_admin(
@@ -3624,7 +4107,6 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
             status_code=302,
         )
 
-
     @router.post("/portal/admin/users/set-password")
     async def portal_admin_users_set_password(
         request: Request,
@@ -3652,11 +4134,15 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
             )
 
         # HTML checkbox sends e.g. 'on' when checked; absent when unchecked.
-        force_change_normalized = str(force_change).strip().lower() if force_change is not None else ""
+        force_change_normalized = (
+            str(force_change).strip().lower() if force_change is not None else ""
+        )
         desired_permanent = force_change_normalized not in {"1", "true", "yes", "on"}
 
         try:
-            deps.cognito_auth.set_user_password(email=email, password=password, permanent=desired_permanent)
+            deps.cognito_auth.set_user_password(
+                email=email, password=password, permanent=desired_permanent
+            )
         except HTTPException as e:
             # CognitoAuth may raise HTTPException (e.g., domain whitelist violations).
             return RedirectResponse(
@@ -3675,7 +4161,11 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                 status_code=302,
             )
 
-        note = "Temporary password set; user must change on next login" if not desired_permanent else "Password set"
+        note = (
+            "Temporary password set; user must change on next login"
+            if not desired_permanent
+            else "Password set"
+        )
         msg = f"{note}: {email}"
         return RedirectResponse(
             url="/portal/admin/users?success=" + quote_plus(msg),
@@ -3737,7 +4227,8 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
             request,
             "clusters.html",
             _get_template_context(
-                request, deps,
+                request,
+                deps,
                 customer=customer,
                 clusters=clusters,
                 regions=regions,

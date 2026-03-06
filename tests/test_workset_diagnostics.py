@@ -55,64 +55,46 @@ class TestErrorAnalyzer:
 
     def test_analyze_out_of_memory(self, analyzer):
         """Test OOM error detection."""
-        result = analyzer.analyze(
-            "test-ws-001",
-            "Process killed: Out of memory"
-        )
-        
+        result = analyzer.analyze("test-ws-001", "Process killed: Out of memory")
+
         assert result.error_code is not None
         assert result.error_code.code == "WS-RES-001"
         assert result.confidence > 0
 
     def test_analyze_disk_full(self, analyzer):
         """Test disk full error detection."""
-        result = analyzer.analyze(
-            "test-ws-001",
-            "write error: No space left on device"
-        )
-        
+        result = analyzer.analyze("test-ws-001", "write error: No space left on device")
+
         assert result.error_code is not None
         assert result.error_code.code == "WS-RES-002"
 
     def test_analyze_s3_timeout(self, analyzer):
         """Test S3 timeout error detection."""
-        result = analyzer.analyze(
-            "test-ws-001",
-            "S3 request timed out after 60 seconds"
-        )
-        
+        result = analyzer.analyze("test-ws-001", "S3 request timed out after 60 seconds")
+
         assert result.error_code is not None
         assert result.error_code.code == "WS-NET-001"
         assert result.error_code.retryable is True
 
     def test_analyze_invalid_fastq(self, analyzer):
         """Test invalid FASTQ detection."""
-        result = analyzer.analyze(
-            "test-ws-001",
-            "Error: truncated quality string in FASTQ file"
-        )
-        
+        result = analyzer.analyze("test-ws-001", "Error: truncated quality string in FASTQ file")
+
         assert result.error_code is not None
         assert result.error_code.code == "WS-DAT-001"
         assert result.error_code.retryable is False
 
     def test_analyze_throttling(self, analyzer):
         """Test AWS throttling detection."""
-        result = analyzer.analyze(
-            "test-ws-001",
-            "ThrottlingException: Rate exceeded"
-        )
-        
+        result = analyzer.analyze("test-ws-001", "ThrottlingException: Rate exceeded")
+
         assert result.error_code is not None
         assert result.error_code.code == "WS-AWS-001"
 
     def test_analyze_unknown_error(self, analyzer):
         """Test unknown error returns None code."""
-        result = analyzer.analyze(
-            "test-ws-001",
-            "Some random error message"
-        )
-        
+        result = analyzer.analyze("test-ws-001", "Some random error message")
+
         assert result.error_code is None
         assert result.confidence == 0.0
 
@@ -124,10 +106,10 @@ class TestErrorAnalyzer:
             logs=[
                 "Starting alignment",
                 "OOMKilled: process exceeded memory limit",
-                "Job terminated"
-            ]
+                "Job terminated",
+            ],
         )
-        
+
         assert result.error_code is not None
         assert result.error_code.code == "WS-RES-001"
 
@@ -139,9 +121,9 @@ class TestErrorAnalyzer:
         2024-01-15 10:00:02 Warning: ThrottlingException from AWS
         2024-01-15 10:00:03 Pipeline failed
         """
-        
+
         results = analyzer.analyze_logs("test-ws-001", log_content)
-        
+
         assert len(results) >= 2
         codes = {r.error_code.code for r in results if r.error_code}
         assert "WS-RES-002" in codes  # Disk full
@@ -152,7 +134,7 @@ class TestErrorAnalyzer:
         error = analyzer.get_error_by_code("WS-RES-001")
         assert error is not None
         assert error.name == "OutOfMemory"
-        
+
         error = analyzer.get_error_by_code("INVALID")
         assert error is None
 
@@ -272,4 +254,3 @@ class TestUtilityFunctions:
         assert len(codes) > 10
         assert all("code" in c for c in codes)
         assert all("severity" in c for c in codes)
-

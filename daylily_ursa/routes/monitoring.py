@@ -57,12 +57,16 @@ def create_monitoring_router(deps: MonitoringDependencies) -> APIRouter:
 
         workset = state_db.get_workset(euid)
         if not workset:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Workset {euid} not found")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail=f"Workset {euid} not found"
+            )
 
         bucket = workset.get("bucket")
         prefix = workset.get("prefix", "").rstrip("/") + "/"
         if not bucket or not prefix:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Workset missing bucket or prefix")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="Workset missing bucket or prefix"
+            )
 
         command_log_key = f"{prefix}workset_command.log"
 
@@ -79,13 +83,18 @@ def create_monitoring_router(deps: MonitoringDependencies) -> APIRouter:
                 log_content = response["Body"].read().decode("utf-8")
             except s3_client.exceptions.NoSuchKey:
                 return {
-                    "euid": euid, "log_available": False,
+                    "euid": euid,
+                    "log_available": False,
                     "message": "No command log found for this workset",
-                    "entries": [], "entry_count": 0,
+                    "entries": [],
+                    "entry_count": 0,
                 }
         except Exception as e:
             LOGGER.warning("Failed to fetch command log for %s: %s", sanitize_for_log(euid), str(e))
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to fetch command log: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to fetch command log: {str(e)}",
+            )
 
         # Parse and filter log entries
         lines_list = log_content.split("\n")
@@ -140,12 +149,14 @@ def create_monitoring_router(deps: MonitoringDependencies) -> APIRouter:
             entries = limited_entries
 
         return {
-            "euid": euid, "log_available": True, "bucket": bucket,
-            "key": command_log_key, "entry_count": entry_count,
+            "euid": euid,
+            "log_available": True,
+            "bucket": bucket,
+            "key": command_log_key,
+            "entry_count": entry_count,
             "entries_returned": len(entries),
             "filters_applied": {"grep": grep, "label": label, "limit": limit},
             "entries": entries,
         }
 
     return router
-

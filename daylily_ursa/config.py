@@ -128,7 +128,7 @@ class Settings(BaseSettings):
 
     # ========== API Server ==========
     api_host: str = Field(
-        default="0.0.0.0",
+        default="0.0.0.0",  # nosec B104 - server config default bind address
         description="API server host",
     )
     api_port: int = Field(
@@ -169,7 +169,9 @@ class Settings(BaseSettings):
     day_project: Optional[str] = Field(default=None, description="Daylily project name")
     day_aws_region: Optional[str] = Field(default=None, description="Daylily AWS region override")
     day_ex_cfg: Optional[str] = Field(default=None, description="Daylily execution config")
-    daylily_primary_region: Optional[str] = Field(default=None, description="Primary region for multi-region")
+    daylily_primary_region: Optional[str] = Field(
+        default=None, description="Primary region for multi-region"
+    )
     daylily_multi_region: bool = Field(default=False, description="Enable multi-region support")
     day_biome: Optional[str] = Field(default=None, description="Daylily biome setting")
     day_root: Optional[str] = Field(default=None, description="Daylily root directory")
@@ -288,11 +290,7 @@ class Settings(BaseSettings):
         Note: AWS_DEFAULT_REGION is intentionally not used. In a multi-region
         architecture, regions must be explicitly specified per API call.
         """
-        return (
-            self.day_aws_region
-            or os.environ.get("AWS_REGION")
-            or "us-west-2"
-        )
+        return self.day_aws_region or os.environ.get("AWS_REGION") or "us-west-2"
 
     @property
     def is_production(self) -> bool:

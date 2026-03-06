@@ -9,7 +9,7 @@ import logging
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
-BYTES_PER_GIB = 1024 ** 3
+BYTES_PER_GIB = 1024**3
 S3_STANDARD_COST_PER_GB_MONTH = 0.023
 DATA_TRANSFER_CROSS_REGION_PER_GB = 0.02
 DATA_TRANSFER_INTERNET_PER_GB = 0.09
@@ -32,6 +32,7 @@ def _detect_bucket_region(bucket: str) -> Optional[str]:
         return response.get("LocationConstraint") or "us-east-1"
     except Exception:
         return None
+
 
 FASTQ_SUFFIXES = (".fastq", ".fastq.gz", ".fq", ".fq.gz")
 
@@ -71,9 +72,7 @@ def _iter_fastq_values(cell: str) -> Iterable[str]:
     return (cell.strip(),)
 
 
-def _resolve_fastq_path(
-    value: str, units_path: Path, pipeline_dir: Path
-) -> Optional[Path]:
+def _resolve_fastq_path(value: str, units_path: Path, pipeline_dir: Path) -> Optional[Path]:
     candidate = Path(value)
     if candidate.exists():
         return candidate
@@ -122,9 +121,7 @@ def _gather_fastq_stats(
     return count, total_size
 
 
-def _gather_pattern_stats(
-    root: Path, pattern: str, *, debug: bool = False
-) -> Tuple[int, int]:
+def _gather_pattern_stats(root: Path, pattern: str, *, debug: bool = False) -> Tuple[int, int]:
     if not root.exists():
         return 0, 0
     import fnmatch
@@ -141,9 +138,7 @@ def _gather_pattern_stats(
                 except OSError:
                     continue
                 if debug:
-                    LOGGER.debug(
-                        "Matched %s while searching for pattern %s", full_path, pattern
-                    )
+                    LOGGER.debug("Matched %s while searching for pattern %s", full_path, pattern)
     return count, total
 
 
@@ -209,23 +204,17 @@ def gather_metrics(
     _debug_command(debug, "sample_library_count", f"count_rows {units_path}")
     metrics["sample_library_count"] = _count_rows(units_path)
     _debug_command(debug, "fastq_count", f"scan FASTQ paths from {units_path}")
-    fastq_count, fastq_size = _gather_fastq_stats(
-        units_path, pipeline_dir, debug=debug
-    )
+    fastq_count, fastq_size = _gather_fastq_stats(units_path, pipeline_dir, debug=debug)
     metrics["fastq_count"] = fastq_count
     metrics["fastq_size_bytes"] = fastq_size
 
     _debug_command(debug, "cram_count", f"find {results_dir} pattern *.cram")
-    cram_count, cram_size = _gather_pattern_stats(
-        results_dir, "*.cram", debug=debug
-    )
+    cram_count, cram_size = _gather_pattern_stats(results_dir, "*.cram", debug=debug)
     metrics["cram_count"] = cram_count
     metrics["cram_size_bytes"] = cram_size
 
     _debug_command(debug, "vcf_count", f"find {results_dir} pattern *.vcf.gz")
-    vcf_count, vcf_size = _gather_pattern_stats(
-        results_dir, "*.vcf.gz", debug=debug
-    )
+    vcf_count, vcf_size = _gather_pattern_stats(results_dir, "*.vcf.gz", debug=debug)
     metrics["vcf_count"] = vcf_count
     metrics["vcf_size_bytes"] = vcf_size
 
@@ -240,9 +229,7 @@ def gather_metrics(
     # it defaults to 0.
     # ---------------------------------------------------------------------
     effective_cluster_region = (
-        cluster_region
-        or os.environ.get("AWS_REGION")
-        or os.environ.get("AWS_DEFAULT_REGION")
+        cluster_region or os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION")
     )
     effective_bucket_region = results_bucket_region
     if not effective_bucket_region and results_bucket:
@@ -270,24 +257,16 @@ def gather_metrics(
 
     _debug_command(debug, "s3_daily_cost_usd", "calculate from results_size_bytes")
     metrics["cram_transfer_cross_region_cost"] = (
-        cram_size / BYTES_PER_GIB * DATA_TRANSFER_CROSS_REGION_PER_GB
-        if cram_size
-        else 0.0
+        cram_size / BYTES_PER_GIB * DATA_TRANSFER_CROSS_REGION_PER_GB if cram_size else 0.0
     )
     metrics["cram_transfer_internet_cost"] = (
-        cram_size / BYTES_PER_GIB * DATA_TRANSFER_INTERNET_PER_GB
-        if cram_size
-        else 0.0
+        cram_size / BYTES_PER_GIB * DATA_TRANSFER_INTERNET_PER_GB if cram_size else 0.0
     )
     metrics["vcf_transfer_cross_region_cost"] = (
-        vcf_size / BYTES_PER_GIB * DATA_TRANSFER_CROSS_REGION_PER_GB
-        if vcf_size
-        else 0.0
+        vcf_size / BYTES_PER_GIB * DATA_TRANSFER_CROSS_REGION_PER_GB if vcf_size else 0.0
     )
     metrics["vcf_transfer_internet_cost"] = (
-        vcf_size / BYTES_PER_GIB * DATA_TRANSFER_INTERNET_PER_GB
-        if vcf_size
-        else 0.0
+        vcf_size / BYTES_PER_GIB * DATA_TRANSFER_INTERNET_PER_GB if vcf_size else 0.0
     )
     _debug_command(debug, "transfer_costs", "derive from cram/vcf sizes")
     metrics["ec2_cost_usd"] = _parse_benchmark_costs(results_dir, debug=debug)
@@ -314,9 +293,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         default=None,
         help="AWS region for results bucket (avoids bucket location lookup)",
     )
-    parser.add_argument(
-        "--json", action="store_true", help="Emit metrics as JSON (default)"
-    )
+    parser.add_argument("--json", action="store_true", help="Emit metrics as JSON (default)")
     parser.add_argument(
         "--debug",
         action="store_true",

@@ -55,6 +55,7 @@ from daylily_ursa.workset_customer import CustomerManager
 # Try to import file management (optional)
 try:
     from daylily_ursa.file_registry import FileRegistry
+
     FILE_MANAGEMENT_AVAILABLE = True
 except ImportError:
     FILE_MANAGEMENT_AVAILABLE = False
@@ -125,7 +126,7 @@ def main():
         file_registry=file_registry,
         enable_auth=False,  # Disable authentication
     )
-    
+
     LOGGER.info("=" * 60)
     LOGGER.info("Workset Monitor API Server")
     LOGGER.info("=" * 60)
@@ -142,9 +143,10 @@ def main():
     LOGGER.info("API Documentation: http://localhost:8914/docs")
     LOGGER.info("Alternative Docs: http://localhost:8914/redoc")
     LOGGER.info("=" * 60)
-    
+
     # Run the server
     import uvicorn
+
     uvicorn.run(
         app,
         host="0.0.0.0",

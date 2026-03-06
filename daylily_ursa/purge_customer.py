@@ -20,10 +20,7 @@ import sys
 
 from daylily_ursa.workset_state_db import WorksetStateDB
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 LOGGER = logging.getLogger(__name__)
 
 
@@ -32,21 +29,23 @@ def get_all_worksets(state_db: WorksetStateDB) -> list:
     return state_db._list_all_worksets(limit=100000)
 
 
-def filter_worksets_by_customer(worksets: list, customer_id: str, include_unknown: bool = False) -> list:
+def filter_worksets_by_customer(
+    worksets: list, customer_id: str, include_unknown: bool = False
+) -> list:
     """Filter worksets by customer_id.
-    
+
     Args:
         worksets: List of workset records
         customer_id: Customer ID to filter for (ignored if include_unknown is True)
         include_unknown: If True, filter for null/empty/Unknown customer_ids
-    
+
     Returns:
         Filtered list of worksets
     """
     filtered = []
     for ws in worksets:
         ws_customer = ws.get("customer_id")
-        
+
         if include_unknown:
             # Match null, empty string, or 'Unknown'
             if ws_customer is None or ws_customer == "" or ws_customer == "Unknown":
@@ -54,7 +53,7 @@ def filter_worksets_by_customer(worksets: list, customer_id: str, include_unknow
         else:
             if ws_customer == customer_id:
                 filtered.append(ws)
-    
+
     return filtered
 
 
@@ -64,7 +63,7 @@ def display_worksets(worksets: list, max_display: int = 20) -> None:
     print("-" * 80)
     print(f"{'Workset ID':<40} {'State':<15} {'Customer ID':<20}")
     print("-" * 80)
-    
+
     for i, ws in enumerate(worksets[:max_display]):
         workset_id = ws.get("euid", "N/A")[:38]
         state = ws.get("state", "N/A")
@@ -72,7 +71,7 @@ def display_worksets(worksets: list, max_display: int = 20) -> None:
         if customer == "Unknown":
             customer = "Unknown"
         print(f"{workset_id:<40} {state:<15} {customer:<20}")
-    
+
     if len(worksets) > max_display:
         print(f"... and {len(worksets) - max_display} more records")
     print("-" * 80)
@@ -84,13 +83,13 @@ def confirm_deletion(count: int, target_description: str) -> bool:
     print(f"   Target: {target_description}")
     print("\n   This action CANNOT be undone!")
     print("\n   Type 'DELETE' (all caps) to confirm: ", end="")
-    
+
     try:
         confirmation = input().strip()
     except (EOFError, KeyboardInterrupt):
         print("\nAborted.")
         return False
-    
+
     return confirmation == "DELETE"
 
 
@@ -104,7 +103,7 @@ Examples:
   %(prog)s --unknown               # Delete worksets with null/empty/Unknown customer_id
   %(prog)s --all                   # Delete ALL worksets (dangerous!)
   %(prog)s --dry-run cust_12345    # Preview without deleting
-"""
+""",
     )
     parser.add_argument(
         "customer_id",
@@ -137,7 +136,8 @@ Examples:
         help="AWS profile name (default: AWS_PROFILE env var)",
     )
     parser.add_argument(
-        "-y", "--yes",
+        "-y",
+        "--yes",
         action="store_true",
         help="Skip confirmation prompt (use with caution!)",
     )
@@ -217,7 +217,9 @@ Examples:
 
         try:
             # Use hard delete to completely remove from TapDB
-            success = state_db.delete_workset(workset_id, deleted_by="purge-script", hard_delete=True)
+            success = state_db.delete_workset(
+                workset_id, deleted_by="purge-script", hard_delete=True
+            )
             if success:
                 deleted_count += 1
                 if deleted_count % 50 == 0:

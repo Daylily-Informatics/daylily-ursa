@@ -149,7 +149,11 @@ class WorksetStateDB:
             if sample_count > 0:
                 return sample_count
         if tsv_content:
-            lines = [line for line in tsv_content.strip().split("\n") if line.strip() and not line.startswith("#")]
+            lines = [
+                line
+                for line in tsv_content.strip().split("\n")
+                if line.strip() and not line.startswith("#")
+            ]
             if lines and "\t" in lines[0]:
                 return max(0, len(lines) - 1)
 
@@ -173,7 +177,9 @@ class WorksetStateDB:
             raise RuntimeError(f"Missing event template: {template_code}")
         return int(template.uuid)
 
-    def _find_workset(self, session, euid: str, *, for_update: bool = False) -> Optional[generic_instance]:
+    def _find_workset(
+        self, session, euid: str, *, for_update: bool = False
+    ) -> Optional[generic_instance]:
         """Look up a workset by its TapDB EUID (primary identity)."""
         return self.backend.find_instance_by_euid(session, euid, for_update=for_update)
 
@@ -415,7 +421,11 @@ class WorksetStateDB:
     ) -> bool:
         now = dt.datetime.now(dt.timezone.utc)
         now_iso = now.isoformat().replace("+00:00", "Z")
-        expires_at = (now + dt.timedelta(seconds=self.lock_timeout_seconds)).isoformat().replace("+00:00", "Z")
+        expires_at = (
+            (now + dt.timedelta(seconds=self.lock_timeout_seconds))
+            .isoformat()
+            .replace("+00:00", "Z")
+        )
 
         with self.backend.session_scope(commit=True) as session:
             ws = self._find_workset(session, euid, for_update=True)
@@ -436,7 +446,9 @@ class WorksetStateDB:
                 lock_is_stale = False
                 if lock_expires_at:
                     try:
-                        expires_time = dt.datetime.fromisoformat(str(lock_expires_at).rstrip("Z")).replace(tzinfo=dt.timezone.utc)
+                        expires_time = dt.datetime.fromisoformat(
+                            str(lock_expires_at).rstrip("Z")
+                        ).replace(tzinfo=dt.timezone.utc)
                         lock_is_stale = now >= expires_time
                     except ValueError:
                         lock_is_stale = True
@@ -499,7 +511,11 @@ class WorksetStateDB:
     def refresh_lock(self, euid: str, owner_id: str) -> bool:
         now = dt.datetime.now(dt.timezone.utc)
         now_iso = now.isoformat().replace("+00:00", "Z")
-        expires_at = (now + dt.timedelta(seconds=self.lock_timeout_seconds)).isoformat().replace("+00:00", "Z")
+        expires_at = (
+            (now + dt.timedelta(seconds=self.lock_timeout_seconds))
+            .isoformat()
+            .replace("+00:00", "Z")
+        )
 
         with self.backend.session_scope(commit=True) as session:
             ws = self._find_workset(session, euid, for_update=True)
@@ -511,12 +527,14 @@ class WorksetStateDB:
             data["lock_acquired_at"] = now_iso
             data["lock_expires_at"] = expires_at
             lock_payload = dict(data.get("lock") or {})
-            lock_payload.update({
-                "owner": owner_id,
-                "acquired_at": now_iso,
-                "expires_at": expires_at,
-                "epoch": int(lock_payload.get("epoch", 0)) + 1,
-            })
+            lock_payload.update(
+                {
+                    "owner": owner_id,
+                    "acquired_at": now_iso,
+                    "expires_at": expires_at,
+                    "epoch": int(lock_payload.get("epoch", 0)) + 1,
+                }
+            )
             data["lock"] = lock_payload
             data["updated_at"] = now_iso
             ws.json_addl = data
@@ -835,7 +853,9 @@ class WorksetStateDB:
         result = {k: workset[k] for k in keys if k in workset}
         return result or None
 
-    def _query_worksets(self, session, *, state: Optional[WorksetState] = None, limit: int = 100) -> List[generic_instance]:
+    def _query_worksets(
+        self, session, *, state: Optional[WorksetState] = None, limit: int = 100
+    ) -> List[generic_instance]:
         query = session.query(generic_instance).filter(
             generic_instance.template_uuid == self._workset_template_uuid(session),
             generic_instance.is_deleted.is_(False),
@@ -973,16 +993,20 @@ class WorksetStateDB:
         retry_count = int(workset.get("retry_count", 0))
         max_retries = int(workset.get("max_retries", DEFAULT_MAX_RETRIES))
 
-        should_retry = (
-            retry_count < max_retries
-            and error_category in [ErrorCategory.TRANSIENT, ErrorCategory.RESOURCE]
-        )
+        should_retry = retry_count < max_retries and error_category in [
+            ErrorCategory.TRANSIENT,
+            ErrorCategory.RESOURCE,
+        ]
 
         if should_retry:
-            backoff_seconds = min(DEFAULT_RETRY_BACKOFF_BASE ** retry_count, DEFAULT_RETRY_BACKOFF_MAX)
+            backoff_seconds = min(
+                DEFAULT_RETRY_BACKOFF_BASE**retry_count, DEFAULT_RETRY_BACKOFF_MAX
+            )
             retry_after = (
-                dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=backoff_seconds)
-            ).isoformat().replace("+00:00", "Z")
+                (dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=backoff_seconds))
+                .isoformat()
+                .replace("+00:00", "Z")
+            )
             new_state = WorksetState.RETRYING
             reason = f"Retry {retry_count + 1}/{max_retries} after {error_category.value} error"
         else:

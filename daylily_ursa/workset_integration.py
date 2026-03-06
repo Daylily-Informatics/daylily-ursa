@@ -43,15 +43,15 @@ STAGE_SAMPLES_NAME = "stage_samples.tsv"
 PIPELINE_DY_R_COMMANDS = {
     "test_help": "-p help",
     "germline_wgs_snv": (
-        'produce_snv_concordances produce_alignstats -p -k -j 200 '
+        "produce_snv_concordances produce_alignstats -p -k -j 200 "
         '--config aligners=["bwa2a"] dedupers=["dppl"] snv_callers=["deep19"]'
     ),
     "germline_wgs_snv_sv": (
-        'produce_snv_concordances produce_alignstats produce_tiddit produce_manta -p -k -j 200 '
+        "produce_snv_concordances produce_alignstats produce_tiddit produce_manta -p -k -j 200 "
         '--config aligners=["bwa2a"] dedupers=["dppl"] snv_callers=["deep19"] sv_callers=["tiddit","manta"]'
     ),
     "germline_wgs_kitchensink": (
-        'produce_snv_concordances produce_multiqc_final_wgs produce_alignstats produce_tiddit produce_manta -p -k -j 200 '
+        "produce_snv_concordances produce_multiqc_final_wgs produce_alignstats produce_tiddit produce_manta -p -k -j 200 "
         '--config aligners=["bwa2a"] dedupers=["dppl"] snv_callers=["deep19"] sv_callers=["tiddit","manta"]'
     ),
 }
@@ -59,7 +59,7 @@ PIPELINE_DY_R_COMMANDS = {
 
 class WorksetIntegration:
     """Bridge between TapDB state management and S3 sentinel-based system.
-    
+
     Provides unified operations that keep both systems in sync:
     - Workset registration writes to both TapDB and S3
     - State updates propagate to both systems
@@ -95,7 +95,7 @@ class WorksetIntegration:
         self.prefix = prefix.strip("/") + "/" if prefix else ""
         self.notification_manager = notification_manager
         self.scheduler = scheduler
-        
+
         if s3_client:
             self._s3 = s3_client
         else:
@@ -152,6 +152,7 @@ class WorksetIntegration:
         # Write to TapDB first (if enabled and available)
         if write_tapdb and self.state_db:
             from daylily_ursa.workset_state_db import WorksetPriority, WorksetType
+
             try:
                 ws_priority = WorksetPriority(priority)
             except ValueError:
@@ -244,6 +245,7 @@ class WorksetIntegration:
         # Update TapDB
         if write_tapdb and self.state_db:
             from daylily_ursa.workset_state_db import WorksetState
+
             try:
                 ws_state = WorksetState(new_state)
                 self.state_db.update_state(
@@ -524,31 +526,26 @@ class WorksetIntegration:
             "workset_id": workset_name,  # Legacy field: S3 info yaml uses human-readable name
             "workset_name": metadata.get("workset_name", workset_name),
             "customer_id": metadata.get("submitted_by", "unknown"),
-
             # Timestamps
             "created_at": timestamp,
             "submitted_at": timestamp,
-
             # Pipeline configuration
             "pipeline_type": metadata.get("pipeline_type", "germline"),
             "reference_genome": metadata.get("reference_genome", "GRCh38"),
             "priority": metadata.get("priority", "normal"),
-
             # Sample summary
             "sample_count": len(samples),
             "sample_ids": [s.get("sample_id", "") for s in samples] if samples else [],
-
             # Processing options
             "enable_qc": metadata.get("enable_qc", True),
             "archive_results": metadata.get("archive_results", True),
-
             # Notification
             "notification_email": metadata.get("notification_email"),
-
             # Location
             "s3_bucket": bucket,
             "s3_prefix": prefix.rstrip("/"),
-            "export_uri": metadata.get("export_uri") or f"s3://{bucket}/{prefix.rstrip('/')}/results/",
+            "export_uri": metadata.get("export_uri")
+            or f"s3://{bucket}/{prefix.rstrip('/')}/results/",
         }
         info_key = f"{prefix}{INFO_YAML_NAME}"
         self._s3.put_object(
@@ -580,11 +577,26 @@ class WorksetIntegration:
             # Use analysis_samples_template.tsv format with 20 columns
             # See etc/analysis_samples_template.tsv for column definitions
             header_cols = [
-                "RUN_ID", "SAMPLE_ID", "EXPERIMENTID", "SAMPLE_TYPE", "LIB_PREP",
-                "SEQ_VENDOR", "SEQ_PLATFORM", "LANE", "SEQBC_ID",
-                "PATH_TO_CONCORDANCE_DATA_DIR", "R1_FQ", "R2_FQ",
-                "STAGE_DIRECTIVE", "STAGE_TARGET", "SUBSAMPLE_PCT",
-                "IS_POS_CTRL", "IS_NEG_CTRL", "N_X", "N_Y", "EXTERNAL_SAMPLE_ID"
+                "RUN_ID",
+                "SAMPLE_ID",
+                "EXPERIMENTID",
+                "SAMPLE_TYPE",
+                "LIB_PREP",
+                "SEQ_VENDOR",
+                "SEQ_PLATFORM",
+                "LANE",
+                "SEQBC_ID",
+                "PATH_TO_CONCORDANCE_DATA_DIR",
+                "R1_FQ",
+                "R2_FQ",
+                "STAGE_DIRECTIVE",
+                "STAGE_TARGET",
+                "SUBSAMPLE_PCT",
+                "IS_POS_CTRL",
+                "IS_NEG_CTRL",
+                "N_X",
+                "N_Y",
+                "EXTERNAL_SAMPLE_ID",
             ]
             tsv_lines = ["\t".join(header_cols)]
 
@@ -627,7 +639,13 @@ class WorksetIntegration:
                     Body="\n".join(tsv_lines).encode("utf-8"),
                     ContentType="text/tab-separated-values",
                 )
-                LOGGER.debug("Wrote %s to s3://%s/%s with %d samples", STAGE_SAMPLES_NAME, bucket, tsv_key, len(samples))
+                LOGGER.debug(
+                    "Wrote %s to s3://%s/%s with %d samples",
+                    STAGE_SAMPLES_NAME,
+                    bucket,
+                    tsv_key,
+                    len(samples),
+                )
 
         # Always create sample_data/ directory with .hold file to prevent S3 from
         # removing the "empty" directory (S3 doesn't have real directories)
@@ -656,9 +674,7 @@ class WorksetIntegration:
         """
         # Load the template file
         template_path = os.path.join(
-            os.path.dirname(os.path.dirname(__file__)),
-            "config",
-            "daylily_work.yaml"
+            os.path.dirname(os.path.dirname(__file__)), "config", "daylily_work.yaml"
         )
 
         try:
@@ -670,26 +686,30 @@ class WorksetIntegration:
 
         # Build export URI using customer's bucket and workset prefix
         export_prefix = prefix.rstrip("/")
-        customer_export_uri = metadata.get("export_uri") or f"s3://{bucket}/{export_prefix}/results/"
+        customer_export_uri = (
+            metadata.get("export_uri") or f"s3://{bucket}/{export_prefix}/results/"
+        )
 
         # Replace the export_uri line in the template
         template_content = re.sub(
-            r'^export_uri:.*$',
+            r"^export_uri:.*$",
             f'export_uri: "{customer_export_uri}"',
             template_content,
-            flags=re.MULTILINE
+            flags=re.MULTILINE,
         )
 
         # Replace dy-r based on pipeline_type from metadata
         pipeline_type = metadata.get("pipeline_type", "test_help")
-        dy_r_command = PIPELINE_DY_R_COMMANDS.get(pipeline_type, PIPELINE_DY_R_COMMANDS["test_help"])
+        dy_r_command = PIPELINE_DY_R_COMMANDS.get(
+            pipeline_type, PIPELINE_DY_R_COMMANDS["test_help"]
+        )
 
         # Replace dy-r: line and any multi-line continuation (handles both single-line and >-style)
         template_content = re.sub(
-            r'^dy-r:.*?(?=\n[a-zA-Z#]|\n\n|\Z)',
-            f'dy-r: >\n  {dy_r_command}',
+            r"^dy-r:.*?(?=\n[a-zA-Z#]|\n\n|\Z)",
+            f"dy-r: >\n  {dy_r_command}",
             template_content,
-            flags=re.MULTILINE | re.DOTALL
+            flags=re.MULTILINE | re.DOTALL,
         )
 
         # Optionally replace {workdir_name} placeholder if present
@@ -699,7 +719,7 @@ class WorksetIntegration:
 
     def _get_default_work_yaml_template(self) -> str:
         """Return default work YAML template if file not found."""
-        return '''# (optional) Keep or drop. If present, the monitor won't try to create/use a different one.
+        return """# (optional) Keep or drop. If present, the monitor won't try to create/use a different one.
 # cluster_name: "newcluex"
 
 # Clone the Daylily pipeline on the headnode (optional but recommended)
@@ -717,7 +737,7 @@ export_uri: "s3://PLACEHOLDER/results/"
 
 # (ignored by script; for you)
 notes: "Daylily Snakemake; hg38; slurm profile; 192 jobs; rerun-incomplete."
-'''
+"""
 
     def _write_sentinel(
         self,
@@ -860,4 +880,3 @@ notes: "Daylily Snakemake; hg38; slurm profile; 192 jobs; rerun-incomplete."
             self.notification_manager.notify(event)
         except Exception as e:
             LOGGER.warning("Failed to send notification for %s: %s", identifier, str(e))
-

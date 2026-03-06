@@ -98,13 +98,28 @@ def create_s3_router(deps: S3Dependencies) -> APIRouter:
                             response = s3_client.get_object(Bucket=bucket, Key=key)
                             yaml_content = response["Body"].read().decode("utf-8")
                         except Exception as e:
-                            LOGGER.warning("S3 Discovery: Failed to read daylily_work.yaml: %s", str(e))
+                            LOGGER.warning(
+                                "S3 Discovery: Failed to read daylily_work.yaml: %s", str(e)
+                            )
 
-                    fastq_extensions = [".fastq", ".fq", ".fastq.gz", ".fq.gz", ".fastq.bz2", ".fq.bz2"]
+                    fastq_extensions = [
+                        ".fastq",
+                        ".fq",
+                        ".fastq.gz",
+                        ".fq.gz",
+                        ".fastq.bz2",
+                        ".fq.bz2",
+                    ]
                     if any(filename.lower().endswith(ext) for ext in fastq_extensions):
-                        files_found.append({"key": key, "filename": filename, "size": obj.get("Size", 0)})
+                        files_found.append(
+                            {"key": key, "filename": filename, "size": obj.get("Size", 0)}
+                        )
 
-            LOGGER.info("S3 Discovery: Found %d total objects, %d FASTQ files", total_objects, len(files_found))
+            LOGGER.info(
+                "S3 Discovery: Found %d total objects, %d FASTQ files",
+                total_objects,
+                len(files_found),
+            )
 
             if yaml_content:
                 try:
@@ -112,12 +127,20 @@ def create_s3_router(deps: S3Dependencies) -> APIRouter:
                     if yaml_data and isinstance(yaml_data.get("samples"), list):
                         for sample in yaml_data["samples"]:
                             if isinstance(sample, dict):
-                                samples.append({
-                                    "sample_id": sample.get("sample_id") or sample.get("id") or sample.get("name", "unknown"),
-                                    "r1_file": sample.get("r1_file") or sample.get("r1") or sample.get("fq1", ""),
-                                    "r2_file": sample.get("r2_file") or sample.get("r2") or sample.get("fq2", ""),
-                                    "status": "pending",
-                                })
+                                samples.append(
+                                    {
+                                        "sample_id": sample.get("sample_id")
+                                        or sample.get("id")
+                                        or sample.get("name", "unknown"),
+                                        "r1_file": sample.get("r1_file")
+                                        or sample.get("r1")
+                                        or sample.get("fq1", ""),
+                                        "r2_file": sample.get("r2_file")
+                                        or sample.get("r2")
+                                        or sample.get("fq2", ""),
+                                        "status": "pending",
+                                    }
+                                )
                 except Exception as e:
                     LOGGER.warning("S3 Discovery: Failed to parse daylily_work.yaml: %s", str(e))
 
@@ -125,17 +148,24 @@ def create_s3_router(deps: S3Dependencies) -> APIRouter:
                 samples = _pair_fastq_files(files_found)
 
             return {
-                "samples": samples, "yaml_content": yaml_content, "files_found": len(files_found),
-                "bucket": bucket, "prefix": prefix, "normalized_prefix": normalized_prefix,
+                "samples": samples,
+                "yaml_content": yaml_content,
+                "files_found": len(files_found),
+                "bucket": bucket,
+                "prefix": prefix,
+                "normalized_prefix": normalized_prefix,
                 "total_objects_scanned": total_objects,
             }
         except Exception as e:
             if "NoSuchBucket" in str(type(e).__name__):
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"S3 bucket '{bucket}' not found")
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND, detail=f"S3 bucket '{bucket}' not found"
+                )
             LOGGER.error("S3 Discovery: Failed to discover samples from S3: %s", str(e))
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to discover samples: {str(e)}")
-
-
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to discover samples: {str(e)}",
+            )
 
     @router.post("/api/v2/s3/validate-bucket")
     async def validate_s3_bucket(
@@ -156,14 +186,25 @@ def create_s3_router(deps: S3Dependencies) -> APIRouter:
                 )
 
             return {
-                "bucket": bucket, "valid": result.is_valid, "fully_configured": result.is_fully_configured,
-                "exists": result.exists, "accessible": result.accessible, "can_read": result.can_read,
-                "can_write": result.can_write, "can_list": result.can_list, "region": result.region,
-                "errors": result.errors, "warnings": result.warnings, "setup_instructions": instructions,
+                "bucket": bucket,
+                "valid": result.is_valid,
+                "fully_configured": result.is_fully_configured,
+                "exists": result.exists,
+                "accessible": result.accessible,
+                "can_read": result.can_read,
+                "can_write": result.can_write,
+                "can_list": result.can_list,
+                "region": result.region,
+                "errors": result.errors,
+                "warnings": result.warnings,
+                "setup_instructions": instructions,
             }
         except Exception as e:
             LOGGER.error("S3 Validation: Failed to validate bucket '%s': %s", bucket, str(e))
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to validate bucket: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to validate bucket: {str(e)}",
+            )
 
     @router.get("/api/v2/s3/iam-policy/{bucket_name}")
     async def get_iam_policy_for_bucket(
@@ -190,7 +231,9 @@ def create_s3_router(deps: S3Dependencies) -> APIRouter:
         validator_inst = S3BucketValidator(region=region, profile=profile)
         policy = validator_inst.generate_customer_bucket_policy(bucket_name, daylily_account_id)
         return {
-            "bucket": bucket_name, "daylily_account_id": daylily_account_id, "policy": policy,
+            "bucket": bucket_name,
+            "daylily_account_id": daylily_account_id,
+            "policy": policy,
             "apply_command": f"aws s3api put-bucket-policy --bucket {bucket_name} --policy file://bucket-policy.json",
         }
 
@@ -218,9 +261,13 @@ def create_s3_router(deps: S3Dependencies) -> APIRouter:
             if error_code == "NoSuchBucket":
                 raise HTTPException(status_code=404, detail=f"Bucket '{bucket_name}' not found")
             elif error_code == "AccessDenied":
-                raise HTTPException(status_code=403, detail=f"Access denied to bucket '{bucket_name}'")
+                raise HTTPException(
+                    status_code=403, detail=f"Access denied to bucket '{bucket_name}'"
+                )
             else:
-                raise HTTPException(status_code=500, detail=f"Failed to get bucket region: {str(e)}")
+                raise HTTPException(
+                    status_code=500, detail=f"Failed to get bucket region: {str(e)}"
+                )
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to get bucket region: {str(e)}")
 
@@ -262,15 +309,21 @@ def _pair_fastq_files(files_found: List[Dict[str, Any]]) -> List[Dict[str, str]]
                     break
 
     all_sample_names = set(r1_files.keys()) | set(r2_files.keys())
-    LOGGER.info("S3 Discovery: Found %d R1 files, %d R2 files, %d unique sample names",
-                len(r1_files), len(r2_files), len(all_sample_names))
+    LOGGER.info(
+        "S3 Discovery: Found %d R1 files, %d R2 files, %d unique sample names",
+        len(r1_files),
+        len(r2_files),
+        len(all_sample_names),
+    )
 
     samples = []
     for sample_name in sorted(all_sample_names):
-        samples.append({
-            "sample_id": sample_name,
-            "r1_file": r1_files.get(sample_name, ""),
-            "r2_file": r2_files.get(sample_name, ""),
-            "status": "pending",
-        })
+        samples.append(
+            {
+                "sample_id": sample_name,
+                "r1_file": r1_files.get(sample_name, ""),
+                "r2_file": r2_files.get(sample_name, ""),
+                "status": "pending",
+            }
+        )
     return samples

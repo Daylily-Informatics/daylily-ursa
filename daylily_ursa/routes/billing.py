@@ -141,7 +141,6 @@ def create_billing_router(deps: BillingDependencies) -> APIRouter:
 
         return invoice_data
 
-
     @router.get("/api/v2/customers/{customer_id}/billing/workset/{euid}")
     async def get_workset_billing(
         customer_id: str,

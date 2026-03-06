@@ -167,4 +167,3 @@ def test_validate_workset_failure(processor, mock_state_db):
 
     assert result is False
     mock_state_db.record_failure.assert_called_once()
-

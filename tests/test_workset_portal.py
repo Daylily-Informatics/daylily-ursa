@@ -89,7 +89,9 @@ class TestPortalAdminUsers:
         other.email = "other@example.com"
         other.customer_name = "Other"
 
-        mock_customer_manager.get_customer_by_email.side_effect = lambda e: admin if e == admin.email else None
+        mock_customer_manager.get_customer_by_email.side_effect = lambda e: (
+            admin if e == admin.email else None
+        )
         mock_customer_manager.list_customers.return_value = [admin, other]
 
         app = create_app(
@@ -143,7 +145,9 @@ class TestPortalAdminUsers:
         admin.email = "admin@example.com"
         admin.customer_name = "Admin"
 
-        mock_customer_manager.get_customer_by_email.side_effect = lambda e: admin if e == admin.email else None
+        mock_customer_manager.get_customer_by_email.side_effect = lambda e: (
+            admin if e == admin.email else None
+        )
         mock_customer_manager.list_customers.return_value = [admin]
 
         app = create_app(
@@ -195,7 +199,9 @@ class TestPortalAdminUsers:
         )
         assert response.status_code == 302
         assert response.headers["location"].startswith("/portal/admin/users?success=")
-        mock_customer_manager.onboard_customer.assert_called_once_with(customer_name="New User", email="new@example.com")
+        mock_customer_manager.onboard_customer.assert_called_once_with(
+            customer_name="New User", email="new@example.com"
+        )
 
     def test_admin_users_add_duplicate_email_error(self, mock_state_db):
         mock_customer_manager = MagicMock()
@@ -247,7 +253,9 @@ class TestPortalAdminUsers:
         admin.email = "admin@example.com"
         admin.customer_name = "Admin"
 
-        mock_customer_manager.get_customer_by_email.side_effect = lambda e: admin if e == admin.email else None
+        mock_customer_manager.get_customer_by_email.side_effect = lambda e: (
+            admin if e == admin.email else None
+        )
         mock_customer_manager.list_customers.return_value = [admin]
 
         app = create_app(
@@ -299,7 +307,9 @@ class TestPortalAdminUsers:
         admin.email = "admin@example.com"
         admin.customer_name = "Admin"
 
-        mock_customer_manager.get_customer_by_email.side_effect = lambda e: admin if e == admin.email else None
+        mock_customer_manager.get_customer_by_email.side_effect = lambda e: (
+            admin if e == admin.email else None
+        )
         mock_customer_manager.set_admin_status.return_value = True
 
         app = create_app(
@@ -317,7 +327,9 @@ class TestPortalAdminUsers:
         )
         assert response.status_code == 302
         assert response.headers["location"].startswith("/portal/admin/users?success=")
-        mock_customer_manager.set_admin_status.assert_called_once_with(email="other@example.com", is_admin=True)
+        mock_customer_manager.set_admin_status.assert_called_once_with(
+            email="other@example.com", is_admin=True
+        )
 
     def test_admin_users_remove_admin_success(self, mock_state_db):
         mock_customer_manager = MagicMock()
@@ -327,7 +339,9 @@ class TestPortalAdminUsers:
         admin.email = "admin@example.com"
         admin.customer_name = "Admin"
 
-        mock_customer_manager.get_customer_by_email.side_effect = lambda e: admin if e == admin.email else None
+        mock_customer_manager.get_customer_by_email.side_effect = lambda e: (
+            admin if e == admin.email else None
+        )
         mock_customer_manager.set_admin_status.return_value = True
 
         app = create_app(
@@ -345,7 +359,9 @@ class TestPortalAdminUsers:
         )
         assert response.status_code == 302
         assert response.headers["location"].startswith("/portal/admin/users?success=")
-        mock_customer_manager.set_admin_status.assert_called_once_with(email="other@example.com", is_admin=False)
+        mock_customer_manager.set_admin_status.assert_called_once_with(
+            email="other@example.com", is_admin=False
+        )
 
     def test_admin_users_set_password_non_admin_forbidden(self, mock_state_db):
         mock_customer_manager = MagicMock()
@@ -383,7 +399,9 @@ class TestPortalAdminUsers:
         admin.email = "admin@example.com"
         admin.customer_name = "Admin"
 
-        mock_customer_manager.get_customer_by_email.side_effect = lambda e: admin if e == admin.email else None
+        mock_customer_manager.get_customer_by_email.side_effect = lambda e: (
+            admin if e == admin.email else None
+        )
         mock_cognito_auth = MagicMock()
         mock_cognito_auth.authenticate.return_value = {"access_token": "at", "id_token": "it"}
 
@@ -419,7 +437,9 @@ class TestPortalAdminUsers:
         admin.email = "admin@example.com"
         admin.customer_name = "Admin"
 
-        mock_customer_manager.get_customer_by_email.side_effect = lambda e: admin if e == admin.email else None
+        mock_customer_manager.get_customer_by_email.side_effect = lambda e: (
+            admin if e == admin.email else None
+        )
         mock_cognito_auth = MagicMock()
         mock_cognito_auth.authenticate.return_value = {"access_token": "at", "id_token": "it"}
 
@@ -450,7 +470,9 @@ class TestPortalAdminUsers:
             permanent=False,
         )
 
-    def test_admin_users_set_password_success_permanent_when_force_change_unchecked(self, mock_state_db):
+    def test_admin_users_set_password_success_permanent_when_force_change_unchecked(
+        self, mock_state_db
+    ):
         mock_customer_manager = MagicMock()
         admin = MagicMock()
         admin.customer_id = "cust-admin"
@@ -458,7 +480,9 @@ class TestPortalAdminUsers:
         admin.email = "admin@example.com"
         admin.customer_name = "Admin"
 
-        mock_customer_manager.get_customer_by_email.side_effect = lambda e: admin if e == admin.email else None
+        mock_customer_manager.get_customer_by_email.side_effect = lambda e: (
+            admin if e == admin.email else None
+        )
         mock_cognito_auth = MagicMock()
         mock_cognito_auth.authenticate.return_value = {"access_token": "at", "id_token": "it"}
 
@@ -497,10 +521,14 @@ class TestPortalAdminUsers:
         admin.email = "admin@example.com"
         admin.customer_name = "Admin"
 
-        mock_customer_manager.get_customer_by_email.side_effect = lambda e: admin if e == admin.email else None
+        mock_customer_manager.get_customer_by_email.side_effect = lambda e: (
+            admin if e == admin.email else None
+        )
         mock_cognito_auth = MagicMock()
         mock_cognito_auth.authenticate.return_value = {"access_token": "at", "id_token": "it"}
-        mock_cognito_auth.set_user_password.side_effect = HTTPException(status_code=403, detail="Domain not allowed")
+        mock_cognito_auth.set_user_password.side_effect = HTTPException(
+            status_code=403, detail="Domain not allowed"
+        )
 
         app = create_app(
             state_db=mock_state_db,
@@ -711,7 +739,9 @@ class TestPortalRoutes:
         assert "text/html" in response.headers["content-type"]
         assert b"File" in response.content
 
-    def test_portal_files_buckets_page_renders_link_actions_card_above_list(self, authenticated_client):
+    def test_portal_files_buckets_page_renders_link_actions_card_above_list(
+        self, authenticated_client
+    ):
         """Buckets page should render Link Bucket actions above the linked buckets list."""
         response = authenticated_client.get("/portal/files/buckets")
         assert response.status_code == 200
@@ -722,7 +752,9 @@ class TestPortalRoutes:
         assert 'id="linked-buckets-card"' in html
         assert html.index('id="link-bucket-actions-card"') < html.index('id="linked-buckets-card"')
 
-    def test_portal_files_buckets_page_has_discover_redirect_button_and_no_modal(self, authenticated_client):
+    def test_portal_files_buckets_page_has_discover_redirect_button_and_no_modal(
+        self, authenticated_client
+    ):
         """Buckets page should provide a redirect to auto-discover; modal-based discover UI should be removed."""
         response = authenticated_client.get("/portal/files/buckets")
         assert response.status_code == 200
@@ -733,11 +765,18 @@ class TestPortalRoutes:
         assert 'href="/portal/files/register?tab=discover"' in html
         assert 'id="discover-modal"' not in html
 
-        assert html.index('id="link-bucket-actions-card"') < html.index('id="discover-files-redirect-btn"')
-        assert html.index('id="discover-files-redirect-btn"') < html.index('id="linked-buckets-card"')
+        assert html.index('id="link-bucket-actions-card"') < html.index(
+            'id="discover-files-redirect-btn"'
+        )
+        assert html.index('id="discover-files-redirect-btn"') < html.index(
+            'id="linked-buckets-card"'
+        )
 
-    def test_portal_biospecimen_subjects_action_label_is_add_new_biospecimen(self, authenticated_client):
+    def test_portal_biospecimen_subjects_action_label_is_add_new_biospecimen(
+        self, authenticated_client
+    ):
         """Biospecimen subjects page should use the required wording for the add action."""
+
         def _inject_biospecimen_registry(app, registry) -> None:
             for route in app.routes:
                 if getattr(route, "path", None) not in {
@@ -790,6 +829,7 @@ class TestPortalRoutes:
 
     def test_portal_biospecimen_subjects_add_new_card_is_above_list(self, authenticated_client):
         """Biospecimen subjects page should render the Add New card above the subjects list/table."""
+
         def _inject_biospecimen_registry(app, registry) -> None:
             for route in app.routes:
                 if getattr(route, "path", None) not in {
@@ -898,7 +938,9 @@ class TestPortalGlobalSearch:
         assert response.status_code == 302
         assert "/portal/login" in response.headers["location"]
 
-    def test_portal_search_header_form_is_rendered_for_authenticated_pages(self, authenticated_client):
+    def test_portal_search_header_form_is_rendered_for_authenticated_pages(
+        self, authenticated_client
+    ):
         response = authenticated_client.get("/portal")
         assert response.status_code == 200
         assert 'id="global-search-input"' in response.text
@@ -907,7 +949,7 @@ class TestPortalGlobalSearch:
         response = authenticated_client.get("/portal/search?q=example")
         assert response.status_code == 200
         assert "Global Search" in response.text
-        assert "id=\"portal-search-facets\"" in response.text
+        assert 'id="portal-search-facets"' in response.text
 
     def test_api_portal_search_non_admin_cannot_query_admin_types(self, mock_state_db):
         client = _make_authenticated_client(
@@ -931,7 +973,9 @@ class TestPortalGlobalSearch:
         assert "user" not in data["types"]
         assert "monitor_log" not in data["types"]
 
-    def test_api_portal_search_admin_scope_all_returns_cross_customer_user_hits(self, mock_state_db):
+    def test_api_portal_search_admin_scope_all_returns_cross_customer_user_hits(
+        self, mock_state_db
+    ):
         client = self._make_admin_search_client(mock_state_db)
         response = client.get(
             "/api/v2/portal/search",
@@ -1016,10 +1060,21 @@ class TestPortalBucketsEditDialog:
         manager.list_customers.return_value = [customer]
         return manager
 
-    def _make_client(self, mock_state_db: MagicMock, *, mock_customer_manager: MagicMock, mock_linked_bucket_manager: MagicMock):
-        with patch("daylily_ursa.routes.portal.RegionAwareS3Client", return_value=MagicMock()), patch(
-            "daylily_ursa.workset_api.FILE_MANAGEMENT_AVAILABLE", True
-        ), patch("daylily_ursa.workset_api.LinkedBucketManager", return_value=mock_linked_bucket_manager):
+    def _make_client(
+        self,
+        mock_state_db: MagicMock,
+        *,
+        mock_customer_manager: MagicMock,
+        mock_linked_bucket_manager: MagicMock,
+    ):
+        with (
+            patch("daylily_ursa.routes.portal.RegionAwareS3Client", return_value=MagicMock()),
+            patch("daylily_ursa.workset_api.FILE_MANAGEMENT_AVAILABLE", True),
+            patch(
+                "daylily_ursa.workset_api.LinkedBucketManager",
+                return_value=mock_linked_bucket_manager,
+            ),
+        ):
             app = create_app(
                 state_db=mock_state_db,
                 enable_auth=False,
@@ -1184,14 +1239,15 @@ class TestPortalBucketsEditDialog:
             "cost_report_sample_count": 2,
             "cost_report_rule_count": 1,
         }
-        mock_state_db.get_storage_metrics.return_value = {"results_storage_bytes": int(20 * 1024**3)}
+        mock_state_db.get_storage_metrics.return_value = {
+            "results_storage_bytes": int(20 * 1024**3)
+        }
 
         expected = calculate_customer_cost_breakdown(mock_state_db, "customer-A", limit=500)
 
         html = client.get("/portal/usage")
         assert html.status_code == 200
         assert f"${expected['total']:.2f}".encode() in html.content
-
 
         # Transfer breakdown should be displayed as 3 line items on the usage page.
         assert b"Transfer (Intra-region)" in html.content
@@ -1300,9 +1356,7 @@ def mock_customer_manager():
 def client_with_customer(mock_state_db, mock_customer_manager):
     """Create test client with customer manager."""
     app = create_app(
-        state_db=mock_state_db,
-        customer_manager=mock_customer_manager,
-        enable_auth=False
+        state_db=mock_state_db, customer_manager=mock_customer_manager, enable_auth=False
     )
     return TestClient(app, base_url="https://testserver")
 
@@ -1322,7 +1376,7 @@ class TestArchiveDeleteAPI:
 
         response = client_with_customer.post(
             "/api/v2/customers/cust-001/worksets/test-ws-001/archive",
-            json={"reason": "No longer needed"}
+            json={"reason": "No longer needed"},
         )
 
         assert response.status_code == 200
@@ -1333,8 +1387,7 @@ class TestArchiveDeleteAPI:
         mock_state_db.get_workset.return_value = None
 
         response = client_with_customer.post(
-            "/api/v2/customers/cust-001/worksets/nonexistent/archive",
-            json={}
+            "/api/v2/customers/cust-001/worksets/nonexistent/archive", json={}
         )
 
         assert response.status_code == 404
@@ -1350,8 +1403,7 @@ class TestArchiveDeleteAPI:
         mock_state_db.archive_workset.return_value = True
 
         response = client_with_customer.post(
-            "/api/v2/customers/cust-001/worksets/test-ws-001/archive",
-            json={}
+            "/api/v2/customers/cust-001/worksets/test-ws-001/archive", json={}
         )
 
         assert response.status_code == 200
@@ -1369,13 +1421,15 @@ class TestArchiveDeleteAPI:
 
         response = client_with_customer.post(
             "/api/v2/customers/cust-001/worksets/test-ws-001/delete",
-            json={"hard_delete": False, "reason": "Cleaning up"}
+            json={"hard_delete": False, "reason": "Cleaning up"},
         )
 
         assert response.status_code == 200
         mock_state_db.delete_workset.assert_called_once()
         call_args = mock_state_db.delete_workset.call_args
-        assert call_args.kwargs.get("hard_delete") is False or call_args[1].get("hard_delete") is False
+        assert (
+            call_args.kwargs.get("hard_delete") is False or call_args[1].get("hard_delete") is False
+        )
 
     def test_delete_workset_hard_success(self, client_with_customer, mock_state_db):
         """Test successful hard delete via API."""
@@ -1394,8 +1448,7 @@ class TestArchiveDeleteAPI:
             mock_s3.list_objects_v2.return_value = {"Contents": []}
 
             response = client_with_customer.post(
-                "/api/v2/customers/cust-001/worksets/test-ws-001/delete",
-                json={"hard_delete": True}
+                "/api/v2/customers/cust-001/worksets/test-ws-001/delete", json={"hard_delete": True}
             )
 
         assert response.status_code == 200
@@ -1405,8 +1458,7 @@ class TestArchiveDeleteAPI:
         mock_state_db.get_workset.return_value = None
 
         response = client_with_customer.post(
-            "/api/v2/customers/cust-001/worksets/nonexistent/delete",
-            json={}
+            "/api/v2/customers/cust-001/worksets/nonexistent/delete", json={}
         )
 
         assert response.status_code == 404
@@ -1422,8 +1474,7 @@ class TestArchiveDeleteAPI:
         mock_state_db.delete_workset.return_value = True
 
         response = client_with_customer.post(
-            "/api/v2/customers/cust-001/worksets/test-ws-001/delete",
-            json={}
+            "/api/v2/customers/cust-001/worksets/test-ws-001/delete", json={}
         )
 
         assert response.status_code == 200
@@ -1467,14 +1518,22 @@ class TestArchiveDeleteAPI:
         mock_db = MagicMock(spec=WorksetStateDB)
         # Include customer_id to pass customer isolation filtering
         mock_db.list_archived_worksets.return_value = [
-            {"workset_id": "ws-001", "state": "archived", "bucket": "test-bucket", "customer_id": "cust-001"},
-            {"workset_id": "ws-002", "state": "archived", "bucket": "test-bucket", "customer_id": "cust-001"},
+            {
+                "workset_id": "ws-001",
+                "state": "archived",
+                "bucket": "test-bucket",
+                "customer_id": "cust-001",
+            },
+            {
+                "workset_id": "ws-002",
+                "state": "archived",
+                "bucket": "test-bucket",
+                "customer_id": "cust-001",
+            },
         ]
 
         app = create_app(
-            state_db=mock_db,
-            customer_manager=mock_customer_manager,
-            enable_auth=False
+            state_db=mock_db, customer_manager=mock_customer_manager, enable_auth=False
         )
         client = TestClient(app, base_url="https://testserver")
 
@@ -1542,18 +1601,19 @@ class TestWorksetCreationValidation:
         # Patch the get_cluster_service function at its source module
         # (it's imported locally inside workset_api functions)
         monkeypatch.setattr(
-            "daylily_ursa.cluster_service.get_cluster_service",
-            lambda **kwargs: mock_service
+            "daylily_ursa.cluster_service.get_cluster_service", lambda **kwargs: mock_service
         )
         # Clear settings cache
         clear_settings_cache()
 
-    def test_create_workset_rejects_empty_customer_id(self, mock_state_db, mock_customer_manager_with_email_lookup):
+    def test_create_workset_rejects_empty_customer_id(
+        self, mock_state_db, mock_customer_manager_with_email_lookup
+    ):
         """Test that empty customer_id is rejected."""
         app = create_app(
             state_db=mock_state_db,
             customer_manager=mock_customer_manager_with_email_lookup,
-            enable_auth=False
+            enable_auth=False,
         )
         client = TestClient(app, base_url="https://testserver")
 
@@ -1564,8 +1624,10 @@ class TestWorksetCreationValidation:
                 "workset_name": "Test Workset",
                 "pipeline_type": "wgs",
                 "reference_genome": "hg38",
-                "samples": [{"sample_id": "s1", "r1_file": "s1_R1.fq.gz", "r2_file": "s1_R2.fq.gz"}],
-            }
+                "samples": [
+                    {"sample_id": "s1", "r1_file": "s1_R1.fq.gz", "r2_file": "s1_R2.fq.gz"}
+                ],
+            },
         )
         # Empty path should return 404 (route not found)
         assert response.status_code == 404
@@ -1575,11 +1637,7 @@ class TestWorksetCreationValidation:
         mock_mgr = MagicMock()
         mock_mgr.get_customer_config.return_value = None
 
-        app = create_app(
-            state_db=mock_state_db,
-            customer_manager=mock_mgr,
-            enable_auth=False
-        )
+        app = create_app(state_db=mock_state_db, customer_manager=mock_mgr, enable_auth=False)
         client = TestClient(app, base_url="https://testserver")
 
         response = client.post(
@@ -1588,8 +1646,10 @@ class TestWorksetCreationValidation:
                 "workset_name": "Test Workset",
                 "pipeline_type": "wgs",
                 "reference_genome": "hg38",
-                "samples": [{"sample_id": "s1", "r1_file": "s1_R1.fq.gz", "r2_file": "s1_R2.fq.gz"}],
-            }
+                "samples": [
+                    {"sample_id": "s1", "r1_file": "s1_R1.fq.gz", "r2_file": "s1_R2.fq.gz"}
+                ],
+            },
         )
         assert response.status_code == 400
         assert "Valid customer ID is required" in response.json()["detail"]
@@ -1599,11 +1659,7 @@ class TestWorksetCreationValidation:
         mock_mgr = MagicMock()
         mock_mgr.get_customer_config.return_value = None
 
-        app = create_app(
-            state_db=mock_state_db,
-            customer_manager=mock_mgr,
-            enable_auth=False
-        )
+        app = create_app(state_db=mock_state_db, customer_manager=mock_mgr, enable_auth=False)
         client = TestClient(app, base_url="https://testserver")
 
         response = client.post(
@@ -1612,18 +1668,22 @@ class TestWorksetCreationValidation:
                 "workset_name": "Test Workset",
                 "pipeline_type": "wgs",
                 "reference_genome": "hg38",
-                "samples": [{"sample_id": "s1", "r1_file": "s1_R1.fq.gz", "r2_file": "s1_R2.fq.gz"}],
-            }
+                "samples": [
+                    {"sample_id": "s1", "r1_file": "s1_R1.fq.gz", "r2_file": "s1_R2.fq.gz"}
+                ],
+            },
         )
         assert response.status_code == 404
         assert "not found" in response.json()["detail"]
 
-    def test_create_workset_rejects_empty_samples(self, mock_state_db, mock_customer_manager_with_email_lookup):
+    def test_create_workset_rejects_empty_samples(
+        self, mock_state_db, mock_customer_manager_with_email_lookup
+    ):
         """Test that workset with no samples is rejected."""
         app = create_app(
             state_db=mock_state_db,
             customer_manager=mock_customer_manager_with_email_lookup,
-            enable_auth=False
+            enable_auth=False,
         )
         client = TestClient(app, base_url="https://testserver")
 
@@ -1635,17 +1695,19 @@ class TestWorksetCreationValidation:
                 "reference_genome": "hg38",
                 "preferred_cluster": "test-cluster",
                 "samples": [],
-            }
+            },
         )
         assert response.status_code == 400
         assert "at least one sample" in response.json()["detail"]
 
-    def test_create_workset_rejects_no_samples_field(self, mock_state_db, mock_customer_manager_with_email_lookup):
+    def test_create_workset_rejects_no_samples_field(
+        self, mock_state_db, mock_customer_manager_with_email_lookup
+    ):
         """Test that workset with missing samples field is rejected."""
         app = create_app(
             state_db=mock_state_db,
             customer_manager=mock_customer_manager_with_email_lookup,
-            enable_auth=False
+            enable_auth=False,
         )
         client = TestClient(app, base_url="https://testserver")
 
@@ -1657,7 +1719,7 @@ class TestWorksetCreationValidation:
                 "reference_genome": "hg38",
                 "preferred_cluster": "test-cluster",
                 # No samples field at all
-            }
+            },
         )
         assert response.status_code == 400
         assert "at least one sample" in response.json()["detail"]
@@ -1679,7 +1741,7 @@ class TestWorksetCreationValidation:
             state_db=mock_state_db,
             customer_manager=mock_mgr,
             integration=mock_integration,
-            enable_auth=False
+            enable_auth=False,
         )
         client = TestClient(app, base_url="https://testserver")
 
@@ -1690,8 +1752,10 @@ class TestWorksetCreationValidation:
                 "pipeline_type": "wgs",
                 "reference_genome": "hg38",
                 "preferred_cluster": "test-cluster",
-                "samples": [{"sample_id": "s1", "r1_file": "s1_R1.fq.gz", "r2_file": "s1_R2.fq.gz"}],
-            }
+                "samples": [
+                    {"sample_id": "s1", "r1_file": "s1_R1.fq.gz", "r2_file": "s1_R2.fq.gz"}
+                ],
+            },
         )
         # Should succeed - uses bucket from cluster tags
         assert response.status_code == 200
@@ -1717,7 +1781,7 @@ class TestWorksetCreationValidation:
             state_db=mock_state_db,
             customer_manager=mock_customer_manager_with_email_lookup,
             integration=mock_integration,
-            enable_auth=False
+            enable_auth=False,
         )
         client = TestClient(app, base_url="https://testserver")
 
@@ -1732,7 +1796,7 @@ class TestWorksetCreationValidation:
                     {"sample_id": "sample1", "r1_file": "s1_R1.fq.gz", "r2_file": "s1_R2.fq.gz"},
                     {"sample_id": "sample2", "r1_file": "s2_R1.fq.gz", "r2_file": "s2_R2.fq.gz"},
                 ],
-            }
+            },
         )
         assert response.status_code == 200
 
@@ -1762,7 +1826,7 @@ class TestWorksetCreationValidation:
             state_db=mock_state_db,
             customer_manager=mock_customer_manager_with_email_lookup,
             integration=mock_integration,
-            enable_auth=False
+            enable_auth=False,
         )
         client = TestClient(app, base_url="https://testserver")
 
@@ -1774,8 +1838,10 @@ class TestWorksetCreationValidation:
                 "reference_genome": "hg38",
                 "preferred_cluster": "test-cluster",
                 "s3_bucket": "different-bucket",  # This should be ignored
-                "samples": [{"sample_id": "s1", "r1_file": "s1_R1.fq.gz", "r2_file": "s1_R2.fq.gz"}],
-            }
+                "samples": [
+                    {"sample_id": "s1", "r1_file": "s1_R1.fq.gz", "r2_file": "s1_R2.fq.gz"}
+                ],
+            },
         )
         assert response.status_code == 200
 
@@ -1793,7 +1859,7 @@ class TestWorksetCreationValidation:
             state_db=mock_state_db,
             customer_manager=mock_customer_manager_with_email_lookup,
             integration=mock_integration,
-            enable_auth=False
+            enable_auth=False,
         )
         client = TestClient(app, base_url="https://testserver")
 
@@ -1805,8 +1871,10 @@ class TestWorksetCreationValidation:
                 "reference_genome": "hg38",
                 "preferred_cluster": "test-cluster",
                 "s3_prefix": "my/custom/path",  # No trailing slash
-                "samples": [{"sample_id": "s1", "r1_file": "s1_R1.fq.gz", "r2_file": "s1_R2.fq.gz"}],
-            }
+                "samples": [
+                    {"sample_id": "s1", "r1_file": "s1_R1.fq.gz", "r2_file": "s1_R2.fq.gz"}
+                ],
+            },
         )
         assert response.status_code == 200
 
@@ -1824,7 +1892,7 @@ class TestWorksetCreationValidation:
             state_db=mock_state_db,
             customer_manager=mock_customer_manager_with_email_lookup,
             integration=mock_integration,
-            enable_auth=False
+            enable_auth=False,
         )
         client = TestClient(app, base_url="https://testserver")
 
@@ -1845,7 +1913,7 @@ samples:
                 "reference_genome": "hg38",
                 "preferred_cluster": "test-cluster",
                 "yaml_content": yaml_content,
-            }
+            },
         )
         assert response.status_code == 200
 
@@ -1862,7 +1930,7 @@ samples:
         app = create_app(
             state_db=mock_state_db,
             customer_manager=mock_customer_manager_with_email_lookup,
-            enable_auth=False
+            enable_auth=False,
         )
         client = TestClient(app, base_url="https://testserver")
 
@@ -1877,7 +1945,7 @@ samples: []
                 "reference_genome": "hg38",
                 "preferred_cluster": "test-cluster",
                 "yaml_content": yaml_content,
-            }
+            },
         )
         assert response.status_code == 400
         assert "at least one sample" in response.json()["detail"]
@@ -1892,7 +1960,7 @@ samples: []
             state_db=mock_state_db,
             customer_manager=mock_customer_manager_with_email_lookup,
             integration=mock_integration,
-            enable_auth=False
+            enable_auth=False,
         )
         client = TestClient(app, base_url="https://testserver")
 
@@ -1908,7 +1976,7 @@ R0\tA1\tE1\tblood\tnoampwgs\tILMN\tNOVASEQX\t0\tS1\t\ts3://bucket/sample.R1.fast
                 "reference_genome": "hg38",
                 "preferred_cluster": "test-cluster",
                 "manifest_tsv_content": manifest_tsv,
-            }
+            },
         )
         assert response.status_code == 200
 
@@ -1930,7 +1998,7 @@ R0\tA1\tE1\tblood\tnoampwgs\tILMN\tNOVASEQX\t0\tS1\t\ts3://bucket/sample.R1.fast
         app = create_app(
             state_db=mock_state_db,
             customer_manager=mock_customer_manager_with_email_lookup,
-            enable_auth=False
+            enable_auth=False,
         )
         client = TestClient(app, base_url="https://testserver")
 
@@ -1945,7 +2013,7 @@ R0\tA1\tE1\tblood\tnoampwgs\tILMN\tNOVASEQX\t0\tS1\t\ts3://bucket/sample.R1.fast
                 "reference_genome": "hg38",
                 "preferred_cluster": "test-cluster",
                 "manifest_tsv_content": manifest_tsv,
-            }
+            },
         )
         assert response.status_code == 400
         assert "at least one sample" in response.json()["detail"]
@@ -1993,11 +2061,7 @@ class TestCustomerLookupByEmail:
         mock_mgr.get_customer_config.return_value = mock_customer
 
         # App should be creatable with customer manager that has get_customer_by_email
-        app = create_app(
-            state_db=mock_state_db,
-            customer_manager=mock_mgr,
-            enable_auth=False
-        )
+        app = create_app(state_db=mock_state_db, customer_manager=mock_mgr, enable_auth=False)
 
         # Verify app was created successfully
         assert app is not None
@@ -2081,9 +2145,7 @@ class TestPortalFileRegistration:
         assert response.status_code == 401
         assert "Not authenticated" in response.json()["detail"]
 
-    def test_portal_register_requires_file_management(
-        self, mock_state_db, mock_customer_manager
-    ):
+    def test_portal_register_requires_file_management(self, mock_state_db, mock_customer_manager):
         """Test that portal file registration returns 501 without file management."""
         app = create_app(
             state_db=mock_state_db,
@@ -2176,7 +2238,9 @@ def test_auth_registration_uses_session_email_and_ignores_form_email(mock_state_
     mock_customer_manager = MagicMock()
     mock_customer_manager.get_customer_by_email.return_value = None
     mock_customer_manager.get_customer_config.return_value = None
-    onboarded = SimpleNamespace(customer_id="cust-new", s3_bucket="daylily-cust-new", is_admin=False)
+    onboarded = SimpleNamespace(
+        customer_id="cust-new", s3_bucket="daylily-cust-new", is_admin=False
+    )
     mock_customer_manager.onboard_customer.return_value = onboarded
 
     app = create_app(
@@ -2213,7 +2277,7 @@ def test_auth_registration_uses_session_email_and_ignores_form_email(mock_state_
     assert register_page.status_code == 200
     assert b"Authenticated Email" in register_page.content
     assert b"johnm+t@lsmc.com" in register_page.content
-    assert b'name=\"email\"' not in register_page.content
+    assert b'name="email"' not in register_page.content
 
     response = client.post(
         "/portal/register",
@@ -2387,9 +2451,14 @@ class TestPortalFileUpload:
         """Create an authenticated client with linked bucket manager + mocked S3 client."""
         mock_s3_client = MagicMock()
 
-        with patch("daylily_ursa.routes.portal.RegionAwareS3Client", return_value=mock_s3_client), patch(
-            "daylily_ursa.workset_api.FILE_MANAGEMENT_AVAILABLE", True
-        ), patch("daylily_ursa.workset_api.LinkedBucketManager", return_value=mock_linked_bucket_manager):
+        with (
+            patch("daylily_ursa.routes.portal.RegionAwareS3Client", return_value=mock_s3_client),
+            patch("daylily_ursa.workset_api.FILE_MANAGEMENT_AVAILABLE", True),
+            patch(
+                "daylily_ursa.workset_api.LinkedBucketManager",
+                return_value=mock_linked_bucket_manager,
+            ),
+        ):
             app = create_app(
                 state_db=mock_state_db,
                 enable_auth=False,
@@ -2401,10 +2470,17 @@ class TestPortalFileUpload:
         client.post("/portal/login", data={"email": "test@example.com", "password": "testpass"})
         return client, mock_s3_client
 
-    def test_upload_requires_auth(self, mock_state_db, mock_customer_manager, mock_linked_bucket_manager):
-        with patch("daylily_ursa.routes.portal.RegionAwareS3Client", return_value=MagicMock()), patch(
-            "daylily_ursa.workset_api.FILE_MANAGEMENT_AVAILABLE", True
-        ), patch("daylily_ursa.workset_api.LinkedBucketManager", return_value=mock_linked_bucket_manager):
+    def test_upload_requires_auth(
+        self, mock_state_db, mock_customer_manager, mock_linked_bucket_manager
+    ):
+        with (
+            patch("daylily_ursa.routes.portal.RegionAwareS3Client", return_value=MagicMock()),
+            patch("daylily_ursa.workset_api.FILE_MANAGEMENT_AVAILABLE", True),
+            patch(
+                "daylily_ursa.workset_api.LinkedBucketManager",
+                return_value=mock_linked_bucket_manager,
+            ),
+        ):
             app = create_app(
                 state_db=mock_state_db,
                 enable_auth=False,
@@ -2453,7 +2529,12 @@ class TestPortalFileUpload:
         assert response.status_code == 404
 
     def test_upload_bucket_wrong_customer_403(
-        self, mock_state_db, mock_customer_manager, mock_linked_bucket_manager, mock_linked_bucket, mock_file_registry
+        self,
+        mock_state_db,
+        mock_customer_manager,
+        mock_linked_bucket_manager,
+        mock_linked_bucket,
+        mock_file_registry,
     ):
         mock_linked_bucket.customer_id = "cust-999"
         client, _mock_s3 = self._make_client_with_file_upload(
@@ -2472,7 +2553,12 @@ class TestPortalFileUpload:
         assert "Access denied" in response.json()["detail"]
 
     def test_upload_bucket_no_write_403(
-        self, mock_state_db, mock_customer_manager, mock_linked_bucket_manager, mock_linked_bucket, mock_file_registry
+        self,
+        mock_state_db,
+        mock_customer_manager,
+        mock_linked_bucket_manager,
+        mock_linked_bucket,
+        mock_file_registry,
     ):
         mock_linked_bucket.can_write = False
         client, _mock_s3 = self._make_client_with_file_upload(
@@ -2663,7 +2749,9 @@ class TestPortalFileAutoRegistration:
         assert len(errors) == 0
         assert mock_file_registry.register_file.call_count == 2
 
-    def test_auto_register_files_skips_already_registered(self, mock_file_registry, mock_bucket_discovery):
+    def test_auto_register_files_skips_already_registered(
+        self, mock_file_registry, mock_bucket_discovery
+    ):
         """Test that already-registered files are skipped."""
         from daylily_ursa.file_registry import BucketFileDiscovery
 
@@ -2711,7 +2799,9 @@ class TestPortalFileAutoRegistration:
         r2_registration = calls[1][0][0]
         assert r2_registration.read_number == 2
 
-    def test_auto_register_handles_registration_failure(self, mock_file_registry, mock_bucket_discovery):
+    def test_auto_register_handles_registration_failure(
+        self, mock_file_registry, mock_bucket_discovery
+    ):
         """Test that registration failures are captured in errors list."""
         from daylily_ursa.file_registry import BucketFileDiscovery
 
@@ -2764,7 +2854,12 @@ class TestFileSearchAPI:
     @pytest.fixture
     def mock_file_registrations(self):
         """Create mock file registrations for search tests."""
-        from daylily_ursa.file_registry import FileRegistration, FileMetadata, BiosampleMetadata, SequencingMetadata
+        from daylily_ursa.file_registry import (
+            FileRegistration,
+            FileMetadata,
+            BiosampleMetadata,
+            SequencingMetadata,
+        )
 
         return [
             FileRegistration(
@@ -2841,12 +2936,13 @@ class TestFileSearchAPI:
             f for f in mock_file_registrations if tag in f.tags
         ]
         registry.search_files_by_biosample.side_effect = lambda cid, bid: [
-            f for f in mock_file_registrations
-            if f.biosample_metadata.biosample_id == bid
+            f for f in mock_file_registrations if f.biosample_metadata.biosample_id == bid
         ]
         return registry
 
-    def test_search_returns_all_files_when_no_filters(self, mock_file_registry_for_search, mock_file_registrations):
+    def test_search_returns_all_files_when_no_filters(
+        self, mock_file_registry_for_search, mock_file_registrations
+    ):
         """Test that search returns all files when no filters are applied."""
         from daylily_ursa.file_api import FileSearchRequest
 
@@ -2859,8 +2955,11 @@ class TestFileSearchAPI:
     def test_search_filters_by_file_format(self, mock_file_registrations):
         """Test filtering by file format."""
         request_format = "fastq"
-        results = [f for f in mock_file_registrations
-                   if f.file_metadata.file_format.lower() == request_format.lower()]
+        results = [
+            f
+            for f in mock_file_registrations
+            if f.file_metadata.file_format.lower() == request_format.lower()
+        ]
 
         assert len(results) == 2
         assert all(f.file_metadata.file_format == "fastq" for f in results)
@@ -2868,9 +2967,11 @@ class TestFileSearchAPI:
     def test_search_filters_by_subject_id(self, mock_file_registrations):
         """Test filtering by subject ID (partial match)."""
         subject_search = "hg002"
-        results = [f for f in mock_file_registrations
-                   if f.biosample_metadata and
-                   subject_search in f.biosample_metadata.subject_id.lower()]
+        results = [
+            f
+            for f in mock_file_registrations
+            if f.biosample_metadata and subject_search in f.biosample_metadata.subject_id.lower()
+        ]
 
         assert len(results) == 2
         assert all(f.biosample_metadata.subject_id == "HG002" for f in results)
@@ -2878,9 +2979,12 @@ class TestFileSearchAPI:
     def test_search_filters_by_biosample_id(self, mock_file_registrations):
         """Test filtering by biosample ID."""
         biosample_search = "biosample-002"
-        results = [f for f in mock_file_registrations
-                   if f.biosample_metadata and
-                   biosample_search in f.biosample_metadata.biosample_id.lower()]
+        results = [
+            f
+            for f in mock_file_registrations
+            if f.biosample_metadata
+            and biosample_search in f.biosample_metadata.biosample_id.lower()
+        ]
 
         assert len(results) == 1
         assert results[0].file_id == "file-003"
@@ -2888,20 +2992,26 @@ class TestFileSearchAPI:
     def test_search_filters_by_sample_type(self, mock_file_registrations):
         """Test filtering by sample type."""
         sample_type = "blood"
-        results = [f for f in mock_file_registrations
-                   if f.biosample_metadata and
-                   f.biosample_metadata.sample_type and
-                   f.biosample_metadata.sample_type.lower() == sample_type.lower()]
+        results = [
+            f
+            for f in mock_file_registrations
+            if f.biosample_metadata
+            and f.biosample_metadata.sample_type
+            and f.biosample_metadata.sample_type.lower() == sample_type.lower()
+        ]
 
         assert len(results) == 2
 
     def test_search_filters_by_platform(self, mock_file_registrations):
         """Test filtering by sequencing platform."""
         platform = "ont"
-        results = [f for f in mock_file_registrations
-                   if f.sequencing_metadata and
-                   f.sequencing_metadata.platform and
-                   platform in f.sequencing_metadata.platform.lower()]
+        results = [
+            f
+            for f in mock_file_registrations
+            if f.sequencing_metadata
+            and f.sequencing_metadata.platform
+            and platform in f.sequencing_metadata.platform.lower()
+        ]
 
         assert len(results) == 1
         assert results[0].file_id == "file-003"
@@ -2917,8 +3027,11 @@ class TestFileSearchAPI:
     def test_search_filters_by_date_range(self, mock_file_registrations):
         """Test filtering by registration date range."""
         date_from = "2024-01-16"
-        results = [f for f in mock_file_registrations
-                   if f.registered_at and str(f.registered_at) >= date_from]
+        results = [
+            f
+            for f in mock_file_registrations
+            if f.registered_at and str(f.registered_at) >= date_from
+        ]
 
         assert len(results) == 1
         assert results[0].file_id == "file-003"
@@ -2928,7 +3041,7 @@ class TestFileSearchAPI:
         search_term = "sample1"
         results = []
         for f in mock_file_registrations:
-            filename = f.file_metadata.s3_uri.split('/')[-1] if f.file_metadata else ''
+            filename = f.file_metadata.s3_uri.split("/")[-1] if f.file_metadata else ""
             if search_term.lower() in filename.lower():
                 results.append(f)
 
@@ -2951,19 +3064,25 @@ class TestFileSearchAPI:
         subject_filter = "hg002"
 
         results = mock_file_registrations
-        results = [f for f in results
-                   if f.file_metadata.file_format.lower() == format_filter.lower()]
-        results = [f for f in results
-                   if f.biosample_metadata and
-                   subject_filter in f.biosample_metadata.subject_id.lower()]
+        results = [
+            f for f in results if f.file_metadata.file_format.lower() == format_filter.lower()
+        ]
+        results = [
+            f
+            for f in results
+            if f.biosample_metadata and subject_filter in f.biosample_metadata.subject_id.lower()
+        ]
 
         assert len(results) == 2
 
     def test_search_returns_empty_for_no_matches(self, mock_file_registrations):
         """Test search returns empty list when no files match."""
         format_filter = "vcf"
-        results = [f for f in mock_file_registrations
-                   if f.file_metadata.file_format.lower() == format_filter.lower()]
+        results = [
+            f
+            for f in mock_file_registrations
+            if f.file_metadata.file_format.lower() == format_filter.lower()
+        ]
 
         assert len(results) == 0
 
@@ -2974,15 +3093,24 @@ class TestFileSearchAPI:
         subject_lower = "hg002"
         subject_mixed = "Hg002"
 
-        results_upper = [f for f in mock_file_registrations
-                        if f.biosample_metadata and
-                        subject_upper.lower() in f.biosample_metadata.subject_id.lower()]
-        results_lower = [f for f in mock_file_registrations
-                        if f.biosample_metadata and
-                        subject_lower.lower() in f.biosample_metadata.subject_id.lower()]
-        results_mixed = [f for f in mock_file_registrations
-                        if f.biosample_metadata and
-                        subject_mixed.lower() in f.biosample_metadata.subject_id.lower()]
+        results_upper = [
+            f
+            for f in mock_file_registrations
+            if f.biosample_metadata
+            and subject_upper.lower() in f.biosample_metadata.subject_id.lower()
+        ]
+        results_lower = [
+            f
+            for f in mock_file_registrations
+            if f.biosample_metadata
+            and subject_lower.lower() in f.biosample_metadata.subject_id.lower()
+        ]
+        results_mixed = [
+            f
+            for f in mock_file_registrations
+            if f.biosample_metadata
+            and subject_mixed.lower() in f.biosample_metadata.subject_id.lower()
+        ]
 
         assert len(results_upper) == len(results_lower) == len(results_mixed) == 2
 
@@ -3177,7 +3305,11 @@ class TestPortalCustomerIsolation:
         from daylily_ursa.routes.dependencies import verify_workset_ownership
 
         # Customer B's workset
-        workset_b = {"workset_id": "ws-b-001", "customer_id": "customer-B", "results_s3_uri": "s3://..."}
+        workset_b = {
+            "workset_id": "ws-b-001",
+            "customer_id": "customer-B",
+            "results_s3_uri": "s3://...",
+        }
 
         # Customer A should NOT have access
         assert verify_workset_ownership(workset_b, "customer-A") is False
@@ -3235,7 +3367,7 @@ class TestVerifyWorksetOwnership:
         workset = {
             "workset_id": "ws-001",
             # No customer_id field
-            "metadata": {"submitted_by": "cust-A"}
+            "metadata": {"submitted_by": "cust-A"},
         }
         assert verify_workset_ownership(workset, "cust-A") is True
         assert verify_workset_ownership(workset, "cust-B") is False
@@ -3263,7 +3395,7 @@ class TestVerifyWorksetOwnership:
         workset = {
             "workset_id": "ws-001",
             "customer_id": "cust-A",
-            "metadata": {"submitted_by": "cust-B"}  # Different from customer_id
+            "metadata": {"submitted_by": "cust-B"},  # Different from customer_id
         }
         # Should use customer_id field
         assert verify_workset_ownership(workset, "cust-A") is True
@@ -3490,16 +3622,22 @@ class TestPortalAuthzSurfaces:
 
         mock_service = MagicMock()
         mock_service.get_all_clusters_with_status.return_value = [mock_cluster]
-        monkeypatch.setattr("daylily_ursa.cluster_service.get_cluster_service", lambda **kwargs: mock_service)
+        monkeypatch.setattr(
+            "daylily_ursa.cluster_service.get_cluster_service", lambda **kwargs: mock_service
+        )
 
-        admin_client = _make_authenticated_client(mock_state_db, customer_id="cust-admin", is_admin=True)
+        admin_client = _make_authenticated_client(
+            mock_state_db, customer_id="cust-admin", is_admin=True
+        )
         admin_response = admin_client.get("/portal/clusters")
         assert admin_response.status_code == 200
         assert b"AWS Budget" in admin_response.content
         assert b"Slurm Job Queue" in admin_response.content
         assert b"Public IP" in admin_response.content
 
-        non_admin_client = _make_authenticated_client(mock_state_db, customer_id="cust-user", is_admin=False)
+        non_admin_client = _make_authenticated_client(
+            mock_state_db, customer_id="cust-user", is_admin=False
+        )
         non_admin_response = non_admin_client.get("/portal/clusters")
         assert non_admin_response.status_code == 200
         assert b"AWS Budget" not in non_admin_response.content
@@ -3531,17 +3669,23 @@ class TestPortalAuthzSurfaces:
 
         mock_service = MagicMock()
         mock_service.get_all_clusters_with_status.return_value = [mock_cluster]
-        monkeypatch.setattr("daylily_ursa.cluster_service.get_cluster_service", lambda **kwargs: mock_service)
+        monkeypatch.setattr(
+            "daylily_ursa.cluster_service.get_cluster_service", lambda **kwargs: mock_service
+        )
 
-        admin_client = _make_authenticated_client(mock_state_db, customer_id="cust-admin", is_admin=True)
+        admin_client = _make_authenticated_client(
+            mock_state_db, customer_id="cust-admin", is_admin=True
+        )
         admin_response = admin_client.get("/portal/clusters")
         assert admin_response.status_code == 200
-        assert b"data-testid=\"delete-cluster-btn\"" in admin_response.content
+        assert b'data-testid="delete-cluster-btn"' in admin_response.content
 
-        non_admin_client = _make_authenticated_client(mock_state_db, customer_id="cust-user", is_admin=False)
+        non_admin_client = _make_authenticated_client(
+            mock_state_db, customer_id="cust-user", is_admin=False
+        )
         non_admin_response = non_admin_client.get("/portal/clusters")
         assert non_admin_response.status_code == 200
-        assert b"data-testid=\"delete-cluster-btn\"" not in non_admin_response.content
+        assert b'data-testid="delete-cluster-btn"' not in non_admin_response.content
 
     def test_clusters_create_ui_is_admin_only(self, mock_state_db, monkeypatch):
         """Create cluster button must be visible only to admins on /portal/clusters."""
@@ -3568,19 +3712,25 @@ class TestPortalAuthzSurfaces:
 
         mock_service = MagicMock()
         mock_service.get_all_clusters_with_status.return_value = [mock_cluster]
-        monkeypatch.setattr("daylily_ursa.cluster_service.get_cluster_service", lambda **kwargs: mock_service)
+        monkeypatch.setattr(
+            "daylily_ursa.cluster_service.get_cluster_service", lambda **kwargs: mock_service
+        )
 
-        admin_client = _make_authenticated_client(mock_state_db, customer_id="cust-admin", is_admin=True)
+        admin_client = _make_authenticated_client(
+            mock_state_db, customer_id="cust-admin", is_admin=True
+        )
         admin_response = admin_client.get("/portal/clusters")
         assert admin_response.status_code == 200
-        assert b"data-testid=\"create-cluster-btn\"" in admin_response.content
-        assert b"data-testid=\"spot-market-panel\"" in admin_response.content
+        assert b'data-testid="create-cluster-btn"' in admin_response.content
+        assert b'data-testid="spot-market-panel"' in admin_response.content
 
-        non_admin_client = _make_authenticated_client(mock_state_db, customer_id="cust-user", is_admin=False)
+        non_admin_client = _make_authenticated_client(
+            mock_state_db, customer_id="cust-user", is_admin=False
+        )
         non_admin_response = non_admin_client.get("/portal/clusters")
         assert non_admin_response.status_code == 200
-        assert b"data-testid=\"create-cluster-btn\"" not in non_admin_response.content
-        assert b"data-testid=\"spot-market-panel\"" not in non_admin_response.content
+        assert b'data-testid="create-cluster-btn"' not in non_admin_response.content
+        assert b'data-testid="spot-market-panel"' not in non_admin_response.content
 
     def test_api_delete_cluster_requires_admin(self, mock_state_db, monkeypatch):
         """DELETE /api/v2/clusters/* must be admin-only."""
@@ -3596,15 +3746,21 @@ class TestPortalAuthzSurfaces:
 
         mock_service = MagicMock()
         mock_service.delete_cluster.return_value = {}
-        monkeypatch.setattr("daylily_ursa.cluster_service.get_cluster_service", lambda **kwargs: mock_service)
+        monkeypatch.setattr(
+            "daylily_ursa.cluster_service.get_cluster_service", lambda **kwargs: mock_service
+        )
 
-        non_admin_client = _make_authenticated_client(mock_state_db, customer_id="cust-user", is_admin=False)
+        non_admin_client = _make_authenticated_client(
+            mock_state_db, customer_id="cust-user", is_admin=False
+        )
         resp = non_admin_client.delete("/api/v2/clusters/test-cluster?region=us-west-2")
         assert resp.status_code == 403
 
     def test_api_create_cluster_requires_admin(self, mock_state_db):
         """POST /api/v2/clusters/create must be admin-only."""
-        non_admin_client = _make_authenticated_client(mock_state_db, customer_id="cust-user", is_admin=False)
+        non_admin_client = _make_authenticated_client(
+            mock_state_db, customer_id="cust-user", is_admin=False
+        )
         resp = non_admin_client.post(
             "/api/v2/clusters/create",
             json={
@@ -3619,7 +3775,9 @@ class TestPortalAuthzSurfaces:
         )
         assert resp.status_code == 403
 
-    def test_api_create_cluster_admin_starts_background_job(self, mock_state_db, monkeypatch, tmp_path):
+    def test_api_create_cluster_admin_starts_background_job(
+        self, mock_state_db, monkeypatch, tmp_path
+    ):
         """Admin create should start a background job and return URLs."""
 
         class _FakeUrsaConfig:
@@ -3648,7 +3806,9 @@ class TestPortalAuthzSurfaces:
         start_mock = MagicMock(return_value=fake_job)
         monkeypatch.setattr("daylily_ursa.ephemeral_cluster.runner.start_create_job", start_mock)
 
-        admin_client = _make_authenticated_client(mock_state_db, customer_id="cust-admin", is_admin=True)
+        admin_client = _make_authenticated_client(
+            mock_state_db, customer_id="cust-admin", is_admin=True
+        )
         resp = admin_client.post(
             "/api/v2/clusters/create",
             json={
@@ -3686,16 +3846,23 @@ class TestPortalAuthzSurfaces:
 
         mock_service = MagicMock()
         mock_service.delete_cluster.return_value = {}
-        monkeypatch.setattr("daylily_ursa.cluster_service.get_cluster_service", lambda **kwargs: mock_service)
+        monkeypatch.setattr(
+            "daylily_ursa.cluster_service.get_cluster_service", lambda **kwargs: mock_service
+        )
 
-        admin_client = _make_authenticated_client(mock_state_db, customer_id="cust-admin", is_admin=True)
+        admin_client = _make_authenticated_client(
+            mock_state_db, customer_id="cust-admin", is_admin=True
+        )
         resp = admin_client.delete("/api/v2/clusters/test-cluster?region=us-west-2")
         assert resp.status_code == 200
         payload = resp.json()
         assert payload["success"] is True
         assert payload["cluster_name"] == "test-cluster"
         assert payload["region"] == "us-west-2"
-        assert payload["pcluster_command"] == "pcluster delete-cluster --region us-west-2 -n test-cluster"
+        assert (
+            payload["pcluster_command"]
+            == "pcluster delete-cluster --region us-west-2 -n test-cluster"
+        )
 
 
 def test_portal_uncovered_routes_have_request_level_coverage(mock_state_db):
@@ -3705,11 +3872,14 @@ def test_portal_uncovered_routes_have_request_level_coverage(mock_state_db):
 
     # Public auth helpers
     assert client.get("/portal/forgot-password").status_code == 200
-    assert client.post(
-        "/portal/forgot-password",
-        data={"email": "user@example.com"},
-        follow_redirects=False,
-    ).status_code == 302
+    assert (
+        client.post(
+            "/portal/forgot-password",
+            data={"email": "user@example.com"},
+            follow_redirects=False,
+        ).status_code
+        == 302
+    )
     assert client.get("/portal/reset-password").status_code == 200
 
     # Logout is always a redirect (clears session, then goes to portal login or SSO logout).
@@ -3728,43 +3898,79 @@ def test_portal_uncovered_routes_have_request_level_coverage(mock_state_db):
 
     # Protected portal pages should redirect to /portal/login when unauthenticated.
     assert client.get("/portal/biospecimen", follow_redirects=False).status_code == 302
-    assert "/portal/login" in client.get("/portal/biospecimen", follow_redirects=False).headers.get("location", "")
+    assert "/portal/login" in client.get("/portal/biospecimen", follow_redirects=False).headers.get(
+        "location", ""
+    )
 
     assert client.get("/portal/feature-requests", follow_redirects=False).status_code == 302
-    assert "/portal/login" in client.get("/portal/feature-requests", follow_redirects=False).headers.get("location", "")
+    assert "/portal/login" in client.get(
+        "/portal/feature-requests", follow_redirects=False
+    ).headers.get("location", "")
 
     assert client.get("/portal/files/browser", follow_redirects=False).status_code == 302
-    assert "/portal/login" in client.get("/portal/files/browser", follow_redirects=False).headers.get("location", "")
+    assert "/portal/login" in client.get(
+        "/portal/files/browser", follow_redirects=False
+    ).headers.get("location", "")
 
     assert client.get("/portal/files/browse/bucket-123", follow_redirects=False).status_code == 302
-    assert "/portal/login" in client.get("/portal/files/browse/bucket-123", follow_redirects=False).headers.get("location", "")
+    assert "/portal/login" in client.get(
+        "/portal/files/browse/bucket-123", follow_redirects=False
+    ).headers.get("location", "")
 
     assert client.get("/portal/files/filesets", follow_redirects=False).status_code == 302
-    assert "/portal/login" in client.get("/portal/files/filesets", follow_redirects=False).headers.get("location", "")
+    assert "/portal/login" in client.get(
+        "/portal/files/filesets", follow_redirects=False
+    ).headers.get("location", "")
 
-    assert client.get("/portal/files/filesets/fileset-001", follow_redirects=False).status_code == 302
-    assert "/portal/login" in client.get("/portal/files/filesets/fileset-001", follow_redirects=False).headers.get("location", "")
+    assert (
+        client.get("/portal/files/filesets/fileset-001", follow_redirects=False).status_code == 302
+    )
+    assert "/portal/login" in client.get(
+        "/portal/files/filesets/fileset-001", follow_redirects=False
+    ).headers.get("location", "")
 
     assert client.get("/portal/files/register", follow_redirects=False).status_code == 302
-    assert "/portal/login" in client.get("/portal/files/register", follow_redirects=False).headers.get("location", "")
+    assert "/portal/login" in client.get(
+        "/portal/files/register", follow_redirects=False
+    ).headers.get("location", "")
 
     assert client.get("/portal/files/upload", follow_redirects=False).status_code == 302
-    assert "/portal/login" in client.get("/portal/files/upload", follow_redirects=False).headers.get("location", "")
+    assert "/portal/login" in client.get(
+        "/portal/files/upload", follow_redirects=False
+    ).headers.get("location", "")
 
     assert client.get("/portal/files/file-001/edit", follow_redirects=False).status_code == 302
-    assert "/portal/login" in client.get("/portal/files/file-001/edit", follow_redirects=False).headers.get("location", "")
+    assert "/portal/login" in client.get(
+        "/portal/files/file-001/edit", follow_redirects=False
+    ).headers.get("location", "")
 
     assert client.get("/portal/worksets/archived", follow_redirects=False).status_code == 302
-    assert "/portal/login" in client.get("/portal/worksets/archived", follow_redirects=False).headers.get("location", "")
+    assert "/portal/login" in client.get(
+        "/portal/worksets/archived", follow_redirects=False
+    ).headers.get("location", "")
 
     assert client.get("/portal/worksets/ws-123/download", follow_redirects=False).status_code == 302
-    assert "/portal/login" in client.get("/portal/worksets/ws-123/download", follow_redirects=False).headers.get("location", "")
+    assert "/portal/login" in client.get(
+        "/portal/worksets/ws-123/download", follow_redirects=False
+    ).headers.get("location", "")
 
-    assert client.get("/portal/worksets/ws-123/results/browse", follow_redirects=False).status_code == 302
-    assert "/portal/login" in client.get("/portal/worksets/ws-123/results/browse", follow_redirects=False).headers.get("location", "")
+    assert (
+        client.get("/portal/worksets/ws-123/results/browse", follow_redirects=False).status_code
+        == 302
+    )
+    assert "/portal/login" in client.get(
+        "/portal/worksets/ws-123/results/browse", follow_redirects=False
+    ).headers.get("location", "")
 
-    assert client.get("/portal/worksets/ws-123/results/download?key=results.txt", follow_redirects=False).status_code == 302
-    assert "/portal/login" in client.get("/portal/worksets/ws-123/results/download?key=results.txt", follow_redirects=False).headers.get("location", "")
+    assert (
+        client.get(
+            "/portal/worksets/ws-123/results/download?key=results.txt", follow_redirects=False
+        ).status_code
+        == 302
+    )
+    assert "/portal/login" in client.get(
+        "/portal/worksets/ws-123/results/download?key=results.txt", follow_redirects=False
+    ).headers.get("location", "")
 
 
 def test_portal_feature_requests_submit_authenticated_writes_under_tmp_home(

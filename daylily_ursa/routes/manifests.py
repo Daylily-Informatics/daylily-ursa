@@ -60,12 +60,17 @@ def create_manifests_router(deps: ManifestDependencies) -> APIRouter:
     ):
         """List saved manifests for a customer (metadata only)."""
         if not customer_manager:
-            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Customer management not configured")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Customer management not configured",
+            )
         _check_manifest_registry()
 
         config = customer_manager.get_customer_config(customer_id)
         if not config:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Customer {customer_id} not found")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail=f"Customer {customer_id} not found"
+            )
 
         manifests = manifest_registry.list_customer_manifests(customer_id, limit=limit)
         return {"manifests": manifests}
@@ -84,7 +89,9 @@ def create_manifests_router(deps: ManifestDependencies) -> APIRouter:
         _check_manifest_registry()
         config = customer_manager.get_customer_config(customer_id)
         if not config:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Customer {customer_id} not found")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail=f"Customer {customer_id} not found"
+            )
 
         try:
             saved = manifest_registry.save_manifest(
@@ -112,7 +119,9 @@ def create_manifests_router(deps: ManifestDependencies) -> APIRouter:
         _check_manifest_registry()
         config = customer_manager.get_customer_config(customer_id)
         if not config:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Customer {customer_id} not found")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail=f"Customer {customer_id} not found"
+            )
 
         m = manifest_registry.get_manifest(customer_id=customer_id, manifest_id=manifest_id)
         if not m:
@@ -125,7 +134,9 @@ def create_manifests_router(deps: ManifestDependencies) -> APIRouter:
         _check_manifest_registry()
         config = customer_manager.get_customer_config(customer_id)
         if not config:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Customer {customer_id} not found")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail=f"Customer {customer_id} not found"
+            )
 
         tsv = manifest_registry.get_manifest_tsv(customer_id=customer_id, manifest_id=manifest_id)
         if tsv is None:
@@ -135,8 +146,7 @@ def create_manifests_router(deps: ManifestDependencies) -> APIRouter:
         return Response(
             content=tsv,
             media_type="text/tab-separated-values",
-            headers={"Content-Disposition": f"attachment; filename=\"{filename}\""},
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
 
     return router
-

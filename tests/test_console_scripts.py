@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 import typer
 
+
 def _read_project_scripts(pyproject: Path) -> dict[str, str]:
     """Parse the [project.scripts] table from pyproject.toml.
 
@@ -68,7 +69,9 @@ def test_ursa_server_start_uses_packaged_entrypoint(monkeypatch):
     monkeypatch.setattr(server_mod, "_ensure_dir", lambda: None)
     monkeypatch.setattr(server_mod, "_get_pid", lambda: None)
     monkeypatch.setattr(server_mod, "_source_env_file", lambda: False)
-    monkeypatch.setattr(server_mod, "_resolve_https_cert_paths", lambda host: ("/tmp/cert.pem", "/tmp/key.pem"))
+    monkeypatch.setattr(
+        server_mod, "_resolve_https_cert_paths", lambda host: ("/tmp/cert.pem", "/tmp/key.pem")
+    )
 
     captured: dict[str, object] = {}
 
@@ -76,6 +79,7 @@ def test_ursa_server_start_uses_packaged_entrypoint(monkeypatch):
         captured["cmd"] = cmd
         captured["cwd"] = cwd
         captured["kwargs"] = kwargs
+
         class _DummyCompletedProcess:
             def __init__(self, returncode: int):
                 self.returncode = returncode
@@ -164,7 +168,9 @@ def test_ursa_server_start_auth_fails_when_cognito_uri_ports_mismatch(monkeypatc
     monkeypatch.setattr(server_mod, "_ensure_dir", lambda: None)
     monkeypatch.setattr(server_mod, "_get_pid", lambda: None)
     monkeypatch.setattr(server_mod, "_source_env_file", lambda: False)
-    monkeypatch.setattr(server_mod, "_resolve_https_cert_paths", lambda host: ("/tmp/cert.pem", "/tmp/key.pem"))
+    monkeypatch.setattr(
+        server_mod, "_resolve_https_cert_paths", lambda host: ("/tmp/cert.pem", "/tmp/key.pem")
+    )
     monkeypatch.setattr(server_mod, "_require_auth_dependencies", lambda: None)
     monkeypatch.setattr(
         server_mod,
@@ -182,9 +188,11 @@ def test_ursa_server_start_auth_fails_when_cognito_uri_ports_mismatch(monkeypatc
 
     def _fake_run(cmd, cwd=None, **kwargs):
         called["run"] = True
+
         class _DummyCompletedProcess:
             def __init__(self, returncode: int):
                 self.returncode = returncode
+
         return _DummyCompletedProcess(0)
 
     monkeypatch.setattr(server_mod.subprocess, "run", _fake_run)

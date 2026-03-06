@@ -20,13 +20,15 @@ LOGGER = logging.getLogger("daylily.workset_validation")
 
 class ValidationStrictness(str, Enum):
     """Validation strictness levels."""
-    STRICT = "strict"       # All validation rules enforced, fail on warnings
+
+    STRICT = "strict"  # All validation rules enforced, fail on warnings
     PERMISSIVE = "permissive"  # Only hard errors fail, warnings allowed
 
 
 @dataclass
 class ValidationError:
     """Detailed validation error with context and remediation."""
+
     field: str
     message: str
     code: str
@@ -43,6 +45,7 @@ class ValidationError:
 @dataclass
 class ValidationResult:
     """Result of workset validation."""
+
     is_valid: bool
     errors: List[str]
     warnings: List[str]
@@ -70,7 +73,9 @@ class ValidationResult:
                     "remediation": e.remediation,
                 }
                 for e in self.detailed_errors
-            ] if self.detailed_errors else [],
+            ]
+            if self.detailed_errors
+            else [],
         }
 
 
@@ -156,20 +161,24 @@ class WorksetValidator:
         """
         errors = []
         if not workset_name:
-            errors.append(ValidationError(
-                field="name",
-                message="Workset name is required",
-                code="WORKSET_NAME_REQUIRED",
-                remediation="Provide a unique workset name",
-            ))
+            errors.append(
+                ValidationError(
+                    field="name",
+                    message="Workset name is required",
+                    code="WORKSET_NAME_REQUIRED",
+                    remediation="Provide a unique workset name",
+                )
+            )
         elif not self.WORKSET_ID_PATTERN.match(workset_name):
-            errors.append(ValidationError(
-                field="name",
-                message=f"Invalid workset name format: '{workset_name}'",
-                code="WORKSET_NAME_FORMAT",
-                remediation="Use 3-64 alphanumeric characters, hyphens, or underscores. Must start with alphanumeric.",
-                context={"value": workset_name, "pattern": self.WORKSET_ID_PATTERN.pattern},
-            ))
+            errors.append(
+                ValidationError(
+                    field="name",
+                    message=f"Invalid workset name format: '{workset_name}'",
+                    code="WORKSET_NAME_FORMAT",
+                    remediation="Use 3-64 alphanumeric characters, hyphens, or underscores. Must start with alphanumeric.",
+                    context={"value": workset_name, "pattern": self.WORKSET_ID_PATTERN.pattern},
+                )
+            )
         return errors
 
     def validate_bucket_exists(self, bucket: str) -> List[ValidationError]:
@@ -183,12 +192,14 @@ class WorksetValidator:
         """
         errors = []
         if not bucket:
-            errors.append(ValidationError(
-                field="bucket",
-                message="S3 bucket name is required",
-                code="BUCKET_REQUIRED",
-                remediation="Provide an S3 bucket name",
-            ))
+            errors.append(
+                ValidationError(
+                    field="bucket",
+                    message="S3 bucket name is required",
+                    code="BUCKET_REQUIRED",
+                    remediation="Provide an S3 bucket name",
+                )
+            )
             return errors
 
         try:
@@ -196,29 +207,35 @@ class WorksetValidator:
         except ClientError as e:
             error_code = e.response.get("Error", {}).get("Code", "Unknown")
             if error_code == "404":
-                errors.append(ValidationError(
-                    field="bucket",
-                    message=f"S3 bucket '{bucket}' does not exist",
-                    code="BUCKET_NOT_FOUND",
-                    remediation="Create the bucket or check the bucket name",
-                    context={"bucket": bucket},
-                ))
+                errors.append(
+                    ValidationError(
+                        field="bucket",
+                        message=f"S3 bucket '{bucket}' does not exist",
+                        code="BUCKET_NOT_FOUND",
+                        remediation="Create the bucket or check the bucket name",
+                        context={"bucket": bucket},
+                    )
+                )
             elif error_code == "403":
-                errors.append(ValidationError(
-                    field="bucket",
-                    message=f"Access denied to S3 bucket '{bucket}'",
-                    code="BUCKET_ACCESS_DENIED",
-                    remediation="Check IAM permissions for the bucket",
-                    context={"bucket": bucket},
-                ))
+                errors.append(
+                    ValidationError(
+                        field="bucket",
+                        message=f"Access denied to S3 bucket '{bucket}'",
+                        code="BUCKET_ACCESS_DENIED",
+                        remediation="Check IAM permissions for the bucket",
+                        context={"bucket": bucket},
+                    )
+                )
             else:
-                errors.append(ValidationError(
-                    field="bucket",
-                    message=f"Error accessing bucket '{bucket}': {error_code}",
-                    code="BUCKET_ERROR",
-                    remediation="Check bucket configuration and permissions",
-                    context={"bucket": bucket, "error_code": error_code},
-                ))
+                errors.append(
+                    ValidationError(
+                        field="bucket",
+                        message=f"Error accessing bucket '{bucket}': {error_code}",
+                        code="BUCKET_ERROR",
+                        remediation="Check bucket configuration and permissions",
+                        context={"bucket": bucket, "error_code": error_code},
+                    )
+                )
         return errors
 
     def validate_prefix_format(self, prefix: str) -> List[ValidationError]:
@@ -238,13 +255,15 @@ class WorksetValidator:
         # Remove trailing slash for validation
         check_prefix = prefix.rstrip("/")
         if check_prefix and not self.PREFIX_PATTERN.match(check_prefix):
-            errors.append(ValidationError(
-                field="prefix",
-                message=f"Invalid S3 prefix format: '{prefix}'",
-                code="PREFIX_FORMAT",
-                remediation="Use alphanumeric characters, hyphens, underscores, and forward slashes",
-                context={"value": prefix},
-            ))
+            errors.append(
+                ValidationError(
+                    field="prefix",
+                    message=f"Invalid S3 prefix format: '{prefix}'",
+                    code="PREFIX_FORMAT",
+                    remediation="Use alphanumeric characters, hyphens, underscores, and forward slashes",
+                    context={"value": prefix},
+                )
+            )
         return errors
 
     def validate_workset(
@@ -284,13 +303,15 @@ class WorksetValidator:
                 work_yaml_content = self._get_s3_object(bucket, work_yaml_path)
                 work_config = yaml.safe_load(work_yaml_content)
             except Exception as e:
-                detailed_errors.append(ValidationError(
-                    field="daylily_work.yaml",
-                    message="Failed to load configuration file",
-                    code="CONFIG_LOAD_FAILED",
-                    remediation="Ensure daylily_work.yaml exists at the specified prefix",
-                    context={"path": f"s3://{bucket}/{work_yaml_path}", "error": str(e)},
-                ))
+                detailed_errors.append(
+                    ValidationError(
+                        field="daylily_work.yaml",
+                        message="Failed to load configuration file",
+                        code="CONFIG_LOAD_FAILED",
+                        remediation="Ensure daylily_work.yaml exists at the specified prefix",
+                        context={"path": f"s3://{bucket}/{work_yaml_path}", "error": str(e)},
+                    )
+                )
                 errors.append(f"Failed to load daylily_work.yaml: {e}")
                 return ValidationResult(
                     is_valid=False,

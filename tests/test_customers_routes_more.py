@@ -45,17 +45,28 @@ def test_customers_routes_have_request_level_coverage():
         request.session["user_authenticated"] = True
         return {"ok": True}
 
-    app.include_router(create_customers_router(CustomerDependencies(customer_manager=customer_manager, get_current_user=get_current_user)))
+    app.include_router(
+        create_customers_router(
+            CustomerDependencies(
+                customer_manager=customer_manager, get_current_user=get_current_user
+            )
+        )
+    )
 
     with TestClient(app, base_url="https://testserver") as client:
-        assert client.post(
-            "/api/v2/customers",
-            json={"customer_name": "Acme", "email": "acme@example.com"},
-        ).status_code != 404
+        assert (
+            client.post(
+                "/api/v2/customers",
+                json={"customer_name": "Acme", "email": "acme@example.com"},
+            ).status_code
+            != 404
+        )
         assert client.get("/api/v2/customers/cust-001").status_code != 404
         assert client.get("/api/v2/customers/cust-001/usage").status_code != 404
 
         # PATCH route reads request.session for authorization.
         assert client.get("/__test__/login").status_code == 200
-        assert client.patch("/api/v2/customers/cust-001", json={"customer_name": "Acme"}).status_code != 404
-
+        assert (
+            client.patch("/api/v2/customers/cust-001", json={"customer_name": "Acme"}).status_code
+            != 404
+        )

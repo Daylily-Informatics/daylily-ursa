@@ -43,6 +43,7 @@ class RegionConfig:
             return None
         return str(Path(self.ssh_pem).expanduser())
 
+
 # Canonical config path (XDG Base Directory convention)
 DEFAULT_CONFIG_PATH = Path.home() / ".config" / "ursa" / "ursa-config.yaml"
 
@@ -121,13 +122,19 @@ def validate_config_file(path: Path) -> Tuple[bool, List[str], List[str]]:
                     # Valid: region with config like {"us-west-2": {"ssh_pem": "..."}}
                     for region_name, region_opts in r.items():
                         if not isinstance(region_name, str):
-                            errors.append(f"regions[{i}] key must be a string, got {type(region_name).__name__}")
+                            errors.append(
+                                f"regions[{i}] key must be a string, got {type(region_name).__name__}"
+                            )
                         if region_opts is not None and not isinstance(region_opts, dict):
-                            errors.append(f"regions[{i}]['{region_name}'] must be a dict or null, got {type(region_opts).__name__}")
+                            errors.append(
+                                f"regions[{i}]['{region_name}'] must be a dict or null, got {type(region_opts).__name__}"
+                            )
                 else:
                     errors.append(f"regions[{i}] must be a string or dict, got {type(r).__name__}")
         elif isinstance(regions, dict):
-            warnings.append("Legacy region-to-bucket format detected; consider updating to list format")
+            warnings.append(
+                "Legacy region-to-bucket format detected; consider updating to list format"
+            )
         else:
             errors.append(f"'regions' must be a list, got {type(regions).__name__}")
 
@@ -143,7 +150,9 @@ def validate_config_file(path: Path) -> Tuple[bool, List[str], List[str]]:
     ]:
         if field_name in data and data[field_name] is not None:
             if not isinstance(data[field_name], str):
-                errors.append(f"'{field_name}' must be a string, got {type(data[field_name]).__name__}")
+                errors.append(
+                    f"'{field_name}' must be a string, got {type(data[field_name]).__name__}"
+                )
 
     is_valid = len(errors) == 0
     return is_valid, errors, warnings
@@ -230,9 +239,9 @@ class UrsaConfig:
                         path = candidate
                         from_legacy = True
                         LOGGER.warning(
-                            "Using legacy config path %s. "
-                            "Consider moving to %s",
-                            path, DEFAULT_CONFIG_PATH
+                            "Using legacy config path %s. Consider moving to %s",
+                            path,
+                            DEFAULT_CONFIG_PATH,
                         )
                         break
 
@@ -291,14 +300,21 @@ class UrsaConfig:
                 "Legacy region-to-bucket config format detected in %s. "
                 "Buckets are now discovered from cluster tags. "
                 "Consider updating to: regions: [%s]",
-                path, ", ".join(region_map.keys())
+                path,
+                ", ".join(region_map.keys()),
             )
 
         # Environment variables take precedence over config file
         aws_profile = os.environ.get("AWS_PROFILE") or data.get("aws_profile")
-        cognito_user_pool_id = os.environ.get("COGNITO_USER_POOL_ID") or data.get("cognito_user_pool_id")
-        cognito_app_client_id = os.environ.get("COGNITO_APP_CLIENT_ID") or data.get("cognito_app_client_id")
-        cognito_app_client_secret = os.environ.get("COGNITO_APP_CLIENT_SECRET") or data.get("cognito_app_client_secret")
+        cognito_user_pool_id = os.environ.get("COGNITO_USER_POOL_ID") or data.get(
+            "cognito_user_pool_id"
+        )
+        cognito_app_client_id = os.environ.get("COGNITO_APP_CLIENT_ID") or data.get(
+            "cognito_app_client_id"
+        )
+        cognito_app_client_secret = os.environ.get("COGNITO_APP_CLIENT_SECRET") or data.get(
+            "cognito_app_client_secret"
+        )
         cognito_domain = os.environ.get("COGNITO_DOMAIN") or data.get("cognito_domain")
         cognito_region = os.environ.get("COGNITO_REGION") or data.get("cognito_region")
         whitelist_domains = os.environ.get("WHITELIST_DOMAINS") or data.get("whitelist_domains")

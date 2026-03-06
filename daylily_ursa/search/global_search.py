@@ -151,7 +151,9 @@ def _parse_query(query: str) -> ParsedQuery:
     return parsed
 
 
-def _resolve_scope(filters: Dict[str, Any], session_context: Dict[str, Any], warnings: List[str]) -> SearchScope:
+def _resolve_scope(
+    filters: Dict[str, Any], session_context: Dict[str, Any], warnings: List[str]
+) -> SearchScope:
     is_admin = bool(session_context.get("is_admin", False))
     requested = _to_lower(filters.get("scope") or ("all" if is_admin else "mine"))
     if requested not in {"all", "mine"}:
@@ -199,7 +201,9 @@ def _extract_filters(filters: Dict[str, Any], parsed_query: ParsedQuery) -> Dict
     }
 
 
-def _resolve_requested_types(extracted_filters: Dict[str, Any], scope: SearchScope, warnings: List[str]) -> Set[str]:
+def _resolve_requested_types(
+    extracted_filters: Dict[str, Any], scope: SearchScope, warnings: List[str]
+) -> Set[str]:
     requested = set(extracted_filters.get("types") or [])
     if not requested:
         requested = set(ALL_TYPES)
@@ -228,7 +232,9 @@ def _prepare_customer_targets(
         if not scope.customer_id:
             warnings.append("Session has no customer_id; customer-scoped results may be empty")
             return [], customer_email_map
-        if customer_filter and not _matches_customer_filter(scope.customer_id, scope.user_email, customer_filter):
+        if customer_filter and not _matches_customer_filter(
+            scope.customer_id, scope.user_email, customer_filter
+        ):
             return [], customer_email_map
         customer_email_map[scope.customer_id] = scope.user_email
         return [scope.customer_id], customer_email_map
@@ -245,7 +251,9 @@ def _prepare_customer_targets(
         customers = customer_manager.list_customers()
     except Exception as exc:  # pragma: no cover - defensive
         LOGGER.warning("Failed to enumerate customers for scope=all search: %s", exc)
-        warnings.append("Failed to enumerate customers for scope=all; falling back to session customer")
+        warnings.append(
+            "Failed to enumerate customers for scope=all; falling back to session customer"
+        )
         if scope.customer_id:
             customer_email_map[scope.customer_id] = scope.user_email
             return [scope.customer_id], customer_email_map
@@ -320,7 +328,10 @@ def _match_terms(terms: Sequence[str], field_map: Dict[str, str]) -> Tuple[bool,
             candidate_score = 0.0
             if haystack == term:
                 candidate_score = 12.0
-            elif any(part == term for part in haystack.replace("/", " ").replace("_", " ").replace("-", " ").split()):
+            elif any(
+                part == term
+                for part in haystack.replace("/", " ").replace("_", " ").replace("-", " ").split()
+            ):
                 candidate_score = 11.0
             elif haystack.startswith(term):
                 candidate_score = 9.0
@@ -345,7 +356,9 @@ def _match_terms(terms: Sequence[str], field_map: Dict[str, str]) -> Tuple[bool,
     return True, score, sorted(matched_fields)
 
 
-def _sort_and_limit_hits(hits: List[Dict[str, Any]], limit_per_type: int) -> Tuple[List[Dict[str, Any]], bool]:
+def _sort_and_limit_hits(
+    hits: List[Dict[str, Any]], limit_per_type: int
+) -> Tuple[List[Dict[str, Any]], bool]:
     sorted_hits = sorted(
         hits,
         key=lambda item: (
@@ -419,11 +432,15 @@ def _search_worksets(
             return [], warnings, {"candidates": 0, "matched": 0}
 
     for customer_id in customer_ids:
-        if not _matches_customer_filter(customer_id, customer_email_map.get(customer_id, ""), customer_filter):
+        if not _matches_customer_filter(
+            customer_id, customer_email_map.get(customer_id, ""), customer_filter
+        ):
             continue
 
         try:
-            batch = state_db.list_worksets_by_customer(customer_id, state=state_obj, limit=candidate_cap)
+            batch = state_db.list_worksets_by_customer(
+                customer_id, state=state_obj, limit=candidate_cap
+            )
         except Exception as exc:  # pragma: no cover - defensive
             warnings.append(f"Failed to query worksets for customer '{customer_id}'")
             LOGGER.warning("Workset search failed for customer %s: %s", customer_id, exc)
@@ -530,7 +547,9 @@ def _search_files(
     platform_filter = _to_lower(extracted_filters.get("platform"))
 
     for customer_id in customer_ids:
-        if not _matches_customer_filter(customer_id, customer_email_map.get(customer_id, ""), customer_filter):
+        if not _matches_customer_filter(
+            customer_id, customer_email_map.get(customer_id, ""), customer_filter
+        ):
             continue
 
         try:
@@ -629,7 +648,9 @@ def _search_subjects(
     required_tags = extracted_filters.get("tags", [])
 
     for customer_id in customer_ids:
-        if not _matches_customer_filter(customer_id, customer_email_map.get(customer_id, ""), customer_filter):
+        if not _matches_customer_filter(
+            customer_id, customer_email_map.get(customer_id, ""), customer_filter
+        ):
             continue
 
         try:
@@ -710,7 +731,9 @@ def _search_biosamples(
     sample_type_filter = _to_lower(extracted_filters.get("sample_type"))
 
     for customer_id in customer_ids:
-        if not _matches_customer_filter(customer_id, customer_email_map.get(customer_id, ""), customer_filter):
+        if not _matches_customer_filter(
+            customer_id, customer_email_map.get(customer_id, ""), customer_filter
+        ):
             continue
 
         try:
@@ -796,7 +819,9 @@ def _search_libraries(
     required_tags = extracted_filters.get("tags", [])
 
     for customer_id in customer_ids:
-        if not _matches_customer_filter(customer_id, customer_email_map.get(customer_id, ""), customer_filter):
+        if not _matches_customer_filter(
+            customer_id, customer_email_map.get(customer_id, ""), customer_filter
+        ):
             continue
 
         try:
@@ -870,7 +895,9 @@ def _search_manifests(
     customer_filter = _to_lower(extracted_filters.get("customer"))
 
     for customer_id in customer_ids:
-        if not _matches_customer_filter(customer_id, customer_email_map.get(customer_id, ""), customer_filter):
+        if not _matches_customer_filter(
+            customer_id, customer_email_map.get(customer_id, ""), customer_filter
+        ):
             continue
 
         try:
@@ -965,7 +992,12 @@ def _search_users(
         if allowed_customer_ids and customer_id not in allowed_customer_ids:
             continue
 
-        if customer_filter and customer_filter not in customer_id.lower() and customer_filter not in email.lower() and customer_filter not in customer_name.lower():
+        if (
+            customer_filter
+            and customer_filter not in customer_id.lower()
+            and customer_filter not in email.lower()
+            and customer_filter not in customer_name.lower()
+        ):
             continue
 
         fields = {
@@ -1240,7 +1272,11 @@ def search_portal(
             hits, adapter_warnings, stats = func(**kwargs)
         except Exception as exc:  # pragma: no cover - defensive
             LOGGER.exception("Search adapter '%s' failed", name)
-            hits, adapter_warnings, stats = [], [f"Adapter '{name}' failed: {exc}"], {"candidates": 0, "matched": 0}
+            hits, adapter_warnings, stats = (
+                [],
+                [f"Adapter '{name}' failed: {exc}"],
+                {"candidates": 0, "matched": 0},
+            )
         elapsed_ms = (time.perf_counter() - start) * 1000.0
         timings_ms[name] = round(elapsed_ms, 2)
         adapter_stats[name] = {

@@ -239,7 +239,13 @@ def start_create_job(
     _atomic_write_json(job_path, job_doc)
 
     proc = subprocess.Popen(
-        [sys.executable, "-m", "daylily_ursa.ephemeral_cluster.job_runner", "--job-file", str(job_path)],
+        [
+            sys.executable,
+            "-m",
+            "daylily_ursa.ephemeral_cluster.job_runner",
+            "--job-file",
+            str(job_path),
+        ],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         start_new_session=True,

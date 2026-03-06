@@ -75,4 +75,3 @@ def test_link_bucket_skips_validation_when_disabled():
     assert bucket.can_write is False
     assert bucket.can_list is False
     mgr.validator.validate_bucket.assert_not_called()
-

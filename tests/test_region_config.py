@@ -11,7 +11,6 @@ import os
 from unittest.mock import MagicMock, patch
 
 
-
 class TestSettingsGetEffectiveRegion:
     """Tests for Settings.get_effective_region() method."""
 
@@ -19,10 +18,14 @@ class TestSettingsGetEffectiveRegion:
         """Test DAY_AWS_REGION takes highest priority."""
         from daylily_ursa.config import Settings
 
-        with patch.dict(os.environ, {
-            "DAY_AWS_REGION": "eu-central-1",
-            "AWS_REGION": "us-east-1",
-        }, clear=True):
+        with patch.dict(
+            os.environ,
+            {
+                "DAY_AWS_REGION": "eu-central-1",
+                "AWS_REGION": "us-east-1",
+            },
+            clear=True,
+        ):
             # Need to create new instance to pick up env vars
             settings = Settings()
             assert settings.get_effective_region() == "eu-central-1"
@@ -31,9 +34,13 @@ class TestSettingsGetEffectiveRegion:
         """Test AWS_REGION is used when DAY_AWS_REGION not set."""
         from daylily_ursa.config import Settings
 
-        with patch.dict(os.environ, {
-            "AWS_REGION": "ap-southeast-1",
-        }, clear=True):
+        with patch.dict(
+            os.environ,
+            {
+                "AWS_REGION": "ap-southeast-1",
+            },
+            clear=True,
+        ):
             settings = Settings()
             assert settings.get_effective_region() == "ap-southeast-1"
 
@@ -53,9 +60,13 @@ class TestSettingsGetEffectiveRegion:
         """Test AWS_DEFAULT_REGION is intentionally ignored."""
         from daylily_ursa.config import Settings
 
-        with patch.dict(os.environ, {
-            "AWS_DEFAULT_REGION": "eu-west-1",  # This should be ignored
-        }, clear=True):
+        with patch.dict(
+            os.environ,
+            {
+                "AWS_DEFAULT_REGION": "eu-west-1",  # This should be ignored
+            },
+            clear=True,
+        ):
             os.environ.pop("DAY_AWS_REGION", None)
             os.environ.pop("AWS_REGION", None)
             settings = Settings()
@@ -66,10 +77,14 @@ class TestSettingsGetEffectiveRegion:
         """Test AWS_REGION is used even when AWS_DEFAULT_REGION is set."""
         from daylily_ursa.config import Settings
 
-        with patch.dict(os.environ, {
-            "AWS_DEFAULT_REGION": "eu-west-1",  # Should be ignored
-            "AWS_REGION": "us-east-2",  # Should be used
-        }, clear=True):
+        with patch.dict(
+            os.environ,
+            {
+                "AWS_DEFAULT_REGION": "eu-west-1",  # Should be ignored
+                "AWS_REGION": "us-east-2",  # Should be used
+            },
+            clear=True,
+        ):
             os.environ.pop("DAY_AWS_REGION", None)
             settings = Settings()
             assert settings.get_effective_region() == "us-east-2"

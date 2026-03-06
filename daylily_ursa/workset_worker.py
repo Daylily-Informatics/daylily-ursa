@@ -155,7 +155,9 @@ def process_workset(
         LOGGER.debug("Lock contention for %s", euid)
         return
 
-    prefix = workset_record.get("prefix") or f"{monitor.config.monitor.normalised_prefix()}{ws_name}/"
+    prefix = (
+        workset_record.get("prefix") or f"{monitor.config.monitor.normalised_prefix()}{ws_name}/"
+    )
     workset = monitor.build_workset(euid, ws_name, prefix=prefix)
     timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 

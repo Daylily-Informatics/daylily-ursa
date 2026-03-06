@@ -48,7 +48,9 @@ def create_worksets_router(
             "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         }
 
-    @router.post("/api/v2/worksets", response_model=WorksetResponse, status_code=status.HTTP_201_CREATED)
+    @router.post(
+        "/api/v2/worksets", response_model=WorksetResponse, status_code=status.HTTP_201_CREATED
+    )
     async def create_workset(workset: WorksetCreate):
         """Register a new workset."""
         try:
@@ -204,7 +206,9 @@ def create_worksets_router(
 
     # ========== Scheduling Endpoints ==========
 
-    @router.get("/api/v2/worksets/next", response_model=Optional[WorksetResponse], tags=["scheduling"])
+    @router.get(
+        "/api/v2/worksets/next", response_model=Optional[WorksetResponse], tags=["scheduling"]
+    )
     async def get_next_workset():
         """Get the next workset to execute based on priority."""
         if not scheduler:

@@ -26,7 +26,11 @@ def test_spot_market_endpoints_require_admin(tmp_path, monkeypatch):
         return {"is_admin": False}
 
     app = FastAPI()
-    app.include_router(create_spot_market_router(SpotMarketDependencies(settings=settings, get_current_user=get_current_user)))
+    app.include_router(
+        create_spot_market_router(
+            SpotMarketDependencies(settings=settings, get_current_user=get_current_user)
+        )
+    )
 
     with patch(
         "daylily_ursa.ursa_config.get_ursa_config",
@@ -49,7 +53,11 @@ def test_spot_market_endpoints_have_request_level_coverage(tmp_path, monkeypatch
         return {"is_admin": True, "user_email": "admin@example.com"}
 
     app = FastAPI()
-    app.include_router(create_spot_market_router(SpotMarketDependencies(settings=settings, get_current_user=get_current_user)))
+    app.include_router(
+        create_spot_market_router(
+            SpotMarketDependencies(settings=settings, get_current_user=get_current_user)
+        )
+    )
 
     base = tmp_path / ".ursa" / "spot-market"
 
@@ -110,7 +118,11 @@ def test_spot_market_poll_starts_jobs(tmp_path, monkeypatch):
         return {"is_admin": True, "user_email": "admin@example.com"}
 
     app = FastAPI()
-    app.include_router(create_spot_market_router(SpotMarketDependencies(settings=settings, get_current_user=get_current_user)))
+    app.include_router(
+        create_spot_market_router(
+            SpotMarketDependencies(settings=settings, get_current_user=get_current_user)
+        )
+    )
 
     with patch(
         "daylily_ursa.ursa_config.get_ursa_config",
@@ -146,7 +158,11 @@ def test_spot_market_poll_blocks_when_checker_running(tmp_path, monkeypatch):
         return {"is_admin": True, "user_email": "admin@example.com"}
 
     app = FastAPI()
-    app.include_router(create_spot_market_router(SpotMarketDependencies(settings=settings, get_current_user=get_current_user)))
+    app.include_router(
+        create_spot_market_router(
+            SpotMarketDependencies(settings=settings, get_current_user=get_current_user)
+        )
+    )
 
     with patch(
         "daylily_ursa.ursa_config.get_ursa_config",

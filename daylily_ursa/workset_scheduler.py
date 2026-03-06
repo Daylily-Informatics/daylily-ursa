@@ -17,6 +17,7 @@ LOGGER = logging.getLogger("daylily.workset_scheduler")
 @dataclass
 class WorksetRequirements:
     """Resource requirements for a workset."""
+
     estimated_vcpu_hours: Optional[float] = None
     estimated_memory_gb: Optional[float] = None
     estimated_storage_gb: Optional[float] = None
@@ -29,6 +30,7 @@ class WorksetRequirements:
 @dataclass
 class ClusterCapacity:
     """Current capacity and utilization of a cluster."""
+
     cluster_name: str
     availability_zone: str
     max_vcpus: int
@@ -43,6 +45,7 @@ class ClusterCapacity:
 @dataclass
 class SchedulingDecision:
     """Result of scheduling decision."""
+
     workset_euid: str
     cluster_name: Optional[str]
     should_create_cluster: bool
@@ -52,7 +55,7 @@ class SchedulingDecision:
 
 class WorksetScheduler:
     """Intelligent scheduler for workset execution."""
-    
+
     def __init__(
         self,
         state_db: WorksetStateDB,
@@ -60,7 +63,7 @@ class WorksetScheduler:
         cost_optimization_enabled: bool = True,
     ):
         """Initialize the scheduler.
-        
+
         Args:
             state_db: Workset state database
             max_concurrent_worksets_per_cluster: Max worksets per cluster
@@ -70,10 +73,10 @@ class WorksetScheduler:
         self.max_concurrent_worksets_per_cluster = max_concurrent_worksets_per_cluster
         self.cost_optimization_enabled = cost_optimization_enabled
         self.cluster_capacities: Dict[str, ClusterCapacity] = {}
-    
+
     def register_cluster(self, capacity: ClusterCapacity) -> None:
         """Register a cluster's capacity for scheduling.
-        
+
         Args:
             capacity: Cluster capacity information
         """
@@ -84,7 +87,7 @@ class WorksetScheduler:
             capacity.availability_zone,
             capacity.max_vcpus,
         )
-    
+
     def update_cluster_utilization(
         self,
         cluster_name: str,
@@ -93,7 +96,7 @@ class WorksetScheduler:
         active_worksets: int,
     ) -> None:
         """Update cluster utilization metrics.
-        
+
         Args:
             cluster_name: Cluster name
             vcpus_used: Current vCPU usage
@@ -105,25 +108,25 @@ class WorksetScheduler:
             capacity.current_vcpus_used = vcpus_used
             capacity.current_memory_gb_used = memory_gb_used
             capacity.active_worksets = active_worksets
-    
+
     def get_next_workset(self) -> Optional[Dict]:
         """Get the next workset to execute based on priority and resources.
-        
+
         Returns:
             Next workset to execute, or None if none available
         """
         # Get ready worksets ordered by priority
         ready_worksets = self.state_db.get_ready_worksets_prioritized(limit=100)
-        
+
         if not ready_worksets:
             return None
-        
+
         # If cost optimization is enabled, sort by estimated cost within priority groups
         if self.cost_optimization_enabled:
             ready_worksets = self._sort_by_cost_efficiency(ready_worksets)
-        
+
         return ready_worksets[0] if ready_worksets else None
-    
+
     def schedule_workset(
         self,
         workset_euid: str,
@@ -134,16 +137,16 @@ class WorksetScheduler:
         Args:
             workset_euid: TapDB EUID of the workset to schedule
             requirements: Resource requirements (optional)
-            
+
         Returns:
             Scheduling decision
         """
         # Find best cluster for this workset
         best_cluster = self._find_best_cluster(requirements)
-        
+
         if best_cluster:
             capacity = self.cluster_capacities[best_cluster]
-            
+
             # Check if cluster has capacity
             if capacity.active_worksets < capacity.max_concurrent_worksets:
                 return SchedulingDecision(
@@ -163,7 +166,7 @@ class WorksetScheduler:
                     estimated_start_delay_minutes=avg_duration // capacity.active_worksets,
                     reason=f"Queued for cluster {best_cluster} (at capacity)",
                 )
-        
+
         # No suitable cluster found, need to create one
         return SchedulingDecision(
             workset_euid=workset_euid,
@@ -228,6 +231,7 @@ class WorksetScheduler:
         Returns:
             Sorted list of worksets
         """
+
         def cost_key(workset: Dict) -> Tuple[int, float]:
             priority = workset.get("priority", "normal")
             priority_order = {
@@ -260,8 +264,9 @@ class WorksetScheduler:
             "total_clusters": len(self.cluster_capacities),
             "total_vcpu_capacity": total_capacity,
             "total_vcpus_used": total_used,
-            "vcpu_utilization_percent": (total_used / total_capacity * 100) if total_capacity > 0 else 0,
+            "vcpu_utilization_percent": (total_used / total_capacity * 100)
+            if total_capacity > 0
+            else 0,
             "total_active_worksets": total_worksets,
             "queue_depth": queue_depth,
         }
-

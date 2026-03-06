@@ -22,8 +22,8 @@ def _make_admin_client() -> TestClient:
     admin_user.customer_name = "Admin"
     admin_user.is_admin = True
 
-    customer_manager.get_customer_by_email.side_effect = (
-        lambda email: admin_user if email == admin_user.email else None
+    customer_manager.get_customer_by_email.side_effect = lambda email: (
+        admin_user if email == admin_user.email else None
     )
     customer_manager.list_customers.return_value = [admin_user]
 
@@ -61,7 +61,7 @@ def test_templates_with_tables_extend_base_html():
         content = template.read_text(encoding="utf-8")
         if "<table" not in content:
             continue
-        if "{% extends \"base.html\" %}" in content or "{% extends 'base.html' %}" in content:
+        if '{% extends "base.html" %}' in content or "{% extends 'base.html' %}" in content:
             continue
         missing.append(str(template))
 
@@ -70,7 +70,9 @@ def test_templates_with_tables_extend_base_html():
 
 def test_representative_portal_pages_include_table_tools_script(monkeypatch):
     fake_service = SimpleNamespace(get_all_clusters_with_status=lambda fetch_ssh_status=False: [])
-    monkeypatch.setattr("daylily_ursa.cluster_service.get_cluster_service", lambda **kwargs: fake_service)
+    monkeypatch.setattr(
+        "daylily_ursa.cluster_service.get_cluster_service", lambda **kwargs: fake_service
+    )
 
     fake_config = SimpleNamespace(
         is_configured=False,

@@ -100,7 +100,7 @@ def client(app_with_file_api):
 
 class TestFileRegistrationEndpoint:
     """Test file registration endpoint."""
-    
+
     def test_register_file_success(self, client, mock_file_registry):
         """Test successful file registration."""
         payload = {
@@ -125,23 +125,23 @@ class TestFileRegistrationEndpoint:
             "read_number": 1,
             "tags": ["wgs"],
         }
-        
+
         response = client.post(
             "/api/v2/files/register?customer_id=cust-001",
             json=payload,
         )
-        
+
         assert response.status_code == 200
         data = response.json()
         assert data["customer_id"] == "cust-001"
         assert data["s3_uri"] == "s3://bucket/sample_R1.fastq.gz"
         assert data["subject_id"] == "HG002"
         assert data["status"] == "registered"
-    
+
     def test_register_file_conflict(self, client, mock_file_registry):
         """Test registering a file that already exists."""
         mock_file_registry.register_file.return_value = None
-        
+
         payload = {
             "file_metadata": {
                 "s3_uri": "s3://bucket/sample_R1.fastq.gz",
@@ -156,12 +156,12 @@ class TestFileRegistrationEndpoint:
                 "subject_id": "HG002",
             },
         }
-        
+
         response = client.post(
             "/api/v2/files/register?customer_id=cust-001",
             json=payload,
         )
-        
+
         assert response.status_code == 409
 
     def test_register_file_conflict_existing_s3_uri(self, client, mock_file_registry):
@@ -203,28 +203,28 @@ class TestFileRegistrationEndpoint:
 
 class TestListFilesEndpoint:
     """Test list files endpoint."""
-    
+
     def test_list_customer_files_empty(self, client, mock_file_registry):
         """Test listing files for customer with no files."""
         response = client.get("/api/v2/files/list?customer_id=cust-001")
-        
+
         assert response.status_code == 200
         data = response.json()
         assert data["customer_id"] == "cust-001"
         assert data["file_count"] == 0
         assert data["files"] == []
-    
+
     def test_list_customer_files_with_limit(self, client, mock_file_registry):
         """Test listing files with custom limit."""
         response = client.get("/api/v2/files/list?customer_id=cust-001&limit=50")
-        
+
         assert response.status_code == 200
         mock_file_registry.list_customer_files.assert_called_with("cust-001", limit=50)
 
 
 class TestCreateFilesetEndpoint:
     """Test file set creation endpoint."""
-    
+
     def test_create_fileset_success(self, client, mock_file_registry):
         """Test successful file set creation."""
         payload = {
@@ -237,29 +237,29 @@ class TestCreateFilesetEndpoint:
             },
             "file_ids": ["file-001", "file-002"],
         }
-        
+
         response = client.post(
             "/api/v2/files/filesets?customer_id=cust-001",
             json=payload,
         )
-        
+
         assert response.status_code == 200
         data = response.json()
         assert data["customer_id"] == "cust-001"
         assert data["name"] == "HG002 WGS"
         assert data["file_count"] == 2
-    
+
     def test_create_fileset_minimal(self, client, mock_file_registry):
         """Test file set creation with minimal fields."""
         payload = {
             "name": "Test FileSet",
         }
-        
+
         response = client.post(
             "/api/v2/files/filesets?customer_id=cust-001",
             json=payload,
         )
-        
+
         assert response.status_code == 200
         data = response.json()
         assert data["name"] == "Test FileSet"
@@ -268,7 +268,7 @@ class TestCreateFilesetEndpoint:
 
 class TestBulkImportEndpoint:
     """Test bulk import endpoint."""
-    
+
     def test_bulk_import_success(self, client, mock_file_registry):
         """Test successful bulk import."""
         payload = {
@@ -304,23 +304,23 @@ class TestBulkImportEndpoint:
             ],
             "fileset_name": "HG002 WGS",
         }
-        
+
         response = client.post(
             "/api/v2/files/bulk-import?customer_id=cust-001",
             json=payload,
         )
-        
+
         assert response.status_code == 200
         data = response.json()
         assert data["imported_count"] == 2
         assert data["failed_count"] == 0
         assert data["fileset_id"] is not None
-    
+
     def test_bulk_import_partial_failure(self, client, mock_file_registry):
         """Test bulk import with some failures."""
         # First call succeeds, second fails
         mock_file_registry.register_file.side_effect = [True, False]
-        
+
         payload = {
             "files": [
                 {
@@ -353,12 +353,12 @@ class TestBulkImportEndpoint:
                 },
             ],
         }
-        
+
         response = client.post(
             "/api/v2/files/bulk-import?customer_id=cust-001",
             json=payload,
         )
-        
+
         assert response.status_code == 200
         data = response.json()
         assert data["imported_count"] == 1
@@ -416,7 +416,9 @@ class TestBucketValidationEndpoint:
         return manager
 
     @pytest.fixture
-    def app_with_bucket_validation(self, mock_file_registry, mock_s3_validator, mock_linked_bucket_manager):
+    def app_with_bucket_validation(
+        self, mock_file_registry, mock_s3_validator, mock_linked_bucket_manager
+    ):
         """Create FastAPI app with bucket validation enabled."""
         app = FastAPI()
         router = create_file_api_router(
@@ -490,9 +492,7 @@ class TestBucketValidationEndpoint:
     def test_validate_bucket_without_validator_returns_501(self, client, mock_file_registry):
         """Test that validation without validator returns 501."""
         # client fixture uses app without s3_bucket_validator
-        response = client.post(
-            "/api/v2/files/buckets/validate?bucket_name=test-bucket"
-        )
+        response = client.post("/api/v2/files/buckets/validate?bucket_name=test-bucket")
 
         assert response.status_code == 501
         data = response.json()
@@ -554,7 +554,9 @@ class TestLinkBucketEndpoint:
         return manager
 
     @pytest.fixture
-    def app_with_bucket_linking(self, mock_file_registry, mock_s3_validator, mock_linked_bucket_manager):
+    def app_with_bucket_linking(
+        self, mock_file_registry, mock_s3_validator, mock_linked_bucket_manager
+    ):
         """Create FastAPI app with bucket linking enabled."""
         app = FastAPI()
         router = create_file_api_router(
@@ -607,9 +609,7 @@ class TestLinkBucketEndpoint:
 
     def test_list_linked_buckets(self, client_with_linking, mock_linked_bucket_manager):
         """Test listing linked buckets."""
-        response = client_with_linking.get(
-            "/api/v2/files/buckets/list?customer_id=cust-001"
-        )
+        response = client_with_linking.get("/api/v2/files/buckets/list?customer_id=cust-001")
 
         assert response.status_code == 200
         data = response.json()
@@ -622,9 +622,7 @@ class TestLinkBucketEndpoint:
         """Test listing linked buckets when none exist."""
         mock_linked_bucket_manager.list_customer_buckets.return_value = []
 
-        response = client_with_linking.get(
-            "/api/v2/files/buckets/list?customer_id=cust-002"
-        )
+        response = client_with_linking.get("/api/v2/files/buckets/list?customer_id=cust-002")
 
         assert response.status_code == 200
         data = response.json()
@@ -714,7 +712,10 @@ class TestBucketAuthorizationEndpoints:
 
     def test_link_bucket_enforces_customer_scope_mismatch(self, mock_file_registry, linked_bucket):
         manager = MagicMock(spec=LinkedBucketManager)
-        manager.link_bucket.return_value = (linked_bucket, BucketValidationResult(bucket_name=linked_bucket.bucket_name))
+        manager.link_bucket.return_value = (
+            linked_bucket,
+            BucketValidationResult(bucket_name=linked_bucket.bucket_name),
+        )
 
         client = self._make_client(
             mock_file_registry,
@@ -757,7 +758,9 @@ class TestBucketAuthorizationEndpoints:
         response = client.get(f"/api/v2/files/buckets/{linked_bucket.bucket_id}")
         assert response.status_code == 403
 
-    def test_update_bucket_enforces_bucket_ownership_mismatch(self, mock_file_registry, linked_bucket):
+    def test_update_bucket_enforces_bucket_ownership_mismatch(
+        self, mock_file_registry, linked_bucket
+    ):
         manager = MagicMock(spec=LinkedBucketManager)
         manager.get_bucket.return_value = linked_bucket
         manager.update_bucket.return_value = linked_bucket
@@ -815,7 +818,9 @@ class TestBucketAuthorizationEndpoints:
         assert patch_resp.json()["bucket"]["display_name"] == "Admin Name"
         manager.update_bucket.assert_called_once()
 
-    def test_revalidate_bucket_enforces_bucket_ownership_mismatch(self, mock_file_registry, linked_bucket):
+    def test_revalidate_bucket_enforces_bucket_ownership_mismatch(
+        self, mock_file_registry, linked_bucket
+    ):
         manager = MagicMock(spec=LinkedBucketManager)
         manager.get_bucket.return_value = linked_bucket
         manager.revalidate_bucket.return_value = (
@@ -841,7 +846,9 @@ class TestBucketAuthorizationEndpoints:
         assert response.status_code == 403
         manager.revalidate_bucket.assert_not_called()
 
-    def test_unlink_bucket_enforces_bucket_ownership_mismatch(self, mock_file_registry, linked_bucket):
+    def test_unlink_bucket_enforces_bucket_ownership_mismatch(
+        self, mock_file_registry, linked_bucket
+    ):
         manager = MagicMock(spec=LinkedBucketManager)
         manager.get_bucket.return_value = linked_bucket
         manager.unlink_bucket.return_value = True
@@ -856,7 +863,9 @@ class TestBucketAuthorizationEndpoints:
         assert response.status_code == 403
         manager.unlink_bucket.assert_not_called()
 
-    def test_discover_bucket_files_enforces_customer_scope_mismatch(self, mock_file_registry, linked_bucket):
+    def test_discover_bucket_files_enforces_customer_scope_mismatch(
+        self, mock_file_registry, linked_bucket
+    ):
         manager = MagicMock(spec=LinkedBucketManager)
 
         discovery = MagicMock()
@@ -877,7 +886,9 @@ class TestBucketAuthorizationEndpoints:
         manager.get_bucket.assert_not_called()
         discovery.discover_files.assert_not_called()
 
-    def test_discover_bucket_files_rejects_bucket_customer_id_mismatch(self, mock_file_registry, linked_bucket):
+    def test_discover_bucket_files_rejects_bucket_customer_id_mismatch(
+        self, mock_file_registry, linked_bucket
+    ):
         manager = MagicMock(spec=LinkedBucketManager)
         manager.get_bucket.return_value = linked_bucket
 
@@ -949,7 +960,9 @@ class TestBucketBrowseEndpoint:
         return TestClient(app, base_url="https://testserver")
 
     @patch("boto3.Session")
-    def test_browse_bucket_success(self, mock_session, client_with_browse, mock_linked_bucket_manager_browse):
+    def test_browse_bucket_success(
+        self, mock_session, client_with_browse, mock_linked_bucket_manager_browse
+    ):
         """Test successful bucket browsing."""
         # Mock S3 client
         mock_s3 = MagicMock()
@@ -962,7 +975,11 @@ class TestBucketBrowseEndpoint:
             {
                 "CommonPrefixes": [{"Prefix": "folder1/"}],
                 "Contents": [
-                    {"Key": "file1.fastq.gz", "Size": 1024, "LastModified": MagicMock(isoformat=lambda: "2024-01-01T00:00:00Z")},
+                    {
+                        "Key": "file1.fastq.gz",
+                        "Size": 1024,
+                        "LastModified": MagicMock(isoformat=lambda: "2024-01-01T00:00:00Z"),
+                    },
                 ],
             }
         ]
@@ -987,7 +1004,9 @@ class TestBucketBrowseEndpoint:
 
         assert response.status_code == 404
 
-    def test_browse_bucket_wrong_customer(self, client_with_browse, mock_linked_bucket_manager_browse):
+    def test_browse_bucket_wrong_customer(
+        self, client_with_browse, mock_linked_bucket_manager_browse
+    ):
         """Test browsing bucket belonging to different customer."""
         response = client_with_browse.get(
             "/api/v2/files/buckets/bucket-123/browse?customer_id=other-customer"
@@ -1048,7 +1067,9 @@ class TestCreateFolderEndpoint:
         assert data["success"] is True
         assert "new-folder/" in data["folder_key"]
 
-    def test_create_folder_read_only_bucket(self, client_with_folder, mock_linked_bucket_manager_folder):
+    def test_create_folder_read_only_bucket(
+        self, client_with_folder, mock_linked_bucket_manager_folder
+    ):
         """Test folder creation on read-only bucket."""
         bucket = mock_linked_bucket_manager_folder.get_bucket.return_value
         bucket.read_only = True
@@ -1133,7 +1154,9 @@ class TestDeleteFileEndpoint:
         assert response.status_code == 409
         assert "registered" in response.json()["detail"].lower()
 
-    def test_delete_file_read_only_bucket(self, client_with_delete, mock_linked_bucket_manager_delete):
+    def test_delete_file_read_only_bucket(
+        self, client_with_delete, mock_linked_bucket_manager_delete
+    ):
         """Test file deletion on read-only bucket."""
         bucket = mock_linked_bucket_manager_delete.get_bucket.return_value
         bucket.read_only = True
@@ -1148,7 +1171,9 @@ class TestDeleteFileEndpoint:
 class TestUpdateFileMetadataEndpoint:
     """Test file metadata update endpoint - PATCH /api/v2/files/{file_id}"""
 
-    def test_update_file_metadata_md5_checksum(self, client_with_update, mock_file_registry_with_get):
+    def test_update_file_metadata_md5_checksum(
+        self, client_with_update, mock_file_registry_with_get
+    ):
         """Test updating MD5 checksum in file metadata."""
         payload = {
             "file_metadata": {
@@ -1172,7 +1197,9 @@ class TestUpdateFileMetadataEndpoint:
         assert call_kwargs["file_id"] == "file-001"
         assert call_kwargs["file_metadata"]["md5_checksum"] == "new_md5_hash_123456"
 
-    def test_update_file_metadata_file_format(self, client_with_update, mock_file_registry_with_get):
+    def test_update_file_metadata_file_format(
+        self, client_with_update, mock_file_registry_with_get
+    ):
         """Test updating file format in file metadata."""
         payload = {
             "file_metadata": {
@@ -1189,7 +1216,9 @@ class TestUpdateFileMetadataEndpoint:
         call_kwargs = mock_file_registry_with_get.update_file.call_args[1]
         assert call_kwargs["file_metadata"]["file_format"] == "bam"
 
-    def test_update_file_metadata_multiple_fields(self, client_with_update, mock_file_registry_with_get):
+    def test_update_file_metadata_multiple_fields(
+        self, client_with_update, mock_file_registry_with_get
+    ):
         """Test updating multiple file metadata fields at once."""
         payload = {
             "file_metadata": {
@@ -1246,7 +1275,9 @@ class TestFileDownloadEndpoint:
         assert response.status_code == 404
         assert "not found" in response.json()["detail"].lower()
 
-    def test_get_file_download_url_custom_expiry(self, client_with_update, mock_file_registry_with_get):
+    def test_get_file_download_url_custom_expiry(
+        self, client_with_update, mock_file_registry_with_get
+    ):
         """Allow overriding URL expiry via query parameter."""
 
         with patch("daylily_ursa.file_api.boto3.client") as mock_boto_client:
@@ -1267,8 +1298,9 @@ class TestFileDownloadEndpoint:
         response = client_with_update.get("/api/v2/files/file-001/download?expires_in=10")
         assert response.status_code == 422
 
-
-    def test_get_file_download_url_enforces_customer_ownership_mismatch(self, mock_file_registry_with_get):
+    def test_get_file_download_url_enforces_customer_ownership_mismatch(
+        self, mock_file_registry_with_get
+    ):
         """Return 403 when authenticated customer does not own the file."""
 
         app = FastAPI()
@@ -1291,7 +1323,6 @@ class TestFileDownloadEndpoint:
         assert "does not belong" in response.json()["detail"]
         # Ownership check should fail before any S3 interaction
         mock_boto_client.assert_not_called()
-
 
     def test_get_file_download_url_allows_matching_customer_id(self, mock_file_registry_with_get):
         """Allow download when authenticated customer_id matches the file's customer_id."""
@@ -1317,8 +1348,9 @@ class TestFileDownloadEndpoint:
         assert response.status_code == 200
         assert response.json()["url"] == "https://signed-url"
 
-
-    def test_get_file_download_url_allows_matching_custom_customer_claim(self, mock_file_registry_with_get):
+    def test_get_file_download_url_allows_matching_custom_customer_claim(
+        self, mock_file_registry_with_get
+    ):
         """Support Cognito-style custom:customer_id claim for ownership checks."""
 
         app = FastAPI()
@@ -1394,7 +1426,9 @@ class TestAddFileToFilesetEndpoint:
         assert response.status_code == 404
         assert "fileset" in response.json()["detail"].lower()
 
-    def test_update_biosample_metadata_biosample_id(self, client_with_update, mock_file_registry_with_get):
+    def test_update_biosample_metadata_biosample_id(
+        self, client_with_update, mock_file_registry_with_get
+    ):
         """Test updating biosample ID."""
         payload = {
             "biosample_metadata": {
@@ -1411,7 +1445,9 @@ class TestAddFileToFilesetEndpoint:
         call_kwargs = mock_file_registry_with_get.update_file.call_args[1]
         assert call_kwargs["biosample_metadata"]["biosample_id"] == "bio-updated"
 
-    def test_update_biosample_metadata_subject_id(self, client_with_update, mock_file_registry_with_get):
+    def test_update_biosample_metadata_subject_id(
+        self, client_with_update, mock_file_registry_with_get
+    ):
         """Test updating subject ID."""
         payload = {
             "biosample_metadata": {
@@ -1428,7 +1464,9 @@ class TestAddFileToFilesetEndpoint:
         call_kwargs = mock_file_registry_with_get.update_file.call_args[1]
         assert call_kwargs["biosample_metadata"]["subject_id"] == "HG003"
 
-    def test_update_biosample_metadata_sample_type(self, client_with_update, mock_file_registry_with_get):
+    def test_update_biosample_metadata_sample_type(
+        self, client_with_update, mock_file_registry_with_get
+    ):
         """Test updating sample type."""
         payload = {
             "biosample_metadata": {
@@ -1445,7 +1483,9 @@ class TestAddFileToFilesetEndpoint:
         call_kwargs = mock_file_registry_with_get.update_file.call_args[1]
         assert call_kwargs["biosample_metadata"]["sample_type"] == "tissue"
 
-    def test_update_biosample_metadata_all_fields(self, client_with_update, mock_file_registry_with_get):
+    def test_update_biosample_metadata_all_fields(
+        self, client_with_update, mock_file_registry_with_get
+    ):
         """Test updating all biosample metadata fields."""
         payload = {
             "biosample_metadata": {
@@ -1475,7 +1515,9 @@ class TestAddFileToFilesetEndpoint:
         assert bio_meta["preservation_method"] == "frozen"
         assert bio_meta["tumor_fraction"] == 0.35
 
-    def test_update_sequencing_metadata_platform(self, client_with_update, mock_file_registry_with_get):
+    def test_update_sequencing_metadata_platform(
+        self, client_with_update, mock_file_registry_with_get
+    ):
         """Test updating sequencing platform."""
         payload = {
             "sequencing_metadata": {
@@ -1492,7 +1534,9 @@ class TestAddFileToFilesetEndpoint:
         call_kwargs = mock_file_registry_with_get.update_file.call_args[1]
         assert call_kwargs["sequencing_metadata"]["platform"] == "ILLUMINA_HISEQ"
 
-    def test_update_sequencing_metadata_vendor(self, client_with_update, mock_file_registry_with_get):
+    def test_update_sequencing_metadata_vendor(
+        self, client_with_update, mock_file_registry_with_get
+    ):
         """Test updating sequencing vendor."""
         payload = {
             "sequencing_metadata": {
@@ -1509,7 +1553,9 @@ class TestAddFileToFilesetEndpoint:
         call_kwargs = mock_file_registry_with_get.update_file.call_args[1]
         assert call_kwargs["sequencing_metadata"]["vendor"] == "10X"
 
-    def test_update_sequencing_metadata_run_id(self, client_with_update, mock_file_registry_with_get):
+    def test_update_sequencing_metadata_run_id(
+        self, client_with_update, mock_file_registry_with_get
+    ):
         """Test updating run ID."""
         payload = {
             "sequencing_metadata": {
@@ -1543,7 +1589,9 @@ class TestAddFileToFilesetEndpoint:
         call_kwargs = mock_file_registry_with_get.update_file.call_args[1]
         assert call_kwargs["sequencing_metadata"]["lane"] == 3
 
-    def test_update_sequencing_metadata_barcode_id(self, client_with_update, mock_file_registry_with_get):
+    def test_update_sequencing_metadata_barcode_id(
+        self, client_with_update, mock_file_registry_with_get
+    ):
         """Test updating barcode ID."""
         payload = {
             "sequencing_metadata": {
@@ -1560,7 +1608,9 @@ class TestAddFileToFilesetEndpoint:
         call_kwargs = mock_file_registry_with_get.update_file.call_args[1]
         assert call_kwargs["sequencing_metadata"]["barcode_id"] == "S42"
 
-    def test_update_sequencing_metadata_flowcell_id(self, client_with_update, mock_file_registry_with_get):
+    def test_update_sequencing_metadata_flowcell_id(
+        self, client_with_update, mock_file_registry_with_get
+    ):
         """Test updating flowcell ID."""
         payload = {
             "sequencing_metadata": {
@@ -1577,7 +1627,9 @@ class TestAddFileToFilesetEndpoint:
         call_kwargs = mock_file_registry_with_get.update_file.call_args[1]
         assert call_kwargs["sequencing_metadata"]["flowcell_id"] == "FLOWCELL123"
 
-    def test_update_sequencing_metadata_run_date(self, client_with_update, mock_file_registry_with_get):
+    def test_update_sequencing_metadata_run_date(
+        self, client_with_update, mock_file_registry_with_get
+    ):
         """Test updating run date."""
         payload = {
             "sequencing_metadata": {
@@ -1594,7 +1646,9 @@ class TestAddFileToFilesetEndpoint:
         call_kwargs = mock_file_registry_with_get.update_file.call_args[1]
         assert call_kwargs["sequencing_metadata"]["run_date"] == "2024-01-15"
 
-    def test_update_sequencing_metadata_all_fields(self, client_with_update, mock_file_registry_with_get):
+    def test_update_sequencing_metadata_all_fields(
+        self, client_with_update, mock_file_registry_with_get
+    ):
         """Test updating all sequencing metadata fields."""
         payload = {
             "sequencing_metadata": {
@@ -1888,7 +1942,9 @@ class TestManifestGenerationEndpoints:
         app.include_router(router)
         return TestClient(app, base_url="https://testserver")
 
-    def test_generate_manifest_for_file_success(self, client_with_manifest, mock_file_registry_with_manifest):
+    def test_generate_manifest_for_file_success(
+        self, client_with_manifest, mock_file_registry_with_manifest
+    ):
         """Test generating manifest for a single file."""
         response = client_with_manifest.post(
             "/api/v2/files/file-001/manifest",
@@ -1909,7 +1965,9 @@ class TestManifestGenerationEndpoints:
         assert "RUN_ID" in data["tsv_content"]
         assert "SAMPLE_ID" in data["tsv_content"]
 
-    def test_generate_manifest_for_file_not_found(self, client_with_manifest, mock_file_registry_with_manifest):
+    def test_generate_manifest_for_file_not_found(
+        self, client_with_manifest, mock_file_registry_with_manifest
+    ):
         """Test generating manifest for non-existent file."""
         mock_file_registry_with_manifest.get_file.return_value = None
 
@@ -1936,7 +1994,9 @@ class TestManifestGenerationEndpoints:
         assert data["sample_count"] == 1
         assert data["file_count"] == 1
 
-    def test_generate_manifest_for_fileset_success(self, client_with_manifest, mock_file_registry_with_manifest):
+    def test_generate_manifest_for_fileset_success(
+        self, client_with_manifest, mock_file_registry_with_manifest
+    ):
         """Test generating manifest for a fileset."""
         from daylily_ursa.file_registry import FileSet
 
@@ -1966,7 +2026,9 @@ class TestManifestGenerationEndpoints:
         assert data["file_count"] == 1
         assert data["warnings"] == []
 
-    def test_generate_manifest_for_fileset_not_found(self, client_with_manifest, mock_file_registry_with_manifest):
+    def test_generate_manifest_for_fileset_not_found(
+        self, client_with_manifest, mock_file_registry_with_manifest
+    ):
         """Test generating manifest for non-existent fileset."""
         mock_file_registry_with_manifest.get_fileset.return_value = None
 
@@ -1977,7 +2039,9 @@ class TestManifestGenerationEndpoints:
         assert response.status_code == 404
         assert "not found" in response.json()["detail"].lower()
 
-    def test_generate_manifest_for_empty_fileset(self, client_with_manifest, mock_file_registry_with_manifest):
+    def test_generate_manifest_for_empty_fileset(
+        self, client_with_manifest, mock_file_registry_with_manifest
+    ):
         """Test generating manifest for fileset with no files."""
         from daylily_ursa.file_registry import FileSet
 
@@ -2050,7 +2114,10 @@ def test_file_api_uncovered_routes_have_request_level_coverage(client, mock_file
     assert client.get("/api/v2/files/worksets/ws-123/files").status_code != 404
     assert client.get("/api/v2/files/worksets/ws-123/recreation-files").status_code != 404
 
-    assert client.patch("/api/v2/files/filesets/fileset-001", json={"name": "New Name"}).status_code != 404
+    assert (
+        client.patch("/api/v2/files/filesets/fileset-001", json={"name": "New Name"}).status_code
+        != 404
+    )
 
     # Optional dependencies are intentionally not configured in this test app.
     # These endpoints should return 501 rather than crashing.
@@ -2076,11 +2143,27 @@ def test_file_api_uncovered_routes_have_request_level_coverage(client, mock_file
         },
     ).status_code in (501, 422)
 
-    assert client.post("/api/v2/files/filesets/fileset-001/add-files", json=["file-001"]).status_code != 404
-    assert client.post("/api/v2/files/filesets/fileset-001/clone", json={"new_name": "Clone"}).status_code != 404
-    assert client.post("/api/v2/files/filesets/fileset-001/remove-files", json=["file-001"]).status_code != 404
+    assert (
+        client.post("/api/v2/files/filesets/fileset-001/add-files", json=["file-001"]).status_code
+        != 404
+    )
+    assert (
+        client.post(
+            "/api/v2/files/filesets/fileset-001/clone", json={"new_name": "Clone"}
+        ).status_code
+        != 404
+    )
+    assert (
+        client.post(
+            "/api/v2/files/filesets/fileset-001/remove-files", json=["file-001"]
+        ).status_code
+        != 404
+    )
 
-    assert client.post("/api/v2/files/manifest/generate?customer_id=cust-001", json={}).status_code != 404
+    assert (
+        client.post("/api/v2/files/manifest/generate?customer_id=cust-001", json={}).status_code
+        != 404
+    )
     assert client.post("/api/v2/files/search?customer_id=cust-001", json={}).status_code != 404
 
     assert client.post(
@@ -2103,12 +2186,18 @@ def test_file_api_uncovered_routes_have_request_level_coverage(client, mock_file
         json={"bucket_name": "b", "object_key": "k"},
     ).status_code in (501, 422)
 
-    assert client.post(
-        "/api/v2/files/workset-usage/record",
-        json={"file_id": "file-001", "workset_id": "ws-123", "customer_id": "cust-001"},
-    ).status_code != 404
-    assert client.post(
-        "/api/v2/files/worksets/ws-123/update-state",
-        json={"new_state": "ready"},
-    ).status_code != 404
+    assert (
+        client.post(
+            "/api/v2/files/workset-usage/record",
+            json={"file_id": "file-001", "workset_id": "ws-123", "customer_id": "cust-001"},
+        ).status_code
+        != 404
+    )
+    assert (
+        client.post(
+            "/api/v2/files/worksets/ws-123/update-state",
+            json={"new_state": "ready"},
+        ).status_code
+        != 404
+    )
     assert client.put("/api/v2/files/file-001/tags", json=["tag-a"]).status_code != 404

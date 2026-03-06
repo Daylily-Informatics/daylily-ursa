@@ -65,7 +65,7 @@ def get_file_icon(filename: str) -> str:
 
 def calculate_cost_with_efficiency(total_size_gb: float) -> float:
     """Calculate cost using efficiency formula.
-    
+
     Formula: (total_size / (total_size - (total_size * 0.98)))
     This represents the cost multiplier based on data efficiency.
     The 0.98 factor represents 98% efficiency, so the denominator is 2% of total_size.
@@ -99,7 +99,7 @@ def convert_customer_for_template(customer_config):
             self.max_storage_gb = float(config.max_storage_gb) if config.max_storage_gb else 500
             self.billing_account_id = config.billing_account_id
             self.cost_center = config.cost_center
-            self.is_admin = getattr(config, 'is_admin', False)
+            self.is_admin = getattr(config, "is_admin", False)
 
     return TemplateCustomer(customer_config)
 
@@ -177,10 +177,16 @@ class WorksetCreate(BaseModel):
     bucket: str = Field(..., description="S3 bucket name")
     prefix: str = Field(..., description="S3 prefix for workset files")
     priority: WorksetPriority = Field(WorksetPriority.NORMAL, description="Execution priority")
-    workset_type: WorksetType = Field(WorksetType.RUO, description="Workset classification type (clinical, ruo, lsmc)")
-    metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata (must include samples)")
+    workset_type: WorksetType = Field(
+        WorksetType.RUO, description="Workset classification type (clinical, ruo, lsmc)"
+    )
+    metadata: Optional[Dict[str, Any]] = Field(
+        None, description="Additional metadata (must include samples)"
+    )
     customer_id: str = Field(..., description="Customer ID who owns this workset (required)")
-    preferred_cluster: Optional[str] = Field(None, description="User-selected preferred cluster for execution")
+    preferred_cluster: Optional[str] = Field(
+        None, description="User-selected preferred cluster for execution"
+    )
     cluster_region: Optional[str] = Field(None, description="AWS region of the preferred cluster")
 
 
@@ -329,16 +335,24 @@ class PortalFileAutoRegisterRequest(BaseModel):
     """
 
     bucket_id: Optional[str] = Field(None, description="Linked bucket ID")
-    bucket_name: Optional[str] = Field(None, description="S3 bucket name (fallback if bucket_id not provided)")
+    bucket_name: Optional[str] = Field(
+        None, description="S3 bucket name (fallback if bucket_id not provided)"
+    )
     prefix: str = Field("", description="Prefix to scan")
-    file_formats: Optional[List[str]] = Field(None, description="Filter by formats (e.g. fastq,bam,vcf)")
+    file_formats: Optional[List[str]] = Field(
+        None, description="Filter by formats (e.g. fastq,bam,vcf)"
+    )
     selected_keys: Optional[List[str]] = Field(
         None,
         description="Optional list of S3 object keys to register (subset of discovered files)",
     )
     max_files: int = Field(1000, ge=1, le=10000, description="Maximum files to scan in the bucket")
-    biosample_id: str = Field(..., min_length=1, description="Biosample ID to apply to all registered files")
-    subject_id: str = Field(..., min_length=1, description="Subject ID to apply to all registered files")
+    biosample_id: str = Field(
+        ..., min_length=1, description="Biosample ID to apply to all registered files"
+    )
+    subject_id: str = Field(
+        ..., min_length=1, description="Subject ID to apply to all registered files"
+    )
     sequencing_platform: str = Field(
         "NOVASEQX",
         description="Sequencing platform (prefer SequencingPlatform enum values like NOVASEQX, NOVASEQ6000)",
@@ -352,4 +366,3 @@ class PortalFileAutoRegisterResponse(BaseModel):
     skipped_count: int
     errors: List[str]
     missing_selected_keys: Optional[List[str]] = None
-

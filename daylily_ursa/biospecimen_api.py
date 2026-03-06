@@ -29,8 +29,10 @@ LOGGER = logging.getLogger("daylily.biospecimen_api")
 # Pydantic Models for API
 # =============================================================================
 
+
 class SubjectRequest(BaseModel):
     """Request model for creating/updating a subject."""
+
     identifier: str = Field(..., description="External identifier for the subject")
     display_name: Optional[str] = None
     sex: Optional[str] = Field(None, pattern="^(male|female|unknown|other)$")
@@ -44,6 +46,7 @@ class SubjectRequest(BaseModel):
 
 class SubjectResponse(BaseModel):
     """Response model for subject."""
+
     subject_id: str
     customer_id: str
     display_name: Optional[str] = None
@@ -60,6 +63,7 @@ class SubjectResponse(BaseModel):
 
 class BiospecimenRequest(BaseModel):
     """Request model for creating/updating a biospecimen."""
+
     identifier: str = Field(..., description="External identifier for the biospecimen")
     subject_id: str = Field(..., description="Subject ID this biospecimen belongs to")
     biospecimen_type: str = "tissue"
@@ -77,6 +81,7 @@ class BiospecimenRequest(BaseModel):
 
 class BiospecimenResponse(BaseModel):
     """Response model for biospecimen."""
+
     biospecimen_id: str
     customer_id: str
     subject_id: str
@@ -97,6 +102,7 @@ class BiospecimenResponse(BaseModel):
 
 class BiosampleRequest(BaseModel):
     """Request model for creating/updating a biosample."""
+
     identifier: str = Field(..., description="External identifier for the biosample")
     biospecimen_id: str = Field(..., description="Biospecimen ID this biosample belongs to")
     sample_type: str = "blood"
@@ -116,6 +122,7 @@ class BiosampleRequest(BaseModel):
 
 class BiosampleResponse(BaseModel):
     """Response model for biosample."""
+
     biosample_id: str
     customer_id: str
     biospecimen_id: str
@@ -139,6 +146,7 @@ class BiosampleResponse(BaseModel):
 
 class LibraryRequest(BaseModel):
     """Request model for creating/updating a library."""
+
     identifier: str = Field(..., description="External identifier for the library")
     biosample_id: str = Field(..., description="Biosample ID this library belongs to")
     library_prep: str = "pcr_free_wgs"
@@ -157,6 +165,7 @@ class LibraryRequest(BaseModel):
 
 class LibraryResponse(BaseModel):
     """Response model for library."""
+
     library_id: str
     customer_id: str
     biosample_id: str
@@ -178,12 +187,14 @@ class LibraryResponse(BaseModel):
 
 class HierarchyResponse(BaseModel):
     """Response model for subject hierarchy."""
+
     subject: SubjectResponse
     biospecimens: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class StatisticsResponse(BaseModel):
     """Response model for biospecimen statistics."""
+
     subjects: int
     biospecimens: int
     biosamples: int
@@ -193,6 +204,7 @@ class StatisticsResponse(BaseModel):
 # =============================================================================
 # Router Factory
 # =============================================================================
+
 
 def create_biospecimen_router(
     registry: BiospecimenRegistry,
@@ -237,7 +249,7 @@ def create_biospecimen_router(
         if not registry.create_subject(subject):
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail=f"Subject with identifier '{request.identifier}' already exists"
+                detail=f"Subject with identifier '{request.identifier}' already exists",
             )
 
         return SubjectResponse(**subject.__dict__)
@@ -306,7 +318,9 @@ def create_biospecimen_router(
     # Biosample Endpoints
     # =========================================================================
 
-    @router.post("/biosamples", response_model=BiosampleResponse, status_code=status.HTTP_201_CREATED)
+    @router.post(
+        "/biosamples", response_model=BiosampleResponse, status_code=status.HTTP_201_CREATED
+    )
     async def create_biosample(http_request: Request, request: BiosampleRequest):
         """Create a new biosample."""
         customer_id = get_customer_id(http_request)
@@ -343,7 +357,7 @@ def create_biospecimen_router(
         if not registry.create_biosample(biosample):
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail=f"Biosample with identifier '{request.identifier}' already exists"
+                detail=f"Biosample with identifier '{request.identifier}' already exists",
             )
 
         return BiosampleResponse(**biosample.__dict__)
@@ -449,7 +463,7 @@ def create_biospecimen_router(
         if not registry.create_library(library):
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail=f"Library with identifier '{request.identifier}' already exists"
+                detail=f"Library with identifier '{request.identifier}' already exists",
             )
 
         return LibraryResponse(**library.__dict__)
@@ -526,4 +540,3 @@ def create_biospecimen_router(
         return StatisticsResponse(**stats)
 
     return router
-

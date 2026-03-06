@@ -122,7 +122,9 @@ cluster:
 class TestMonitorDashboardRoute:
     """Test /portal/monitor route."""
 
-    def test_monitor_page_renders_authenticated(self, authenticated_client, mock_ursa_dir, monkeypatch):
+    def test_monitor_page_renders_authenticated(
+        self, authenticated_client, mock_ursa_dir, monkeypatch
+    ):
         """Test that the monitor page renders successfully when authenticated."""
         # Patch Path.home() to return our mock directory's parent
         monkeypatch.setattr(Path, "home", lambda: mock_ursa_dir.parent)
@@ -141,7 +143,9 @@ class TestMonitorDashboardRoute:
         assert response.status_code == 302
         assert "/portal/login" in response.headers["location"]
 
-    def test_monitor_page_non_admin_403(self, authenticated_non_admin_client, mock_ursa_dir, monkeypatch):
+    def test_monitor_page_non_admin_403(
+        self, authenticated_non_admin_client, mock_ursa_dir, monkeypatch
+    ):
         """Non-admin users must not be able to access the monitor dashboard."""
         monkeypatch.setattr(Path, "home", lambda: mock_ursa_dir.parent)
 
@@ -258,7 +262,9 @@ class TestMonitorAPIStatus:
         assert "stats" in data
         assert isinstance(data["stats"], dict)
 
-    def test_api_status_running_false_no_pid(self, authenticated_client, mock_ursa_dir, monkeypatch):
+    def test_api_status_running_false_no_pid(
+        self, authenticated_client, mock_ursa_dir, monkeypatch
+    ):
         """Test API returns running=False when no PID file."""
         monkeypatch.setattr(Path, "home", lambda: mock_ursa_dir.parent)
 
@@ -298,7 +304,9 @@ class TestMonitorAPIStatus:
         data = response.json()
         assert data["stats"]["ready"] == 2
 
-    def test_api_status_non_admin_403(self, authenticated_non_admin_client, mock_ursa_dir, monkeypatch):
+    def test_api_status_non_admin_403(
+        self, authenticated_non_admin_client, mock_ursa_dir, monkeypatch
+    ):
         """Non-admin users must not be able to access monitor status API."""
         monkeypatch.setattr(Path, "home", lambda: mock_ursa_dir.parent)
 
@@ -310,7 +318,9 @@ class TestMonitorAPIStatus:
 class TestMonitorAPILogs:
     """Test /api/v2/monitor/logs endpoint."""
 
-    def test_api_logs_returns_json(self, authenticated_client, mock_ursa_dir, mock_log_file, monkeypatch):
+    def test_api_logs_returns_json(
+        self, authenticated_client, mock_ursa_dir, mock_log_file, monkeypatch
+    ):
         """Test that logs API returns proper JSON structure."""
         monkeypatch.setattr(Path, "home", lambda: mock_ursa_dir.parent)
 
@@ -372,9 +382,7 @@ class TestMonitorAPILogs:
         for line in data["lines"]:
             assert "[WARNING]" in line
 
-    def test_api_logs_handles_no_log_files(
-        self, authenticated_client, mock_ursa_dir, monkeypatch
-    ):
+    def test_api_logs_handles_no_log_files(self, authenticated_client, mock_ursa_dir, monkeypatch):
         """Test logs API handles gracefully when no log files exist."""
         monkeypatch.setattr(Path, "home", lambda: mock_ursa_dir.parent)
 
@@ -396,7 +404,9 @@ class TestMonitorAPILogs:
         data = response.json()
         assert data["log_file"] == "monitor_20260123_120000.log"
 
-    def test_api_logs_non_admin_403(self, authenticated_non_admin_client, mock_ursa_dir, monkeypatch):
+    def test_api_logs_non_admin_403(
+        self, authenticated_non_admin_client, mock_ursa_dir, monkeypatch
+    ):
         """Non-admin users must not be able to access monitor logs API."""
         monkeypatch.setattr(Path, "home", lambda: mock_ursa_dir.parent)
 
@@ -431,4 +441,3 @@ class TestMonitorConfigDisplay:
         assert response.status_code == 200
         content = response.content.decode("utf-8")
         assert "monitor-config.yaml" in content or ".ursa" in content
-

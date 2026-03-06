@@ -45,17 +45,17 @@ def test_sns_notification_success(sample_event):
         mock_sns = MagicMock()
         mock_session.return_value.client.return_value = mock_sns
         mock_sns.publish.return_value = {"MessageId": "test-message-id"}
-        
+
         channel = SNSNotificationChannel(
             topic_arn="arn:aws:sns:us-west-2:123456789:test-topic",
             region="us-west-2",
         )
-        
+
         result = channel.send(sample_event)
-        
+
         assert result is True
         mock_sns.publish.assert_called_once()
-        
+
         call_args = mock_sns.publish.call_args
         assert call_args.kwargs["TopicArn"] == "arn:aws:sns:us-west-2:123456789:test-topic"
         assert "test-workset-001" in call_args.kwargs["Message"]
@@ -68,18 +68,18 @@ def test_sns_notification_with_error_details(error_event):
         mock_sns = MagicMock()
         mock_session.return_value.client.return_value = mock_sns
         mock_sns.publish.return_value = {"MessageId": "test-message-id"}
-        
+
         channel = SNSNotificationChannel(
             topic_arn="arn:aws:sns:us-west-2:123456789:test-topic",
             region="us-west-2",
         )
-        
+
         result = channel.send(error_event)
-        
+
         assert result is True
         call_args = mock_sns.publish.call_args
         message = call_args.kwargs["Message"]
-        
+
         assert "Error Details:" in message
         assert "ValueError: Invalid input file format" in message
 
@@ -87,7 +87,7 @@ def test_sns_notification_with_error_details(error_event):
 def test_sns_notification_failure(sample_event):
     """Test SNS notification failure handling."""
     from botocore.exceptions import ClientError
-    
+
     with patch("daylily_ursa.workset_notifications.boto3.Session") as mock_session:
         mock_sns = MagicMock()
         mock_session.return_value.client.return_value = mock_sns
@@ -95,14 +95,14 @@ def test_sns_notification_failure(sample_event):
             {"Error": {"Code": "InvalidParameter"}},
             "Publish",
         )
-        
+
         channel = SNSNotificationChannel(
             topic_arn="arn:aws:sns:us-west-2:123456789:test-topic",
             region="us-west-2",
         )
-        
+
         result = channel.send(sample_event)
-        
+
         assert result is False
 
 
@@ -125,20 +125,20 @@ def test_linear_notification_error_event(error_event):
         }
         mock_client.post.return_value = mock_response
         mock_client_class.return_value.__enter__.return_value = mock_client
-        
+
         channel = LinearNotificationChannel(
             api_key="test-api-key",
             team_id="team-123",
         )
-        
+
         result = channel.send(error_event)
-        
+
         assert result is True
         mock_client.post.assert_called_once()
-        
+
         call_args = mock_client.post.call_args
         assert call_args.args[0] == "https://api.linear.app/graphql"
-        
+
         json_data = call_args.kwargs["json"]
         assert "mutation" in json_data["query"].lower()
         assert json_data["variables"]["input"]["teamId"] == "team-123"
@@ -150,7 +150,7 @@ def test_linear_notification_skips_state_change(sample_event):
         api_key="test-api-key",
         team_id="team-123",
     )
-    
+
     # Should return True but not create issue
     result = channel.send(sample_event)
     assert result is True
@@ -159,7 +159,7 @@ def test_linear_notification_skips_state_change(sample_event):
 def test_notification_manager_add_channel():
     """Test adding channels to notification manager."""
     manager = NotificationManager()
-    
+
     with patch("daylily_ursa.workset_notifications.boto3.Session"):
         channel1 = SNSNotificationChannel(
             topic_arn="arn:aws:sns:us-west-2:123:topic1",
@@ -169,7 +169,7 @@ def test_notification_manager_add_channel():
             topic_arn="arn:aws:sns:us-west-2:123:topic2",
             region="us-west-2",
         )
-        
+
         manager.add_channel(channel1)
         manager.add_channel(channel2)
 
@@ -255,4 +255,3 @@ def test_notification_manager_multiple_channels(sample_event):
 
         assert count == 2
         assert mock_sns.publish.call_count == 2
-

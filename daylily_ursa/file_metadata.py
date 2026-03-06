@@ -23,6 +23,7 @@ from typing import Dict, List, Optional, Tuple
 
 class SequencingPlatform(str, Enum):
     """Supported sequencing platforms."""
+
     ILLUMINA_NOVASEQ_X = "NOVASEQX"
     ILLUMINA_NOVASEQ_6000 = "NOVASEQ6000"
     ILLUMINA_HISEQ_X = "HISEQX"
@@ -35,6 +36,7 @@ class SequencingPlatform(str, Enum):
 
 class SequencingVendor(str, Enum):
     """Sequencing technology vendors."""
+
     ILLUMINA = "ILMN"
     PACBIO = "PACBIO"
     OXFORD_NANOPORE = "ONT"
@@ -44,6 +46,7 @@ class SequencingVendor(str, Enum):
 
 class LibraryPrep(str, Enum):
     """Library preparation methods."""
+
     PCR_FREE_WGS = "noampwgs"
     PCR_WGS = "pcr"
     WES = "wes"
@@ -54,6 +57,7 @@ class LibraryPrep(str, Enum):
 
 class SampleType(str, Enum):
     """Biosample tissue types."""
+
     BLOOD = "blood"
     SALIVA = "saliva"
     TISSUE = "tissue"
@@ -70,11 +74,12 @@ class Subject:
     GA4GH Subject/Individual representation.
     The source organism from which biosamples are derived.
     """
+
     subject_id: str  # Unique subject identifier (e.g., patient ID, HG002)
     species: str = "Homo sapiens"
     sex: Optional[str] = None  # male, female, unknown
     cohort: Optional[str] = None  # Study or cohort name
-    
+
     def __post_init__(self):
         if not self.subject_id:
             raise ValueError("subject_id is required")
@@ -86,6 +91,7 @@ class Biosample:
     GA4GH Biosample representation.
     A physical specimen collected from a Subject.
     """
+
     biosample_id: str
     subject_id: str  # Reference to Subject
     sample_type: SampleType = SampleType.BLOOD
@@ -93,7 +99,7 @@ class Biosample:
     collection_date: Optional[datetime] = None
     preservation_method: Optional[str] = None  # fresh, frozen, ffpe
     tumor_fraction: Optional[float] = None  # For tumor samples
-    
+
     def __post_init__(self):
         if not self.biosample_id:
             raise ValueError("biosample_id is required")
@@ -105,13 +111,14 @@ class SequencingLibrary:
     Sequencing library prepared from a Biosample.
     Contains preparation method and target specifications.
     """
+
     library_id: str
     biosample_id: str  # Reference to Biosample
     lib_prep: LibraryPrep = LibraryPrep.PCR_FREE_WGS
     target_coverage: Optional[float] = None  # Target sequencing depth
     insert_size: Optional[int] = None  # Mean insert size
     protocol_id: Optional[str] = None  # Lab protocol reference
-    
+
     def __post_init__(self):
         if not self.library_id:
             raise ValueError("library_id is required")
@@ -123,6 +130,7 @@ class SequencingRun:
     A sequencing run that produces FASTQ files.
     Links to the sequencing platform and run parameters.
     """
+
     run_id: str
     library_id: str  # Reference to SequencingLibrary
     vendor: SequencingVendor = SequencingVendor.ILLUMINA
@@ -131,7 +139,7 @@ class SequencingRun:
     barcode_id: str = "S1"  # Sample index/barcode
     flowcell_id: Optional[str] = None
     run_date: Optional[datetime] = None
-    
+
     def __post_init__(self):
         if not self.run_id:
             raise ValueError("run_id is required")
@@ -143,6 +151,7 @@ class FASTQFile:
     A FASTQ file with full provenance chain.
     The actual file that will be processed by the pipeline.
     """
+
     file_id: str  # Unique file identifier
     s3_uri: str  # Full S3 URI (s3://bucket/path/file.fastq.gz)
     run_id: str  # Reference to SequencingRun
@@ -179,6 +188,7 @@ class AnalysisInput:
 
     This is the GA4GH-aligned term for what was previously called "sample".
     """
+
     # Identifiers
     sample_id: str  # Pipeline input identifier (SAMPLE_ID column)
     external_sample_id: str  # Subject/individual ID (EXTERNAL_SAMPLE_ID column)
@@ -224,10 +234,18 @@ class AnalysisInput:
             "RUN_ID": self.run_id,
             "SAMPLE_ID": self.sample_id,
             "EXPERIMENTID": self.experiment_id or self.sample_id,
-            "SAMPLE_TYPE": self.sample_type.value if isinstance(self.sample_type, SampleType) else self.sample_type,
-            "LIB_PREP": self.lib_prep.value if isinstance(self.lib_prep, LibraryPrep) else self.lib_prep,
-            "SEQ_VENDOR": self.seq_vendor.value if isinstance(self.seq_vendor, SequencingVendor) else self.seq_vendor,
-            "SEQ_PLATFORM": self.seq_platform.value if isinstance(self.seq_platform, SequencingPlatform) else self.seq_platform,
+            "SAMPLE_TYPE": self.sample_type.value
+            if isinstance(self.sample_type, SampleType)
+            else self.sample_type,
+            "LIB_PREP": self.lib_prep.value
+            if isinstance(self.lib_prep, LibraryPrep)
+            else self.lib_prep,
+            "SEQ_VENDOR": self.seq_vendor.value
+            if isinstance(self.seq_vendor, SequencingVendor)
+            else self.seq_vendor,
+            "SEQ_PLATFORM": self.seq_platform.value
+            if isinstance(self.seq_platform, SequencingPlatform)
+            else self.seq_platform,
             "LANE": str(self.lane),
             "SEQBC_ID": self.barcode_id,
             "PATH_TO_CONCORDANCE_DATA_DIR": self.concordance_dir,
@@ -258,18 +276,18 @@ def parse_fastq_filename(filename: str) -> Tuple[str, int, Optional[str]]:
         Tuple of (sample_id, read_number, lane)
     """
     # Remove extensions
-    base = re.sub(r'\.(fastq|fq)(\.gz)?$', '', filename, flags=re.IGNORECASE)
+    base = re.sub(r"\.(fastq|fq)(\.gz)?$", "", filename, flags=re.IGNORECASE)
 
     # Try Illumina BCL Convert format: Sample_S1_L001_R1_001
-    bcl_match = re.match(r'^(.+)_S\d+_L(\d+)_R([12])_\d+$', base)
+    bcl_match = re.match(r"^(.+)_S\d+_L(\d+)_R([12])_\d+$", base)
     if bcl_match:
         return bcl_match.group(1), int(bcl_match.group(3)), bcl_match.group(2)
 
     # Try common patterns
     patterns = [
-        r'^(.+)[_.]R([12])$',  # sample_R1, sample.R1
-        r'^(.+)[_.]([12])$',   # sample_1, sample.1
-        r'^(.+)_R([12])_\d+$', # sample_R1_001
+        r"^(.+)[_.]R([12])$",  # sample_R1, sample.R1
+        r"^(.+)[_.]([12])$",  # sample_1, sample.1
+        r"^(.+)_R([12])_\d+$",  # sample_R1_001
     ]
 
     for pattern in patterns:

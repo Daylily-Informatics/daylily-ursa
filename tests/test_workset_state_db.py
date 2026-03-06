@@ -27,7 +27,14 @@ class _SessionCtx:
 
 
 class _Instance:
-    def __init__(self, *, name: str = "ws", bstatus: str = "ready", json_addl: dict | None = None, euid: str | None = None):
+    def __init__(
+        self,
+        *,
+        name: str = "ws",
+        bstatus: str = "ready",
+        json_addl: dict | None = None,
+        euid: str | None = None,
+    ):
         self.name = name
         self.bstatus = bstatus
         self.json_addl = dict(json_addl or {})
@@ -172,30 +179,46 @@ def test_refresh_lock_success(state_db: WorksetStateDB):
 
 
 def test_record_failure_sets_retrying(state_db: WorksetStateDB):
-    ws = _Instance(name="ws-fail", json_addl={"retry_count": 0, "max_retries": 3, "state": "in_progress"})
+    ws = _Instance(
+        name="ws-fail", json_addl={"retry_count": 0, "max_retries": 3, "state": "in_progress"}
+    )
     state_db.get_workset = MagicMock(return_value={"retry_count": 0, "max_retries": 3})
     state_db._find_workset.return_value = ws
 
-    should_retry = state_db.record_failure("ws-fail", "boom", error_category=ErrorCategory.TRANSIENT)
+    should_retry = state_db.record_failure(
+        "ws-fail", "boom", error_category=ErrorCategory.TRANSIENT
+    )
 
     assert should_retry is True
     assert ws.json_addl["state"] == WorksetState.RETRYING.value
 
 
 def test_record_failure_sets_failed_at_max_retries(state_db: WorksetStateDB):
-    ws = _Instance(name="ws-fail", json_addl={"retry_count": 3, "max_retries": 3, "state": "in_progress"})
+    ws = _Instance(
+        name="ws-fail", json_addl={"retry_count": 3, "max_retries": 3, "state": "in_progress"}
+    )
     state_db.get_workset = MagicMock(return_value={"retry_count": 3, "max_retries": 3})
     state_db._find_workset.return_value = ws
 
-    should_retry = state_db.record_failure("ws-fail", "boom", error_category=ErrorCategory.TRANSIENT)
+    should_retry = state_db.record_failure(
+        "ws-fail", "boom", error_category=ErrorCategory.TRANSIENT
+    )
 
     assert should_retry is False
     assert ws.json_addl["state"] == WorksetState.FAILED.value
 
 
 def test_get_retryable_worksets_filters_retry_after(state_db: WorksetStateDB):
-    past = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=5)).isoformat().replace("+00:00", "Z")
-    future = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=5)).isoformat().replace("+00:00", "Z")
+    past = (
+        (dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=5))
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+    future = (
+        (dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=5))
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
     state_db.list_worksets_by_state = MagicMock(
         return_value=[
             {"workset_id": "ws-ready", "retry_after": past},

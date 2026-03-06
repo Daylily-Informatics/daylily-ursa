@@ -10,7 +10,10 @@ from fastapi.testclient import TestClient
 
 
 def test_customer_worksets_extra_routes_have_request_level_coverage():
-    from daylily_ursa.routes.customer_worksets import CustomerWorksetDependencies, create_customer_worksets_router
+    from daylily_ursa.routes.customer_worksets import (
+        CustomerWorksetDependencies,
+        create_customer_worksets_router,
+    )
     from daylily_ursa.workset_state_db import WorksetStateDB
 
     state_db = MagicMock(spec=WorksetStateDB)
@@ -82,7 +85,10 @@ def test_customer_worksets_extra_routes_have_request_level_coverage():
         assert client.post("/api/v2/customers/cust-001/worksets/ws-123/cancel").status_code != 404
         assert client.post("/api/v2/customers/cust-001/worksets/ws-123/retry").status_code != 404
         assert client.get("/api/v2/customers/cust-001/worksets/ws-123/logs").status_code != 404
-        assert client.get("/api/v2/customers/cust-001/worksets/ws-123/performance-metrics").status_code != 404
+        assert (
+            client.get("/api/v2/customers/cust-001/worksets/ws-123/performance-metrics").status_code
+            != 404
+        )
 
         # Exercise the early validation path (prevents SSH/headnode access).
         resp = client.get("/api/v2/customers/cust-001/worksets/ws-123/snakemake-log/evil.txt")

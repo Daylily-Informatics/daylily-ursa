@@ -37,6 +37,7 @@ from daylily_ursa.routes.dependencies import (
 try:
     from daylily_cognito.auth import CognitoAuth
     from daylily_cognito.fastapi import create_auth_dependency
+
     AUTH_AVAILABLE = True
 except ImportError:
     AUTH_AVAILABLE = False
@@ -49,6 +50,7 @@ from daylily_ursa.workset_validation import WorksetValidator
 # Optional integration layer import
 try:
     from daylily_ursa.workset_integration import WorksetIntegration
+
     INTEGRATION_AVAILABLE = True
 except ImportError:
     INTEGRATION_AVAILABLE = False
@@ -59,6 +61,7 @@ try:
     from daylily_ursa.file_api import create_file_api_router
     from daylily_ursa.file_registry import FileRegistry, BucketFileDiscovery
     from daylily_ursa.s3_bucket_validator import S3BucketValidator, LinkedBucketManager
+
     FILE_MANAGEMENT_AVAILABLE = True
 except ImportError:
     FILE_MANAGEMENT_AVAILABLE = False
@@ -72,6 +75,7 @@ except ImportError:
 try:
     from daylily_ursa.biospecimen import BiospecimenRegistry
     from daylily_ursa.biospecimen_api import create_biospecimen_router
+
     BIOSPECIMEN_AVAILABLE = True
 except ImportError:
     BIOSPECIMEN_AVAILABLE = False
@@ -81,6 +85,7 @@ except ImportError:
 # Manifest storage imports
 try:
     from daylily_ursa.manifest_registry import ManifestRegistry
+
     MANIFEST_STORAGE_AVAILABLE = True
 except ImportError:
     MANIFEST_STORAGE_AVAILABLE = False
@@ -132,8 +137,7 @@ def create_app(
     # Configure logging based on settings
     log_level = getattr(logging, settings.log_level.upper(), logging.INFO)
     logging.basicConfig(
-        level=log_level,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+        level=log_level, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     )
 
     # Set specific loggers to DEBUG for file management (in development)
@@ -143,7 +147,11 @@ def create_app(
         logging.getLogger("daylily.s3_bucket_validator").setLevel(logging.DEBUG)
         logging.getLogger("daylily.manifest_registry").setLevel(logging.DEBUG)
 
-    LOGGER.info("Creating Daylily application (env=%s, log_level=%s)", settings.daylily_env, settings.log_level)
+    LOGGER.info(
+        "Creating Daylily application (env=%s, log_level=%s)",
+        settings.daylily_env,
+        settings.log_level,
+    )
 
     # AWS configuration from settings
     region = settings.get_effective_region()
@@ -195,7 +203,10 @@ def create_app(
     )
 
     # Add session middleware for portal authentication
-    if settings.is_production and settings.session_secret_key == "daylily-dev-secret-change-in-production":
+    if (
+        settings.is_production
+        and settings.session_secret_key == "daylily-dev-secret-change-in-production"
+    ):
         LOGGER.warning("Using default session secret in production - this is insecure!")
     app.add_middleware(
         SessionMiddleware,
@@ -240,9 +251,13 @@ def create_app(
         request_id = getattr(request.state, "request_id", None) or str(uuid.uuid4())[:8]
         LOGGER.error(
             "DaylilyException: code=%s, message=%s, request_id=%s, path=%s",
-            exc.code, exc.message, request_id, request.url.path
+            exc.code,
+            exc.message,
+            request_id,
+            request.url.path,
         )
         from fastapi.responses import JSONResponse
+
         return JSONResponse(
             status_code=exc.status_code,
             content=exc.to_dict(request_id=request_id),
@@ -258,15 +273,20 @@ def create_app(
         request_id = getattr(request.state, "request_id", None) or str(uuid.uuid4())[:8]
         LOGGER.exception(
             "Unhandled exception: %s, request_id=%s, path=%s",
-            str(exc), request_id, request.url.path
+            str(exc),
+            request_id,
+            request.url.path,
         )
         from fastapi.responses import JSONResponse
+
         return JSONResponse(
             status_code=500,
             content={
                 "error": "An internal error occurred",
                 "code": "INTERNAL_ERROR",
-                "details": {"exception_type": type(exc).__name__} if settings.is_development else {},
+                "details": {"exception_type": type(exc).__name__}
+                if settings.is_development
+                else {},
                 "request_id": request_id,
             },
         )
@@ -354,6 +374,7 @@ def create_app(
             if auth_header.startswith("Bearer "):
                 try:
                     from fastapi.security import HTTPAuthorizationCredentials
+
                     token = auth_header[7:]  # Remove "Bearer " prefix
                     credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
                     user: Optional[Dict[Any, Any]] = cognito_auth.get_current_user(credentials)
@@ -364,7 +385,9 @@ def create_app(
 
                         if customer_manager and customer_id:
                             try:
-                                customer_config = customer_manager.get_customer_config(str(customer_id))
+                                customer_config = customer_manager.get_customer_config(
+                                    str(customer_id)
+                                )
                                 if customer_config:
                                     user["is_admin"] = bool(customer_config.is_admin)
                             except Exception as e:  # pragma: no cover - defensive logging
@@ -412,7 +435,9 @@ def create_app(
 
     LOGGER.info("Combined session/JWT authentication configured")
 
-    def get_customer_for_session(request: Request) -> Tuple[Optional[Dict[Any, Any]], Optional[CustomerConfig]]:
+    def get_customer_for_session(
+        request: Request,
+    ) -> Tuple[Optional[Dict[Any, Any]], Optional[CustomerConfig]]:
         """Get the customer for the currently logged-in user.
 
         Looks up the customer by the user's email from the session.
@@ -477,23 +502,27 @@ def create_app(
         """Health check endpoint."""
         accept = request.headers.get("accept", "")
         if "text/html" in accept:
-            return RedirectResponse(url="/portal/login" if enable_auth else "/portal", status_code=302)
+            return RedirectResponse(
+                url="/portal/login" if enable_auth else "/portal", status_code=302
+            )
         return {
             "status": "healthy",
             "service": "daylily-workset-monitor",
             "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         }
-    
+
     # ========== Wire up extracted routers ==========
 
     # Workset CRUD + queue/scheduler/next (routes/worksets.py)
     from daylily_ursa.routes.worksets import create_worksets_router
+
     worksets_router = create_worksets_router(state_db=state_db, scheduler=scheduler)
     app.include_router(worksets_router)
     LOGGER.info("Workset routes registered via create_worksets_router")
 
     # Monitoring/admin routes (routes/monitoring.py)
     from daylily_ursa.routes.monitoring import create_monitoring_router, MonitoringDependencies
+
     mon_deps = MonitoringDependencies(state_db=state_db, settings=settings)
     mon_router = create_monitoring_router(mon_deps)
     app.include_router(mon_router)
@@ -501,6 +530,7 @@ def create_app(
 
     # S3 utility routes (routes/s3.py)
     from daylily_ursa.routes.s3 import create_s3_router, S3Dependencies
+
     s3_deps = S3Dependencies(settings=settings, get_current_user=get_current_user)
     s3_router = create_s3_router(s3_deps)
     app.include_router(s3_router)
@@ -508,6 +538,7 @@ def create_app(
 
     # Cluster management routes (routes/clusters.py)
     from daylily_ursa.routes.clusters import create_clusters_router, ClusterDependencies
+
     cluster_deps = ClusterDependencies(settings=settings, get_current_user=get_current_user)
     cluster_router = create_clusters_router(cluster_deps)
     app.include_router(cluster_router)
@@ -515,6 +546,7 @@ def create_app(
 
     # Spot market tracker routes (routes/spot_market.py) - admin-only
     from daylily_ursa.routes.spot_market import create_spot_market_router, SpotMarketDependencies
+
     spot_deps = SpotMarketDependencies(settings=settings, get_current_user=get_current_user)
     spot_router = create_spot_market_router(spot_deps)
     app.include_router(spot_router)
@@ -523,6 +555,7 @@ def create_app(
     # Customer routes (routes/customers.py) - only if customer_manager available
     if customer_manager:
         from daylily_ursa.routes.customers import create_customers_router, CustomerDependencies
+
         cust_deps = CustomerDependencies(
             customer_manager=customer_manager,
             get_current_user=get_current_user,
@@ -533,6 +566,7 @@ def create_app(
 
         # File management routes (routes/files.py)
         from daylily_ursa.routes.files import create_files_router, FileDependencies
+
         file_deps = FileDependencies(customer_manager=customer_manager)
         files_router = create_files_router(file_deps)
         app.include_router(files_router)
@@ -540,6 +574,7 @@ def create_app(
 
         # Manifest routes (routes/manifests.py) - registry may be None (routes return 503)
         from daylily_ursa.routes.manifests import create_manifests_router, ManifestDependencies
+
         manifest_deps = ManifestDependencies(
             customer_manager=customer_manager,
             manifest_registry=manifest_registry,
@@ -561,7 +596,11 @@ def create_app(
     ):
         """Estimate cost for a workset based on parameters."""
         base_vcpu_hours_per_sample = {
-            "germline": 4.0, "somatic": 8.0, "rnaseq": 2.0, "wgs": 12.0, "wes": 3.0,
+            "germline": 4.0,
+            "somatic": 8.0,
+            "rnaseq": 2.0,
+            "wgs": 12.0,
+            "wes": 3.0,
         }
         base_hours = base_vcpu_hours_per_sample.get(pipeline_type, 4.0)
         coverage_factor = estimated_coverage / 30.0
@@ -577,7 +616,9 @@ def create_app(
         fsx_cost = data_size_gb * 0.14 / 4
         transfer_cost = data_size_gb * 0.10 * 0.09
         efficiency_multiplier = _calculate_cost_with_efficiency(data_size_gb)
-        adjusted_storage_cost = storage_cost * efficiency_multiplier if efficiency_multiplier > 0 else storage_cost
+        adjusted_storage_cost = (
+            storage_cost * efficiency_multiplier if efficiency_multiplier > 0 else storage_cost
+        )
         total_cost = compute_cost + adjusted_storage_cost + fsx_cost + transfer_cost
         priority_multiplier = {"urgent": 2.0, "high": 1.5, "normal": 1.0, "low": 0.6}
         multiplier = priority_multiplier.get(priority, 1.0)
@@ -612,7 +653,12 @@ def create_app(
     # ========== Workset Validation Endpoints ==========
 
     if validator:
-        @app.post("/api/v2/worksets/validate", response_model=WorksetValidationResponse, tags=["validation"])
+
+        @app.post(
+            "/api/v2/worksets/validate",
+            response_model=WorksetValidationResponse,
+            tags=["validation"],
+        )
         async def validate_workset(
             bucket: str = Query(..., description="S3 bucket name"),
             prefix: str = Query(..., description="S3 prefix"),
@@ -675,6 +721,7 @@ def create_app(
 
         # Portal routes are now in daylily_ursa/routes/portal.py
         from daylily_ursa.routes.portal import create_portal_router, PortalDependencies
+
         portal_deps = PortalDependencies(
             state_db=state_db,
             templates=templates,
@@ -696,6 +743,7 @@ def create_app(
             create_customer_worksets_router,
             CustomerWorksetDependencies,
         )
+
         cw_deps = CustomerWorksetDependencies(
             state_db=state_db,
             settings=settings,
@@ -713,6 +761,7 @@ def create_app(
             create_dashboard_router,
             DashboardDependencies,
         )
+
         dash_deps = DashboardDependencies(
             state_db=state_db,
             settings=settings,
@@ -727,6 +776,7 @@ def create_app(
             create_billing_router,
             BillingDependencies,
         )
+
         billing_deps = BillingDependencies(
             state_db=state_db,
             settings=settings,
@@ -774,7 +824,9 @@ def create_app(
             )
             app.include_router(file_router)
             auth_status = "with combined session/JWT authentication"
-            LOGGER.info(f"File management API endpoints registered at /api/v2/files/* ({auth_status})")
+            LOGGER.info(
+                f"File management API endpoints registered at /api/v2/files/* ({auth_status})"
+            )
         except Exception as e:
             LOGGER.error("Failed to integrate file management API: %s", str(e))
             LOGGER.warning("File management endpoints will not be available")
@@ -805,9 +857,9 @@ def create_app(
                     HTTPException(401): If customer cannot be resolved
                 """
                 # Try session first (portal login)
-                session = getattr(request, 'session', None)
+                session = getattr(request, "session", None)
                 if session:
-                    customer_id = session.get('customer_id')
+                    customer_id = session.get("customer_id")
                     if customer_id:
                         return str(customer_id)
 

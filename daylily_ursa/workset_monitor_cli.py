@@ -45,14 +45,18 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         action="store_true",
         help="Run a single poll iteration and exit (ignored when --action is provided)",
     )
-    parser.add_argument("--dry-run", action="store_true", help="Do not mutate S3 or execute commands")
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Do not mutate S3 or execute commands"
+    )
     parser.add_argument(
         "--attempt-restart",
         action="store_true",
         help="Retry failed workset commands once starting from the failed command",
     )
     parser.add_argument("--verbose", action="store_true", help="Enable debug logging")
-    parser.add_argument("--debug", action="store_true", help="Print all commands executed (and in dry-run)")
+    parser.add_argument(
+        "--debug", action="store_true", help="Print all commands executed (and in dry-run)"
+    )
     parser.add_argument(
         "--force-recalculate",
         action="store_true",
@@ -118,9 +122,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def setup_integration_components(
-    config: MonitorConfig, args: argparse.Namespace
-) -> dict[str, Any]:
+def setup_integration_components(config: MonitorConfig, args: argparse.Namespace) -> dict[str, Any]:
     """Initialize optional integration components.
 
     Returns dict with state_db, integration, notification_manager, and scheduler keys.
@@ -142,15 +144,16 @@ def setup_integration_components(
             components["state_db"] = state_db
             LOGGER.info("TapDB state tracking enabled (templates bootstrapped)")
         except ImportError:
-            LOGGER.warning(
-                "TapDB integration requested but workset_state_db module not available"
-            )
+            LOGGER.warning("TapDB integration requested but workset_state_db module not available")
         except Exception as exc:
             LOGGER.warning("Failed to initialize TapDB state tracking: %s", exc)
 
     if args.enable_notifications and args.sns_topic_arn:
         try:
-            from daylily_ursa.workset_notifications import NotificationManager, SNSNotificationChannel
+            from daylily_ursa.workset_notifications import (
+                NotificationManager,
+                SNSNotificationChannel,
+            )
 
             notification_manager = NotificationManager()
             sns_channel = SNSNotificationChannel(
@@ -181,7 +184,9 @@ def setup_integration_components(
             components["integration"] = integration
             LOGGER.info("Integration layer initialized")
         except ImportError:
-            LOGGER.warning("Integration layer requested but workset_integration module not available")
+            LOGGER.warning(
+                "Integration layer requested but workset_integration module not available"
+            )
         except Exception as exc:
             LOGGER.warning("Failed to initialize integration layer: %s", exc)
 

@@ -84,7 +84,9 @@ class TestCognitoListUsers:
         ]
         mock_cognito_client.get_paginator.return_value = mock_paginator
 
-        with patch.dict(os.environ, {"AWS_PROFILE": "test", "COGNITO_USER_POOL_ID": "us-west-2_test"}):
+        with patch.dict(
+            os.environ, {"AWS_PROFILE": "test", "COGNITO_USER_POOL_ID": "us-west-2_test"}
+        ):
             with patch("daylily_ursa.config.get_settings", return_value=mock_settings):
                 with patch("boto3.client", return_value=mock_cognito_client):
                     result = runner.invoke(cognito_app, ["list-users"])
@@ -124,16 +126,22 @@ class TestCognitoDeleteUser:
         """Test that delete-user fails without AWS_PROFILE set."""
         with patch.dict(os.environ, {}, clear=True):
             os.environ.pop("AWS_PROFILE", None)
-            result = runner.invoke(cognito_app, ["delete-user", "--email", "test@example.com", "--force"])
+            result = runner.invoke(
+                cognito_app, ["delete-user", "--email", "test@example.com", "--force"]
+            )
             assert result.exit_code == 1
             assert "AWS_PROFILE" in result.output
 
     def test_delete_user_prompts_without_force(self, mock_settings, mock_cognito_client):
         """Test that delete-user prompts for confirmation."""
-        with patch.dict(os.environ, {"AWS_PROFILE": "test", "COGNITO_USER_POOL_ID": "us-west-2_test"}):
+        with patch.dict(
+            os.environ, {"AWS_PROFILE": "test", "COGNITO_USER_POOL_ID": "us-west-2_test"}
+        ):
             with patch("daylily_ursa.config.get_settings", return_value=mock_settings):
                 with patch("boto3.client", return_value=mock_cognito_client):
-                    result = runner.invoke(cognito_app, ["delete-user", "--email", "test@example.com"], input="n\n")
+                    result = runner.invoke(
+                        cognito_app, ["delete-user", "--email", "test@example.com"], input="n\n"
+                    )
                     assert "Cancelled" in result.output
 
 
@@ -150,7 +158,9 @@ class TestCognitoDeleteAllUsers:
 
     def test_delete_all_users_prompts_without_force(self, mock_settings):
         """Test that delete-all-users prompts for confirmation."""
-        with patch.dict(os.environ, {"AWS_PROFILE": "test", "COGNITO_USER_POOL_ID": "us-west-2_test"}):
+        with patch.dict(
+            os.environ, {"AWS_PROFILE": "test", "COGNITO_USER_POOL_ID": "us-west-2_test"}
+        ):
             result = runner.invoke(cognito_app, ["delete-all-users"], input="n\n")
             assert "Cancelled" in result.output
 
