@@ -209,7 +209,7 @@ def create_biospecimen_router(
     Returns:
         Configured APIRouter
     """
-    router = APIRouter(prefix="/api/biospecimen", tags=["biospecimen"])
+    router = APIRouter(prefix="/api/v2/biospecimen", tags=["biospecimen"])
 
     # =========================================================================
     # Subject Endpoints

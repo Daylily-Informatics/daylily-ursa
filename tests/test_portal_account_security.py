@@ -95,7 +95,7 @@ def test_api_change_password_returns_user_friendly_error_on_short_password() -> 
     )
 
     resp = client.post(
-        "/api/v1/auth/change-password",
+        "/api/v2/auth/change-password",
         json={"current_password": "old", "new_password": "1234567"},
     )
     assert resp.status_code == 400
@@ -131,14 +131,14 @@ def test_api_tokens_endpoints_work_for_authenticated_session() -> None:
         follow_redirects=False,
     )
 
-    listed = client.get("/api/v1/auth/tokens")
+    listed = client.get("/api/v2/auth/tokens")
     assert listed.status_code == 200
     assert listed.json()[0]["id"] == "t1"
 
-    created = client.post("/api/v1/auth/tokens", json={"name": "New", "expiry_days": 0})
+    created = client.post("/api/v2/auth/tokens", json={"name": "New", "expiry_days": 0})
     assert created.status_code == 200
     assert created.json()["token"] == "sekret"
 
-    revoked = client.delete("/api/v1/auth/tokens/t2")
+    revoked = client.delete("/api/v2/auth/tokens/t2")
     assert revoked.status_code == 200
     assert revoked.json()["revoked"] is True

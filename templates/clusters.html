@@ -729,7 +729,7 @@ async function refreshClusters() {
     icon.classList.add('fa-spin');
 
     try {
-        const response = await fetch('/api/clusters?refresh=true');
+        const response = await fetch('/api/v2/clusters?refresh=true');
         const data = await response.json();
 
         if (data.error) {
@@ -785,7 +785,7 @@ async function loadCreateOptions() {
     }
 
     try {
-        const resp = await fetch(`/api/clusters/create/options?region=${encodeURIComponent(region)}`);
+        const resp = await fetch(`/api/v2/clusters/create/options?region=${encodeURIComponent(region)}`);
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok) {
             const detail = data.detail || data.error || 'Failed to load options';
@@ -878,7 +878,7 @@ async function createCluster() {
     }
 
     try {
-        const resp = await fetch('/api/clusters/create', {
+        const resp = await fetch('/api/v2/clusters/create', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload),
@@ -916,7 +916,7 @@ async function refreshCreateJobs() {
     tbodyEl.innerHTML = '';
 
     try {
-        const resp = await fetch('/api/clusters/create/jobs?limit=20');
+        const resp = await fetch('/api/v2/clusters/create/jobs?limit=20');
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok) {
             const detail = data.detail || data.error || 'Failed to load jobs';
@@ -1026,7 +1026,7 @@ async function _loadCreateJobLogs(jobId, logRow) {
     if (!pre) return;
     pre.textContent = 'Loading…';
     try {
-        const resp = await fetch(`/api/clusters/create/jobs/${encodeURIComponent(jobId)}/logs?lines=200`);
+        const resp = await fetch(`/api/v2/clusters/create/jobs/${encodeURIComponent(jobId)}/logs?lines=200`);
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok) {
             const detail = data.detail || data.error || 'Failed to load logs';
@@ -1157,7 +1157,7 @@ async function spotMarketLoadStatus() {
     if (!panel) return;
 
     try {
-        const resp = await fetch('/api/spot-market/status');
+        const resp = await fetch('/api/v2/spot-market/status');
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok) {
             const detail = _spotMarketErrorDetail(data, 'Failed to load spot market status');
@@ -1224,7 +1224,7 @@ async function spotMarketSaveConfig() {
         const intervalEl = document.getElementById('spot-market-interval');
         const interval = intervalEl ? String(intervalEl.value || '6h') : '6h';
 
-        const resp = await fetch('/api/spot-market/config', {
+        const resp = await fetch('/api/v2/spot-market/config', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ regions, interval }),
@@ -1266,7 +1266,7 @@ async function spotMarketPollNow() {
             showClusterToast('Select at least one region', 'error');
             return;
         }
-        const resp = await fetch('/api/spot-market/poll', {
+        const resp = await fetch('/api/v2/spot-market/poll', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ regions, mode: 'now' }),
@@ -1319,7 +1319,7 @@ async function _spotMarketLoadJobLogs(jobId, logRow) {
     pre.textContent = 'Loading…';
 
     try {
-        const resp = await fetch(`/api/spot-market/jobs/${encodeURIComponent(jobId)}/logs?lines=200`);
+        const resp = await fetch(`/api/v2/spot-market/jobs/${encodeURIComponent(jobId)}/logs?lines=200`);
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok) {
             const detail = _spotMarketErrorDetail(data, 'Failed to load logs');
@@ -1371,7 +1371,7 @@ async function spotMarketRefreshJobs() {
     tbodyEl.innerHTML = '';
 
     try {
-        const resp = await fetch('/api/spot-market/jobs?limit=20');
+        const resp = await fetch('/api/v2/spot-market/jobs?limit=20');
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok) {
             emptyEl.textContent = _spotMarketErrorDetail(data, 'Failed to load spot market jobs');
@@ -1466,7 +1466,7 @@ async function spotMarketRefreshJobs() {
 }
 
 async function spotMarketFetchSnapshots(region, limit) {
-    const resp = await fetch(`/api/spot-market/snapshots?region=${encodeURIComponent(region)}&limit=${limit || 200}`);
+    const resp = await fetch(`/api/v2/spot-market/snapshots?region=${encodeURIComponent(region)}&limit=${limit || 200}`);
     const data = await resp.json().catch(() => ({}));
     if (!resp.ok) {
         const detail = data.detail || data.error || 'Failed to load snapshots';
@@ -1630,7 +1630,7 @@ async function deleteCluster(buttonEl) {
 
     try {
         const response = await fetch(
-            `/api/clusters/${encodeURIComponent(clusterName)}?region=${encodeURIComponent(region)}`,
+            `/api/v2/clusters/${encodeURIComponent(clusterName)}?region=${encodeURIComponent(region)}`,
             { method: 'DELETE' },
         );
         const data = await response.json().catch(() => ({}));

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 import re
-import uuid
+import hashlib
 from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
 
 import boto3
@@ -165,10 +165,10 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
         ]
         return customer_archived
 
-    @router.get("/api/v2/customers/{customer_id}/worksets/{workset_id}")
+    @router.get("/api/v2/customers/{customer_id}/worksets/{euid}")
     async def get_customer_workset(
         customer_id: str,
-        workset_id: str,
+        euid: str,
     ):
         """Get a specific workset for a customer."""
         if not customer_manager:
@@ -184,11 +184,11 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
                 detail=f"Customer {customer_id} not found",
             )
 
-        workset = state_db.get_workset(workset_id)
+        workset = state_db.get_workset(euid)
         if not workset:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Workset {workset_id} not found",
+                detail=f"Workset {euid} not found",
             )
 
         # Verify workset belongs to this customer (by customer_id, not bucket)
@@ -257,11 +257,13 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
                 detail=f"Customer {customer_id} not found",
             )
 
-        # Generate a unique workset ID from the name with date suffix
+        # Generate a unique workset name from the user-provided name with date suffix
         import datetime as dt
         safe_name = workset_name.replace(" ", "-").lower()[:30]
-        date_suffix = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d")
-        workset_id = f"{safe_name}-{uuid.uuid4().hex[:8]}-{date_suffix}"
+        now_utc = dt.datetime.now(dt.timezone.utc)
+        date_suffix = now_utc.strftime("%Y%m%d")
+        time_hash = hashlib.sha256(f"{safe_name}-{now_utc.isoformat()}-{customer_id}".encode()).hexdigest()[:8]
+        ws_name = f"{safe_name}-{time_hash}-{date_suffix}"
 
         # Determine bucket from cluster tags (aws-parallelcluster-monitor-bucket)
         # A cluster MUST be selected - bucket is discovered from its tags
@@ -330,7 +332,7 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
                 # bucket = parts[0]  # Could use this if needed
                 prefix = parts[1]
         if not prefix:
-            prefix = f"worksets/{workset_id}/"
+            prefix = f"worksets/{ws_name}/"
         if not prefix.endswith("/"):
             prefix += "/"
 
@@ -443,8 +445,8 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
             )
 
         if effective_integration:
-            success = effective_integration.register_workset(
-                name=workset_id,  # workset_id here is the human-readable name
+            euid = effective_integration.register_workset(
+                name=ws_name,
                 bucket=bucket,
                 prefix=prefix,
                 priority=priority,
@@ -465,8 +467,8 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
                 ws_priority = WorksetPriority.NORMAL
 
             try:
-                success = state_db.register_workset(
-                    name=workset_id,  # workset_id here is the human-readable name
+                euid = state_db.register_workset(
+                    name=ws_name,
                     bucket=bucket,
                     prefix=prefix,
                     priority=ws_priority,
@@ -482,19 +484,19 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
                     detail=str(e),
                 )
 
-        if not success:
+        if not euid:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail=f"Workset {workset_id} already exists",
+                detail=f"Workset {ws_name} already exists",
             )
 
-        created = state_db.get_workset(workset_id)
+        created = state_db.get_workset(euid)
         return created
 
-    @router.post("/api/v2/customers/{customer_id}/worksets/{workset_id}/cancel")
+    @router.post("/api/v2/customers/{customer_id}/worksets/{euid}/cancel")
     async def cancel_customer_workset(
         customer_id: str,
-        workset_id: str,
+        euid: str,
     ):
         """Cancel a customer's workset."""
         if not customer_manager:
@@ -510,11 +512,11 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
                 detail=f"Customer {customer_id} not found",
             )
 
-        workset = state_db.get_workset(workset_id)
+        workset = state_db.get_workset(euid)
         if not workset:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Workset {workset_id} not found",
+                detail=f"Workset {euid} not found",
             )
 
         # Verify workset belongs to this customer (by customer_id, not bucket)
@@ -524,14 +526,14 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
                 detail="Workset does not belong to this customer",
             )
 
-        state_db.update_state(euid=workset_id, new_state=WorksetState.CANCELED, reason="Canceled by user")
-        updated = state_db.get_workset(workset_id)
+        state_db.update_state(euid=euid, new_state=WorksetState.CANCELED, reason="Canceled by user")
+        updated = state_db.get_workset(euid)
         return updated
 
-    @router.post("/api/v2/customers/{customer_id}/worksets/{workset_id}/retry")
+    @router.post("/api/v2/customers/{customer_id}/worksets/{euid}/retry")
     async def retry_customer_workset(
         customer_id: str,
-        workset_id: str,
+        euid: str,
     ):
         """Retry a failed customer workset by creating a new cloned workset.
 
@@ -557,11 +559,11 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
                 detail=f"Customer {customer_id} not found",
             )
 
-        original = state_db.get_workset(workset_id)
+        original = state_db.get_workset(euid)
         if not original:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Workset {workset_id} not found",
+                detail=f"Workset {euid} not found",
             )
 
         # Verify workset belongs to this customer (by customer_id, not bucket)
@@ -571,20 +573,23 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
                 detail="Workset does not belong to this customer",
             )
 
-        # Extract base name from original workset ID (remove uuid8-YYYYMMDD suffix)
-        # Format: {safe-name}-{uuid8}-{YYYYMMDD}
-        match = re.match(r"^(.+)-[a-f0-9]{8}-\d{8}$", workset_id)
+        # Extract base name from original workset name (remove hash8-YYYYMMDD suffix)
+        # Format: {safe-name}-{hash8}-{YYYYMMDD}
+        original_name = original.get("name", "")
+        match = re.match(r"^(.+)-[a-f0-9]{8}-\d{8}$", original_name)
         if match:
             base_name = match.group(1)
         else:
-            # Fallback: use original workset name from metadata or ID
+            # Fallback: use original workset name from metadata
             original_meta = original.get("metadata", {})
-            base_name = original_meta.get("workset_name", workset_id)[:30]
+            base_name = original_meta.get("workset_name", original_name)[:30]
             base_name = base_name.replace(" ", "-").lower()
 
-        # Generate new workset ID with new datetime suffix
-        date_suffix = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d")
-        new_workset_id = f"{base_name}-{uuid.uuid4().hex[:8]}-{date_suffix}"
+        # Generate new workset name with new datetime suffix
+        now_utc = dt.datetime.now(dt.timezone.utc)
+        date_suffix = now_utc.strftime("%Y%m%d")
+        time_hash = hashlib.sha256(f"{base_name}-{now_utc.isoformat()}-{customer_id}".encode()).hexdigest()[:8]
+        new_ws_name = f"{base_name}-{time_hash}-{date_suffix}"
 
         # Clone metadata from original workset
         original_meta = original.get("metadata", {})
@@ -601,7 +606,7 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
             "preferred_cluster": original.get("preferred_cluster"),
             "cluster_region": original.get("cluster_region"),
             # Retry tracking metadata
-            "retried_from": workset_id,
+            "retried_from_euid": euid,
             "retry_reason": "User requested retry",
         }
 
@@ -612,7 +617,7 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
 
         # Determine bucket and prefix for new workset
         bucket = original.get("bucket") or config.s3_bucket
-        prefix = f"worksets/{new_workset_id}/"
+        prefix = f"worksets/{new_ws_name}/"
         priority = original.get("priority", "normal")
         workset_type_val = original.get("workset_type", "ruo")
         preferred_cluster = original.get("preferred_cluster")
@@ -633,8 +638,8 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
             )
 
         if effective_integration:
-            success = effective_integration.register_workset(
-                name=new_workset_id,  # new_workset_id is the human-readable name
+            new_euid = effective_integration.register_workset(
+                name=new_ws_name,
                 bucket=bucket,
                 prefix=prefix,
                 priority=priority,
@@ -657,8 +662,8 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
             except ValueError:
                 ws_type = WorksetType.RUO
 
-            success = state_db.register_workset(
-                name=new_workset_id,  # new_workset_id is the human-readable name
+            new_euid = state_db.register_workset(
+                name=new_ws_name,
                 bucket=bucket,
                 prefix=prefix,
                 priority=ws_priority,
@@ -669,7 +674,7 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
                 cluster_region=cluster_region,
             )
 
-        if not success:
+        if not new_euid:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to create retry workset",
@@ -678,21 +683,21 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
         # Update original workset metadata to track retry
         try:
             state_db.update_metadata(
-                workset_id,
-                {"retried_as": new_workset_id},
+                euid,
+                {"retried_as_euid": new_euid},
             )
         except Exception as e:
             LOGGER.warning("Failed to update original workset with retry link: %s", e)
 
         # Return the new workset
-        new_workset = state_db.get_workset(new_workset_id)
+        new_workset = state_db.get_workset(new_euid)
         return new_workset
 
-    @router.post("/api/v2/customers/{customer_id}/worksets/{workset_id}/archive")
+    @router.post("/api/v2/customers/{customer_id}/worksets/{euid}/archive")
     async def archive_customer_workset(
         request: Request,
         customer_id: str,
-        workset_id: str,
+        euid: str,
         reason: Optional[str] = Body(None, embed=True),
     ):
         """Archive a customer's workset.
@@ -713,11 +718,11 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
                 detail=f"Customer {customer_id} not found",
             )
 
-        workset = state_db.get_workset(workset_id)
+        workset = state_db.get_workset(euid)
         if not workset:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Workset {workset_id} not found",
+                detail=f"Workset {euid} not found",
             )
 
         # Check if user is admin (can archive any workset) or owns the workset (by customer_id)
@@ -730,7 +735,7 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
 
         # Archive the workset
         success = state_db.archive_workset(
-            workset_id, archived_by=customer_id, archive_reason=reason
+            euid, archived_by=customer_id, archive_reason=reason
         )
         if not success:
             raise HTTPException(
@@ -757,17 +762,17 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
                             Key=new_key,
                         )
                         s3.delete_object(Bucket=bucket, Key=old_key)
-                LOGGER.info("Moved workset %s files to archive: %s", workset_id, archive_prefix)
+                LOGGER.info("Moved workset %s files to archive: %s", euid, archive_prefix)
             except Exception as e:
                 LOGGER.warning("Failed to move workset files to archive: %s", str(e))
 
-        return state_db.get_workset(workset_id)
+        return state_db.get_workset(euid)
 
-    @router.post("/api/v2/customers/{customer_id}/worksets/{workset_id}/delete")
+    @router.post("/api/v2/customers/{customer_id}/worksets/{euid}/delete")
     async def delete_customer_workset(
         request: Request,
         customer_id: str,
-        workset_id: str,
+        euid: str,
         hard_delete: bool = Body(False, embed=True),
         reason: Optional[str] = Body(None, embed=True),
     ):
@@ -792,11 +797,11 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
                 detail=f"Customer {customer_id} not found",
             )
 
-        workset = state_db.get_workset(workset_id)
+        workset = state_db.get_workset(euid)
         if not workset:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Workset {workset_id} not found",
+                detail=f"Workset {euid} not found",
             )
 
         # Check if user is admin (can delete any workset) or owns the workset (by customer_id)
@@ -831,10 +836,10 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
                         LOGGER.info(
                             "Deleted %d S3 objects for workset %s",
                             len(objects_to_delete),
-                            workset_id,
+                            euid,
                         )
                 except Exception as e:
-                    LOGGER.error("Failed to delete S3 objects for workset %s: %s", workset_id, str(e))
+                    LOGGER.error("Failed to delete S3 objects for workset %s: %s", euid, str(e))
                     raise HTTPException(
                         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                         detail=f"Failed to delete S3 data: {str(e)}",
@@ -842,7 +847,7 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
 
         # Update TapDB state
         success = state_db.delete_workset(
-            workset_id,
+            euid,
             deleted_by=customer_id,
             delete_reason=reason,
             hard_delete=hard_delete,
@@ -854,13 +859,13 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
             )
 
         if hard_delete:
-            return {"status": "deleted", "workset_id": workset_id, "hard_delete": True}
-        return state_db.get_workset(workset_id)
+            return {"status": "deleted", "euid": euid, "hard_delete": True}
+        return state_db.get_workset(euid)
 
-    @router.post("/api/v2/customers/{customer_id}/worksets/{workset_id}/restore")
+    @router.post("/api/v2/customers/{customer_id}/worksets/{euid}/restore")
     async def restore_customer_workset(
         customer_id: str,
-        workset_id: str,
+        euid: str,
     ):
         """Restore an archived workset back to ready state."""
         if not customer_manager:
@@ -876,11 +881,11 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
                 detail=f"Customer {customer_id} not found",
             )
 
-        workset = state_db.get_workset(workset_id)
+        workset = state_db.get_workset(euid)
         if not workset:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Workset {workset_id} not found",
+                detail=f"Workset {euid} not found",
             )
 
         # Verify workset belongs to this customer (by customer_id, not bucket)
@@ -896,24 +901,24 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
                 detail="Only archived worksets can be restored",
             )
 
-        success = state_db.restore_workset(workset_id, restored_by=customer_id)
+        success = state_db.restore_workset(euid, restored_by=customer_id)
         if not success:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to restore workset",
             )
 
-        return state_db.get_workset(workset_id)
+        return state_db.get_workset(euid)
 
-    @router.get("/api/v2/customers/{customer_id}/worksets/{workset_id}/logs")
+    @router.get("/api/v2/customers/{customer_id}/worksets/{euid}/logs")
     async def get_customer_workset_logs(
         customer_id: str,
-        workset_id: str,
+        euid: str,
     ):
         """Get logs for a customer's workset including live pipeline status.
 
         Returns:
-            - workset_id: The workset identifier
+            - euid: The workset EUID
             - state_history: List of state transitions from TapDB
             - pipeline_status: Live status from headnode (null if unavailable)
               - is_running: Whether the tmux session is active
@@ -940,11 +945,11 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
                 detail=f"Customer {customer_id} not found",
             )
 
-        workset = state_db.get_workset(workset_id)
+        workset = state_db.get_workset(euid)
         if not workset:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Workset {workset_id} not found",
+                detail=f"Workset {euid} not found",
             )
 
         # Verify workset belongs to this customer (by customer_id, not bucket)
@@ -1008,22 +1013,22 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
                 except Exception as e:
                     LOGGER.warning(
                         "Failed to fetch pipeline status for %s: %s",
-                        workset_id,
+                        euid,
                         str(e),
                     )
                     # Graceful fallback - return null pipeline_status
                     pipeline_status = None
 
         return {
-            "workset_id": workset_id,
+            "euid": euid,
             "state_history": history,
             "pipeline_status": pipeline_status,
         }
 
-    @router.get("/api/v2/customers/{customer_id}/worksets/{workset_id}/performance-metrics")
+    @router.get("/api/v2/customers/{customer_id}/worksets/{euid}/performance-metrics")
     async def get_customer_workset_performance_metrics(
         customer_id: str,
-        workset_id: str,
+        euid: str,
         force_refresh: bool = Query(False, description="Force refresh from headnode even if cached"),
     ):
         """Get performance metrics for a customer's workset.
@@ -1051,11 +1056,11 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
                 detail=f"Customer {customer_id} not found",
             )
 
-        workset = state_db.get_workset(workset_id)
+        workset = state_db.get_workset(euid)
         if not workset:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Workset {workset_id} not found",
+                detail=f"Workset {euid} not found",
             )
 
         # Verify workset belongs to this customer
@@ -1070,7 +1075,7 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
 
         # Check for cached metrics first
         if not force_refresh:
-            cached = state_db.get_performance_metrics(workset_id)
+            cached = state_db.get_performance_metrics(euid)
             if cached and cached.get("is_final"):
                 cached_metrics = cached.get("metrics", {})
                 if isinstance(cached_metrics, dict):
@@ -1087,7 +1092,7 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
                         )
                 # Have final cached metrics - return them
                 return {
-                    "workset_id": workset_id,
+                    "euid": euid,
                     "cached": True,
                     "is_final": True,
                     **(cached_metrics if isinstance(cached_metrics, dict) else {}),
@@ -1098,7 +1103,7 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
         metrics_source = None
 
         if PIPELINE_STATUS_AVAILABLE and PipelineStatusFetcher is not None:
-            workset_name = workset.get("name") or workset.get("workset_name") or workset_id
+            workset_name = workset.get("name") or workset.get("workset_name") or euid
             results_s3_uri = workset.get("results_s3_uri")
             # Use cached headnode IP from TapDB (stored by monitor when workset started)
             headnode_ip = workset.get("execution_headnode_ip")
@@ -1140,7 +1145,7 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
                 except Exception as e:
                     LOGGER.warning(
                         "Failed to fetch performance metrics from headnode for %s: %s",
-                        workset_id,
+                        euid,
                         str(e),
                     )
 
@@ -1159,12 +1164,12 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
                             metrics_source = "s3"
                             LOGGER.info(
                                 "Fetched performance metrics from S3 for %s",
-                                workset_id,
+                                euid,
                             )
                     except Exception as e:
                         LOGGER.warning(
                             "Failed to fetch performance metrics from S3 for %s: %s",
-                            workset_id,
+                            euid,
                             str(e),
                         )
 
@@ -1232,14 +1237,14 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
                         metrics_data["post_export_metrics"] = post_export_metrics
                         LOGGER.info(
                             "Calculated S3 directory size for %s: %s (%d bytes)",
-                            workset_id,
+                            euid,
                             post_export_metrics["analysis_directory_size_human"],
                             total_size,
                         )
                 except Exception as e:
                     LOGGER.warning(
                         "Failed to calculate S3 directory size for %s: %s",
-                        workset_id,
+                        euid,
                         str(e),
                     )
 
@@ -1255,11 +1260,11 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
 
             # Cache with is_final=True if workset is in terminal state
             state_db.update_performance_metrics(
-                workset_id, metrics_data, is_final=is_terminal_state
+                euid, metrics_data, is_final=is_terminal_state
             )
 
         return {
-            "workset_id": workset_id,
+            "euid": euid,
             "cached": False,
             "is_final": is_terminal_state,
             "source": metrics_source,
@@ -1267,18 +1272,18 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
         }
 
     @router.get(
-        "/api/v2/customers/{customer_id}/worksets/{workset_id}/snakemake-log/{log_filename}",
+        "/api/v2/customers/{customer_id}/worksets/{euid}/snakemake-log/{log_filename}",
     )
     async def download_snakemake_log(
         customer_id: str,
-        workset_id: str,
+        euid: str,
         log_filename: str,
     ):
         """Download a specific Snakemake log file from the headnode.
 
         Args:
             customer_id: Customer identifier
-            workset_id: Workset identifier
+            euid: Workset EUID
             log_filename: Name of the Snakemake log file (e.g., 2026-01-18T135855.907380.snakemake.log)
 
         Returns:
@@ -1297,11 +1302,11 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
                 detail=f"Customer {customer_id} not found",
             )
 
-        workset = state_db.get_workset(workset_id)
+        workset = state_db.get_workset(euid)
         if not workset:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Workset {workset_id} not found",
+                detail=f"Workset {euid} not found",
             )
 
         # Verify workset belongs to this customer

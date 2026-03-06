@@ -43,7 +43,7 @@ let inputIndex = 0;
 let currentEditIndex = null;
 
 // File browser state
-const FILE_API_BASE = '/api/files';
+const FILE_API_BASE = '/api/v2/files';
 let currentFileBrowserTarget = null; // 'R1_FQ' or 'R2_FQ'
 let currentBucketId = null;
 let currentBucketName = null;
@@ -90,7 +90,7 @@ async function refreshSavedManifests() {
     if (!customerId) return;
 
     try {
-        const resp = await fetch(`/api/customers/${customerId}/manifests`);
+        const resp = await fetch(`/api/v2/customers/${customerId}/manifests`);
         if (!resp.ok) throw new Error(`List failed (${resp.status})`);
         const data = await resp.json();
         setSavedManifestOptions(data.manifests || []);
@@ -148,7 +148,7 @@ async function saveManifest() {
     const tsv = generateManifestTSV();
 
     try {
-        const resp = await fetch(`/api/customers/${customerId}/manifests`, {
+        const resp = await fetch(`/api/v2/customers/${customerId}/manifests`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ tsv_content: tsv, name }),
@@ -186,7 +186,7 @@ async function loadSelectedManifest() {
     }
 
     try {
-        const resp = await fetch(`/api/customers/${customerId}/manifests/${manifestId}/download`);
+        const resp = await fetch(`/api/v2/customers/${customerId}/manifests/${manifestId}/download`);
         if (!resp.ok) throw new Error(`Download failed (${resp.status})`);
         const tsv = await resp.text();
         loadInputsFromTSVContent(tsv);
@@ -210,7 +210,7 @@ function downloadSelectedManifest() {
     }
 
     const a = document.createElement('a');
-    a.href = `/api/customers/${customerId}/manifests/${manifestId}/download`;
+    a.href = `/api/v2/customers/${customerId}/manifests/${manifestId}/download`;
     a.click();
 }
 
@@ -645,7 +645,7 @@ async function discoverFromS3() {
     }
 
     try {
-        const response = await fetch(`/api/s3/discover-samples?customer_id=${customerId}`);
+        const response = await fetch(`/api/v2/s3/discover-samples?customer_id=${customerId}`);
         if (!response.ok) throw new Error('Discovery failed');
 
         const data = await response.json();
@@ -913,7 +913,7 @@ async function detectAndDisplayBucketRegion(bucketName, targetField) {
 	}
 
 	try {
-		const resp = await fetch(`/api/s3/bucket-region/${encodeURIComponent(bucketName)}`);
+		const resp = await fetch(`/api/v2/s3/bucket-region/${encodeURIComponent(bucketName)}`);
 		if (resp.ok) {
 			const data = await resp.json();
 			if (regionIndicator) {

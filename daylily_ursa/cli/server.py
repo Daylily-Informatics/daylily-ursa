@@ -13,7 +13,7 @@ from urllib.parse import urlparse
 
 import typer
 import boto3
-from botocore.exceptions import BotoCoreError, ClientError
+from botocore.exceptions import ClientError
 from rich.console import Console
 
 server_app = typer.Typer(help="API server management commands")
@@ -464,7 +464,7 @@ def start(
                 user_pool_id=user_pool_id,
                 app_client_id=app_client_id,
             )
-        except (ClientError, BotoCoreError, ValueError) as exc:
+        except (ClientError, ValueError) as exc:
             console.print("[red]✗[/red]  Failed Cognito OAuth preflight check")
             console.print(f"   Could not describe app client [cyan]{app_client_id}[/cyan] in pool [cyan]{user_pool_id}[/cyan]")
             console.print(f"   Error: {exc}")

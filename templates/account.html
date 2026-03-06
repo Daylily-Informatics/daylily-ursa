@@ -736,7 +736,7 @@ async function submitPasswordChange(event) {
     }
 
     try {
-        const response = await fetch('/api/v1/auth/change-password', {
+        const response = await fetch('/api/v2/auth/change-password', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -770,7 +770,7 @@ async function loadApiTokens() {
     const container = document.getElementById('api-tokens-list');
 
     try {
-        const response = await fetch('/api/v1/auth/tokens');
+        const response = await fetch('/api/v2/auth/tokens');
         if (response.ok) {
             const tokens = await response.json();
             if (tokens.length === 0) {
@@ -802,7 +802,7 @@ async function generateApiToken() {
     const expiryDays = parseInt(document.getElementById('new-token-expiry').value);
 
     try {
-        const response = await fetch('/api/v1/auth/tokens', {
+        const response = await fetch('/api/v2/auth/tokens', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ name, expiry_days: expiryDays })
@@ -838,7 +838,7 @@ async function revokeToken(tokenId) {
     if (!confirm('Are you sure you want to revoke this token?')) return;
 
     try {
-        const response = await fetch(`/api/v1/auth/tokens/${tokenId}`, {
+        const response = await fetch(`/api/v2/auth/tokens/${tokenId}`, {
             method: 'DELETE'
         });
 

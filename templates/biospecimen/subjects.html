@@ -103,9 +103,7 @@
                     {% for subject in subjects %}
                     <tr>
                         <td>
-                            <a href="/portal/biospecimen/subjects/{{ subject.subject_id }}" class="text-accent">
-                                {{ subject.subject_id[:20] }}...
-                            </a>
+                            <span class="text-accent">{{ subject.subject_id[:20] }}...</span>
                         </td>
                         <td>{{ subject.display_name | default('—') }}</td>
                         <td>
@@ -122,14 +120,10 @@
                         <td>{{ subject.created_at[:10] if subject.created_at else '—' }}</td>
                         <td>
                             <div class="d-flex gap-sm">
-                                <a href="/portal/biospecimen/subjects/{{ subject.subject_id }}" 
-                                   class="btn btn-outline btn-sm" title="View">
-                                    <i class="fas fa-eye"></i>
-                                    </a>
-                                    <button class="btn btn-outline btn-sm"
-                                            onclick="addBiosample('{{ subject.subject_id }}')" title="Add new biospecimen" aria-label="Add new biospecimen">
-                                        <i class="fas fa-vial"></i>
-                                    </button>
+                                <button class="btn btn-outline btn-sm"
+                                        onclick="addBiosample('{{ subject.subject_id }}')" title="Add new biospecimen" aria-label="Add new biospecimen">
+                                    <i class="fas fa-vial"></i>
+                                </button>
                             </div>
                         </td>
                     </tr>
@@ -212,7 +206,7 @@
 {% block extra_js %}
 <script>
 window.CUSTOMER_ID = '{{ customer.customer_id if customer else "default-customer" }}';
-const BIOSPECIMEN_API = '/api/biospecimen';
+const BIOSPECIMEN_API = '/api/v2/biospecimen';
 
 function showModal(id) { document.getElementById(id).classList.add('show'); }
 function closeModal(id) { document.getElementById(id).classList.remove('show'); }
@@ -257,7 +251,7 @@ async function createSubject() {
 }
 
 function addBiosample(subjectId) {
-    window.location.href = `/portal/biospecimen/subjects/${subjectId}?action=add-biosample`;
+    window.location.href = `/portal/biospecimen/subjects?subject_id=${encodeURIComponent(subjectId)}&action=add-biosample`;
 }
 </script>
 {% endblock %}

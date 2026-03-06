@@ -1,11 +1,11 @@
 """S3 utility routes for Daylily API.
 
 Contains routes for S3 operations:
-- POST /api/s3/discover-samples
-- POST /api/s3/validate-bucket
-- GET /api/s3/iam-policy/{bucket_name}
-- GET /api/s3/bucket-policy/{bucket_name}
-- GET /api/s3/bucket-region/{bucket_name}
+- POST /api/v2/s3/discover-samples
+- POST /api/v2/s3/validate-bucket
+- GET /api/v2/s3/iam-policy/{bucket_name}
+- GET /api/v2/s3/bucket-policy/{bucket_name}
+- GET /api/v2/s3/bucket-region/{bucket_name}
 """
 
 from __future__ import annotations
@@ -44,7 +44,7 @@ def create_s3_router(deps: S3Dependencies) -> APIRouter:
     region = settings.get_effective_region()
     profile = settings.aws_profile
 
-    @router.post("/api/s3/discover-samples")
+    @router.post("/api/v2/s3/discover-samples")
     async def discover_samples_from_s3(
         request: Request,
         bucket: str = Body(..., embed=True),
@@ -137,7 +137,7 @@ def create_s3_router(deps: S3Dependencies) -> APIRouter:
 
 
 
-    @router.post("/api/s3/validate-bucket")
+    @router.post("/api/v2/s3/validate-bucket")
     async def validate_s3_bucket(
         bucket: str = Body(..., embed=True),
         current_user: Optional[Dict] = Depends(get_current_user),
@@ -165,7 +165,7 @@ def create_s3_router(deps: S3Dependencies) -> APIRouter:
             LOGGER.error("S3 Validation: Failed to validate bucket '%s': %s", bucket, str(e))
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to validate bucket: {str(e)}")
 
-    @router.get("/api/s3/iam-policy/{bucket_name}")
+    @router.get("/api/v2/s3/iam-policy/{bucket_name}")
     async def get_iam_policy_for_bucket(
         bucket_name: str,
         read_only: bool = False,
@@ -178,7 +178,7 @@ def create_s3_router(deps: S3Dependencies) -> APIRouter:
         policy = validator_inst.generate_iam_policy_for_bucket(bucket_name, read_only=read_only)
         return {"bucket": bucket_name, "read_only": read_only, "policy": policy}
 
-    @router.get("/api/s3/bucket-policy/{bucket_name}")
+    @router.get("/api/v2/s3/bucket-policy/{bucket_name}")
     async def get_bucket_policy_for_daylily(
         bucket_name: str,
         daylily_account_id: str = "108782052779",
@@ -194,7 +194,7 @@ def create_s3_router(deps: S3Dependencies) -> APIRouter:
             "apply_command": f"aws s3api put-bucket-policy --bucket {bucket_name} --policy file://bucket-policy.json",
         }
 
-    @router.get("/api/s3/bucket-region/{bucket_name}")
+    @router.get("/api/v2/s3/bucket-region/{bucket_name}")
     async def get_bucket_region(
         bucket_name: str,
         current_user: Optional[Dict] = Depends(get_current_user),

@@ -1,13 +1,13 @@
 """Cluster management routes for Daylily API.
 
 Contains routes for ParallelCluster operations:
-- GET /api/clusters
-- POST /api/clusters/create
-- GET /api/clusters/create/jobs
-- GET /api/clusters/create/jobs/{job_id}
-- GET /api/clusters/create/jobs/{job_id}/logs
-- GET /api/clusters/create/options
-- DELETE /api/clusters/{cluster_name}
+- GET /api/v2/clusters
+- POST /api/v2/clusters/create
+- GET /api/v2/clusters/create/jobs
+- GET /api/v2/clusters/create/jobs/{job_id}
+- GET /api/v2/clusters/create/jobs/{job_id}/logs
+- GET /api/v2/clusters/create/options
+- DELETE /api/v2/clusters/{cluster_name}
 """
 
 from __future__ import annotations
@@ -88,7 +88,7 @@ def create_clusters_router(deps: ClusterDependencies) -> APIRouter:
             profile = settings.aws_profile
         return (allowed or []), profile
 
-    @router.get("/api/clusters")
+    @router.get("/api/v2/clusters")
     async def list_clusters(
         request: Request,
         refresh: bool = Query(False, description="Force refresh cluster cache"),
@@ -139,7 +139,7 @@ def create_clusters_router(deps: ClusterDependencies) -> APIRouter:
             LOGGER.error(f"Failed to list clusters: {e}")
             return {"clusters": [], "regions": [], "error": str(e)}
 
-    @router.post("/api/clusters/create")
+    @router.post("/api/v2/clusters/create")
     async def create_cluster(
         create_req: ClusterCreateRequest,
         current_user: Optional[Dict] = Depends(get_current_user),
@@ -210,11 +210,11 @@ def create_clusters_router(deps: ClusterDependencies) -> APIRouter:
             "region_az": job.region_az,
             "aws_profile": job.aws_profile,
             "log_path": str(job.log_path),
-            "job_status_url": f"/api/clusters/create/jobs/{job.job_id}",
-            "job_logs_url": f"/api/clusters/create/jobs/{job.job_id}/logs",
+            "job_status_url": f"/api/v2/clusters/create/jobs/{job.job_id}",
+            "job_logs_url": f"/api/v2/clusters/create/jobs/{job.job_id}/logs",
         }
 
-    @router.get("/api/clusters/create/jobs")
+    @router.get("/api/v2/clusters/create/jobs")
     async def list_cluster_create_jobs(
         limit: int = Query(20, ge=1, le=100),
         current_user: Optional[Dict] = Depends(get_current_user),
@@ -227,7 +227,7 @@ def create_clusters_router(deps: ClusterDependencies) -> APIRouter:
 
         return {"jobs": ec_runner.list_cluster_create_jobs(limit=limit)}
 
-    @router.get("/api/clusters/create/jobs/{job_id}")
+    @router.get("/api/v2/clusters/create/jobs/{job_id}")
     async def get_cluster_create_job(
         job_id: str,
         current_user: Optional[Dict] = Depends(get_current_user),
@@ -243,7 +243,7 @@ def create_clusters_router(deps: ClusterDependencies) -> APIRouter:
         except FileNotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e))
 
-    @router.get("/api/clusters/create/jobs/{job_id}/logs")
+    @router.get("/api/v2/clusters/create/jobs/{job_id}/logs")
     async def get_cluster_create_job_logs(
         job_id: str,
         lines: int = Query(200, ge=1, le=2000),
@@ -261,7 +261,7 @@ def create_clusters_router(deps: ClusterDependencies) -> APIRouter:
             raise HTTPException(status_code=404, detail=str(e))
         return {"job_id": job_id, "lines": lines, "log": log_text}
 
-    @router.get("/api/clusters/create/options")
+    @router.get("/api/v2/clusters/create/options")
     async def get_cluster_create_options(
         region: str = Query(..., description="AWS region for keypair lookup and bucket filtering"),
         current_user: Optional[Dict] = Depends(get_current_user),
@@ -325,7 +325,7 @@ def create_clusters_router(deps: ClusterDependencies) -> APIRouter:
             "buckets": buckets,
         }
 
-    @router.delete("/api/clusters/{cluster_name}")
+    @router.delete("/api/v2/clusters/{cluster_name}")
     async def delete_cluster(
         cluster_name: str,
         region: str = Query(..., description="AWS region where the cluster is located"),

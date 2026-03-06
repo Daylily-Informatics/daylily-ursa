@@ -221,8 +221,8 @@ _CASES = [
   _AuthzCase("worksets_list", "/portal/worksets", 302, 200, 200),
   _AuthzCase("clusters", "/portal/clusters", 302, 200, 200, assert_non_admin=_assert_clusters_non_admin, assert_admin=_assert_clusters_admin),
   _AuthzCase("monitor_page", "/portal/monitor", 302, 403, 200),
-  _AuthzCase("monitor_status", "/api/monitor/status", 302, 403, 200),
-  _AuthzCase("monitor_logs", "/api/monitor/logs", 302, 403, 200),
+  _AuthzCase("monitor_status", "/api/v2/monitor/status", 302, 403, 200),
+  _AuthzCase("monitor_logs", "/api/v2/monitor/logs", 302, 403, 200),
   _AuthzCase("workset_detail_owned_user", "/portal/worksets/ws-owned-by-cust-user", 302, 200, 404),
   _AuthzCase("workset_detail_owned_admin", "/portal/worksets/ws-owned-by-cust-admin", 302, 404, 200),
   _AuthzCase("workset_detail_not_owned", "/portal/worksets/ws-owned-by-cust-other", 302, 404, 404),
@@ -253,13 +253,13 @@ def test_portal_authz_matrix(
   if case.assert_admin and admin.status_code == 200:
     case.assert_admin(admin)
 
-  if case.path == "/api/monitor/status" and admin.status_code == 200:
+  if case.path == "/api/v2/monitor/status" and admin.status_code == 200:
     data = admin.json()
     assert "running" in data
     assert "pid" in data
     assert "stats" in data
 
-  if case.path == "/api/monitor/logs" and admin.status_code == 200:
+  if case.path == "/api/v2/monitor/logs" and admin.status_code == 200:
     data = admin.json()
     assert "lines" in data
     assert "error" in data

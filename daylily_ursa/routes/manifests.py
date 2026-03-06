@@ -1,10 +1,10 @@
 """Manifest management routes for Daylily API.
 
 Contains routes for customer manifest operations:
-- GET /api/customers/{customer_id}/manifests
-- POST /api/customers/{customer_id}/manifests
-- GET /api/customers/{customer_id}/manifests/{manifest_id}
-- GET /api/customers/{customer_id}/manifests/{manifest_id}/download
+- GET /api/v2/customers/{customer_id}/manifests
+- POST /api/v2/customers/{customer_id}/manifests
+- GET /api/v2/customers/{customer_id}/manifests/{manifest_id}
+- GET /api/v2/customers/{customer_id}/manifests/{manifest_id}/download
 """
 
 from __future__ import annotations
@@ -53,7 +53,7 @@ def create_manifests_router(deps: ManifestDependencies) -> APIRouter:
                 detail="Manifest storage not configured",
             )
 
-    @router.get("/api/customers/{customer_id}/manifests")
+    @router.get("/api/v2/customers/{customer_id}/manifests")
     async def list_customer_manifests(
         customer_id: str,
         limit: int = Query(200, ge=1, le=500),
@@ -71,7 +71,7 @@ def create_manifests_router(deps: ManifestDependencies) -> APIRouter:
         return {"manifests": manifests}
 
     @router.post(
-        "/api/customers/{customer_id}/manifests",
+        "/api/v2/customers/{customer_id}/manifests",
         status_code=status.HTTP_201_CREATED,
     )
     async def save_customer_manifest(
@@ -100,13 +100,13 @@ def create_manifests_router(deps: ManifestDependencies) -> APIRouter:
                 raise HTTPException(status_code=400, detail=str(e))
             raise
 
-        download_url = f"/api/customers/{customer_id}/manifests/{saved.manifest_id}/download"
+        download_url = f"/api/v2/customers/{customer_id}/manifests/{saved.manifest_id}/download"
         return {
             "manifest": saved.to_metadata_dict(),
             "download_url": download_url,
         }
 
-    @router.get("/api/customers/{customer_id}/manifests/{manifest_id}")
+    @router.get("/api/v2/customers/{customer_id}/manifests/{manifest_id}")
     async def get_customer_manifest_metadata(customer_id: str, manifest_id: str):
         """Get saved manifest metadata (not content)."""
         _check_manifest_registry()
@@ -119,7 +119,7 @@ def create_manifests_router(deps: ManifestDependencies) -> APIRouter:
             raise HTTPException(status_code=404, detail="Manifest not found")
         return {"manifest": m.to_metadata_dict()}
 
-    @router.get("/api/customers/{customer_id}/manifests/{manifest_id}/download")
+    @router.get("/api/v2/customers/{customer_id}/manifests/{manifest_id}/download")
     async def download_customer_manifest(customer_id: str, manifest_id: str):
         """Download the saved stage_samples.tsv content."""
         _check_manifest_registry()

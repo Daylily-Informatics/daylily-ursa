@@ -49,13 +49,13 @@ def test_customers_routes_have_request_level_coverage():
 
     with TestClient(app, base_url="https://testserver") as client:
         assert client.post(
-            "/customers",
+            "/api/v2/customers",
             json={"customer_name": "Acme", "email": "acme@example.com"},
         ).status_code != 404
-        assert client.get("/customers/cust-001").status_code != 404
-        assert client.get("/customers/cust-001/usage").status_code != 404
+        assert client.get("/api/v2/customers/cust-001").status_code != 404
+        assert client.get("/api/v2/customers/cust-001/usage").status_code != 404
 
         # PATCH route reads request.session for authorization.
         assert client.get("/__test__/login").status_code == 200
-        assert client.patch("/api/v1/customers/cust-001", json={"customer_name": "Acme"}).status_code != 404
+        assert client.patch("/api/v2/customers/cust-001", json={"customer_name": "Acme"}).status_code != 404
 

@@ -532,7 +532,8 @@ def mock_state_db():
     mock_db = MagicMock(spec=WorksetStateDB)
     mock_db.list_worksets_by_state.return_value = [
         {
-            "workset_id": "test-workset-001",
+            "euid": "euid-test-workset-001",
+            "name": "test-workset-001",
             "state": "ready",
             "priority": "normal",
             "bucket": "test-bucket",
@@ -542,7 +543,8 @@ def mock_state_db():
             "updated_at": "2024-01-15T10:00:00Z",
         },
         {
-            "workset_id": "test-workset-002",
+            "euid": "euid-test-workset-002",
+            "name": "test-workset-002",
             "state": "in_progress",
             "priority": "high",
             "bucket": "test-bucket",
@@ -553,7 +555,8 @@ def mock_state_db():
         },
     ]
     mock_db.get_workset.return_value = {
-        "workset_id": "test-workset-001",
+        "euid": "euid-test-workset-001",
+        "name": "test-workset-001",
         "state": "ready",
         "priority": "normal",
         "bucket": "test-bucket",
@@ -915,7 +918,7 @@ class TestPortalGlobalSearch:
         )
 
         response = client.get(
-            "/api/portal/search",
+            "/api/v2/portal/search",
             params={
                 "q": "type:user",
                 "type": "user",
@@ -931,7 +934,7 @@ class TestPortalGlobalSearch:
     def test_api_portal_search_admin_scope_all_returns_cross_customer_user_hits(self, mock_state_db):
         client = self._make_admin_search_client(mock_state_db)
         response = client.get(
-            "/api/portal/search",
+            "/api/v2/portal/search",
             params={"q": "example.com", "type": "user", "scope": "all"},
         )
         assert response.status_code == 200
@@ -945,7 +948,7 @@ class TestPortalGlobalSearch:
     def test_api_portal_search_admin_scope_mine_excludes_other_customers(self, mock_state_db):
         client = self._make_admin_search_client(mock_state_db)
         response = client.get(
-            "/api/portal/search",
+            "/api/v2/portal/search",
             params={"q": "example.com", "type": "user", "scope": "mine"},
         )
         assert response.status_code == 200
@@ -964,7 +967,7 @@ class TestPortalGlobalSearch:
         )
 
         response = client.get(
-            "/api/portal/search",
+            "/api/v2/portal/search",
             params={"q": "type:file tag:germline"},
         )
         assert response.status_code == 200
@@ -1193,7 +1196,7 @@ class TestPortalBucketsEditDialog:
         assert b"Transfer (Cross-region)" in html.content
         assert b"Internet egress" in html.content
 
-        api = client.get("/api/customers/customer-A/dashboard/cost-breakdown")
+        api = client.get("/api/v2/customers/customer-A/dashboard/cost-breakdown")
         assert api.status_code == 200
         payload = api.json()
         assert payload["categories"] == [
@@ -1248,17 +1251,17 @@ class TestAPIEndpoints:
 
     def test_list_worksets(self, client, mock_state_db):
         """Test listing worksets via API."""
-        response = client.get("/worksets")
+        response = client.get("/api/v2/worksets")
         assert response.status_code == 200
         data = response.json()
         assert isinstance(data, list)
 
     def test_get_workset(self, client, mock_state_db):
         """Test getting a single workset."""
-        response = client.get("/worksets/test-workset-001")
+        response = client.get("/api/v2/worksets/test-workset-001")
         assert response.status_code == 200
         data = response.json()
-        assert data["workset_id"] == "test-workset-001"
+        assert data["euid"] == "euid-test-workset-001"
 
     def test_get_queue_stats(self, client, mock_state_db):
         """Test queue statistics endpoint."""
@@ -1268,7 +1271,7 @@ class TestAPIEndpoints:
             "completed": 10,
             "error": 1,
         }
-        response = client.get("/queue/stats")
+        response = client.get("/api/v2/queue/stats")
         assert response.status_code == 200
         data = response.json()
         assert "queue_depth" in data
@@ -1316,7 +1319,7 @@ class TestArchiveDeleteAPI:
         mock_state_db.archive_workset.return_value = True
 
         response = client_with_customer.post(
-            "/api/customers/cust-001/worksets/test-ws-001/archive",
+            "/api/v2/customers/cust-001/worksets/test-ws-001/archive",
             json={"reason": "No longer needed"}
         )
 
@@ -1328,7 +1331,7 @@ class TestArchiveDeleteAPI:
         mock_state_db.get_workset.return_value = None
 
         response = client_with_customer.post(
-            "/api/customers/cust-001/worksets/nonexistent/archive",
+            "/api/v2/customers/cust-001/worksets/nonexistent/archive",
             json={}
         )
 
@@ -1345,7 +1348,7 @@ class TestArchiveDeleteAPI:
         mock_state_db.archive_workset.return_value = True
 
         response = client_with_customer.post(
-            "/api/customers/cust-001/worksets/test-ws-001/archive",
+            "/api/v2/customers/cust-001/worksets/test-ws-001/archive",
             json={}
         )
 
@@ -1363,7 +1366,7 @@ class TestArchiveDeleteAPI:
         mock_state_db.delete_workset.return_value = True
 
         response = client_with_customer.post(
-            "/api/customers/cust-001/worksets/test-ws-001/delete",
+            "/api/v2/customers/cust-001/worksets/test-ws-001/delete",
             json={"hard_delete": False, "reason": "Cleaning up"}
         )
 
@@ -1389,7 +1392,7 @@ class TestArchiveDeleteAPI:
             mock_s3.list_objects_v2.return_value = {"Contents": []}
 
             response = client_with_customer.post(
-                "/api/customers/cust-001/worksets/test-ws-001/delete",
+                "/api/v2/customers/cust-001/worksets/test-ws-001/delete",
                 json={"hard_delete": True}
             )
 
@@ -1400,7 +1403,7 @@ class TestArchiveDeleteAPI:
         mock_state_db.get_workset.return_value = None
 
         response = client_with_customer.post(
-            "/api/customers/cust-001/worksets/nonexistent/delete",
+            "/api/v2/customers/cust-001/worksets/nonexistent/delete",
             json={}
         )
 
@@ -1417,7 +1420,7 @@ class TestArchiveDeleteAPI:
         mock_state_db.delete_workset.return_value = True
 
         response = client_with_customer.post(
-            "/api/customers/cust-001/worksets/test-ws-001/delete",
+            "/api/v2/customers/cust-001/worksets/test-ws-001/delete",
             json={}
         )
 
@@ -1435,7 +1438,7 @@ class TestArchiveDeleteAPI:
         mock_state_db.restore_workset.return_value = True
 
         response = client_with_customer.post(
-            "/api/customers/cust-001/worksets/test-ws-001/restore"
+            "/api/v2/customers/cust-001/worksets/test-ws-001/restore"
         )
 
         assert response.status_code == 200
@@ -1451,7 +1454,7 @@ class TestArchiveDeleteAPI:
         }
 
         response = client_with_customer.post(
-            "/api/customers/cust-001/worksets/test-ws-001/restore"
+            "/api/v2/customers/cust-001/worksets/test-ws-001/restore"
         )
 
         assert response.status_code == 400
@@ -1473,7 +1476,7 @@ class TestArchiveDeleteAPI:
         )
         client = TestClient(app, base_url="https://testserver")
 
-        response = client.get("/api/customers/cust-001/worksets/archived")
+        response = client.get("/api/v2/customers/cust-001/worksets/archived")
 
         assert response.status_code == 200
         data = response.json()
@@ -1554,7 +1557,7 @@ class TestWorksetCreationValidation:
 
         # Test with empty string
         response = client.post(
-            "/api/customers//worksets",
+            "/api/v2/customers//worksets",
             json={
                 "workset_name": "Test Workset",
                 "pipeline_type": "wgs",
@@ -1578,7 +1581,7 @@ class TestWorksetCreationValidation:
         client = TestClient(app, base_url="https://testserver")
 
         response = client.post(
-            "/api/customers/Unknown/worksets",
+            "/api/v2/customers/Unknown/worksets",
             json={
                 "workset_name": "Test Workset",
                 "pipeline_type": "wgs",
@@ -1602,7 +1605,7 @@ class TestWorksetCreationValidation:
         client = TestClient(app, base_url="https://testserver")
 
         response = client.post(
-            "/api/customers/nonexistent-customer/worksets",
+            "/api/v2/customers/nonexistent-customer/worksets",
             json={
                 "workset_name": "Test Workset",
                 "pipeline_type": "wgs",
@@ -1623,7 +1626,7 @@ class TestWorksetCreationValidation:
         client = TestClient(app, base_url="https://testserver")
 
         response = client.post(
-            "/api/customers/cust-001/worksets",
+            "/api/v2/customers/cust-001/worksets",
             json={
                 "workset_name": "Empty Workset",
                 "pipeline_type": "wgs",
@@ -1645,7 +1648,7 @@ class TestWorksetCreationValidation:
         client = TestClient(app, base_url="https://testserver")
 
         response = client.post(
-            "/api/customers/cust-001/worksets",
+            "/api/v2/customers/cust-001/worksets",
             json={
                 "workset_name": "No Samples Workset",
                 "pipeline_type": "wgs",
@@ -1668,7 +1671,7 @@ class TestWorksetCreationValidation:
         mock_customer.customer_id = "cust-no-bucket"
         mock_customer.s3_bucket = None  # No bucket configured - this is OK now
         mock_mgr.get_customer_config.return_value = mock_customer
-        mock_state_db.get_workset.return_value = {"workset_id": "test"}
+        mock_state_db.get_workset.return_value = {"euid": "euid-test", "name": "test"}
 
         app = create_app(
             state_db=mock_state_db,
@@ -1679,7 +1682,7 @@ class TestWorksetCreationValidation:
         client = TestClient(app, base_url="https://testserver")
 
         response = client.post(
-            "/api/customers/cust-no-bucket/worksets",
+            "/api/v2/customers/cust-no-bucket/worksets",
             json={
                 "workset_name": "Test Workset",
                 "pipeline_type": "wgs",
@@ -1698,9 +1701,10 @@ class TestWorksetCreationValidation:
 
         Note: Worksets get bucket from cluster tags (aws-parallelcluster-monitor-bucket).
         """
-        mock_state_db.register_workset.return_value = True
+        mock_state_db.register_workset.return_value = "euid-test-workset-12345678"
         mock_state_db.get_workset.return_value = {
-            "workset_id": "test-workset-12345678",
+            "euid": "euid-test-workset-12345678",
+            "name": "test-workset-12345678",
             "state": "ready",
             "bucket": "test-control-bucket",  # From cluster tag
             "prefix": "worksets/test-workset-12345678/",
@@ -1716,7 +1720,7 @@ class TestWorksetCreationValidation:
         client = TestClient(app, base_url="https://testserver")
 
         response = client.post(
-            "/api/customers/cust-001/worksets",
+            "/api/v2/customers/cust-001/worksets",
             json={
                 "workset_name": "Valid Workset",
                 "pipeline_type": "wgs",
@@ -1747,7 +1751,8 @@ class TestWorksetCreationValidation:
         The s3_bucket parameter is ignored in favor of the cluster bucket.
         """
         mock_state_db.get_workset.return_value = {
-            "workset_id": "test-workset-12345678",
+            "euid": "euid-test-workset-12345678",
+            "name": "test-workset-12345678",
             "state": "ready",
         }
 
@@ -1760,7 +1765,7 @@ class TestWorksetCreationValidation:
         client = TestClient(app, base_url="https://testserver")
 
         response = client.post(
-            "/api/customers/cust-001/worksets",
+            "/api/v2/customers/cust-001/worksets",
             json={
                 "workset_name": "Test Workset",
                 "pipeline_type": "wgs",
@@ -1780,7 +1785,7 @@ class TestWorksetCreationValidation:
         self, mock_state_db, mock_customer_manager_with_email_lookup, mock_integration
     ):
         """Test that prefix is properly normalized with trailing slash."""
-        mock_state_db.get_workset.return_value = {"workset_id": "test"}
+        mock_state_db.get_workset.return_value = {"euid": "euid-test", "name": "test"}
 
         app = create_app(
             state_db=mock_state_db,
@@ -1791,7 +1796,7 @@ class TestWorksetCreationValidation:
         client = TestClient(app, base_url="https://testserver")
 
         response = client.post(
-            "/api/customers/cust-001/worksets",
+            "/api/v2/customers/cust-001/worksets",
             json={
                 "workset_name": "Test Workset",
                 "pipeline_type": "wgs",
@@ -1811,7 +1816,7 @@ class TestWorksetCreationValidation:
         self, mock_state_db, mock_customer_manager_with_email_lookup, mock_integration
     ):
         """Test workset creation from YAML content."""
-        mock_state_db.get_workset.return_value = {"workset_id": "test"}
+        mock_state_db.get_workset.return_value = {"euid": "euid-test", "name": "test"}
 
         app = create_app(
             state_db=mock_state_db,
@@ -1831,7 +1836,7 @@ samples:
     r2_file: ys2_R2.fq.gz
 """
         response = client.post(
-            "/api/customers/cust-001/worksets",
+            "/api/v2/customers/cust-001/worksets",
             json={
                 "workset_name": "YAML Workset",
                 "pipeline_type": "wgs",
@@ -1863,7 +1868,7 @@ samples:
 samples: []
 """
         response = client.post(
-            "/api/customers/cust-001/worksets",
+            "/api/v2/customers/cust-001/worksets",
             json={
                 "workset_name": "Empty YAML Workset",
                 "pipeline_type": "wgs",
@@ -1879,7 +1884,7 @@ samples: []
         self, mock_state_db, mock_customer_manager_with_email_lookup, mock_integration
     ):
         """Test workset creation from manifest TSV content."""
-        mock_state_db.get_workset.return_value = {"workset_id": "test"}
+        mock_state_db.get_workset.return_value = {"euid": "euid-test", "name": "test"}
 
         app = create_app(
             state_db=mock_state_db,
@@ -1894,7 +1899,7 @@ samples: []
 R0\tA1\tE1\tblood\tnoampwgs\tILMN\tNOVASEQX\t0\tS1\t\ts3://bucket/sample.R1.fastq.gz\ts3://bucket/sample.R2.fastq.gz\tstage_data\t/fsx/staged/\tna\tfalse\tfalse\t1\t1\tHG002"""
 
         response = client.post(
-            "/api/customers/cust-001/worksets",
+            "/api/v2/customers/cust-001/worksets",
             json={
                 "workset_name": "Manifest TSV Workset",
                 "pipeline_type": "wgs",
@@ -1931,7 +1936,7 @@ R0\tA1\tE1\tblood\tnoampwgs\tILMN\tNOVASEQX\t0\tS1\t\ts3://bucket/sample.R1.fast
         manifest_tsv = "RUN_ID\tSAMPLE_ID\tR1_FQ\tR2_FQ"
 
         response = client.post(
-            "/api/customers/cust-001/worksets",
+            "/api/v2/customers/cust-001/worksets",
             json={
                 "workset_name": "Empty Manifest Workset",
                 "pipeline_type": "wgs",
@@ -2994,7 +2999,7 @@ class TestBucketRegionDetectionAPI:
             # S3 returns None for us-east-1 buckets
             mock_s3.get_bucket_location.return_value = {"LocationConstraint": None}
 
-            response = client.get("/api/s3/bucket-region/test-bucket-east")
+            response = client.get("/api/v2/s3/bucket-region/test-bucket-east")
 
             assert response.status_code == 200
             data = response.json()
@@ -3008,7 +3013,7 @@ class TestBucketRegionDetectionAPI:
             mock_session.return_value.client.return_value = mock_s3
             mock_s3.get_bucket_location.return_value = {"LocationConstraint": "us-west-2"}
 
-            response = client.get("/api/s3/bucket-region/test-bucket-west")
+            response = client.get("/api/v2/s3/bucket-region/test-bucket-west")
 
             assert response.status_code == 200
             data = response.json()
@@ -3027,7 +3032,7 @@ class TestBucketRegionDetectionAPI:
                 "GetBucketLocation",
             )
 
-            response = client.get("/api/s3/bucket-region/nonexistent-bucket")
+            response = client.get("/api/v2/s3/bucket-region/nonexistent-bucket")
 
             assert response.status_code == 404
             data = response.json()
@@ -3045,7 +3050,7 @@ class TestBucketRegionDetectionAPI:
                 "GetBucketLocation",
             )
 
-            response = client.get("/api/s3/bucket-region/private-bucket")
+            response = client.get("/api/v2/s3/bucket-region/private-bucket")
 
             assert response.status_code == 403
             data = response.json()
@@ -3057,9 +3062,10 @@ class TestWorksetCreationWithPreferredCluster:
 
     def test_create_workset_with_preferred_cluster(self, client, mock_state_db):
         """Test creating workset with preferred_cluster."""
-        mock_state_db.register_workset.return_value = True
+        mock_state_db.register_workset.return_value = "euid-test-ws-cluster"
         mock_state_db.get_workset.return_value = {
-            "workset_id": "test-ws-cluster",
+            "euid": "euid-test-ws-cluster",
+            "name": "test-ws-cluster",
             "state": "ready",
             "priority": "normal",
             "workset_type": "ruo",
@@ -3071,9 +3077,9 @@ class TestWorksetCreationWithPreferredCluster:
         }
 
         response = client.post(
-            "/worksets",
+            "/api/v2/worksets",
             json={
-                "workset_id": "test-ws-cluster",
+                "name": "test-ws-cluster",
                 "bucket": "test-bucket",
                 "prefix": "worksets/test/",
                 "priority": "normal",
@@ -3092,9 +3098,10 @@ class TestWorksetCreationWithPreferredCluster:
 
     def test_create_workset_without_preferred_cluster(self, client, mock_state_db):
         """Test creating workset without preferred_cluster."""
-        mock_state_db.register_workset.return_value = True
+        mock_state_db.register_workset.return_value = "euid-test-ws-no-cluster"
         mock_state_db.get_workset.return_value = {
-            "workset_id": "test-ws-no-cluster",
+            "euid": "euid-test-ws-no-cluster",
+            "name": "test-ws-no-cluster",
             "state": "ready",
             "priority": "normal",
             "workset_type": "ruo",
@@ -3105,9 +3112,9 @@ class TestWorksetCreationWithPreferredCluster:
         }
 
         response = client.post(
-            "/worksets",
+            "/api/v2/worksets",
             json={
-                "workset_id": "test-ws-no-cluster",
+                "name": "test-ws-no-cluster",
                 "bucket": "test-bucket",
                 "prefix": "worksets/test/",
                 "priority": "normal",
@@ -3574,7 +3581,7 @@ class TestPortalAuthzSurfaces:
         assert b"data-testid=\"spot-market-panel\"" not in non_admin_response.content
 
     def test_api_delete_cluster_requires_admin(self, mock_state_db, monkeypatch):
-        """DELETE /api/clusters/* must be admin-only."""
+        """DELETE /api/v2/clusters/* must be admin-only."""
 
         class _FakeUrsaConfig:
             is_configured = True
@@ -3590,14 +3597,14 @@ class TestPortalAuthzSurfaces:
         monkeypatch.setattr("daylily_ursa.cluster_service.get_cluster_service", lambda **kwargs: mock_service)
 
         non_admin_client = _make_authenticated_client(mock_state_db, customer_id="cust-user", is_admin=False)
-        resp = non_admin_client.delete("/api/clusters/test-cluster?region=us-west-2")
+        resp = non_admin_client.delete("/api/v2/clusters/test-cluster?region=us-west-2")
         assert resp.status_code == 403
 
     def test_api_create_cluster_requires_admin(self, mock_state_db):
-        """POST /api/clusters/create must be admin-only."""
+        """POST /api/v2/clusters/create must be admin-only."""
         non_admin_client = _make_authenticated_client(mock_state_db, customer_id="cust-user", is_admin=False)
         resp = non_admin_client.post(
-            "/api/clusters/create",
+            "/api/v2/clusters/create",
             json={
                 "region_az": "us-west-2a",
                 "cluster_name": "test-cluster",
@@ -3641,7 +3648,7 @@ class TestPortalAuthzSurfaces:
 
         admin_client = _make_authenticated_client(mock_state_db, customer_id="cust-admin", is_admin=True)
         resp = admin_client.post(
-            "/api/clusters/create",
+            "/api/v2/clusters/create",
             json={
                 "region_az": "us-west-2a",
                 "cluster_name": "test-cluster",
@@ -3658,8 +3665,8 @@ class TestPortalAuthzSurfaces:
         assert payload["cluster_name"] == "test-cluster"
         assert payload["region_az"] == "us-west-2a"
         assert payload["aws_profile"] == "lsmc"
-        assert payload["job_status_url"] == "/api/clusters/create/jobs/ec_test_0001"
-        assert payload["job_logs_url"] == "/api/clusters/create/jobs/ec_test_0001/logs"
+        assert payload["job_status_url"] == "/api/v2/clusters/create/jobs/ec_test_0001"
+        assert payload["job_logs_url"] == "/api/v2/clusters/create/jobs/ec_test_0001/logs"
 
         start_mock.assert_called_once()
 
@@ -3680,7 +3687,7 @@ class TestPortalAuthzSurfaces:
         monkeypatch.setattr("daylily_ursa.cluster_service.get_cluster_service", lambda **kwargs: mock_service)
 
         admin_client = _make_authenticated_client(mock_state_db, customer_id="cust-admin", is_admin=True)
-        resp = admin_client.delete("/api/clusters/test-cluster?region=us-west-2")
+        resp = admin_client.delete("/api/v2/clusters/test-cluster?region=us-west-2")
         assert resp.status_code == 200
         payload = resp.json()
         assert payload["success"] is True

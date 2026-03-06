@@ -79,11 +79,11 @@ def test_customer_worksets_extra_routes_have_request_level_coverage():
     app.include_router(create_customer_worksets_router(deps))
 
     with TestClient(app, base_url="https://testserver") as client:
-        assert client.post("/api/customers/cust-001/worksets/ws-123/cancel").status_code != 404
-        assert client.post("/api/customers/cust-001/worksets/ws-123/retry").status_code != 404
-        assert client.get("/api/customers/cust-001/worksets/ws-123/logs").status_code != 404
-        assert client.get("/api/customers/cust-001/worksets/ws-123/performance-metrics").status_code != 404
+        assert client.post("/api/v2/customers/cust-001/worksets/ws-123/cancel").status_code != 404
+        assert client.post("/api/v2/customers/cust-001/worksets/ws-123/retry").status_code != 404
+        assert client.get("/api/v2/customers/cust-001/worksets/ws-123/logs").status_code != 404
+        assert client.get("/api/v2/customers/cust-001/worksets/ws-123/performance-metrics").status_code != 404
 
         # Exercise the early validation path (prevents SSH/headnode access).
-        resp = client.get("/api/customers/cust-001/worksets/ws-123/snakemake-log/evil.txt")
+        resp = client.get("/api/v2/customers/cust-001/worksets/ws-123/snakemake-log/evil.txt")
         assert resp.status_code == 400

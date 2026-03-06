@@ -411,7 +411,7 @@ async function refreshWorksetDetail(worksetState) {
                 const customerId = window.UrsaConfig?.customerId;
                 const worksetId = window.location.pathname.split('/').pop();
 
-                const url = `/api/customers/${customerId}/worksets/${worksetId}/performance-metrics?force_refresh=true`;
+                const url = `/api/v2/customers/${customerId}/worksets/${worksetId}/performance-metrics?force_refresh=true`;
                 const response = await fetch(url);
 
                 if (!response.ok) {
@@ -831,7 +831,7 @@ async function refreshClusterList() {
     try {
         // Use cached cluster data - refresh is expensive (10+ seconds)
         // The cache has 5-minute TTL and parallel region scanning
-        const response = await fetch('/api/clusters');
+        const response = await fetch('/api/v2/clusters');
         if (!response.ok) throw new Error(`Failed to load clusters (${response.status})`);
 
         const data = await response.json();

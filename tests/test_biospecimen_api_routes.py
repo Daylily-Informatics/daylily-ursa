@@ -60,35 +60,35 @@ def test_biospecimen_api_routes_have_request_level_coverage():
 
     with TestClient(app, base_url="https://testserver") as client:
         # Subjects
-        assert client.get("/api/biospecimen/subjects").status_code != 404
-        assert client.get("/api/biospecimen/subjects/subj-001").status_code != 404
-        assert client.get("/api/biospecimen/subjects/subj-001/hierarchy").status_code != 404
-        assert client.post("/api/biospecimen/subjects", json={"identifier": "HG002"}).status_code != 404
-        assert client.put("/api/biospecimen/subjects/subj-001", json={"identifier": "HG002"}).status_code != 404
+        assert client.get("/api/v2/biospecimen/subjects").status_code != 404
+        assert client.get("/api/v2/biospecimen/subjects/subj-001").status_code != 404
+        assert client.get("/api/v2/biospecimen/subjects/subj-001/hierarchy").status_code != 404
+        assert client.post("/api/v2/biospecimen/subjects", json={"identifier": "HG002"}).status_code != 404
+        assert client.put("/api/v2/biospecimen/subjects/subj-001", json={"identifier": "HG002"}).status_code != 404
 
         # Biosamples
-        assert client.get("/api/biospecimen/biosamples").status_code != 404
-        assert client.get("/api/biospecimen/biosamples/bio-001").status_code != 404
+        assert client.get("/api/v2/biospecimen/biosamples").status_code != 404
+        assert client.get("/api/v2/biospecimen/biosamples/bio-001").status_code != 404
         assert client.post(
-            "/api/biospecimen/biosamples",
+            "/api/v2/biospecimen/biosamples",
             json={"identifier": "S1", "biospecimen_id": "bspec-001"},
         ).status_code != 404
         assert client.put(
-            "/api/biospecimen/biosamples/bio-001",
+            "/api/v2/biospecimen/biosamples/bio-001",
             json={"identifier": "S1", "biospecimen_id": "bspec-001"},
         ).status_code != 404
 
         # Libraries
-        assert client.get("/api/biospecimen/libraries").status_code != 404
-        assert client.get("/api/biospecimen/libraries/lib-001").status_code != 404
+        assert client.get("/api/v2/biospecimen/libraries").status_code != 404
+        assert client.get("/api/v2/biospecimen/libraries/lib-001").status_code != 404
         assert client.post(
-            "/api/biospecimen/libraries",
+            "/api/v2/biospecimen/libraries",
             json={"identifier": "L1", "biosample_id": "bio-001"},
         ).status_code != 404
         assert client.put(
-            "/api/biospecimen/libraries/lib-001",
+            "/api/v2/biospecimen/libraries/lib-001",
             json={"identifier": "L1", "biosample_id": "bio-001"},
         ).status_code != 404
 
         # Statistics
-        assert client.get("/api/biospecimen/statistics").status_code != 404
+        assert client.get("/api/v2/biospecimen/statistics").status_code != 404

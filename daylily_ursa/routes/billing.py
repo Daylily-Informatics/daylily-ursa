@@ -57,7 +57,7 @@ def create_billing_router(deps: BillingDependencies) -> APIRouter:
     # Initialize billing calculator with default rates
     billing_calculator = BillingCalculator(state_db=state_db)
 
-    @router.get("/api/customers/{customer_id}/billing/summary")
+    @router.get("/api/v2/customers/{customer_id}/billing/summary")
     async def get_customer_billing_summary(
         customer_id: str,
         days: int = Query(30, ge=1, le=365, description="Number of days to include"),
@@ -107,7 +107,7 @@ def create_billing_router(deps: BillingDependencies) -> APIRouter:
             },
         }
 
-    @router.get("/api/customers/{customer_id}/billing/invoice")
+    @router.get("/api/v2/customers/{customer_id}/billing/invoice")
     async def get_customer_invoice(
         customer_id: str,
         days: int = Query(30, ge=1, le=365, description="Number of days to include"),
@@ -142,7 +142,7 @@ def create_billing_router(deps: BillingDependencies) -> APIRouter:
         return invoice_data
 
 
-    @router.get("/api/customers/{customer_id}/billing/workset/{workset_id}")
+    @router.get("/api/v2/customers/{customer_id}/billing/workset/{workset_id}")
     async def get_workset_billing(
         customer_id: str,
         workset_id: str,

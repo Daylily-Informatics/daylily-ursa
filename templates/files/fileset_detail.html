@@ -207,7 +207,7 @@
 {% block extra_js %}
 <script>
 const FILESET_ID = '{{ fileset.fileset_id if fileset else "" }}';
-const FILE_API_BASE = '/api/files';
+const FILE_API_BASE = '/api/v2/files';
 let selectedFilesToAdd = new Set();
 
 function showModal(id) { document.getElementById(id).classList.add('show'); }

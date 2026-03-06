@@ -53,7 +53,7 @@ def create_worksets_router(
         """Register a new workset."""
         try:
             euid = state_db.register_workset(
-                name=workset.workset_id,  # WorksetCreate.workset_id is the name
+                name=workset.name,
                 bucket=workset.bucket,
                 prefix=workset.prefix,
                 priority=workset.priority,
@@ -72,7 +72,7 @@ def create_worksets_router(
         if not euid:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail=f"Workset {workset.workset_id} already exists",
+                detail=f"Workset {workset.name} already exists",
             )
 
         # Retrieve the created workset by its new euid
@@ -85,14 +85,14 @@ def create_worksets_router(
 
         return WorksetResponse(**created)
 
-    @router.get("/api/v2/worksets/{workset_id}", response_model=WorksetResponse)
-    async def get_workset(workset_id: str):
-        """Get workset details by euid (path param name kept for backward compat)."""
-        workset = state_db.get_workset(workset_id)
+    @router.get("/api/v2/worksets/{euid}", response_model=WorksetResponse)
+    async def get_workset(euid: str):
+        """Get workset details by EUID."""
+        workset = state_db.get_workset(euid)
         if not workset:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Workset {workset_id} not found",
+                detail=f"Workset {euid} not found",
             )
 
         return WorksetResponse(**workset)
@@ -118,19 +118,19 @@ def create_worksets_router(
 
         return [WorksetResponse(**w) for w in worksets]
 
-    @router.put("/api/v2/worksets/{workset_id}/state", response_model=WorksetResponse)
-    async def update_workset_state(workset_id: str, update: WorksetStateUpdate):
-        """Update workset state. Path param workset_id is actually the euid."""
+    @router.put("/api/v2/worksets/{euid}/state", response_model=WorksetResponse)
+    async def update_workset_state(euid: str, update: WorksetStateUpdate):
+        """Update workset state."""
         # Verify workset exists
-        workset = state_db.get_workset(workset_id)
+        workset = state_db.get_workset(euid)
         if not workset:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Workset {workset_id} not found",
+                detail=f"Workset {euid} not found",
             )
 
         state_db.update_state(
-            euid=workset_id,
+            euid=euid,
             new_state=update.state,
             reason=update.reason,
             error_details=update.error_details,
@@ -139,41 +139,41 @@ def create_worksets_router(
         )
 
         # Return updated workset
-        updated = state_db.get_workset(workset_id)
+        updated = state_db.get_workset(euid)
         if not updated:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to retrieve updated workset {workset_id}",
+                detail=f"Failed to retrieve updated workset {euid}",
             )
         return WorksetResponse(**updated)
 
-    @router.post("/api/v2/worksets/{workset_id}/lock")
+    @router.post("/api/v2/worksets/{euid}/lock")
     async def acquire_workset_lock(
-        workset_id: str, owner_id: str = Query(..., description="Lock owner ID")
+        euid: str, owner_id: str = Query(..., description="Lock owner ID")
     ):
-        """Acquire lock on a workset. Path param workset_id is actually the euid."""
-        success = state_db.acquire_lock(workset_id, owner_id)
+        """Acquire lock on a workset."""
+        success = state_db.acquire_lock(euid, owner_id)
         if not success:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail=f"Failed to acquire lock on workset {workset_id}",
+                detail=f"Failed to acquire lock on workset {euid}",
             )
 
-        return {"status": "locked", "euid": workset_id, "owner_id": owner_id}
+        return {"status": "locked", "euid": euid, "owner_id": owner_id}
 
-    @router.delete("/api/v2/worksets/{workset_id}/lock")
+    @router.delete("/api/v2/worksets/{euid}/lock")
     async def release_workset_lock(
-        workset_id: str, owner_id: str = Query(..., description="Lock owner ID")
+        euid: str, owner_id: str = Query(..., description="Lock owner ID")
     ):
-        """Release lock on a workset. Path param workset_id is actually the euid."""
-        success = state_db.release_lock(workset_id, owner_id)
+        """Release lock on a workset."""
+        success = state_db.release_lock(euid, owner_id)
         if not success:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Failed to release lock on workset {workset_id} (not owner)",
+                detail=f"Failed to release lock on workset {euid} (not owner)",
             )
 
-        return {"status": "unlocked", "euid": workset_id}
+        return {"status": "unlocked", "euid": euid}
 
     # ========== Monitoring Endpoints ==========
 

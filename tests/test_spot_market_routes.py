@@ -33,7 +33,7 @@ def test_spot_market_endpoints_require_admin(tmp_path, monkeypatch):
         return_value=SimpleNamespace(is_configured=False, aws_profile=None),
     ):
         with TestClient(app, base_url="https://testserver") as client:
-            assert client.get("/api/spot-market/status").status_code == 403
+            assert client.get("/api/v2/spot-market/status").status_code == 403
 
 
 def test_spot_market_endpoints_have_request_level_coverage(tmp_path, monkeypatch):
@@ -78,21 +78,21 @@ def test_spot_market_endpoints_have_request_level_coverage(tmp_path, monkeypatch
         return_value=SimpleNamespace(is_configured=False, aws_profile=None),
     ):
         with TestClient(app, base_url="https://testserver") as client:
-            assert client.get("/api/spot-market/status").status_code == 200
+            assert client.get("/api/v2/spot-market/status").status_code == 200
             assert (
                 client.post(
-                    "/api/spot-market/config",
+                    "/api/v2/spot-market/config",
                     json={"regions": ["us-west-2", "us-east-1"], "interval": "6h"},
                 ).status_code
                 == 200
             )
 
-            assert client.get("/api/spot-market/jobs?limit=20").status_code == 200
-            assert client.get(f"/api/spot-market/jobs/{job_id}").status_code == 200
-            assert client.get(f"/api/spot-market/jobs/{job_id}/logs?lines=10").status_code == 200
+            assert client.get("/api/v2/spot-market/jobs?limit=20").status_code == 200
+            assert client.get(f"/api/v2/spot-market/jobs/{job_id}").status_code == 200
+            assert client.get(f"/api/v2/spot-market/jobs/{job_id}/logs?lines=10").status_code == 200
 
             assert (
-                client.get("/api/spot-market/snapshots?region=us-west-2&limit=50").status_code
+                client.get("/api/v2/spot-market/snapshots?region=us-west-2&limit=50").status_code
                 == 200
             )
 
@@ -125,7 +125,7 @@ def test_spot_market_poll_starts_jobs(tmp_path, monkeypatch):
         ):
             with TestClient(app, base_url="https://testserver") as client:
                 resp = client.post(
-                    "/api/spot-market/poll",
+                    "/api/v2/spot-market/poll",
                     json={"regions": ["us-west-2", "us-east-1"], "mode": "now"},
                 )
                 assert resp.status_code == 200
@@ -159,7 +159,7 @@ def test_spot_market_poll_blocks_when_checker_running(tmp_path, monkeypatch):
             with patch("daylily_ursa.spot_market.runner.start_poll_job") as start_poll_job:
                 with TestClient(app, base_url="https://testserver") as client:
                     resp = client.post(
-                        "/api/spot-market/poll",
+                        "/api/v2/spot-market/poll",
                         json={"regions": ["us-west-2"], "mode": "now"},
                     )
                 assert resp.status_code == 409

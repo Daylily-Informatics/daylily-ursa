@@ -1,11 +1,11 @@
 """Customer management routes for Daylily API.
 
 Contains routes for customer CRUD operations:
-- POST /customers
-- GET /customers/{customer_id}
-- PATCH /api/v1/customers/{customer_id}
-- GET /customers
-- GET /customers/{customer_id}/usage
+- POST /api/v2/customers
+- GET /api/v2/customers/{customer_id}
+- PATCH /api/v2/customers/{customer_id}
+- GET /api/v2/customers
+- GET /api/v2/customers/{customer_id}/usage
 """
 
 from __future__ import annotations
@@ -52,7 +52,7 @@ def create_customers_router(deps: CustomerDependencies) -> APIRouter:
     customer_manager = deps.customer_manager
     get_current_user = deps.get_current_user
 
-    @router.post("/customers", response_model=CustomerResponse, status_code=status.HTTP_201_CREATED)
+    @router.post("/api/v2/customers", response_model=CustomerResponse, status_code=status.HTTP_201_CREATED)
     async def create_customer(
         customer: CustomerCreate,
         current_user: Optional[Dict] = Depends(get_current_user),
@@ -78,7 +78,7 @@ def create_customers_router(deps: CustomerDependencies) -> APIRouter:
             cost_center=config.cost_center,
         )
 
-    @router.get("/customers/{customer_id}", response_model=CustomerResponse)
+    @router.get("/api/v2/customers/{customer_id}", response_model=CustomerResponse)
     async def get_customer(
         customer_id: str,
         current_user: Optional[Dict] = Depends(get_current_user),
@@ -102,7 +102,7 @@ def create_customers_router(deps: CustomerDependencies) -> APIRouter:
             cost_center=config.cost_center,
         )
 
-    @router.patch("/api/v1/customers/{customer_id}", response_model=CustomerResponse)
+    @router.patch("/api/v2/customers/{customer_id}", response_model=CustomerResponse)
     async def update_customer(
         customer_id: str,
         update: CustomerUpdate,
@@ -160,7 +160,7 @@ def create_customers_router(deps: CustomerDependencies) -> APIRouter:
             cost_center=config.cost_center,
         )
 
-    @router.get("/customers", response_model=List[CustomerResponse])
+    @router.get("/api/v2/customers", response_model=List[CustomerResponse])
     async def list_customers(
         current_user: Optional[Dict] = Depends(get_current_user),
     ):
@@ -181,7 +181,7 @@ def create_customers_router(deps: CustomerDependencies) -> APIRouter:
             for c in configs
         ]
 
-    @router.get("/customers/{customer_id}/usage")
+    @router.get("/api/v2/customers/{customer_id}/usage")
     async def get_customer_usage(
         customer_id: str,
         current_user: Optional[Dict] = Depends(get_current_user),

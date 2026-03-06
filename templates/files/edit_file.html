@@ -278,7 +278,7 @@ async function saveFileMetadata(event) {
     console.log('Payload:', payload);
 
     try {
-        const response = await fetch(`/api/v1/files/${fileId}`, {
+        const response = await fetch(`/api/v2/files/${fileId}`, {
             method: 'PATCH',
             headers: {
                 'Content-Type': 'application/json',

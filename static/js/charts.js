@@ -39,7 +39,7 @@ async function initActivityChart(canvasId, customerId) {
     // Fetch real data if customerId provided
     if (customerId) {
         try {
-            const response = await fetch(`/api/customers/${customerId}/dashboard/activity?days=30`);
+            const response = await fetch(`/api/v2/customers/${customerId}/dashboard/activity?days=30`);
             if (response.ok) {
                 const data = await response.json();
                 labels = data.labels || [];
@@ -139,7 +139,7 @@ async function initCostChart(canvasId, customerId) {
     // Fetch real data if customerId provided
     if (customerId) {
         try {
-            const response = await fetch(`/api/customers/${customerId}/dashboard/cost-history?days=30`);
+            const response = await fetch(`/api/v2/customers/${customerId}/dashboard/cost-history?days=30`);
             if (response.ok) {
                 const data = await response.json();
                 labels = data.labels || [];
@@ -215,7 +215,7 @@ async function initBreakdownChart(canvasId, customerId) {
     // Fetch real data if customerId provided
     if (customerId) {
         try {
-            const response = await fetch(`/api/customers/${customerId}/dashboard/cost-breakdown`);
+            const response = await fetch(`/api/v2/customers/${customerId}/dashboard/cost-breakdown`);
             if (response.ok) {
                 const data = await response.json();
                 categories = data.categories || ['Compute'];

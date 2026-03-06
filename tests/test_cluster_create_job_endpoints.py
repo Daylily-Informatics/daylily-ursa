@@ -53,8 +53,8 @@ def test_cluster_create_job_endpoints_have_request_level_coverage():
                 with patch("daylily_ursa.ephemeral_cluster.runner.read_cluster_create_job", return_value={"job_id": "ec-1"}):
                     with patch("daylily_ursa.ephemeral_cluster.runner.tail_job_log", return_value="log"):
                         with TestClient(app, base_url="https://testserver") as client:
-                            assert client.get("/api/clusters/create/jobs").status_code != 404
-                            assert client.get("/api/clusters/create/jobs/ec-1").status_code != 404
-                            assert client.get("/api/clusters/create/jobs/ec-1/logs").status_code != 404
-                            assert client.get("/api/clusters/create/options?region=us-west-2").status_code != 404
+                            assert client.get("/api/v2/clusters/create/jobs").status_code != 404
+                            assert client.get("/api/v2/clusters/create/jobs/ec-1").status_code != 404
+                            assert client.get("/api/v2/clusters/create/jobs/ec-1/logs").status_code != 404
+                            assert client.get("/api/v2/clusters/create/options?region=us-west-2").status_code != 404
 

@@ -1,12 +1,12 @@
 """File management routes for Daylily API.
 
 Contains routes for customer file operations:
-- GET /api/customers/{customer_id}/files
-- POST /api/customers/{customer_id}/files/upload
-- POST /api/customers/{customer_id}/files/create-folder
-- GET /api/customers/{customer_id}/files/{file_key}/preview
-- GET /api/customers/{customer_id}/files/{file_key}/download-url
-- DELETE /api/customers/{customer_id}/files/{file_key}
+- GET /api/v2/customers/{customer_id}/files
+- POST /api/v2/customers/{customer_id}/files/upload
+- POST /api/v2/customers/{customer_id}/files/create-folder
+- GET /api/v2/customers/{customer_id}/files/{file_key}/preview
+- GET /api/v2/customers/{customer_id}/files/{file_key}/download-url
+- DELETE /api/v2/customers/{customer_id}/files/{file_key}
 """
 
 from __future__ import annotations
@@ -48,7 +48,7 @@ def create_files_router(deps: FileDependencies) -> APIRouter:
     router = APIRouter(tags=["files"])
     customer_manager = deps.customer_manager
 
-    @router.get("/api/customers/{customer_id}/files")
+    @router.get("/api/v2/customers/{customer_id}/files")
     async def list_customer_files(customer_id: str, prefix: str = ""):
         """List files in customer's S3 bucket."""
         config = customer_manager.get_customer_config(customer_id)
@@ -86,7 +86,7 @@ def create_files_router(deps: FileDependencies) -> APIRouter:
             LOGGER.error("Failed to list files: %s", str(e))
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
-    @router.post("/api/customers/{customer_id}/files/upload")
+    @router.post("/api/v2/customers/{customer_id}/files/upload")
     async def upload_file(customer_id: str, file: UploadFile = File(...), prefix: str = Form("")):
         """Upload a file to customer's S3 bucket."""
         config = customer_manager.get_customer_config(customer_id)
@@ -105,7 +105,7 @@ def create_files_router(deps: FileDependencies) -> APIRouter:
             LOGGER.error("Failed to upload file: %s", str(e))
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
-    @router.post("/api/customers/{customer_id}/files/create-folder")
+    @router.post("/api/v2/customers/{customer_id}/files/create-folder")
     async def create_folder(customer_id: str, folder_path: str = Body(..., embed=True)):
         """Create a folder in customer's S3 bucket."""
         config = customer_manager.get_customer_config(customer_id)
@@ -125,7 +125,7 @@ def create_files_router(deps: FileDependencies) -> APIRouter:
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
 
-    @router.get("/api/customers/{customer_id}/files/{file_key:path}/preview")
+    @router.get("/api/v2/customers/{customer_id}/files/{file_key:path}/preview")
     async def preview_file(customer_id: str, file_key: str, lines: int = 20):
         """Preview file contents.
 
@@ -230,7 +230,7 @@ def create_files_router(deps: FileDependencies) -> APIRouter:
             LOGGER.error("Failed to preview file: %s", str(e))
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
-    @router.get("/api/customers/{customer_id}/files/{file_key:path}/download-url")
+    @router.get("/api/v2/customers/{customer_id}/files/{file_key:path}/download-url")
     async def get_download_url(customer_id: str, file_key: str):
         """Get presigned URL for file download."""
         config = customer_manager.get_customer_config(customer_id)
@@ -249,7 +249,7 @@ def create_files_router(deps: FileDependencies) -> APIRouter:
             LOGGER.error("Failed to generate download URL: %s", str(e))
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
-    @router.delete("/api/customers/{customer_id}/files/{file_key:path}")
+    @router.delete("/api/v2/customers/{customer_id}/files/{file_key:path}")
     async def delete_file(customer_id: str, file_key: str):
         """Delete a file from customer's S3 bucket."""
         config = customer_manager.get_customer_config(customer_id)

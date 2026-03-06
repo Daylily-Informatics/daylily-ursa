@@ -79,6 +79,18 @@ def _new_error_ref(prefix: str) -> str:
     return f"{prefix}-{secrets.token_hex(4).upper()}"
 
 
+def _inject_workset_id_compat(ws: Dict[str, Any]) -> Dict[str, Any]:
+    """Inject backward-compatible ``workset_id`` from ``euid`` for templates.
+
+    Templates still reference ``workset.workset_id``.  This shim bridges
+    until the full template migration (Steps 7-8) replaces those refs with
+    ``euid`` / ``name``.
+    """
+    if "workset_id" not in ws and "euid" in ws:
+        ws["workset_id"] = ws["euid"]
+    return ws
+
+
 class PortalDependencies:
     """Container for portal route dependencies.
 
@@ -661,6 +673,9 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                     except Exception as e:
                         LOGGER.warning(f"Failed to get file statistics: {e}")
 
+        for ws in worksets:
+            _inject_workset_id_compat(ws)
+
         return deps.templates.TemplateResponse(
             request,
             "dashboard.html",
@@ -723,7 +738,7 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
             ),
         )
 
-    @router.get("/api/portal/search")
+    @router.get("/api/v2/portal/search")
     async def portal_api_search(request: Request):
         """JSON global search endpoint used by portal clients."""
         _require_portal_api_session(request)
@@ -1294,7 +1309,7 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
 
     # ========== Portal JSON Auth Endpoints (used by /portal/account UI) ==========
 
-    @router.post("/api/v1/auth/change-password")
+    @router.post("/api/v2/auth/change-password")
     async def portal_api_change_password(request: Request, payload: ChangePasswordRequest):
         """Change the current user's password via portal session."""
         _require_portal_api_session(request)
@@ -1319,7 +1334,7 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
 
         return {"ok": True}
 
-    @router.get("/api/v1/auth/tokens")
+    @router.get("/api/v2/auth/tokens")
     async def portal_api_list_tokens(request: Request):
         """List API tokens for the current customer (metadata only)."""
         customer_id = _require_portal_api_session(request)
@@ -1327,7 +1342,7 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Token management not configured")
         return deps.customer_manager.list_api_tokens(customer_id)
 
-    @router.post("/api/v1/auth/tokens")
+    @router.post("/api/v2/auth/tokens")
     async def portal_api_create_token(request: Request, payload: APITokenCreateRequest):
         """Create a new API token and return the secret once."""
         customer_id = _require_portal_api_session(request)
@@ -1341,7 +1356,7 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
 
         return {"token": result.get("secret"), "token_meta": result.get("token")}
 
-    @router.delete("/api/v1/auth/tokens/{token_id}")
+    @router.delete("/api/v2/auth/tokens/{token_id}")
     async def portal_api_revoke_token(request: Request, token_id: str):
         """Revoke an API token for the current customer."""
         customer_id = _require_portal_api_session(request)
@@ -1571,6 +1586,10 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         end_idx = start_idx + per_page
         paginated_worksets = filtered_worksets[start_idx:end_idx]
 
+        # Backward-compat shim for templates still referencing workset_id
+        for ws in paginated_worksets:
+            _inject_workset_id_compat(ws)
+
         return deps.templates.TemplateResponse(
             request,
             "worksets/list.html",
@@ -1647,6 +1666,8 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                 ws["workset_type"] = ws.get("workset_type", "ruo")
                 ws["pipeline_type"] = "germline"
                 ws["sample_count"] = 0
+        for ws in archived_worksets:
+            _inject_workset_id_compat(ws)
         return deps.templates.TemplateResponse(
             request,
             "worksets/archived.html",
@@ -1690,6 +1711,9 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
 
         # Extract storage size from performance_metrics
         _extract_workset_storage(workset)
+
+        # Backward-compat shim for templates still referencing workset_id
+        _inject_workset_id_compat(workset)
 
         return deps.templates.TemplateResponse(
             request,
@@ -1891,6 +1915,8 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
             parts = prefix.rstrip("/").split("/")
             for i, part in enumerate(parts):
                 breadcrumbs.append({"name": part, "prefix": "/".join(parts[:i + 1]) + "/"})
+
+        _inject_workset_id_compat(workset)
 
         return deps.templates.TemplateResponse(
             request,
@@ -3725,7 +3751,7 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
 
     # ========== Monitor API Endpoints (for AJAX) ==========
 
-    @router.get("/api/monitor/status")
+    @router.get("/api/v2/monitor/status")
     async def api_monitor_status(request: Request):
         """Get monitor status as JSON for AJAX updates."""
         auth_redirect = _require_portal_auth(request)
@@ -3777,7 +3803,7 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
             "stats": stats,
         }
 
-    @router.get("/api/monitor/logs")
+    @router.get("/api/v2/monitor/logs")
     async def api_monitor_logs(
         request: Request,
         lines: int = Query(100, ge=10, le=500),

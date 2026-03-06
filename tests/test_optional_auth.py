@@ -71,7 +71,7 @@ def test_api_endpoints_work_without_auth():
     assert response.json()["status"] == "healthy"
     
     # Test queue stats endpoint (no auth required)
-    response = client.get("/queue/stats")
+    response = client.get("/api/v2/queue/stats")
     assert response.status_code == 200
 
 

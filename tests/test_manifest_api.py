@@ -159,7 +159,7 @@ def client(mock_state_db, mock_customer_manager, mock_manifest_registry):
 
 
 def test_list_customer_manifests(client, mock_manifest_registry):
-    resp = client.get("/api/customers/cust-001/manifests")
+    resp = client.get("/api/v2/customers/cust-001/manifests")
     assert resp.status_code == 200
     data = resp.json()
     assert "manifests" in data
@@ -169,7 +169,7 @@ def test_list_customer_manifests(client, mock_manifest_registry):
 
 def test_save_customer_manifest(client, mock_manifest_registry):
     payload = {"tsv_content": "RUN_ID\tSAMPLE_ID\nR0\tHG002\n", "name": "Saved"}
-    resp = client.post("/api/customers/cust-001/manifests", json=payload)
+    resp = client.post("/api/v2/customers/cust-001/manifests", json=payload)
     assert resp.status_code == 201
     data = resp.json()
     assert data["manifest"]["manifest_id"] == "m-2"
@@ -178,7 +178,7 @@ def test_save_customer_manifest(client, mock_manifest_registry):
 
 
 def test_download_customer_manifest(client, mock_manifest_registry):
-    resp = client.get("/api/customers/cust-001/manifests/m-1/download")
+    resp = client.get("/api/v2/customers/cust-001/manifests/m-1/download")
     assert resp.status_code == 200
     assert resp.text.startswith("RUN_ID")
     assert "attachment" in resp.headers.get("content-disposition", "")
@@ -190,7 +190,7 @@ def test_download_customer_manifest(client, mock_manifest_registry):
 def test_save_customer_manifest_413_when_too_large(client, mock_manifest_registry):
     mock_manifest_registry.save_manifest.side_effect = ManifestTooLargeError("too big")
     resp = client.post(
-        "/api/customers/cust-001/manifests",
+        "/api/v2/customers/cust-001/manifests",
         json={"tsv_content": "X" * 10, "name": "big"},
     )
     assert resp.status_code == 413
@@ -209,7 +209,7 @@ def test_manifest_storage_not_configured_returns_503(mock_state_db, mock_custome
         enable_auth=False,
     )
     test_client = TestClient(app, base_url="https://testserver")
-    resp = test_client.get("/api/customers/cust-001/manifests")
+    resp = test_client.get("/api/v2/customers/cust-001/manifests")
     assert resp.status_code == 503
 
 
@@ -288,7 +288,7 @@ def test_create_workset_from_saved_manifest_id(
 
     payload = _build_workset_payload(manifest_id="m-1")
 
-    resp = client_with_integration.post("/api/customers/cust-001/worksets", json=payload)
+    resp = client_with_integration.post("/api/v2/customers/cust-001/worksets", json=payload)
     assert resp.status_code == 200
 
     mock_manifest_registry.get_manifest_tsv.assert_called_once_with(
@@ -331,7 +331,7 @@ def test_create_workset_from_raw_manifest_tsv_content(client_with_integration, m
 
     payload = _build_workset_payload(manifest_tsv_content=tsv_content)
 
-    resp = client_with_integration.post("/api/customers/cust-001/worksets", json=payload)
+    resp = client_with_integration.post("/api/v2/customers/cust-001/worksets", json=payload)
     assert resp.status_code == 200
 
     # When using raw TSV content, ManifestRegistry is not consulted

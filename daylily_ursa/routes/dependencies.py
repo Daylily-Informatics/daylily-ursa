@@ -127,7 +127,7 @@ def verify_workset_ownership(workset: Dict[str, Any], customer_id: str) -> bool:
 
     LOGGER.warning(
         "Workset %s has no customer_id field - ownership check failed",
-        workset.get("workset_id", "unknown"),
+        workset.get("euid", "unknown"),
     )
     return False
 
@@ -173,7 +173,7 @@ def verify_workset_access(
 class WorksetCreate(BaseModel):
     """Request model for creating a workset."""
 
-    workset_id: str = Field(..., description="Unique workset identifier")
+    name: str = Field(..., description="Human-readable workset name")
     bucket: str = Field(..., description="S3 bucket name")
     prefix: str = Field(..., description="S3 prefix for workset files")
     priority: WorksetPriority = Field(WorksetPriority.NORMAL, description="Execution priority")
@@ -187,7 +187,8 @@ class WorksetCreate(BaseModel):
 class WorksetResponse(BaseModel):
     """Response model for workset data."""
 
-    workset_id: str
+    euid: str
+    name: str
     state: str
     priority: str
     workset_type: str = "ruo"  # Default for backward compatibility

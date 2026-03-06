@@ -14,7 +14,7 @@ from typing import Any, Dict, Optional, Tuple
 
 import yaml  # type: ignore[import-untyped]
 
-from fastapi import APIRouter, Body, Depends, FastAPI, HTTPException, Query, Request, status
+from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -550,7 +550,7 @@ def create_app(
 
     # ========== Cost Estimation Endpoint ==========
 
-    @app.post("/api/estimate-cost", tags=["utilities"])
+    @app.post("/api/v2/estimate-cost", tags=["utilities"])
     async def estimate_workset_cost(
         pipeline_type: str = Body(..., embed=True),
         reference_genome: str = Body("GRCh38", embed=True),
@@ -612,7 +612,7 @@ def create_app(
     # ========== Workset Validation Endpoints ==========
 
     if validator:
-        @app.post("/worksets/validate", response_model=WorksetValidationResponse, tags=["validation"])
+        @app.post("/api/v2/worksets/validate", response_model=WorksetValidationResponse, tags=["validation"])
         async def validate_workset(
             bucket: str = Query(..., description="S3 bucket name"),
             prefix: str = Query(..., description="S3 prefix"),
@@ -633,7 +633,7 @@ def create_app(
 
     # ========== YAML Generator Endpoint ==========
 
-    @app.post("/worksets/generate-yaml", tags=["utilities"])
+    @app.post("/api/v2/worksets/generate-yaml", tags=["utilities"])
     async def generate_work_yaml(
         request: WorkYamlGenerateRequest,
         current_user: Optional[Dict] = Depends(get_current_user),
@@ -774,7 +774,7 @@ def create_app(
             )
             app.include_router(file_router)
             auth_status = "with combined session/JWT authentication"
-            LOGGER.info(f"File management API endpoints registered at /api/files/* ({auth_status})")
+            LOGGER.info(f"File management API endpoints registered at /api/v2/files/* ({auth_status})")
         except Exception as e:
             LOGGER.error("Failed to integrate file management API: %s", str(e))
             LOGGER.warning("File management endpoints will not be available")
@@ -822,52 +822,12 @@ def create_app(
                 get_customer_id=get_customer_id_from_request,
             )
             app.include_router(biospecimen_router)
-            LOGGER.info("Biospecimen API endpoints registered at /api/biospecimen/*")
+            LOGGER.info("Biospecimen API endpoints registered at /api/v2/biospecimen/*")
         except Exception as e:
             LOGGER.error("Failed to integrate biospecimen API: %s", str(e))
             LOGGER.warning("Biospecimen endpoints will not be available")
     else:
         LOGGER.info("Biospecimen module not available - biospecimen API endpoints not registered")
-
-    # ========== API Versioning (v1) ==========
-    # Create a versioned router that mirrors all API routes under /v1/
-    # Original routes remain for backward compatibility.
-    v1_router = APIRouter(prefix="/v1", tags=["v1"])
-
-    # Always-available API routers
-    v1_router.include_router(worksets_router)
-    v1_router.include_router(mon_router)
-    v1_router.include_router(s3_router)
-    v1_router.include_router(cluster_router)
-
-    # Customer-dependent API routers
-    if customer_manager:
-        v1_router.include_router(cust_router)
-        v1_router.include_router(files_router)
-        v1_router.include_router(manifest_router)
-
-    # Template-dependent API routers (customer worksets, dashboard, billing)
-    if templates_dir.exists():
-        v1_router.include_router(cw_router)
-        v1_router.include_router(dash_router)
-        v1_router.include_router(billing_router)
-
-    # File management API router (conditional)
-    if file_registry and FILE_MANAGEMENT_AVAILABLE:
-        try:
-            v1_router.include_router(file_router)
-        except NameError:
-            pass  # file_router was not created due to earlier error
-
-    # Biospecimen API router (conditional)
-    if BIOSPECIMEN_AVAILABLE:
-        try:
-            v1_router.include_router(biospecimen_router)
-        except NameError:
-            pass  # biospecimen_router was not created due to earlier error
-
-    app.include_router(v1_router)
-    LOGGER.info("API v1 routes registered under /v1/ prefix")
 
     # Store settings in app state for access in route handlers
     app.state.settings = settings

@@ -50,7 +50,7 @@ def create_spot_market_router(deps: SpotMarketDependencies) -> APIRouter:
             profile = settings.aws_profile
         return (allowed or []), profile
 
-    @router.get("/api/spot-market/status")
+    @router.get("/api/v2/spot-market/status")
     async def get_spot_market_status(
         current_user: Optional[Dict] = Depends(get_current_user),
     ):
@@ -84,7 +84,7 @@ def create_spot_market_router(deps: SpotMarketDependencies) -> APIRouter:
             "has_running_jobs": bool(running_job_ids),
         }
 
-    @router.post("/api/spot-market/config")
+    @router.post("/api/v2/spot-market/config")
     async def update_spot_market_config(
         update: SpotMarketConfigUpdate,
         current_user: Optional[Dict] = Depends(get_current_user),
@@ -125,7 +125,7 @@ def create_spot_market_router(deps: SpotMarketDependencies) -> APIRouter:
             }
         }
 
-    @router.post("/api/spot-market/poll")
+    @router.post("/api/v2/spot-market/poll")
     async def poll_spot_market(
         poll: SpotMarketPollRequest,
         current_user: Optional[Dict] = Depends(get_current_user),
@@ -172,7 +172,7 @@ def create_spot_market_router(deps: SpotMarketDependencies) -> APIRouter:
 
         return {"jobs": jobs, "job_ids": [j.get("job_id") for j in jobs]}
 
-    @router.get("/api/spot-market/jobs")
+    @router.get("/api/v2/spot-market/jobs")
     async def list_spot_market_jobs(
         limit: int = Query(20, ge=1, le=100),
         current_user: Optional[Dict] = Depends(get_current_user),
@@ -183,7 +183,7 @@ def create_spot_market_router(deps: SpotMarketDependencies) -> APIRouter:
         _enforce_admin_only(current_user, operation="list spot market jobs")
         return {"jobs": sm_runner.list_jobs(limit=limit)}
 
-    @router.get("/api/spot-market/jobs/{job_id}")
+    @router.get("/api/v2/spot-market/jobs/{job_id}")
     async def get_spot_market_job(
         job_id: str,
         current_user: Optional[Dict] = Depends(get_current_user),
@@ -197,7 +197,7 @@ def create_spot_market_router(deps: SpotMarketDependencies) -> APIRouter:
         except FileNotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e))
 
-    @router.get("/api/spot-market/jobs/{job_id}/logs")
+    @router.get("/api/v2/spot-market/jobs/{job_id}/logs")
     async def get_spot_market_job_logs(
         job_id: str,
         lines: int = Query(200, ge=1, le=2000),
@@ -213,7 +213,7 @@ def create_spot_market_router(deps: SpotMarketDependencies) -> APIRouter:
             raise HTTPException(status_code=404, detail=str(e))
         return {"job_id": job_id, "lines": lines, "log": log_text}
 
-    @router.get("/api/spot-market/snapshots")
+    @router.get("/api/v2/spot-market/snapshots")
     async def list_spot_market_snapshots(
         region: str = Query(..., description="AWS region to list snapshots for"),
         limit: int = Query(200, ge=1, le=1000),

@@ -53,7 +53,7 @@ def create_dashboard_router(deps: DashboardDependencies) -> APIRouter:
     state_db = deps.state_db
     customer_manager = deps.customer_manager
 
-    @router.get("/api/customers/{customer_id}/dashboard/activity")
+    @router.get("/api/v2/customers/{customer_id}/dashboard/activity")
     async def get_dashboard_activity(
         customer_id: str,
         days: int = Query(30, ge=1, le=90, description="Number of days of activity data"),
@@ -147,7 +147,7 @@ def create_dashboard_router(deps: DashboardDependencies) -> APIRouter:
 
 
 
-    @router.get("/api/customers/{customer_id}/dashboard/cost-history")
+    @router.get("/api/v2/customers/{customer_id}/dashboard/cost-history")
     async def get_dashboard_cost_history(
         customer_id: str,
         days: int = Query(30, ge=1, le=90, description="Number of days of cost data"),
@@ -247,7 +247,7 @@ def create_dashboard_router(deps: DashboardDependencies) -> APIRouter:
             "total": round(sum(costs), 2),
         }
 
-    @router.get("/api/customers/{customer_id}/dashboard/cost-breakdown")
+    @router.get("/api/v2/customers/{customer_id}/dashboard/cost-breakdown")
     async def get_dashboard_cost_breakdown(
         customer_id: str,
     ):

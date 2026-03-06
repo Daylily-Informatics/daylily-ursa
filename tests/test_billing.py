@@ -352,7 +352,7 @@ class TestBillingAPIEndpoints:
         return mock_state_db, mock_customer_manager
 
     def test_billing_summary_endpoint(self, mock_app_dependencies):
-        """Test /api/customers/{customer_id}/billing/summary endpoint."""
+        """Test /api/v2/customers/{customer_id}/billing/summary endpoint."""
         from fastapi.testclient import TestClient
         from daylily_ursa.workset_api import create_app
 
@@ -367,7 +367,7 @@ class TestBillingAPIEndpoints:
         )
         client = TestClient(app, base_url="https://testserver")
 
-        response = client.get("/api/customers/cust-001/billing/summary?days=30")
+        response = client.get("/api/v2/customers/cust-001/billing/summary?days=30")
 
         assert response.status_code == 200
         data = response.json()
@@ -378,7 +378,7 @@ class TestBillingAPIEndpoints:
         assert "grand_total_usd" in data["costs"]
 
     def test_billing_invoice_endpoint(self, mock_app_dependencies):
-        """Test /api/customers/{customer_id}/billing/invoice endpoint."""
+        """Test /api/v2/customers/{customer_id}/billing/invoice endpoint."""
         from fastapi.testclient import TestClient
         from daylily_ursa.workset_api import create_app
 
@@ -393,7 +393,7 @@ class TestBillingAPIEndpoints:
         )
         client = TestClient(app, base_url="https://testserver")
 
-        response = client.get("/api/customers/cust-001/billing/invoice?days=30")
+        response = client.get("/api/v2/customers/cust-001/billing/invoice?days=30")
 
         assert response.status_code == 200
         data = response.json()
@@ -404,7 +404,7 @@ class TestBillingAPIEndpoints:
         assert "rates" in data
 
     def test_billing_workset_endpoint(self, mock_app_dependencies):
-        """Test /api/customers/{customer_id}/billing/workset/{workset_id} endpoint."""
+        """Test /api/v2/customers/{customer_id}/billing/workset/{workset_id} endpoint."""
         from fastapi.testclient import TestClient
         from daylily_ursa.workset_api import create_app
 
@@ -428,7 +428,7 @@ class TestBillingAPIEndpoints:
         )
         client = TestClient(app, base_url="https://testserver")
 
-        response = client.get("/api/customers/cust-001/billing/workset/ws-001")
+        response = client.get("/api/v2/customers/cust-001/billing/workset/ws-001")
 
         assert response.status_code == 200
         data = response.json()
@@ -451,7 +451,7 @@ class TestBillingAPIEndpoints:
         )
         client = TestClient(app, base_url="https://testserver")
 
-        response = client.get("/api/customers/cust-001/billing/workset/nonexistent")
+        response = client.get("/api/v2/customers/cust-001/billing/workset/nonexistent")
 
         assert response.status_code == 404
 
@@ -473,7 +473,7 @@ class TestBillingAPIEndpoints:
         )
         client = TestClient(app, base_url="https://testserver")
 
-        response = client.get("/api/customers/cust-001/billing/workset/ws-001")
+        response = client.get("/api/v2/customers/cust-001/billing/workset/ws-001")
 
         assert response.status_code == 403
 

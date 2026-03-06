@@ -14,7 +14,8 @@ def test_worksets_lock_state_and_scheduler_routes_have_request_level_coverage():
 
     state_db = MagicMock(spec=WorksetStateDB)
     state_db.get_workset.return_value = {
-        "workset_id": "ws-123",
+        "euid": "euid-ws-123",
+        "name": "ws-123",
         "state": "ready",
         "priority": "normal",
         "workset_type": "ruo",
@@ -32,15 +33,15 @@ def test_worksets_lock_state_and_scheduler_routes_have_request_level_coverage():
 
     with TestClient(app, base_url="https://testserver") as client:
         assert client.put(
-            "/worksets/ws-123/state",
+            "/api/v2/worksets/ws-123/state",
             json={"state": "ready", "reason": "test"},
         ).status_code != 404
-        assert client.post("/worksets/ws-123/lock?owner_id=worker-1").status_code != 404
-        assert client.delete("/worksets/ws-123/lock?owner_id=worker-1").status_code != 404
+        assert client.post("/api/v2/worksets/ws-123/lock?owner_id=worker-1").status_code != 404
+        assert client.delete("/api/v2/worksets/ws-123/lock?owner_id=worker-1").status_code != 404
 
         # Scheduler not configured -> 503 (but still hits the route)
-        assert client.get("/scheduler/stats").status_code == 503
+        assert client.get("/api/v2/scheduler/stats").status_code == 503
 
         # No ready worksets -> null payload (200)
-        assert client.get("/worksets/next").status_code != 404
+        assert client.get("/api/v2/worksets/next").status_code != 404
 

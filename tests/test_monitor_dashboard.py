@@ -244,13 +244,13 @@ class TestMonitorDashboardRoute:
 
 
 class TestMonitorAPIStatus:
-    """Test /api/monitor/status endpoint."""
+    """Test /api/v2/monitor/status endpoint."""
 
     def test_api_status_returns_json(self, authenticated_client, mock_ursa_dir, monkeypatch):
         """Test that API returns proper JSON structure."""
         monkeypatch.setattr(Path, "home", lambda: mock_ursa_dir.parent)
 
-        response = authenticated_client.get("/api/monitor/status")
+        response = authenticated_client.get("/api/v2/monitor/status")
         assert response.status_code == 200
         data = response.json()
         assert "running" in data
@@ -262,7 +262,7 @@ class TestMonitorAPIStatus:
         """Test API returns running=False when no PID file."""
         monkeypatch.setattr(Path, "home", lambda: mock_ursa_dir.parent)
 
-        response = authenticated_client.get("/api/monitor/status")
+        response = authenticated_client.get("/api/v2/monitor/status")
         assert response.status_code == 200
         data = response.json()
         assert data["running"] is False
@@ -274,7 +274,7 @@ class TestMonitorAPIStatus:
         """Test API returns running=True when valid PID file exists."""
         monkeypatch.setattr(Path, "home", lambda: mock_ursa_dir.parent)
 
-        response = authenticated_client.get("/api/monitor/status")
+        response = authenticated_client.get("/api/v2/monitor/status")
         assert response.status_code == 200
         data = response.json()
         assert data["running"] is True
@@ -293,7 +293,7 @@ class TestMonitorAPIStatus:
 
         mock_state_db.list_worksets_by_state.side_effect = mock_list_by_state
 
-        response = authenticated_client.get("/api/monitor/status")
+        response = authenticated_client.get("/api/v2/monitor/status")
         assert response.status_code == 200
         data = response.json()
         assert data["stats"]["ready"] == 2
@@ -302,19 +302,19 @@ class TestMonitorAPIStatus:
         """Non-admin users must not be able to access monitor status API."""
         monkeypatch.setattr(Path, "home", lambda: mock_ursa_dir.parent)
 
-        response = authenticated_non_admin_client.get("/api/monitor/status")
+        response = authenticated_non_admin_client.get("/api/v2/monitor/status")
         assert response.status_code == 403
         assert response.json()["detail"] == "Admin access required"
 
 
 class TestMonitorAPILogs:
-    """Test /api/monitor/logs endpoint."""
+    """Test /api/v2/monitor/logs endpoint."""
 
     def test_api_logs_returns_json(self, authenticated_client, mock_ursa_dir, mock_log_file, monkeypatch):
         """Test that logs API returns proper JSON structure."""
         monkeypatch.setattr(Path, "home", lambda: mock_ursa_dir.parent)
 
-        response = authenticated_client.get("/api/monitor/logs")
+        response = authenticated_client.get("/api/v2/monitor/logs")
         assert response.status_code == 200
         data = response.json()
         assert "lines" in data
@@ -328,7 +328,7 @@ class TestMonitorAPILogs:
         """Test logs API returns actual log content."""
         monkeypatch.setattr(Path, "home", lambda: mock_ursa_dir.parent)
 
-        response = authenticated_client.get("/api/monitor/logs")
+        response = authenticated_client.get("/api/v2/monitor/logs")
         assert response.status_code == 200
         data = response.json()
         assert len(data["lines"]) > 0
@@ -342,7 +342,7 @@ class TestMonitorAPILogs:
         """Test logs API respects the lines parameter."""
         monkeypatch.setattr(Path, "home", lambda: mock_ursa_dir.parent)
 
-        response = authenticated_client.get("/api/monitor/logs?lines=50")
+        response = authenticated_client.get("/api/v2/monitor/logs?lines=50")
         assert response.status_code == 200
         data = response.json()
         assert len(data["lines"]) <= 50
@@ -353,7 +353,7 @@ class TestMonitorAPILogs:
         """Test logs API filters by log level."""
         monkeypatch.setattr(Path, "home", lambda: mock_ursa_dir.parent)
 
-        response = authenticated_client.get("/api/monitor/logs?level=ERROR")
+        response = authenticated_client.get("/api/v2/monitor/logs?level=ERROR")
         assert response.status_code == 200
         data = response.json()
         # Should only return ERROR level lines
@@ -366,7 +366,7 @@ class TestMonitorAPILogs:
         """Test logs API filters WARNING level."""
         monkeypatch.setattr(Path, "home", lambda: mock_ursa_dir.parent)
 
-        response = authenticated_client.get("/api/monitor/logs?level=WARNING")
+        response = authenticated_client.get("/api/v2/monitor/logs?level=WARNING")
         assert response.status_code == 200
         data = response.json()
         for line in data["lines"]:
@@ -378,7 +378,7 @@ class TestMonitorAPILogs:
         """Test logs API handles gracefully when no log files exist."""
         monkeypatch.setattr(Path, "home", lambda: mock_ursa_dir.parent)
 
-        response = authenticated_client.get("/api/monitor/logs")
+        response = authenticated_client.get("/api/v2/monitor/logs")
         assert response.status_code == 200
         data = response.json()
         assert data["lines"] == []
@@ -391,7 +391,7 @@ class TestMonitorAPILogs:
         """Test logs API returns the log filename."""
         monkeypatch.setattr(Path, "home", lambda: mock_ursa_dir.parent)
 
-        response = authenticated_client.get("/api/monitor/logs")
+        response = authenticated_client.get("/api/v2/monitor/logs")
         assert response.status_code == 200
         data = response.json()
         assert data["log_file"] == "monitor_20260123_120000.log"
@@ -400,7 +400,7 @@ class TestMonitorAPILogs:
         """Non-admin users must not be able to access monitor logs API."""
         monkeypatch.setattr(Path, "home", lambda: mock_ursa_dir.parent)
 
-        response = authenticated_non_admin_client.get("/api/monitor/logs")
+        response = authenticated_non_admin_client.get("/api/v2/monitor/logs")
         assert response.status_code == 403
         assert response.json()["detail"] == "Admin access required"
 

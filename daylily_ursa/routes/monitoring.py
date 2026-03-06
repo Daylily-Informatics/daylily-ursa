@@ -1,7 +1,7 @@
 """Monitoring and admin routes for Daylily API.
 
 Contains routes for admin workset monitoring:
-- GET /api/admin/worksets/{workset_id}/command-log
+- GET /api/v2/admin/worksets/{workset_id}/command-log
 
 Note: Queue stats, scheduler stats, and worksets/next are in routes/worksets.py.
 """
@@ -39,7 +39,7 @@ def create_monitoring_router(deps: MonitoringDependencies) -> APIRouter:
     router = APIRouter()
     state_db = deps.state_db
 
-    @router.get("/api/admin/worksets/{workset_id}/command-log", tags=["admin"])
+    @router.get("/api/v2/admin/worksets/{workset_id}/command-log", tags=["admin"])
     async def get_workset_command_log(
         request: Request,
         workset_id: str,
