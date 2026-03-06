@@ -4,7 +4,10 @@ import os
 import datetime as dt
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any, Dict, Generator, Optional
+from typing import Any, Dict, Generator, List, Optional
+
+# Canonical EUID type alias — use this everywhere outside TapDB internals
+Euid = str
 
 from sqlalchemy import and_, text
 from sqlalchemy.orm import Session
@@ -283,6 +286,21 @@ class TapDBBackend:
         instance.json_addl = payload
         session.flush()
 
+    def find_instance_by_euid(
+        self,
+        session: Session,
+        euid: str,
+    ) -> Optional[generic_instance]:
+        """Look up a non-deleted instance by its TapDB EUID."""
+        return (
+            session.query(generic_instance)
+            .filter(
+                generic_instance.euid == euid,
+                generic_instance.is_deleted.is_(False),
+            )
+            .first()
+        )
+
     def find_instance_by_external_id(
         self,
         session: Session,
@@ -446,9 +464,17 @@ class TapDBBackend:
         )
 
 
+def require_euid(euid: Optional[str]) -> str:
+    """Validate that an EUID is present and non-empty.  Raises ValueError otherwise."""
+    if not euid:
+        raise ValueError("EUID is required but was empty or None")
+    return euid
+
+
 def from_json_addl(instance: generic_instance) -> Dict[str, Any]:
     payload = dict(instance.json_addl or {})
-    payload.setdefault("euid", instance.euid)
+    # ALWAYS use the instance-level euid — never trust json_addl["euid"]
+    payload["euid"] = instance.euid
     payload.setdefault("name", instance.name)
     payload.setdefault("created_at", instance.created_dt.isoformat().replace("+00:00", "Z") if instance.created_dt else utc_now_iso())
     payload.setdefault("updated_at", instance.modified_dt.isoformat().replace("+00:00", "Z") if instance.modified_dt else payload["created_at"])
