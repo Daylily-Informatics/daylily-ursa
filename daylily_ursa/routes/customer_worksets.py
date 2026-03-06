@@ -95,7 +95,7 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
     manifest_registry = deps.manifest_registry
     get_current_user = deps.get_current_user
 
-    @router.get("/api/customers/{customer_id}/worksets")
+    @router.get("/api/v2/customers/{customer_id}/worksets")
     async def list_customer_worksets(
         customer_id: str,
         state: Optional[str] = None,
@@ -141,7 +141,7 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
 
         return {"worksets": customer_worksets[:limit]}
 
-    @router.get("/api/customers/{customer_id}/worksets/archived")
+    @router.get("/api/v2/customers/{customer_id}/worksets/archived")
     async def list_archived_worksets(customer_id: str):
         """List all archived worksets for a customer."""
         if not customer_manager:
@@ -165,7 +165,7 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
         ]
         return customer_archived
 
-    @router.get("/api/customers/{customer_id}/worksets/{workset_id}")
+    @router.get("/api/v2/customers/{customer_id}/worksets/{workset_id}")
     async def get_customer_workset(
         customer_id: str,
         workset_id: str,
@@ -200,7 +200,7 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
 
         return workset
 
-    @router.post("/api/customers/{customer_id}/worksets")
+    @router.post("/api/v2/customers/{customer_id}/worksets")
     async def create_customer_workset(
         request: Request,
         customer_id: str,
@@ -444,7 +444,7 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
 
         if effective_integration:
             success = effective_integration.register_workset(
-                workset_id=workset_id,
+                name=workset_id,  # workset_id here is the human-readable name
                 bucket=bucket,
                 prefix=prefix,
                 priority=priority,
@@ -466,7 +466,7 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
 
             try:
                 success = state_db.register_workset(
-                    workset_id=workset_id,
+                    name=workset_id,  # workset_id here is the human-readable name
                     bucket=bucket,
                     prefix=prefix,
                     priority=ws_priority,
@@ -491,7 +491,7 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
         created = state_db.get_workset(workset_id)
         return created
 
-    @router.post("/api/customers/{customer_id}/worksets/{workset_id}/cancel")
+    @router.post("/api/v2/customers/{customer_id}/worksets/{workset_id}/cancel")
     async def cancel_customer_workset(
         customer_id: str,
         workset_id: str,
@@ -524,11 +524,11 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
                 detail="Workset does not belong to this customer",
             )
 
-        state_db.update_state(workset_id, WorksetState.CANCELED, "Canceled by user")
+        state_db.update_state(euid=workset_id, new_state=WorksetState.CANCELED, reason="Canceled by user")
         updated = state_db.get_workset(workset_id)
         return updated
 
-    @router.post("/api/customers/{customer_id}/worksets/{workset_id}/retry")
+    @router.post("/api/v2/customers/{customer_id}/worksets/{workset_id}/retry")
     async def retry_customer_workset(
         customer_id: str,
         workset_id: str,
@@ -634,7 +634,7 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
 
         if effective_integration:
             success = effective_integration.register_workset(
-                workset_id=new_workset_id,
+                name=new_workset_id,  # new_workset_id is the human-readable name
                 bucket=bucket,
                 prefix=prefix,
                 priority=priority,
@@ -658,7 +658,7 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
                 ws_type = WorksetType.RUO
 
             success = state_db.register_workset(
-                workset_id=new_workset_id,
+                name=new_workset_id,  # new_workset_id is the human-readable name
                 bucket=bucket,
                 prefix=prefix,
                 priority=ws_priority,
@@ -688,7 +688,7 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
         new_workset = state_db.get_workset(new_workset_id)
         return new_workset
 
-    @router.post("/api/customers/{customer_id}/worksets/{workset_id}/archive")
+    @router.post("/api/v2/customers/{customer_id}/worksets/{workset_id}/archive")
     async def archive_customer_workset(
         request: Request,
         customer_id: str,
@@ -763,7 +763,7 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
 
         return state_db.get_workset(workset_id)
 
-    @router.post("/api/customers/{customer_id}/worksets/{workset_id}/delete")
+    @router.post("/api/v2/customers/{customer_id}/worksets/{workset_id}/delete")
     async def delete_customer_workset(
         request: Request,
         customer_id: str,
@@ -857,7 +857,7 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
             return {"status": "deleted", "workset_id": workset_id, "hard_delete": True}
         return state_db.get_workset(workset_id)
 
-    @router.post("/api/customers/{customer_id}/worksets/{workset_id}/restore")
+    @router.post("/api/v2/customers/{customer_id}/worksets/{workset_id}/restore")
     async def restore_customer_workset(
         customer_id: str,
         workset_id: str,
@@ -905,7 +905,7 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
 
         return state_db.get_workset(workset_id)
 
-    @router.get("/api/customers/{customer_id}/worksets/{workset_id}/logs")
+    @router.get("/api/v2/customers/{customer_id}/worksets/{workset_id}/logs")
     async def get_customer_workset_logs(
         customer_id: str,
         workset_id: str,
@@ -1020,7 +1020,7 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
             "pipeline_status": pipeline_status,
         }
 
-    @router.get("/api/customers/{customer_id}/worksets/{workset_id}/performance-metrics")
+    @router.get("/api/v2/customers/{customer_id}/worksets/{workset_id}/performance-metrics")
     async def get_customer_workset_performance_metrics(
         customer_id: str,
         workset_id: str,
@@ -1267,7 +1267,7 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
         }
 
     @router.get(
-        "/api/customers/{customer_id}/worksets/{workset_id}/snakemake-log/{log_filename}",
+        "/api/v2/customers/{customer_id}/worksets/{workset_id}/snakemake-log/{log_filename}",
     )
     async def download_snakemake_log(
         customer_id: str,

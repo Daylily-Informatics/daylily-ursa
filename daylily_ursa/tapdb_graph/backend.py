@@ -290,16 +290,20 @@ class TapDBBackend:
         self,
         session: Session,
         euid: str,
+        *,
+        for_update: bool = False,
     ) -> Optional[generic_instance]:
         """Look up a non-deleted instance by its TapDB EUID."""
-        return (
+        query = (
             session.query(generic_instance)
             .filter(
                 generic_instance.euid == euid,
                 generic_instance.is_deleted.is_(False),
             )
-            .first()
         )
+        if for_update:
+            query = query.with_for_update()
+        return query.first()
 
     def find_instance_by_external_id(
         self,

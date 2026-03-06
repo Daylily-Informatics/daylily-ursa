@@ -48,12 +48,12 @@ def create_worksets_router(
             "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         }
 
-    @router.post("/worksets", response_model=WorksetResponse, status_code=status.HTTP_201_CREATED)
+    @router.post("/api/v2/worksets", response_model=WorksetResponse, status_code=status.HTTP_201_CREATED)
     async def create_workset(workset: WorksetCreate):
         """Register a new workset."""
         try:
-            success = state_db.register_workset(
-                workset_id=workset.workset_id,
+            euid = state_db.register_workset(
+                name=workset.workset_id,  # WorksetCreate.workset_id is the name
                 bucket=workset.bucket,
                 prefix=workset.prefix,
                 priority=workset.priority,
@@ -69,14 +69,14 @@ def create_worksets_router(
                 detail=str(e),
             )
 
-        if not success:
+        if not euid:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f"Workset {workset.workset_id} already exists",
             )
 
-        # Retrieve the created workset
-        created = state_db.get_workset(workset.workset_id)
+        # Retrieve the created workset by its new euid
+        created = state_db.get_workset(euid)
         if not created:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -85,9 +85,9 @@ def create_worksets_router(
 
         return WorksetResponse(**created)
 
-    @router.get("/worksets/{workset_id}", response_model=WorksetResponse)
+    @router.get("/api/v2/worksets/{workset_id}", response_model=WorksetResponse)
     async def get_workset(workset_id: str):
-        """Get workset details."""
+        """Get workset details by euid (path param name kept for backward compat)."""
         workset = state_db.get_workset(workset_id)
         if not workset:
             raise HTTPException(
@@ -97,7 +97,7 @@ def create_worksets_router(
 
         return WorksetResponse(**workset)
 
-    @router.get("/worksets", response_model=List[WorksetResponse])
+    @router.get("/api/v2/worksets", response_model=List[WorksetResponse])
     async def list_worksets(
         state: Optional[WorksetState] = Query(None, description="Filter by state"),
         priority: Optional[WorksetPriority] = Query(None, description="Filter by priority"),
@@ -118,9 +118,9 @@ def create_worksets_router(
 
         return [WorksetResponse(**w) for w in worksets]
 
-    @router.put("/worksets/{workset_id}/state", response_model=WorksetResponse)
+    @router.put("/api/v2/worksets/{workset_id}/state", response_model=WorksetResponse)
     async def update_workset_state(workset_id: str, update: WorksetStateUpdate):
-        """Update workset state."""
+        """Update workset state. Path param workset_id is actually the euid."""
         # Verify workset exists
         workset = state_db.get_workset(workset_id)
         if not workset:
@@ -130,7 +130,7 @@ def create_worksets_router(
             )
 
         state_db.update_state(
-            workset_id=workset_id,
+            euid=workset_id,
             new_state=update.state,
             reason=update.reason,
             error_details=update.error_details,
@@ -147,11 +147,11 @@ def create_worksets_router(
             )
         return WorksetResponse(**updated)
 
-    @router.post("/worksets/{workset_id}/lock")
+    @router.post("/api/v2/worksets/{workset_id}/lock")
     async def acquire_workset_lock(
         workset_id: str, owner_id: str = Query(..., description="Lock owner ID")
     ):
-        """Acquire lock on a workset."""
+        """Acquire lock on a workset. Path param workset_id is actually the euid."""
         success = state_db.acquire_lock(workset_id, owner_id)
         if not success:
             raise HTTPException(
@@ -159,13 +159,13 @@ def create_worksets_router(
                 detail=f"Failed to acquire lock on workset {workset_id}",
             )
 
-        return {"status": "locked", "workset_id": workset_id, "owner_id": owner_id}
+        return {"status": "locked", "euid": workset_id, "owner_id": owner_id}
 
-    @router.delete("/worksets/{workset_id}/lock")
+    @router.delete("/api/v2/worksets/{workset_id}/lock")
     async def release_workset_lock(
         workset_id: str, owner_id: str = Query(..., description="Lock owner ID")
     ):
-        """Release lock on a workset."""
+        """Release lock on a workset. Path param workset_id is actually the euid."""
         success = state_db.release_lock(workset_id, owner_id)
         if not success:
             raise HTTPException(
@@ -173,11 +173,11 @@ def create_worksets_router(
                 detail=f"Failed to release lock on workset {workset_id} (not owner)",
             )
 
-        return {"status": "unlocked", "workset_id": workset_id}
+        return {"status": "unlocked", "euid": workset_id}
 
     # ========== Monitoring Endpoints ==========
 
-    @router.get("/queue/stats", response_model=QueueStats, tags=["monitoring"])
+    @router.get("/api/v2/queue/stats", response_model=QueueStats, tags=["monitoring"])
     async def get_queue_stats():
         """Get queue statistics."""
         queue_depth = state_db.get_queue_depth()
@@ -190,7 +190,7 @@ def create_worksets_router(
             error_worksets=queue_depth.get(WorksetState.ERROR.value, 0),
         )
 
-    @router.get("/scheduler/stats", response_model=SchedulingStats, tags=["monitoring"])
+    @router.get("/api/v2/scheduler/stats", response_model=SchedulingStats, tags=["monitoring"])
     async def get_scheduler_stats():
         """Get scheduler statistics."""
         if not scheduler:
@@ -204,7 +204,7 @@ def create_worksets_router(
 
     # ========== Scheduling Endpoints ==========
 
-    @router.get("/worksets/next", response_model=Optional[WorksetResponse], tags=["scheduling"])
+    @router.get("/api/v2/worksets/next", response_model=Optional[WorksetResponse], tags=["scheduling"])
     async def get_next_workset():
         """Get the next workset to execute based on priority."""
         if not scheduler:

@@ -173,14 +173,17 @@ class WorksetStateDB:
             raise RuntimeError(f"Missing event template: {template_code}")
         return int(template.uuid)
 
-    def _find_workset(self, session, workset_id: str, *, for_update: bool = False) -> Optional[generic_instance]:
+    def _find_workset(self, session, euid: str, *, for_update: bool = False) -> Optional[generic_instance]:
+        """Look up a workset by its TapDB EUID (primary identity)."""
+        return self.backend.find_instance_by_euid(session, euid, for_update=for_update)
+
+    def _find_workset_by_name(self, session, name: str) -> Optional[generic_instance]:
+        """Look up a workset by instance name (used for duplicate checks during registration)."""
         query = session.query(generic_instance).filter(
             generic_instance.template_uuid == self._workset_template_uuid(session),
             generic_instance.is_deleted.is_(False),
-            generic_instance.json_addl["workset_id"].as_string() == workset_id,
+            generic_instance.name == name,
         )
-        if for_update:
-            query = query.with_for_update()
         return query.first()
 
     def _find_customer(self, session, customer_id: str) -> Optional[generic_instance]:
@@ -238,8 +241,9 @@ class WorksetStateDB:
         action: str,
         expires_at: Optional[str] = None,
     ) -> None:
+        workset_euid = workset.euid
         event_payload: Dict[str, Any] = {
-            "workset_id": (workset.json_addl or {}).get("workset_id", workset.name),
+            "workset_euid": workset_euid,
             "lock_action": action,
             "owner": owner_id,
             "timestamp": utc_now_iso(),
@@ -249,7 +253,7 @@ class WorksetStateDB:
         event = self.backend.create_instance(
             session,
             self.LOCK_EVENT_TEMPLATE,
-            f"lock:{event_payload['workset_id']}:{event_payload['timestamp']}",
+            f"lock:{workset_euid}:{event_payload['timestamp']}",
             json_addl=event_payload,
             bstatus="active",
         )
@@ -270,8 +274,9 @@ class WorksetStateDB:
         progress_step: Optional[WorksetProgressStep] = None,
         error_details: Optional[str] = None,
     ) -> None:
+        workset_euid = workset.euid
         event_payload: Dict[str, Any] = {
-            "workset_id": (workset.json_addl or {}).get("workset_id", workset.name),
+            "workset_euid": workset_euid,
             "state": new_state.value,
             "timestamp": utc_now_iso(),
             "reason": reason,
@@ -284,7 +289,7 @@ class WorksetStateDB:
         event = self.backend.create_instance(
             session,
             self.STATE_EVENT_TEMPLATE,
-            f"state:{event_payload['workset_id']}:{event_payload['timestamp']}",
+            f"state:{workset_euid}:{event_payload['timestamp']}",
             json_addl=event_payload,
             bstatus=new_state.value,
         )
@@ -313,7 +318,7 @@ class WorksetStateDB:
 
     def register_workset(
         self,
-        workset_id: str,
+        name: str,
         bucket: str,
         prefix: str,
         priority: WorksetPriority = WorksetPriority.NORMAL,
@@ -323,7 +328,8 @@ class WorksetStateDB:
         workset_type: Optional[WorksetType] = None,
         preferred_cluster: Optional[str] = None,
         cluster_region: Optional[str] = None,
-    ) -> bool:
+    ) -> Optional[str]:
+        """Register a new workset. Returns the TapDB EUID or None if duplicate."""
         if not skip_validation:
             customer_id = self._validate_customer_id(customer_id)
             self._validate_samples(metadata)
@@ -337,7 +343,6 @@ class WorksetStateDB:
 
         now = utc_now_iso()
         payload: Dict[str, Any] = {
-            "workset_id": workset_id,
             "state": WorksetState.READY.value,
             "priority": priority.value,
             "workset_type": workset_type.value,
@@ -367,14 +372,14 @@ class WorksetStateDB:
 
         with self.backend.session_scope(commit=True) as session:
             self.backend.ensure_templates(session)
-            if self._find_workset(session, workset_id) is not None:
-                LOGGER.warning("Workset %s already exists", workset_id)
-                return False
+            if self._find_workset_by_name(session, name) is not None:
+                LOGGER.warning("Workset %s already exists", name)
+                return None
 
             ws = self.backend.create_instance(
                 session,
                 self.WORKSET_TEMPLATE,
-                workset_id,
+                name,
                 json_addl=payload,
                 bstatus=WorksetState.READY.value,
             )
@@ -396,13 +401,15 @@ class WorksetStateDB:
                 reason="Initial registration",
             )
 
+            euid = ws.euid
+
         self._emit_metric("WorksetRegistered", 1.0)
-        LOGGER.info("Registered workset %s (priority=%s)", workset_id, priority.value)
-        return True
+        LOGGER.info("Registered workset %s euid=%s (priority=%s)", name, euid, priority.value)
+        return euid
 
     def acquire_lock(
         self,
-        workset_id: str,
+        euid: str,
         owner_id: str,
         force: bool = False,
     ) -> bool:
@@ -411,9 +418,9 @@ class WorksetStateDB:
         expires_at = (now + dt.timedelta(seconds=self.lock_timeout_seconds)).isoformat().replace("+00:00", "Z")
 
         with self.backend.session_scope(commit=True) as session:
-            ws = self._find_workset(session, workset_id, for_update=True)
+            ws = self._find_workset(session, euid, for_update=True)
             if ws is None:
-                LOGGER.warning("Workset %s not found", workset_id)
+                LOGGER.warning("Workset %s not found", euid)
                 return False
 
             data = dict(ws.json_addl or {})
@@ -460,9 +467,9 @@ class WorksetStateDB:
         self._emit_metric("LockAcquired", 1.0)
         return True
 
-    def release_lock(self, workset_id: str, owner_id: str) -> bool:
+    def release_lock(self, euid: str, owner_id: str) -> bool:
         with self.backend.session_scope(commit=True) as session:
-            ws = self._find_workset(session, workset_id, for_update=True)
+            ws = self._find_workset(session, euid, for_update=True)
             if ws is None:
                 return False
             data = dict(ws.json_addl or {})
@@ -489,13 +496,13 @@ class WorksetStateDB:
         self._emit_metric("LockReleased", 1.0)
         return True
 
-    def refresh_lock(self, workset_id: str, owner_id: str) -> bool:
+    def refresh_lock(self, euid: str, owner_id: str) -> bool:
         now = dt.datetime.now(dt.timezone.utc)
         now_iso = now.isoformat().replace("+00:00", "Z")
         expires_at = (now + dt.timedelta(seconds=self.lock_timeout_seconds)).isoformat().replace("+00:00", "Z")
 
         with self.backend.session_scope(commit=True) as session:
-            ws = self._find_workset(session, workset_id, for_update=True)
+            ws = self._find_workset(session, euid, for_update=True)
             if ws is None:
                 return False
             data = dict(ws.json_addl or {})
@@ -518,7 +525,7 @@ class WorksetStateDB:
 
     def update_state(
         self,
-        workset_id: str,
+        euid: str,
         new_state: WorksetState,
         reason: str,
         error_details: Optional[str] = None,
@@ -528,9 +535,9 @@ class WorksetStateDB:
     ) -> None:
         now_iso = utc_now_iso()
         with self.backend.session_scope(commit=True) as session:
-            ws = self._find_workset(session, workset_id, for_update=True)
+            ws = self._find_workset(session, euid, for_update=True)
             if ws is None:
-                raise KeyError(f"workset not found: {workset_id}")
+                raise KeyError(f"workset not found: {euid}")
 
             data = dict(ws.json_addl or {})
             data["state"] = new_state.value
@@ -569,12 +576,12 @@ class WorksetStateDB:
 
     def update_progress_step(
         self,
-        workset_id: str,
+        euid: str,
         progress_step: WorksetProgressStep,
         message: Optional[str] = None,
     ) -> None:
         with self.backend.session_scope(commit=True) as session:
-            ws = self._find_workset(session, workset_id, for_update=True)
+            ws = self._find_workset(session, euid, for_update=True)
             if ws is None:
                 return
             data = dict(ws.json_addl or {})
@@ -587,7 +594,7 @@ class WorksetStateDB:
 
     def update_progress(
         self,
-        workset_id: str,
+        euid: str,
         current_step: Optional[str] = None,
         cluster_name: Optional[str] = None,
         started_at: Optional[str] = None,
@@ -595,7 +602,7 @@ class WorksetStateDB:
         metrics: Optional[Dict[str, Any]] = None,
     ) -> None:
         with self.backend.session_scope(commit=True) as session:
-            ws = self._find_workset(session, workset_id, for_update=True)
+            ws = self._find_workset(session, euid, for_update=True)
             if ws is None:
                 return
             data = dict(ws.json_addl or {})
@@ -615,11 +622,11 @@ class WorksetStateDB:
 
     def update_metadata(
         self,
-        workset_id: str,
+        euid: str,
         metadata_updates: Dict[str, Any],
     ) -> bool:
         with self.backend.session_scope(commit=True) as session:
-            ws = self._find_workset(session, workset_id, for_update=True)
+            ws = self._find_workset(session, euid, for_update=True)
             if ws is None:
                 return False
             data = dict(ws.json_addl or {})
@@ -635,7 +642,7 @@ class WorksetStateDB:
 
     def update_execution_environment(
         self,
-        workset_id: str,
+        euid: str,
         cluster_name: Optional[str] = None,
         cluster_region: Optional[str] = None,
         headnode_ip: Optional[str] = None,
@@ -647,7 +654,7 @@ class WorksetStateDB:
         results_s3_uri: Optional[str] = None,
     ) -> None:
         with self.backend.session_scope(commit=True) as session:
-            ws = self._find_workset(session, workset_id, for_update=True)
+            ws = self._find_workset(session, euid, for_update=True)
             if ws is None:
                 return
             data = dict(ws.json_addl or {})
@@ -673,8 +680,8 @@ class WorksetStateDB:
             ws.json_addl = data
             session.flush()
 
-    def get_execution_environment(self, workset_id: str) -> Optional[Dict[str, Any]]:
-        record = self.get_workset(workset_id)
+    def get_execution_environment(self, euid: str) -> Optional[Dict[str, Any]]:
+        record = self.get_workset(euid)
         if record is None:
             return None
         return {
@@ -691,11 +698,11 @@ class WorksetStateDB:
 
     def set_execution_context(
         self,
-        workset_id: str,
+        euid: str,
         execution_context: Dict[str, Any],
     ) -> bool:
         with self.backend.session_scope(commit=True) as session:
-            ws = self._find_workset(session, workset_id, for_update=True)
+            ws = self._find_workset(session, euid, for_update=True)
             if ws is None:
                 return False
             data = dict(ws.json_addl or {})
@@ -705,8 +712,8 @@ class WorksetStateDB:
             session.flush()
             return True
 
-    def get_execution_context(self, workset_id: str) -> Optional[Dict[str, Any]]:
-        workset = self.get_workset(workset_id)
+    def get_execution_context(self, euid: str) -> Optional[Dict[str, Any]]:
+        workset = self.get_workset(euid)
         if not workset:
             return None
         value = workset.get("execution_context")
@@ -714,21 +721,29 @@ class WorksetStateDB:
             return value
         return None
 
-    def get_workset(self, workset_id: str) -> Optional[Dict[str, Any]]:
+    def get_workset(self, euid: str) -> Optional[Dict[str, Any]]:
         with self.backend.session_scope() as session:
-            ws = self._find_workset(session, workset_id)
+            ws = self._find_workset(session, euid)
+            if ws is None:
+                return None
+            return self._deserialize_item(self._to_dict(ws))
+
+    def get_workset_by_name(self, name: str) -> Optional[Dict[str, Any]]:
+        """Public lookup by instance name (e.g. for S3-to-TapDB sync)."""
+        with self.backend.session_scope() as session:
+            ws = self._find_workset_by_name(session, name)
             if ws is None:
                 return None
             return self._deserialize_item(self._to_dict(ws))
 
     def update_performance_metrics(
         self,
-        workset_id: str,
+        euid: str,
         performance_metrics: Dict[str, Any],
         is_final: bool = False,
     ) -> bool:
         with self.backend.session_scope(commit=True) as session:
-            ws = self._find_workset(session, workset_id, for_update=True)
+            ws = self._find_workset(session, euid, for_update=True)
             if ws is None:
                 return False
             data = dict(ws.json_addl or {})
@@ -739,8 +754,8 @@ class WorksetStateDB:
             session.flush()
             return True
 
-    def get_performance_metrics(self, workset_id: str) -> Optional[Dict[str, Any]]:
-        workset = self.get_workset(workset_id)
+    def get_performance_metrics(self, euid: str) -> Optional[Dict[str, Any]]:
+        workset = self.get_workset(euid)
         if workset is None:
             return None
         result: Dict[str, Any] = {
@@ -752,14 +767,14 @@ class WorksetStateDB:
 
     def update_cost_report(
         self,
-        workset_id: str,
+        euid: str,
         total_compute_cost_usd: float,
         per_sample_costs: Optional[Dict[str, float]] = None,
         rule_count: Optional[int] = None,
         sample_count: Optional[int] = None,
     ) -> bool:
         with self.backend.session_scope(commit=True) as session:
-            ws = self._find_workset(session, workset_id, for_update=True)
+            ws = self._find_workset(session, euid, for_update=True)
             if ws is None:
                 return False
             data = dict(ws.json_addl or {})
@@ -777,8 +792,8 @@ class WorksetStateDB:
             session.flush()
             return True
 
-    def get_cost_report(self, workset_id: str) -> Optional[Dict[str, Any]]:
-        workset = self.get_workset(workset_id)
+    def get_cost_report(self, euid: str) -> Optional[Dict[str, Any]]:
+        workset = self.get_workset(euid)
         if workset is None:
             return None
         keys = {
@@ -793,12 +808,12 @@ class WorksetStateDB:
 
     def update_storage_metrics(
         self,
-        workset_id: str,
+        euid: str,
         results_storage_bytes: int,
         fsx_storage_bytes: Optional[int] = None,
     ) -> bool:
         with self.backend.session_scope(commit=True) as session:
-            ws = self._find_workset(session, workset_id, for_update=True)
+            ws = self._find_workset(session, euid, for_update=True)
             if ws is None:
                 return False
             data = dict(ws.json_addl or {})
@@ -812,8 +827,8 @@ class WorksetStateDB:
             session.flush()
             return True
 
-    def get_storage_metrics(self, workset_id: str) -> Optional[Dict[str, Any]]:
-        workset = self.get_workset(workset_id)
+    def get_storage_metrics(self, euid: str) -> Optional[Dict[str, Any]]:
+        workset = self.get_workset(euid)
         if workset is None:
             return None
         keys = {"results_storage_bytes", "fsx_storage_bytes", "storage_calculated_at"}
@@ -946,12 +961,12 @@ class WorksetStateDB:
 
     def record_failure(
         self,
-        workset_id: str,
+        euid: str,
         error_details: str,
         error_category: ErrorCategory = ErrorCategory.TRANSIENT,
         failed_step: Optional[str] = None,
     ) -> bool:
-        workset = self.get_workset(workset_id)
+        workset = self.get_workset(euid)
         if not workset:
             return False
 
@@ -976,7 +991,7 @@ class WorksetStateDB:
             reason = f"Permanent failure after {retry_count} retries: {error_category.value}"
 
         with self.backend.session_scope(commit=True) as session:
-            ws = self._find_workset(session, workset_id, for_update=True)
+            ws = self._find_workset(session, euid, for_update=True)
             if ws is None:
                 return False
             data = dict(ws.json_addl or {})
@@ -1020,21 +1035,21 @@ class WorksetStateDB:
                 retryable.append(workset)
         return retryable
 
-    def reset_for_retry(self, workset_id: str) -> bool:
+    def reset_for_retry(self, euid: str) -> bool:
         try:
-            self.update_state(workset_id, WorksetState.READY, reason="Reset for retry attempt")
+            self.update_state(euid, WorksetState.READY, reason="Reset for retry attempt")
             return True
         except Exception:
             return False
 
     def set_cluster_affinity(
         self,
-        workset_id: str,
+        euid: str,
         cluster_name: str,
         affinity_reason: str = "manual",
     ) -> bool:
         with self.backend.session_scope(commit=True) as session:
-            ws = self._find_workset(session, workset_id, for_update=True)
+            ws = self._find_workset(session, euid, for_update=True)
             if ws is None:
                 return False
             data = dict(ws.json_addl or {})
@@ -1073,12 +1088,12 @@ class WorksetStateDB:
 
     def archive_workset(
         self,
-        workset_id: str,
+        euid: str,
         archived_by: str = "system",
         archive_reason: Optional[str] = None,
     ) -> bool:
         with self.backend.session_scope(commit=True) as session:
-            ws = self._find_workset(session, workset_id, for_update=True)
+            ws = self._find_workset(session, euid, for_update=True)
             if ws is None:
                 return False
             data = dict(ws.json_addl or {})
@@ -1102,13 +1117,13 @@ class WorksetStateDB:
 
     def delete_workset(
         self,
-        workset_id: str,
+        euid: str,
         deleted_by: str = "system",
         delete_reason: Optional[str] = None,
         hard_delete: bool = False,
     ) -> bool:
         with self.backend.session_scope(commit=True) as session:
-            ws = self._find_workset(session, workset_id, for_update=True)
+            ws = self._find_workset(session, euid, for_update=True)
             if ws is None:
                 return False
             data = dict(ws.json_addl or {})
@@ -1140,11 +1155,11 @@ class WorksetStateDB:
 
     def restore_workset(
         self,
-        workset_id: str,
+        euid: str,
         restored_by: str = "system",
     ) -> bool:
         with self.backend.session_scope(commit=True) as session:
-            ws = self._find_workset(session, workset_id, for_update=True)
+            ws = self._find_workset(session, euid, for_update=True)
             if ws is None:
                 return False
             data = dict(ws.json_addl or {})

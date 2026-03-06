@@ -17,7 +17,7 @@ from daylily_ursa.workset_integration import (
 def mock_state_db():
     """Create mock WorksetStateDB."""
     mock_db = MagicMock()
-    mock_db.register_workset.return_value = True
+    mock_db.register_workset.return_value = "euid-test-ws-001"  # returns euid on success
     mock_db.get_workset.return_value = {
         "workset_id": "test-ws-001",
         "state": "ready",
@@ -107,7 +107,7 @@ class TestRegisterWorkset:
     def test_register_workset_dual_write(self, integration, mock_state_db, mock_s3_client):
         """Test registration writes to both TapDB and S3."""
         result = integration.register_workset(
-            workset_id="new-ws-001",
+            name="new-ws-001",
             bucket="test-bucket",
             prefix="worksets/new-ws-001/",
             priority="high",
@@ -116,7 +116,7 @@ class TestRegisterWorkset:
             write_tapdb=True,
         )
 
-        assert result is True
+        assert result is not None  # returns euid on success
         mock_state_db.register_workset.assert_called_once()
         # S3 sentinel should be written
         assert mock_s3_client.put_object.called
@@ -124,27 +124,28 @@ class TestRegisterWorkset:
     def test_register_workset_tapdb_only(self, integration, mock_state_db, mock_s3_client):
         """Test registration to TapDB only."""
         result = integration.register_workset(
-            workset_id="db-only-ws",
+            name="db-only-ws",
             bucket="test-bucket",
             prefix="worksets/db-only-ws/",
             write_s3=False,
             write_tapdb=True,
         )
 
-        assert result is True
+        assert result is not None  # returns euid on success
         mock_state_db.register_workset.assert_called_once()
 
     def test_register_workset_s3_only(self, integration, mock_state_db, mock_s3_client):
         """Test registration to S3 only."""
         result = integration.register_workset(
-            workset_id="s3-only-ws",
+            name="s3-only-ws",
             bucket="test-bucket",
             prefix="worksets/s3-only-ws/",
             write_s3=True,
             write_tapdb=False,
         )
 
-        assert result is True
+        # S3-only returns None (no TapDB euid generated)
+        assert result is None
         mock_state_db.register_workset.assert_not_called()
         assert mock_s3_client.put_object.called
 
@@ -211,7 +212,7 @@ class TestUpdateState:
     def test_update_state_syncs_both(self, integration, mock_state_db, mock_s3_client):
         """Test state update syncs to both TapDB and S3."""
         integration.update_state(
-            workset_id="test-ws-001",
+            euid="test-ws-001",
             new_state="in_progress",
             reason="Started processing",
             write_s3=True,
@@ -227,7 +228,7 @@ class TestUpdateState:
         mock_s3_client.reset_mock()
 
         integration.update_state(
-            workset_id="test-ws-001",
+            euid="test-ws-001",
             new_state="in_progress",
             reason="Processing started",
             write_s3=False,
@@ -242,7 +243,7 @@ class TestUpdateState:
         mock_s3_client.reset_mock()
 
         integration.update_state(
-            workset_id="test-ws-001",
+            euid="test-ws-001",
             new_state="complete",
             reason="Processing finished",
             write_s3=True,
@@ -1237,7 +1238,7 @@ class TestUpdateExecutionEnvironmentHeadnodePath:
         db.backend.session_scope.return_value = _Ctx()
 
         db.update_execution_environment(
-            workset_id="test-ws-001",
+            euid="test-ws-001",
             headnode_analysis_path="/fsx/analysis_results/ubuntu/test-ws-001/daylily-omics-analysis",
         )
 
@@ -1265,7 +1266,7 @@ class TestUpdateExecutionEnvironmentHeadnodePath:
         db.backend.session_scope.return_value = _Ctx()
 
         db.update_execution_environment(
-            workset_id="test-ws-002",
+            euid="test-ws-002",
             cluster_name="test-cluster",
             headnode_ip="10.0.1.100",
             headnode_analysis_path="/fsx/analysis",
@@ -1506,7 +1507,7 @@ class TestBucketNormalizationAtIngress:
     def test_register_workset_normalizes_bucket_param(self, integration, mock_state_db, mock_s3_client):
         """Test register_workset normalizes bucket parameter with s3:// prefix."""
         result = integration.register_workset(
-            workset_id="test-ws-norm",
+            name="test-ws-norm",
             bucket="s3://bucket-with-prefix",
             prefix="worksets/test/",
             priority="normal",
@@ -1515,14 +1516,14 @@ class TestBucketNormalizationAtIngress:
             write_tapdb=True,
         )
 
-        assert result is True
+        assert result is not None  # returns euid on success
         call_kwargs = mock_state_db.register_workset.call_args.kwargs
         assert call_kwargs["bucket"] == "bucket-with-prefix"
 
     def test_update_state_normalizes_bucket_param(self, integration, mock_state_db, mock_s3_client):
         """Test update_state normalizes bucket parameter with s3:// prefix."""
         integration.update_state(
-            workset_id="test-ws-001",
+            euid="test-ws-001",
             new_state="in_progress",
             reason="Starting processing",
             bucket="s3://bucket-with-prefix",
@@ -1539,7 +1540,7 @@ class TestBucketNormalizationAtIngress:
         mock_state_db.acquire_lock.return_value = True
 
         result = integration.acquire_lock(
-            workset_id="test-ws-001",
+            euid="test-ws-001",
             owner_id="test-processor",
             bucket="s3://bucket-with-prefix",
         )
@@ -1555,7 +1556,7 @@ class TestBucketNormalizationAtIngress:
         mock_state_db.release_lock.return_value = True
 
         result = integration.release_lock(
-            workset_id="test-ws-001",
+            euid="test-ws-001",
             owner_id="test-processor",
             bucket="s3://bucket-with-prefix",
         )

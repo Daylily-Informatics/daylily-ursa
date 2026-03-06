@@ -27,11 +27,12 @@ class _SessionCtx:
 
 
 class _Instance:
-    def __init__(self, *, name: str = "ws", bstatus: str = "ready", json_addl: dict | None = None):
+    def __init__(self, *, name: str = "ws", bstatus: str = "ready", json_addl: dict | None = None, euid: str | None = None):
         self.name = name
         self.bstatus = bstatus
         self.json_addl = dict(json_addl or {})
         self.is_deleted = False
+        self.euid = euid or f"euid-{name}"
 
 
 @pytest.fixture
@@ -54,6 +55,7 @@ def state_db() -> WorksetStateDB:
     db._write_lock_event = MagicMock()
     db._emit_metric = MagicMock()
     db._find_workset = MagicMock(return_value=None)
+    db._find_workset_by_name = MagicMock(return_value=None)
     return db
 
 
@@ -61,8 +63,8 @@ def test_register_workset_success(state_db: WorksetStateDB):
     ws = _Instance(name="ws-001")
     state_db.backend.create_instance.return_value = ws
 
-    ok = state_db.register_workset(
-        workset_id="ws-001",
+    euid = state_db.register_workset(
+        name="ws-001",
         bucket="my-bucket",
         prefix="worksets/ws-001/",
         priority=WorksetPriority.NORMAL,
@@ -70,31 +72,30 @@ def test_register_workset_success(state_db: WorksetStateDB):
         customer_id="cust-1",
     )
 
-    assert ok is True
+    assert euid == "euid-ws-001"  # from _Instance.euid property
     state_db.backend.create_instance.assert_called_once()
     payload = state_db.backend.create_instance.call_args.kwargs["json_addl"]
-    assert payload["workset_id"] == "ws-001"
     assert payload["state"] == "ready"
 
 
-def test_register_workset_duplicate_returns_false(state_db: WorksetStateDB):
-    state_db._find_workset.return_value = _Instance(name="existing")
+def test_register_workset_duplicate_returns_none(state_db: WorksetStateDB):
+    state_db._find_workset_by_name = MagicMock(return_value=_Instance(name="existing"))
 
-    ok = state_db.register_workset(
-        workset_id="ws-dup",
+    euid = state_db.register_workset(
+        name="ws-dup",
         bucket="my-bucket",
         prefix="worksets/ws-dup/",
         metadata={"samples": [{"sample_id": "S1"}]},
         customer_id="cust-1",
     )
 
-    assert ok is False
+    assert euid is None
 
 
 def test_register_workset_rejects_invalid_customer(state_db: WorksetStateDB):
     with pytest.raises(ValueError):
         state_db.register_workset(
-            workset_id="ws-bad",
+            name="ws-bad",
             bucket="my-bucket",
             prefix="worksets/ws-bad/",
             metadata={"samples": [{"sample_id": "S1"}]},
@@ -105,7 +106,7 @@ def test_register_workset_rejects_invalid_customer(state_db: WorksetStateDB):
 def test_register_workset_requires_samples(state_db: WorksetStateDB):
     with pytest.raises(ValueError):
         state_db.register_workset(
-            workset_id="ws-nosamples",
+            name="ws-nosamples",
             bucket="my-bucket",
             prefix="worksets/ws-nosamples/",
             metadata={},

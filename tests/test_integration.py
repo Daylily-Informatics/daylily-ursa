@@ -23,11 +23,12 @@ class _SessionCtx:
 
 
 class _Instance:
-    def __init__(self, *, name: str = "ws", bstatus: str = "ready", json_addl: dict | None = None):
+    def __init__(self, *, name: str = "ws", bstatus: str = "ready", json_addl: dict | None = None, euid: str | None = None):
         self.name = name
         self.bstatus = bstatus
         self.json_addl = dict(json_addl or {})
         self.is_deleted = False
+        self.euid = euid or f"euid-{name}"
 
 
 @pytest.fixture
@@ -49,6 +50,7 @@ def state_db() -> WorksetStateDB:
     db._write_lock_event = MagicMock()
     db._emit_metric = MagicMock()
     db._find_workset = MagicMock(return_value=None)
+    db._find_workset_by_name = MagicMock(return_value=None)
     return db
 
 
@@ -67,27 +69,30 @@ class TestWorksetLifecycle:
             },
         )
         state_db.backend.create_instance.return_value = ws
-        state_db._find_workset.side_effect = [None, ws, ws, ws]
+        # _find_workset_by_name returns None (no duplicate) for register_workset
+        # _find_workset returns ws for acquire_lock and update_state calls
+        state_db._find_workset.side_effect = [ws, ws, ws]
 
-        assert state_db.register_workset(
-            workset_id="integration-ws-001",
+        euid = state_db.register_workset(
+            name="integration-ws-001",
             bucket="test-bucket",
             prefix="worksets/test/",
             priority=WorksetPriority.NORMAL,
             metadata={"samples": [{"sample_id": f"S{i}"} for i in range(5)], "sample_count": 5},
             customer_id="test-customer",
         )
+        assert euid is not None  # returns euid string on success
 
-        assert state_db.acquire_lock("integration-ws-001", "processor-1") is True
+        assert state_db.acquire_lock(euid, "processor-1") is True
 
         state_db.update_state(
-            "integration-ws-001",
+            euid,
             WorksetState.IN_PROGRESS,
             reason="Started processing",
             cluster_name="test-cluster",
         )
         state_db.update_state(
-            "integration-ws-001",
+            euid,
             WorksetState.COMPLETE,
             reason="Processing finished",
             metrics={"duration_seconds": 300, "cost_usd": 5.0},
@@ -102,7 +107,7 @@ class TestWorksetLifecycle:
         state_db._find_workset.return_value = ws
 
         should_retry = state_db.record_failure(
-            workset_id="error-ws-001",
+            euid="error-ws-001",
             error_details="Connection timeout",
             error_category=ErrorCategory.TRANSIENT,
         )
@@ -116,7 +121,7 @@ class TestWorksetLifecycle:
         state_db._find_workset.return_value = ws
 
         should_retry = state_db.record_failure(
-            workset_id="perm-error-ws-001",
+            euid="perm-error-ws-001",
             error_details="Persistent error",
             error_category=ErrorCategory.TRANSIENT,
         )
@@ -145,13 +150,13 @@ class TestValidationToProcessing:
             state_db._find_workset.side_effect = [None]
 
             result = state_db.register_workset(
-                workset_id=config["workset_id"],
+                name=config["workset_id"],
                 bucket="test-bucket",
                 prefix="worksets/validated-ws-001/",
                 metadata={"samples": config["samples"]},
                 customer_id="test-customer",
             )
-            assert result is True
+            assert result is not None  # returns euid string on success
 
 
 class TestDiagnosticsIntegration:
@@ -169,7 +174,7 @@ class TestDiagnosticsIntegration:
 
         error_category = ErrorCategory.TRANSIENT if classification["retryable"] else ErrorCategory.PERMANENT
         should_retry = state_db.record_failure(
-            workset_id="diag-ws-001",
+            euid="diag-ws-001",
             error_details=error_text,
             error_category=error_category,
         )
@@ -188,7 +193,7 @@ class TestDiagnosticsIntegration:
         state_db._find_workset.return_value = ws
 
         should_retry = state_db.record_failure(
-            workset_id="data-error-ws-001",
+            euid="data-error-ws-001",
             error_details=error_text,
             error_category=ErrorCategory.PERMANENT,
         )

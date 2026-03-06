@@ -107,7 +107,7 @@ class WorksetIntegration:
 
     def register_workset(
         self,
-        workset_id: str,
+        name: str,
         bucket: Optional[str] = None,
         prefix: Optional[str] = None,
         priority: str = "normal",
@@ -119,11 +119,11 @@ class WorksetIntegration:
         *,
         write_s3: bool = True,
         write_tapdb: bool = True,
-    ) -> bool:
+    ) -> Optional[str]:
         """Register a new workset in both TapDB and S3.
 
         Args:
-            workset_id: Unique workset identifier
+            name: Workset name (stored as instance.name in TapDB)
             bucket: S3 bucket (uses default if not provided)
             prefix: S3 prefix for this workset
             priority: Execution priority (urgent, normal, low)
@@ -136,18 +136,18 @@ class WorksetIntegration:
             write_tapdb: Whether to write TapDB record
 
         Returns:
-            True if registration successful
+            The TapDB euid of the registered workset, or None on failure.
         """
         target_bucket = normalize_bucket_name(bucket) or self.bucket
         if not target_bucket:
             raise ValueError("Bucket must be specified")
 
-        workset_prefix = prefix or f"{self.prefix}{workset_id}/"
+        workset_prefix = prefix or f"{self.prefix}{name}/"
         if not workset_prefix.endswith("/"):
             workset_prefix += "/"
 
         now = dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
-        success = True
+        euid: Optional[str] = None
 
         # Write to TapDB first (if enabled and available)
         if write_tapdb and self.state_db:
@@ -170,8 +170,8 @@ class WorksetIntegration:
                 if not effective_cluster_region:
                     effective_cluster_region = metadata.get("cluster_region")
 
-            db_success = self.state_db.register_workset(
-                workset_id=workset_id,
+            euid = self.state_db.register_workset(
+                name=name,
                 bucket=target_bucket,
                 prefix=workset_prefix,
                 priority=ws_priority,
@@ -181,33 +181,32 @@ class WorksetIntegration:
                 preferred_cluster=effective_preferred_cluster,
                 cluster_region=effective_cluster_region,
             )
-            if not db_success:
-                LOGGER.warning("TapDB registration failed for %s", workset_id)
-                success = False
-        
+            if not euid:
+                LOGGER.warning("TapDB registration failed for %s", name)
+                return None
+
         # Write S3 sentinel files (if enabled)
         if write_s3:
             try:
                 self._write_s3_workset_files(
                     bucket=target_bucket,
                     prefix=workset_prefix,
-                    workset_id=workset_id,
+                    workset_id=name,
                     metadata=metadata or {},
                     timestamp=now,
                 )
             except Exception as e:
-                LOGGER.error("S3 sentinel write failed for %s: %s", workset_id, str(e))
-                success = False
-        
-        if success:
-            LOGGER.info("Registered workset %s in bucket %s", workset_id, target_bucket)
-            self._notify_state_change(workset_id, "ready", "Workset registered")
+                LOGGER.error("S3 sentinel write failed for %s: %s", name, str(e))
+                return None
 
-        return success
+        LOGGER.info("Registered workset %s (euid=%s) in bucket %s", name, euid, target_bucket)
+        self._notify_state_change(name, "ready", "Workset registered")
+
+        return euid
 
     def update_state(
         self,
-        workset_id: str,
+        euid: str,
         new_state: str,
         reason: str,
         bucket: Optional[str] = None,
@@ -222,7 +221,7 @@ class WorksetIntegration:
         """Update workset state in both systems.
 
         Args:
-            workset_id: Workset identifier
+            euid: Workset TapDB EUID
             new_state: New state (ready, locked, in_progress, error, complete, ignore)
             reason: Reason for state change
             bucket: S3 bucket
@@ -237,7 +236,7 @@ class WorksetIntegration:
             True if update successful
         """
         target_bucket = normalize_bucket_name(bucket) or self.bucket
-        workset_prefix = prefix or f"{self.prefix}{workset_id}/"
+        workset_prefix = prefix or f"{self.prefix}{euid}/"
 
         now = dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
         success = True
@@ -248,7 +247,7 @@ class WorksetIntegration:
             try:
                 ws_state = WorksetState(new_state)
                 self.state_db.update_state(
-                    workset_id=workset_id,
+                    euid=euid,
                     new_state=ws_state,
                     reason=reason,
                     error_details=error_details,
@@ -256,7 +255,7 @@ class WorksetIntegration:
                     metrics=metrics,
                 )
             except Exception as e:
-                LOGGER.error("TapDB state update failed for %s: %s", workset_id, str(e))
+                LOGGER.error("TapDB state update failed for %s: %s", euid, str(e))
                 success = False
 
         # Update S3 sentinel
@@ -270,11 +269,11 @@ class WorksetIntegration:
                     content=reason,
                 )
             except Exception as e:
-                LOGGER.error("S3 sentinel update failed for %s: %s", workset_id, str(e))
+                LOGGER.error("S3 sentinel update failed for %s: %s", euid, str(e))
                 success = False
 
         if success:
-            self._notify_state_change(workset_id, new_state, reason, error_details)
+            self._notify_state_change(euid, new_state, reason, error_details)
 
         return success
 
@@ -287,14 +286,14 @@ class WorksetIntegration:
             workset_prefix: S3 prefix for the workset
 
         Returns:
-            Workset ID if sync successful, None otherwise
+            Workset euid if sync successful, None otherwise
         """
         if not self.state_db or not self.bucket:
             LOGGER.warning("TapDB or bucket not configured for sync")
             return None
 
-        # Determine workset ID from prefix
-        workset_id = workset_prefix.rstrip("/").split("/")[-1]
+        # Determine workset name from prefix (S3 paths use names, not euids)
+        workset_name = workset_prefix.rstrip("/").split("/")[-1]
 
         # Read current state from S3
         state = self._determine_s3_state(workset_prefix)
@@ -302,20 +301,25 @@ class WorksetIntegration:
 
         from daylily_ursa.workset_state_db import WorksetPriority, WorksetState
 
-        # Check if workset already exists in TapDB
-        existing = self.state_db.get_workset(workset_id)
+        # Check if workset already exists in TapDB (lookup by name)
+        existing = self.state_db.get_workset_by_name(workset_name)
 
         if existing:
+            euid = existing.get("euid")
+            if not euid:
+                LOGGER.error("Existing workset %s has no euid", workset_name)
+                return None
             # Update state if changed
             try:
                 ws_state = WorksetState(state)
                 self.state_db.update_state(
-                    workset_id=workset_id,
+                    euid=euid,
                     new_state=ws_state,
                     reason="Synced from S3 sentinel",
                 )
             except ValueError:
                 pass
+            return euid
         else:
             # Register new workset
             priority_str = metadata.get("priority", "normal") if metadata else "normal"
@@ -324,22 +328,22 @@ class WorksetIntegration:
             except ValueError:
                 ws_priority = WorksetPriority.NORMAL
 
-            self.state_db.register_workset(
-                workset_id=workset_id,
+            euid = self.state_db.register_workset(
+                name=workset_name,
                 bucket=self.bucket,
                 prefix=workset_prefix,
                 priority=ws_priority,
                 metadata=metadata,
             )
 
-        LOGGER.info("Synced S3 workset %s to TapDB", workset_id)
-        return workset_id
+        LOGGER.info("Synced S3 workset %s (euid=%s) to TapDB", workset_name, euid)
+        return euid
 
-    def sync_tapdb_to_s3(self, workset_id: str) -> bool:
+    def sync_tapdb_to_s3(self, euid: str) -> bool:
         """Write S3 sentinel files for a TapDB workset.
 
         Args:
-            workset_id: Workset identifier
+            euid: Workset TapDB EUID
 
         Returns:
             True if sync successful
@@ -348,16 +352,17 @@ class WorksetIntegration:
             LOGGER.warning("TapDB not configured for sync")
             return False
 
-        workset = self.state_db.get_workset(workset_id)
+        workset = self.state_db.get_workset(euid)
         if not workset:
-            LOGGER.error("Workset %s not found in TapDB", workset_id)
+            LOGGER.error("Workset euid=%s not found in TapDB", euid)
             return False
 
+        workset_name = workset.get("name", euid)
         bucket_name: str = normalize_bucket_name(workset.get("bucket")) or self.bucket or ""
         if not bucket_name:
-            LOGGER.error("No bucket configured for workset %s", workset_id)
+            LOGGER.error("No bucket configured for workset euid=%s", euid)
             return False
-        prefix = workset.get("prefix", f"{self.prefix}{workset_id}/")
+        prefix = workset.get("prefix", f"{self.prefix}{workset_name}/")
         state = workset.get("state", "ready")
         metadata = workset.get("metadata", {})
 
@@ -369,7 +374,7 @@ class WorksetIntegration:
                 self._write_s3_workset_files(
                     bucket=bucket_name,
                     prefix=prefix,
-                    workset_id=workset_id,
+                    workset_id=workset_name,
                     metadata=metadata,
                     timestamp=now,
                 )
@@ -382,11 +387,11 @@ class WorksetIntegration:
                 timestamp=now,
             )
 
-            LOGGER.info("Synced TapDB workset %s to S3", workset_id)
+            LOGGER.info("Synced TapDB workset %s (euid=%s) to S3", workset_name, euid)
             return True
 
         except Exception as e:
-            LOGGER.error("Failed to sync workset %s to S3: %s", workset_id, str(e))
+            LOGGER.error("Failed to sync workset euid=%s to S3: %s", euid, str(e))
             return False
 
     def get_ready_worksets(self, limit: int = 100) -> List[Dict[str, Any]]:
@@ -405,7 +410,7 @@ class WorksetIntegration:
 
     def acquire_lock(
         self,
-        workset_id: str,
+        euid: str,
         owner_id: str,
         bucket: Optional[str] = None,
         prefix: Optional[str] = None,
@@ -415,7 +420,7 @@ class WorksetIntegration:
         Uses TapDB for authoritative locking with S3 sentinel as backup.
 
         Args:
-            workset_id: Workset identifier
+            euid: Workset TapDB EUID
             owner_id: Lock owner identifier
             bucket: S3 bucket
             prefix: S3 prefix
@@ -424,11 +429,11 @@ class WorksetIntegration:
             True if lock acquired
         """
         target_bucket = normalize_bucket_name(bucket) or self.bucket
-        workset_prefix = prefix or f"{self.prefix}{workset_id}/"
+        workset_prefix = prefix or f"{self.prefix}{euid}/"
 
         # Try TapDB lock first (authoritative)
         if self.state_db:
-            if not self.state_db.acquire_lock(workset_id, owner_id):
+            if not self.state_db.acquire_lock(euid, owner_id):
                 return False
 
         # Also write S3 lock sentinel for compatibility
@@ -449,7 +454,7 @@ class WorksetIntegration:
 
     def release_lock(
         self,
-        workset_id: str,
+        euid: str,
         owner_id: str,
         bucket: Optional[str] = None,
         prefix: Optional[str] = None,
@@ -457,7 +462,7 @@ class WorksetIntegration:
         """Release lock on a workset.
 
         Args:
-            workset_id: Workset identifier
+            euid: Workset TapDB EUID
             owner_id: Lock owner identifier
             bucket: S3 bucket
             prefix: S3 prefix
@@ -466,11 +471,11 @@ class WorksetIntegration:
             True if lock released
         """
         target_bucket = normalize_bucket_name(bucket) or self.bucket
-        workset_prefix = prefix or f"{self.prefix}{workset_id}/"
+        workset_prefix = prefix or f"{self.prefix}{euid}/"
 
         # Release TapDB lock
         if self.state_db:
-            if not self.state_db.release_lock(workset_id, owner_id):
+            if not self.state_db.release_lock(euid, owner_id):
                 return False
 
         # Remove S3 lock sentinel
@@ -489,7 +494,7 @@ class WorksetIntegration:
         self,
         bucket: str,
         prefix: str,
-        workset_id: str,
+        workset_id: str,  # NOTE: this is the workset *name*, used for S3 paths
         metadata: Dict[str, Any],
         timestamp: str,
     ) -> None:
@@ -825,7 +830,7 @@ notes: "Daylily Snakemake; hg38; slurm profile; 192 jobs; rerun-incomplete."
 
     def _notify_state_change(
         self,
-        workset_id: str,
+        identifier: str,
         state: str,
         message: str,
         error_details: Optional[str] = None,
@@ -833,7 +838,7 @@ notes: "Daylily Snakemake; hg38; slurm profile; 192 jobs; rerun-incomplete."
         """Send notification for state change.
 
         Args:
-            workset_id: Workset identifier
+            identifier: Workset euid or name (passed through to notification)
             state: New state
             message: State change message
             error_details: Error details if applicable
@@ -844,7 +849,7 @@ notes: "Daylily Snakemake; hg38; slurm profile; 192 jobs; rerun-incomplete."
         from daylily_ursa.workset_notifications import NotificationEvent
 
         event = NotificationEvent(
-            workset_id=workset_id,
+            workset_id=identifier,  # TODO: rename field in NotificationEvent to euid
             event_type="state_change",
             state=state,
             message=message,
@@ -854,5 +859,5 @@ notes: "Daylily Snakemake; hg38; slurm profile; 192 jobs; rerun-incomplete."
         try:
             self.notification_manager.notify(event)
         except Exception as e:
-            LOGGER.warning("Failed to send notification for %s: %s", workset_id, str(e))
+            LOGGER.warning("Failed to send notification for %s: %s", identifier, str(e))
 
