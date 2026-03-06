@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
-import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import PurePosixPath
@@ -280,7 +279,9 @@ class FileRegistry:
 
     @staticmethod
     def _norm_file_id(file_id: str) -> str:
-        return file_id or f"file-{uuid.uuid4().hex[:12]}"
+        if not file_id:
+            raise ValueError("file_id is required; use generate_file_id() to create a deterministic name")
+        return file_id
 
     def _ensure_customer(self, session, customer_id: str):
         customer = self.backend.find_instance_by_external_id(
@@ -350,7 +351,8 @@ class FileRegistry:
             file_euid=payload.get("euid"),
         )
 
-    def register_file(self, registration: FileRegistration) -> bool:
+    def register_file(self, registration: FileRegistration) -> Optional[str]:
+        """Register a file. Returns the EUID of the created/updated file, or None on failure."""
         registration.file_id = self._norm_file_id(registration.file_id)
         if not registration.file_metadata.file_format:
             registration.file_metadata.file_format = detect_file_format(registration.file_metadata.s3_uri)
@@ -366,7 +368,7 @@ class FileRegistry:
             payload["updated_at"] = utc_now_iso()
             if existing is not None:
                 self.backend.update_instance_json(session, existing, payload)
-                return True
+                return existing.euid
 
             customer = self._ensure_customer(session, registration.customer_id)
             row = self.backend.create_instance(
@@ -382,7 +384,7 @@ class FileRegistry:
                 child=row,
                 relationship_type="owns",
             )
-            return True
+            return row.euid
 
     def get_file(self, file_id: str) -> Optional[FileRegistration]:
         with self.backend.session_scope(commit=False) as session:
@@ -394,7 +396,19 @@ class FileRegistry:
             )
             if row is None:
                 return None
-            return self._to_registration(from_json_addl(row))
+            reg = self._to_registration(from_json_addl(row))
+            reg.file_euid = row.euid
+            return reg
+
+    def get_file_by_euid(self, euid: str) -> Optional[FileRegistration]:
+        """Look up a file by its TapDB EUID."""
+        with self.backend.session_scope(commit=False) as session:
+            row = self.backend.find_instance_by_euid(session, euid)
+            if row is None:
+                return None
+            reg = self._to_registration(from_json_addl(row))
+            reg.file_euid = row.euid
+            return reg
 
     def find_file_by_s3_uri(
         self,
@@ -495,9 +509,10 @@ class FileRegistry:
             fileset_euid=payload.get("euid"),
         )
 
-    def create_fileset(self, fileset: FileSet) -> bool:
+    def create_fileset(self, fileset: FileSet) -> Optional[str]:
+        """Create or update a fileset. Returns the EUID of the fileset, or None on failure."""
         if not fileset.fileset_id:
-            fileset.fileset_id = f"fs-{uuid.uuid4().hex[:12]}"
+            fileset.fileset_id = fileset.name  # use the human-readable name as the legacy id
         payload = self._serialize_fileset(fileset)
         with self.backend.session_scope(commit=True) as session:
             existing = self.backend.find_instance_by_external_id(
@@ -508,7 +523,7 @@ class FileRegistry:
             )
             if existing is not None:
                 self.backend.update_instance_json(session, existing, payload)
-                return True
+                return existing.euid
             customer = self._ensure_customer(session, fileset.customer_id)
             row = self.backend.create_instance(
                 session,
@@ -527,7 +542,7 @@ class FileRegistry:
                 )
                 if file_row is not None:
                     self.backend.create_lineage(session, parent=row, child=file_row, relationship_type="contains")
-            return True
+            return row.euid
 
     def get_fileset(self, fileset_id: str) -> Optional[FileSet]:
         with self.backend.session_scope(commit=False) as session:
@@ -539,7 +554,19 @@ class FileRegistry:
             )
             if row is None:
                 return None
-            return self._to_fileset(from_json_addl(row))
+            fs = self._to_fileset(from_json_addl(row))
+            fs.fileset_euid = row.euid
+            return fs
+
+    def get_fileset_by_euid(self, euid: str) -> Optional[FileSet]:
+        """Look up a fileset by its TapDB EUID."""
+        with self.backend.session_scope(commit=False) as session:
+            row = self.backend.find_instance_by_euid(session, euid)
+            if row is None:
+                return None
+            fs = self._to_fileset(from_json_addl(row))
+            fs.fileset_euid = row.euid
+            return fs
 
     def list_customer_filesets(self, customer_id: str) -> List[FileSet]:
         with self.backend.session_scope(commit=False) as session:
@@ -567,8 +594,8 @@ class FileRegistry:
         merged = list(dict.fromkeys(fileset.file_ids + file_ids))
         fileset.file_ids = merged
         fileset.updated_at = utc_now_iso()
-        updated = self.create_fileset(fileset)
-        if not updated:
+        euid = self.create_fileset(fileset)
+        if not euid:
             return False
         with self.backend.session_scope(commit=True) as session:
             fileset_row = self.backend.find_instance_by_external_id(
@@ -597,7 +624,7 @@ class FileRegistry:
         remove_set = set(file_ids)
         fileset.file_ids = [fid for fid in fileset.file_ids if fid not in remove_set]
         fileset.updated_at = utc_now_iso()
-        return self.create_fileset(fileset)
+        return bool(self.create_fileset(fileset))
 
     def update_fileset_metadata(self, fileset_id: str, updates: Dict[str, Any]) -> bool:
         fileset = self.get_fileset(fileset_id)
@@ -637,18 +664,20 @@ class FileRegistry:
         src = self.get_fileset(fileset_id)
         if src is None:
             return None
+        clone_name = name or f"{src.name}-copy"
         cloned = FileSet(
-            fileset_id=new_fileset_id or f"fs-{uuid.uuid4().hex[:12]}",
+            fileset_id=new_fileset_id or clone_name,
             customer_id=src.customer_id,
-            name=name or f"{src.name}-copy",
+            name=clone_name,
             description=src.description,
             biosample_metadata=src.biosample_metadata,
             sequencing_metadata=src.sequencing_metadata,
             file_ids=list(src.file_ids),
             tags=list(src.tags),
         )
-        if self.create_fileset(cloned):
-            return self.get_fileset(cloned.fileset_id)
+        euid = self.create_fileset(cloned)
+        if euid:
+            return self.get_fileset_by_euid(euid)
         return None
 
     def get_fileset_files(self, fileset_id: str) -> List[FileRegistration]:

@@ -8,7 +8,6 @@ linked bucket management, and file discovery.
 from __future__ import annotations
 
 import logging
-import uuid
 from typing import Any, Callable, Dict, List, Optional
 
 import boto3
@@ -230,6 +229,7 @@ class FileRegistrationRequest(BaseModel):
 class FileRegistrationResponse(BaseModel):
     """Response model for file registration."""
     file_id: str
+    euid: Optional[str] = None
     customer_id: str
     s3_uri: str
     biosample_id: str
@@ -250,6 +250,7 @@ class FileSetRequest(BaseModel):
 class FileSetResponse(BaseModel):
     """Response model for file set."""
     fileset_id: str
+    euid: Optional[str] = None
     customer_id: str
     name: str
     file_count: int
@@ -274,6 +275,7 @@ class BulkImportResponse(BaseModel):
     imported_count: int
     failed_count: int
     fileset_id: Optional[str] = None
+    fileset_euid: Optional[str] = None
     errors: List[Dict[str, Any]] = Field(default_factory=list)
 
 
@@ -531,7 +533,7 @@ def create_file_api_router(
     Returns:
         APIRouter with file registration endpoints
     """
-    router = APIRouter(prefix="/api/files", tags=["files"])
+    router = APIRouter(prefix="/api/v2/files", tags=["files"])
 
     # Create a dummy auth dependency if none provided
     if auth_dependency is None:
@@ -614,8 +616,8 @@ def create_file_api_router(
                 tags=request.tags,
             )
             
-            success = file_registry.register_file(registration)
-            if not success:
+            file_euid = file_registry.register_file(registration)
+            if not file_euid:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail=f"File {file_id} already registered",
@@ -623,6 +625,7 @@ def create_file_api_router(
 
             return FileRegistrationResponse(
                 file_id=file_id,
+                euid=file_euid,
                 customer_id=customer_id,
                 s3_uri=request.file_metadata.s3_uri,
                 biosample_id=request.biosample_metadata.biosample_id,
@@ -682,8 +685,6 @@ def create_file_api_router(
         Requires authentication if enabled. Customer ID must match authenticated user's customer.
         """
         try:
-            fileset_id = f"fileset-{uuid.uuid4().hex[:12]}"
-            
             bio_meta = None
             if request.biosample_metadata:
                 bio_meta = BiosampleMetadata(
@@ -695,7 +696,7 @@ def create_file_api_router(
                     preservation_method=request.biosample_metadata.preservation_method,
                     tumor_fraction=request.biosample_metadata.tumor_fraction,
                 )
-            
+
             seq_meta = None
             if request.sequencing_metadata:
                 seq_meta = SequencingMetadata(
@@ -707,9 +708,9 @@ def create_file_api_router(
                     flowcell_id=request.sequencing_metadata.flowcell_id,
                     run_date=request.sequencing_metadata.run_date,
                 )
-            
+
             fileset = FileSet(
-                fileset_id=fileset_id,
+                fileset_id=request.name,  # use name as legacy id
                 customer_id=customer_id,
                 name=request.name,
                 description=request.description,
@@ -717,21 +718,24 @@ def create_file_api_router(
                 sequencing_metadata=seq_meta,
                 file_ids=request.file_ids,
             )
-            
-            success = file_registry.create_fileset(fileset)
-            if not success:
+
+            fileset_euid = file_registry.create_fileset(fileset)
+            if not fileset_euid:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
-                    detail=f"FileSet {fileset_id} already exists",
+                    detail=f"FileSet {request.name} already exists",
                 )
-            
+
             return FileSetResponse(
-                fileset_id=fileset_id,
+                fileset_id=fileset.fileset_id,
+                euid=fileset_euid,
                 customer_id=customer_id,
                 name=request.name,
                 file_count=len(request.file_ids),
                 created_at=fileset.created_at,
             )
+        except HTTPException:
+            raise
         except Exception as e:
             LOGGER.error("Failed to create fileset: %s", str(e))
             raise HTTPException(
@@ -784,8 +788,8 @@ def create_file_api_router(
         
         for idx, file_req in enumerate(request.files):
             try:
-                file_id = f"file-{uuid.uuid4().hex[:12]}"
-                
+                file_id = generate_file_id(file_req.file_metadata.s3_uri, customer_id)
+
                 file_meta = FileMetadata(
                     file_id=file_id,
                     s3_uri=file_req.file_metadata.s3_uri,
@@ -830,7 +834,8 @@ def create_file_api_router(
                     tags=file_req.tags,
                 )
                 
-                if file_registry.register_file(registration):
+                file_euid = file_registry.register_file(registration)
+                if file_euid:
                     imported_count += 1
                     file_ids.append(file_id)
                 else:
@@ -838,7 +843,7 @@ def create_file_api_router(
                     errors.append({
                         "index": idx,
                         "s3_uri": file_req.file_metadata.s3_uri,
-                        "error": "File already registered",
+                        "error": "File registration failed",
                     })
             except Exception as e:
                 failed_count += 1
@@ -849,17 +854,18 @@ def create_file_api_router(
                 })
         
         # Create fileset if requested
+        fileset_euid = None
         if request.fileset_name and file_ids:
             try:
-                fileset_id = f"fileset-{uuid.uuid4().hex[:12]}"
                 fileset = FileSet(
-                    fileset_id=fileset_id,
+                    fileset_id=request.fileset_name,
                     customer_id=customer_id,
                     name=request.fileset_name,
                     description=request.fileset_description,
                     file_ids=file_ids,
                 )
-                file_registry.create_fileset(fileset)
+                fileset_euid = file_registry.create_fileset(fileset)
+                fileset_id = fileset.fileset_id
             except Exception as e:
                 LOGGER.error("Failed to create fileset: %s", str(e))
         
@@ -867,6 +873,7 @@ def create_file_api_router(
             imported_count=imported_count,
             failed_count=failed_count,
             fileset_id=fileset_id,
+            fileset_euid=fileset_euid,
             errors=errors,
         )
 

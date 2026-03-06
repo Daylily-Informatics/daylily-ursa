@@ -23,8 +23,8 @@ from daylily_ursa.s3_bucket_validator import (
 def mock_file_registry():
     """Mock FileRegistry."""
     registry = MagicMock(spec=FileRegistry)
-    registry.register_file.return_value = True
-    registry.create_fileset.return_value = True
+    registry.register_file.return_value = "file-euid-mock-001"
+    registry.create_fileset.return_value = "fileset-euid-mock-001"
     registry.list_customer_files.return_value = []
     # By default, pretend there is no existing registration for a given S3 URI so
     # tests exercise the happy-path flow unless they override this behavior.
@@ -127,7 +127,7 @@ class TestFileRegistrationEndpoint:
         }
         
         response = client.post(
-            "/api/files/register?customer_id=cust-001",
+            "/api/v2/files/register?customer_id=cust-001",
             json=payload,
         )
         
@@ -140,7 +140,7 @@ class TestFileRegistrationEndpoint:
     
     def test_register_file_conflict(self, client, mock_file_registry):
         """Test registering a file that already exists."""
-        mock_file_registry.register_file.return_value = False
+        mock_file_registry.register_file.return_value = None
         
         payload = {
             "file_metadata": {
@@ -158,7 +158,7 @@ class TestFileRegistrationEndpoint:
         }
         
         response = client.post(
-            "/api/files/register?customer_id=cust-001",
+            "/api/v2/files/register?customer_id=cust-001",
             json=payload,
         )
         
@@ -191,7 +191,7 @@ class TestFileRegistrationEndpoint:
         }
 
         response = client.post(
-            "/api/files/register?customer_id=cust-001",
+            "/api/v2/files/register?customer_id=cust-001",
             json=payload,
         )
 
@@ -206,7 +206,7 @@ class TestListFilesEndpoint:
     
     def test_list_customer_files_empty(self, client, mock_file_registry):
         """Test listing files for customer with no files."""
-        response = client.get("/api/files/list?customer_id=cust-001")
+        response = client.get("/api/v2/files/list?customer_id=cust-001")
         
         assert response.status_code == 200
         data = response.json()
@@ -216,7 +216,7 @@ class TestListFilesEndpoint:
     
     def test_list_customer_files_with_limit(self, client, mock_file_registry):
         """Test listing files with custom limit."""
-        response = client.get("/api/files/list?customer_id=cust-001&limit=50")
+        response = client.get("/api/v2/files/list?customer_id=cust-001&limit=50")
         
         assert response.status_code == 200
         mock_file_registry.list_customer_files.assert_called_with("cust-001", limit=50)
@@ -239,7 +239,7 @@ class TestCreateFilesetEndpoint:
         }
         
         response = client.post(
-            "/api/files/filesets?customer_id=cust-001",
+            "/api/v2/files/filesets?customer_id=cust-001",
             json=payload,
         )
         
@@ -256,7 +256,7 @@ class TestCreateFilesetEndpoint:
         }
         
         response = client.post(
-            "/api/files/filesets?customer_id=cust-001",
+            "/api/v2/files/filesets?customer_id=cust-001",
             json=payload,
         )
         
@@ -306,7 +306,7 @@ class TestBulkImportEndpoint:
         }
         
         response = client.post(
-            "/api/files/bulk-import?customer_id=cust-001",
+            "/api/v2/files/bulk-import?customer_id=cust-001",
             json=payload,
         )
         
@@ -355,7 +355,7 @@ class TestBulkImportEndpoint:
         }
         
         response = client.post(
-            "/api/files/bulk-import?customer_id=cust-001",
+            "/api/v2/files/bulk-import?customer_id=cust-001",
             json=payload,
         )
         
@@ -435,7 +435,7 @@ class TestBucketValidationEndpoint:
     def test_validate_bucket_success(self, client_with_validation, mock_s3_validator):
         """Test successful bucket validation."""
         response = client_with_validation.post(
-            "/api/files/buckets/validate?bucket_name=test-bucket"
+            "/api/v2/files/buckets/validate?bucket_name=test-bucket"
         )
 
         assert response.status_code == 200
@@ -459,7 +459,7 @@ class TestBucketValidationEndpoint:
         )
 
         response = client_with_validation.post(
-            "/api/files/buckets/validate?bucket_name=nonexistent-bucket"
+            "/api/v2/files/buckets/validate?bucket_name=nonexistent-bucket"
         )
 
         assert response.status_code == 200
@@ -478,7 +478,7 @@ class TestBucketValidationEndpoint:
         )
 
         response = client_with_validation.post(
-            "/api/files/buckets/validate?bucket_name=private-bucket"
+            "/api/v2/files/buckets/validate?bucket_name=private-bucket"
         )
 
         assert response.status_code == 200
@@ -491,7 +491,7 @@ class TestBucketValidationEndpoint:
         """Test that validation without validator returns 501."""
         # client fixture uses app without s3_bucket_validator
         response = client.post(
-            "/api/files/buckets/validate?bucket_name=test-bucket"
+            "/api/v2/files/buckets/validate?bucket_name=test-bucket"
         )
 
         assert response.status_code == 501
@@ -573,7 +573,7 @@ class TestLinkBucketEndpoint:
     def test_link_bucket_success(self, client_with_linking, mock_linked_bucket_manager):
         """Test successful bucket linking."""
         response = client_with_linking.post(
-            "/api/files/buckets/link?customer_id=cust-001",
+            "/api/v2/files/buckets/link?customer_id=cust-001",
             json={
                 "bucket_name": "my-bucket",
                 "bucket_type": "secondary",
@@ -595,7 +595,7 @@ class TestLinkBucketEndpoint:
     def test_link_bucket_without_manager_returns_501(self, client, mock_file_registry):
         """Test that linking without manager returns 501."""
         response = client.post(
-            "/api/files/buckets/link?customer_id=cust-001",
+            "/api/v2/files/buckets/link?customer_id=cust-001",
             json={
                 "bucket_name": "my-bucket",
             },
@@ -608,7 +608,7 @@ class TestLinkBucketEndpoint:
     def test_list_linked_buckets(self, client_with_linking, mock_linked_bucket_manager):
         """Test listing linked buckets."""
         response = client_with_linking.get(
-            "/api/files/buckets/list?customer_id=cust-001"
+            "/api/v2/files/buckets/list?customer_id=cust-001"
         )
 
         assert response.status_code == 200
@@ -623,7 +623,7 @@ class TestLinkBucketEndpoint:
         mock_linked_bucket_manager.list_customer_buckets.return_value = []
 
         response = client_with_linking.get(
-            "/api/files/buckets/list?customer_id=cust-002"
+            "/api/v2/files/buckets/list?customer_id=cust-002"
         )
 
         assert response.status_code == 200
@@ -637,7 +637,7 @@ class TestLinkBucketEndpoint:
         )
 
         response = client_with_linking.post(
-            "/api/files/buckets/link?customer_id=cust-001",
+            "/api/v2/files/buckets/link?customer_id=cust-001",
             json={
                 "bucket_name": "my-bucket",
                 "bucket_type": "secondary",
@@ -654,7 +654,7 @@ class TestLinkBucketEndpoint:
         mock_linked_bucket_manager.link_bucket.side_effect = ValueError("Invalid bucket name")
 
         response = client_with_linking.post(
-            "/api/files/buckets/link?customer_id=cust-001",
+            "/api/v2/files/buckets/link?customer_id=cust-001",
             json={
                 "bucket_name": "my-bucket",
                 "bucket_type": "secondary",
@@ -723,7 +723,7 @@ class TestBucketAuthorizationEndpoints:
         )
 
         response = client.post(
-            "/api/files/buckets/link?customer_id=cust-001",
+            "/api/v2/files/buckets/link?customer_id=cust-001",
             json={"bucket_name": "my-bucket"},
         )
 
@@ -740,7 +740,7 @@ class TestBucketAuthorizationEndpoints:
             current_user={"customer_id": "cust-OTHER", "is_admin": False},
         )
 
-        response = client.get("/api/files/buckets/list?customer_id=cust-001")
+        response = client.get("/api/v2/files/buckets/list?customer_id=cust-001")
         assert response.status_code == 403
         manager.list_customer_buckets.assert_not_called()
 
@@ -754,7 +754,7 @@ class TestBucketAuthorizationEndpoints:
             current_user={"customer_id": "cust-OTHER", "is_admin": False},
         )
 
-        response = client.get(f"/api/files/buckets/{linked_bucket.bucket_id}")
+        response = client.get(f"/api/v2/files/buckets/{linked_bucket.bucket_id}")
         assert response.status_code == 403
 
     def test_update_bucket_enforces_bucket_ownership_mismatch(self, mock_file_registry, linked_bucket):
@@ -769,7 +769,7 @@ class TestBucketAuthorizationEndpoints:
         )
 
         response = client.patch(
-            f"/api/files/buckets/{linked_bucket.bucket_id}",
+            f"/api/v2/files/buckets/{linked_bucket.bucket_id}",
             json={"display_name": "New Name", "bucket_type": "primary"},
         )
         assert response.status_code == 403
@@ -802,12 +802,12 @@ class TestBucketAuthorizationEndpoints:
             current_user={"customer_id": "cust-admin", "is_admin": True},
         )
 
-        get_resp = client.get(f"/api/files/buckets/{linked_bucket.bucket_id}")
+        get_resp = client.get(f"/api/v2/files/buckets/{linked_bucket.bucket_id}")
         assert get_resp.status_code == 200
         assert get_resp.json()["bucket_id"] == linked_bucket.bucket_id
 
         patch_resp = client.patch(
-            f"/api/files/buckets/{linked_bucket.bucket_id}",
+            f"/api/v2/files/buckets/{linked_bucket.bucket_id}",
             json={"display_name": "Admin Name", "bucket_type": "primary"},
         )
         assert patch_resp.status_code == 200
@@ -837,7 +837,7 @@ class TestBucketAuthorizationEndpoints:
             current_user={"customer_id": "cust-OTHER", "is_admin": False},
         )
 
-        response = client.post(f"/api/files/buckets/{linked_bucket.bucket_id}/revalidate")
+        response = client.post(f"/api/v2/files/buckets/{linked_bucket.bucket_id}/revalidate")
         assert response.status_code == 403
         manager.revalidate_bucket.assert_not_called()
 
@@ -852,7 +852,7 @@ class TestBucketAuthorizationEndpoints:
             current_user={"customer_id": "cust-OTHER", "is_admin": False},
         )
 
-        response = client.post(f"/api/files/buckets/{linked_bucket.bucket_id}/unlink")
+        response = client.post(f"/api/v2/files/buckets/{linked_bucket.bucket_id}/unlink")
         assert response.status_code == 403
         manager.unlink_bucket.assert_not_called()
 
@@ -871,7 +871,7 @@ class TestBucketAuthorizationEndpoints:
         )
 
         response = client.post(
-            f"/api/files/buckets/{linked_bucket.bucket_id}/discover?customer_id=cust-001&prefix=&max_files=10"
+            f"/api/v2/files/buckets/{linked_bucket.bucket_id}/discover?customer_id=cust-001&prefix=&max_files=10"
         )
         assert response.status_code == 403
         manager.get_bucket.assert_not_called()
@@ -906,7 +906,7 @@ class TestBucketAuthorizationEndpoints:
         )
 
         response = client.post(
-            f"/api/files/buckets/{linked_bucket.bucket_id}/discover?customer_id=cust-OTHER&prefix=&max_files=10"
+            f"/api/v2/files/buckets/{linked_bucket.bucket_id}/discover?customer_id=cust-OTHER&prefix=&max_files=10"
         )
         assert response.status_code == 403
         discovery.discover_files.assert_not_called()
@@ -968,7 +968,7 @@ class TestBucketBrowseEndpoint:
         ]
 
         response = client_with_browse.get(
-            "/api/files/buckets/bucket-123/browse?customer_id=cust-001"
+            "/api/v2/files/buckets/bucket-123/browse?customer_id=cust-001"
         )
 
         assert response.status_code == 200
@@ -982,7 +982,7 @@ class TestBucketBrowseEndpoint:
         mock_linked_bucket_manager_browse.get_bucket.return_value = None
 
         response = client_with_browse.get(
-            "/api/files/buckets/nonexistent/browse?customer_id=cust-001"
+            "/api/v2/files/buckets/nonexistent/browse?customer_id=cust-001"
         )
 
         assert response.status_code == 404
@@ -990,7 +990,7 @@ class TestBucketBrowseEndpoint:
     def test_browse_bucket_wrong_customer(self, client_with_browse, mock_linked_bucket_manager_browse):
         """Test browsing bucket belonging to different customer."""
         response = client_with_browse.get(
-            "/api/files/buckets/bucket-123/browse?customer_id=other-customer"
+            "/api/v2/files/buckets/bucket-123/browse?customer_id=other-customer"
         )
 
         assert response.status_code == 403
@@ -1039,7 +1039,7 @@ class TestCreateFolderEndpoint:
         mock_session.return_value.client.return_value = mock_s3
 
         response = client_with_folder.post(
-            "/api/files/buckets/bucket-123/folders?customer_id=cust-001&prefix=",
+            "/api/v2/files/buckets/bucket-123/folders?customer_id=cust-001&prefix=",
             json={"folder_name": "new-folder"},
         )
 
@@ -1054,7 +1054,7 @@ class TestCreateFolderEndpoint:
         bucket.read_only = True
 
         response = client_with_folder.post(
-            "/api/files/buckets/bucket-123/folders?customer_id=cust-001",
+            "/api/v2/files/buckets/bucket-123/folders?customer_id=cust-001",
             json={"folder_name": "new-folder"},
         )
 
@@ -1063,7 +1063,7 @@ class TestCreateFolderEndpoint:
     def test_create_folder_empty_name(self, client_with_folder):
         """Test folder creation with empty name."""
         response = client_with_folder.post(
-            "/api/files/buckets/bucket-123/folders?customer_id=cust-001",
+            "/api/v2/files/buckets/bucket-123/folders?customer_id=cust-001",
             json={"folder_name": ""},
         )
 
@@ -1115,7 +1115,7 @@ class TestDeleteFileEndpoint:
         mock_file_registry.get_file.return_value = None  # File not registered
 
         response = client_with_delete.delete(
-            "/api/files/buckets/bucket-123/files?customer_id=cust-001&file_key=test-file.txt"
+            "/api/v2/files/buckets/bucket-123/files?customer_id=cust-001&file_key=test-file.txt"
         )
 
         assert response.status_code == 200
@@ -1127,7 +1127,7 @@ class TestDeleteFileEndpoint:
         mock_file_registry.get_file.return_value = MagicMock()  # File is registered
 
         response = client_with_delete.delete(
-            "/api/files/buckets/bucket-123/files?customer_id=cust-001&file_key=registered-file.fastq.gz"
+            "/api/v2/files/buckets/bucket-123/files?customer_id=cust-001&file_key=registered-file.fastq.gz"
         )
 
         assert response.status_code == 409
@@ -1139,14 +1139,14 @@ class TestDeleteFileEndpoint:
         bucket.read_only = True
 
         response = client_with_delete.delete(
-            "/api/files/buckets/bucket-123/files?customer_id=cust-001&file_key=test-file.txt"
+            "/api/v2/files/buckets/bucket-123/files?customer_id=cust-001&file_key=test-file.txt"
         )
 
         assert response.status_code == 403
 
 
 class TestUpdateFileMetadataEndpoint:
-    """Test file metadata update endpoint - PATCH /api/files/{file_id}"""
+    """Test file metadata update endpoint - PATCH /api/v2/files/{file_id}"""
 
     def test_update_file_metadata_md5_checksum(self, client_with_update, mock_file_registry_with_get):
         """Test updating MD5 checksum in file metadata."""
@@ -1157,7 +1157,7 @@ class TestUpdateFileMetadataEndpoint:
         }
 
         response = client_with_update.patch(
-            "/api/files/file-001",
+            "/api/v2/files/file-001",
             json=payload,
         )
 
@@ -1181,7 +1181,7 @@ class TestUpdateFileMetadataEndpoint:
         }
 
         response = client_with_update.patch(
-            "/api/files/file-001",
+            "/api/v2/files/file-001",
             json=payload,
         )
 
@@ -1199,7 +1199,7 @@ class TestUpdateFileMetadataEndpoint:
         }
 
         response = client_with_update.patch(
-            "/api/files/file-001",
+            "/api/v2/files/file-001",
             json=payload,
         )
 
@@ -1210,7 +1210,7 @@ class TestUpdateFileMetadataEndpoint:
 
 
 class TestFileDownloadEndpoint:
-    """Tests for GET /api/files/{file_id}/download."""
+    """Tests for GET /api/v2/files/{file_id}/download."""
 
     def test_get_file_download_url_success(self, client_with_update, mock_file_registry_with_get):
         """Return a presigned URL for an existing registered file."""
@@ -1221,7 +1221,7 @@ class TestFileDownloadEndpoint:
             mock_s3 = mock_boto_client.return_value
             mock_s3.generate_presigned_url.return_value = "https://signed-url"
 
-            response = client_with_update.get("/api/files/file-001/download")
+            response = client_with_update.get("/api/v2/files/file-001/download")
 
         assert response.status_code == 200
         data = response.json()
@@ -1241,7 +1241,7 @@ class TestFileDownloadEndpoint:
 
         mock_file_registry_with_get.get_file.return_value = None
 
-        response = client_with_update.get("/api/files/unknown-file/download")
+        response = client_with_update.get("/api/v2/files/unknown-file/download")
 
         assert response.status_code == 404
         assert "not found" in response.json()["detail"].lower()
@@ -1253,7 +1253,7 @@ class TestFileDownloadEndpoint:
             mock_s3 = mock_boto_client.return_value
             mock_s3.generate_presigned_url.return_value = "https://signed-url"
 
-            response = client_with_update.get("/api/files/file-001/download?expires_in=600")
+            response = client_with_update.get("/api/v2/files/file-001/download?expires_in=600")
 
         assert response.status_code == 200
         mock_s3.generate_presigned_url.assert_called_once()
@@ -1264,7 +1264,7 @@ class TestFileDownloadEndpoint:
         """Reject expiry values outside the allowed range."""
 
         # Too short (< 60 seconds) should fail validation
-        response = client_with_update.get("/api/files/file-001/download?expires_in=10")
+        response = client_with_update.get("/api/v2/files/file-001/download?expires_in=10")
         assert response.status_code == 422
 
 
@@ -1285,7 +1285,7 @@ class TestFileDownloadEndpoint:
         client = TestClient(app, base_url="https://testserver")
 
         with patch("daylily_ursa.file_api.boto3.client") as mock_boto_client:
-            response = client.get("/api/files/file-001/download")
+            response = client.get("/api/v2/files/file-001/download")
 
         assert response.status_code == 403
         assert "does not belong" in response.json()["detail"]
@@ -1312,7 +1312,7 @@ class TestFileDownloadEndpoint:
             mock_s3 = mock_boto_client.return_value
             mock_s3.generate_presigned_url.return_value = "https://signed-url"
 
-            response = client.get("/api/files/file-001/download")
+            response = client.get("/api/v2/files/file-001/download")
 
         assert response.status_code == 200
         assert response.json()["url"] == "https://signed-url"
@@ -1338,14 +1338,14 @@ class TestFileDownloadEndpoint:
             mock_s3 = mock_boto_client.return_value
             mock_s3.generate_presigned_url.return_value = "https://signed-url"
 
-            response = client.get("/api/files/file-001/download")
+            response = client.get("/api/v2/files/file-001/download")
 
         assert response.status_code == 200
         assert response.json()["url"] == "https://signed-url"
 
 
 class TestAddFileToFilesetEndpoint:
-    """Tests for POST /api/files/{file_id}/add-to-fileset."""
+    """Tests for POST /api/v2/files/{file_id}/add-to-fileset."""
 
     def test_add_file_to_fileset_success(self, client, mock_file_registry):
         """Successfully add a single file to a fileset."""
@@ -1355,7 +1355,7 @@ class TestAddFileToFilesetEndpoint:
         mock_file_registry.add_files_to_fileset.return_value = True
 
         response = client.post(
-            "/api/files/file-123/add-to-fileset",
+            "/api/v2/files/file-123/add-to-fileset",
             json={"fileset_id": "fs-001"},
         )
 
@@ -1373,7 +1373,7 @@ class TestAddFileToFilesetEndpoint:
         mock_file_registry.get_file.return_value = None
 
         response = client.post(
-            "/api/files/missing-file/add-to-fileset",
+            "/api/v2/files/missing-file/add-to-fileset",
             json={"fileset_id": "fs-001"},
         )
 
@@ -1387,7 +1387,7 @@ class TestAddFileToFilesetEndpoint:
         mock_file_registry.add_files_to_fileset.return_value = False
 
         response = client.post(
-            "/api/files/file-123/add-to-fileset",
+            "/api/v2/files/file-123/add-to-fileset",
             json={"fileset_id": "missing-fs"},
         )
 
@@ -1403,7 +1403,7 @@ class TestAddFileToFilesetEndpoint:
         }
 
         response = client_with_update.patch(
-            "/api/files/file-001",
+            "/api/v2/files/file-001",
             json=payload,
         )
 
@@ -1420,7 +1420,7 @@ class TestAddFileToFilesetEndpoint:
         }
 
         response = client_with_update.patch(
-            "/api/files/file-001",
+            "/api/v2/files/file-001",
             json=payload,
         )
 
@@ -1437,7 +1437,7 @@ class TestAddFileToFilesetEndpoint:
         }
 
         response = client_with_update.patch(
-            "/api/files/file-001",
+            "/api/v2/files/file-001",
             json=payload,
         )
 
@@ -1460,7 +1460,7 @@ class TestAddFileToFilesetEndpoint:
         }
 
         response = client_with_update.patch(
-            "/api/files/file-001",
+            "/api/v2/files/file-001",
             json=payload,
         )
 
@@ -1484,7 +1484,7 @@ class TestAddFileToFilesetEndpoint:
         }
 
         response = client_with_update.patch(
-            "/api/files/file-001",
+            "/api/v2/files/file-001",
             json=payload,
         )
 
@@ -1501,7 +1501,7 @@ class TestAddFileToFilesetEndpoint:
         }
 
         response = client_with_update.patch(
-            "/api/files/file-001",
+            "/api/v2/files/file-001",
             json=payload,
         )
 
@@ -1518,7 +1518,7 @@ class TestAddFileToFilesetEndpoint:
         }
 
         response = client_with_update.patch(
-            "/api/files/file-001",
+            "/api/v2/files/file-001",
             json=payload,
         )
 
@@ -1535,7 +1535,7 @@ class TestAddFileToFilesetEndpoint:
         }
 
         response = client_with_update.patch(
-            "/api/files/file-001",
+            "/api/v2/files/file-001",
             json=payload,
         )
 
@@ -1552,7 +1552,7 @@ class TestAddFileToFilesetEndpoint:
         }
 
         response = client_with_update.patch(
-            "/api/files/file-001",
+            "/api/v2/files/file-001",
             json=payload,
         )
 
@@ -1569,7 +1569,7 @@ class TestAddFileToFilesetEndpoint:
         }
 
         response = client_with_update.patch(
-            "/api/files/file-001",
+            "/api/v2/files/file-001",
             json=payload,
         )
 
@@ -1586,7 +1586,7 @@ class TestAddFileToFilesetEndpoint:
         }
 
         response = client_with_update.patch(
-            "/api/files/file-001",
+            "/api/v2/files/file-001",
             json=payload,
         )
 
@@ -1609,7 +1609,7 @@ class TestAddFileToFilesetEndpoint:
         }
 
         response = client_with_update.patch(
-            "/api/files/file-001",
+            "/api/v2/files/file-001",
             json=payload,
         )
 
@@ -1631,7 +1631,7 @@ class TestAddFileToFilesetEndpoint:
         }
 
         response = client_with_update.patch(
-            "/api/files/file-001",
+            "/api/v2/files/file-001",
             json=payload,
         )
 
@@ -1646,7 +1646,7 @@ class TestAddFileToFilesetEndpoint:
         }
 
         response = client_with_update.patch(
-            "/api/files/file-001",
+            "/api/v2/files/file-001",
             json=payload,
         )
 
@@ -1661,7 +1661,7 @@ class TestAddFileToFilesetEndpoint:
         }
 
         response = client_with_update.patch(
-            "/api/files/file-001",
+            "/api/v2/files/file-001",
             json=payload,
         )
 
@@ -1676,7 +1676,7 @@ class TestAddFileToFilesetEndpoint:
         }
 
         response = client_with_update.patch(
-            "/api/files/file-001",
+            "/api/v2/files/file-001",
             json=payload,
         )
 
@@ -1691,7 +1691,7 @@ class TestAddFileToFilesetEndpoint:
         }
 
         response = client_with_update.patch(
-            "/api/files/file-001",
+            "/api/v2/files/file-001",
             json=payload,
         )
 
@@ -1706,7 +1706,7 @@ class TestAddFileToFilesetEndpoint:
         }
 
         response = client_with_update.patch(
-            "/api/files/file-001",
+            "/api/v2/files/file-001",
             json=payload,
         )
 
@@ -1721,7 +1721,7 @@ class TestAddFileToFilesetEndpoint:
         }
 
         response = client_with_update.patch(
-            "/api/files/file-001",
+            "/api/v2/files/file-001",
             json=payload,
         )
 
@@ -1756,7 +1756,7 @@ class TestAddFileToFilesetEndpoint:
         }
 
         response = client_with_update.patch(
-            "/api/files/file-001",
+            "/api/v2/files/file-001",
             json=payload,
         )
 
@@ -1789,7 +1789,7 @@ class TestAddFileToFilesetEndpoint:
         }
 
         response = client_with_update.patch(
-            "/api/files/nonexistent-file",
+            "/api/v2/files/nonexistent-file",
             json=payload,
         )
 
@@ -1807,7 +1807,7 @@ class TestAddFileToFilesetEndpoint:
         }
 
         response = client_with_update.patch(
-            "/api/files/file-001",
+            "/api/v2/files/file-001",
             json=payload,
         )
 
@@ -1819,7 +1819,7 @@ class TestAddFileToFilesetEndpoint:
         payload = {}
 
         response = client_with_update.patch(
-            "/api/files/file-001",
+            "/api/v2/files/file-001",
             json=payload,
         )
 
@@ -1891,7 +1891,7 @@ class TestManifestGenerationEndpoints:
     def test_generate_manifest_for_file_success(self, client_with_manifest, mock_file_registry_with_manifest):
         """Test generating manifest for a single file."""
         response = client_with_manifest.post(
-            "/api/files/file-001/manifest",
+            "/api/v2/files/file-001/manifest",
             params={
                 "run_id": "R0",
                 "stage_target": "/fsx/staged_sample_data/",
@@ -1914,7 +1914,7 @@ class TestManifestGenerationEndpoints:
         mock_file_registry_with_manifest.get_file.return_value = None
 
         response = client_with_manifest.post(
-            "/api/files/nonexistent-file/manifest",
+            "/api/v2/files/nonexistent-file/manifest",
         )
 
         assert response.status_code == 404
@@ -1923,7 +1923,7 @@ class TestManifestGenerationEndpoints:
     def test_generate_manifest_for_file_with_custom_params(self, client_with_manifest):
         """Test generating manifest with custom run_id and stage_target."""
         response = client_with_manifest.post(
-            "/api/files/file-001/manifest",
+            "/api/v2/files/file-001/manifest",
             params={
                 "run_id": "R1",
                 "stage_target": "/custom/path/",
@@ -1951,7 +1951,7 @@ class TestManifestGenerationEndpoints:
         mock_file_registry_with_manifest.get_fileset.return_value = mock_fileset
 
         response = client_with_manifest.post(
-            "/api/files/filesets/fileset-001/manifest",
+            "/api/v2/files/filesets/fileset-001/manifest",
             params={
                 "run_id": "R0",
                 "stage_target": "/fsx/staged_sample_data/",
@@ -1971,7 +1971,7 @@ class TestManifestGenerationEndpoints:
         mock_file_registry_with_manifest.get_fileset.return_value = None
 
         response = client_with_manifest.post(
-            "/api/files/filesets/nonexistent-fileset/manifest",
+            "/api/v2/files/filesets/nonexistent-fileset/manifest",
         )
 
         assert response.status_code == 404
@@ -1992,7 +1992,7 @@ class TestManifestGenerationEndpoints:
         mock_file_registry_with_manifest.get_fileset.return_value = mock_fileset
 
         response = client_with_manifest.post(
-            "/api/files/filesets/fileset-001/manifest",
+            "/api/v2/files/filesets/fileset-001/manifest",
         )
 
         assert response.status_code == 200
@@ -2041,21 +2041,21 @@ def test_file_api_uncovered_routes_have_request_level_coverage(client, mock_file
     mock_file_registry.update_workset_usage_state.return_value = 0
 
     # file_api (24) uncovered routes list
-    assert client.get("/api/files/customer/cust-001/filesets").status_code != 404
-    assert client.get("/api/files/files/file-001/workset-history").status_code != 404
-    assert client.get("/api/files/filesets?customer_id=cust-001").status_code != 404
-    assert client.get("/api/files/filesets/fileset-001").status_code != 404
-    assert client.get("/api/files/filesets/fileset-001/files").status_code != 404
-    assert client.get("/api/files/manifest/template").status_code != 404
-    assert client.get("/api/files/worksets/ws-123/files").status_code != 404
-    assert client.get("/api/files/worksets/ws-123/recreation-files").status_code != 404
+    assert client.get("/api/v2/files/customer/cust-001/filesets").status_code != 404
+    assert client.get("/api/v2/files/files/file-001/workset-history").status_code != 404
+    assert client.get("/api/v2/files/filesets?customer_id=cust-001").status_code != 404
+    assert client.get("/api/v2/files/filesets/fileset-001").status_code != 404
+    assert client.get("/api/v2/files/filesets/fileset-001/files").status_code != 404
+    assert client.get("/api/v2/files/manifest/template").status_code != 404
+    assert client.get("/api/v2/files/worksets/ws-123/files").status_code != 404
+    assert client.get("/api/v2/files/worksets/ws-123/recreation-files").status_code != 404
 
-    assert client.patch("/api/files/filesets/fileset-001", json={"name": "New Name"}).status_code != 404
+    assert client.patch("/api/v2/files/filesets/fileset-001", json={"name": "New Name"}).status_code != 404
 
     # Optional dependencies are intentionally not configured in this test app.
     # These endpoints should return 501 rather than crashing.
     assert client.post(
-        "/api/files/auto-register?customer_id=cust-001",
+        "/api/v2/files/auto-register?customer_id=cust-001",
         json={
             "bucket_name": "example-bucket",
             "prefix": "",
@@ -2067,7 +2067,7 @@ def test_file_api_uncovered_routes_have_request_level_coverage(client, mock_file
         },
     ).status_code in (501, 422)
     assert client.post(
-        "/api/files/discover?customer_id=cust-001",
+        "/api/v2/files/discover?customer_id=cust-001",
         json={
             "bucket_name": "example-bucket",
             "prefix": "",
@@ -2076,39 +2076,39 @@ def test_file_api_uncovered_routes_have_request_level_coverage(client, mock_file
         },
     ).status_code in (501, 422)
 
-    assert client.post("/api/files/filesets/fileset-001/add-files", json=["file-001"]).status_code != 404
-    assert client.post("/api/files/filesets/fileset-001/clone", json={"new_name": "Clone"}).status_code != 404
-    assert client.post("/api/files/filesets/fileset-001/remove-files", json=["file-001"]).status_code != 404
+    assert client.post("/api/v2/files/filesets/fileset-001/add-files", json=["file-001"]).status_code != 404
+    assert client.post("/api/v2/files/filesets/fileset-001/clone", json={"new_name": "Clone"}).status_code != 404
+    assert client.post("/api/v2/files/filesets/fileset-001/remove-files", json=["file-001"]).status_code != 404
 
-    assert client.post("/api/files/manifest/generate?customer_id=cust-001", json={}).status_code != 404
-    assert client.post("/api/files/search?customer_id=cust-001", json={}).status_code != 404
+    assert client.post("/api/v2/files/manifest/generate?customer_id=cust-001", json={}).status_code != 404
+    assert client.post("/api/v2/files/search?customer_id=cust-001", json={}).status_code != 404
 
     assert client.post(
-        "/api/files/upload/multipart/abort?bucket_name=b&object_key=k&upload_id=u",
+        "/api/v2/files/upload/multipart/abort?bucket_name=b&object_key=k&upload_id=u",
     ).status_code in (501, 422)
     assert client.post(
-        "/api/files/upload/multipart/complete",
+        "/api/v2/files/upload/multipart/complete",
         json={"bucket_name": "b", "object_key": "k", "upload_id": "u", "parts": []},
     ).status_code in (501, 422)
     assert client.post(
-        "/api/files/upload/multipart/part-url",
+        "/api/v2/files/upload/multipart/part-url",
         json={"bucket_name": "b", "object_key": "k", "upload_id": "u", "part_number": 1},
     ).status_code in (501, 422)
     assert client.post(
-        "/api/files/upload/presigned-url?customer_id=cust-001",
+        "/api/v2/files/upload/presigned-url?customer_id=cust-001",
         json={"bucket_name": "b", "filename": "x.txt"},
     ).status_code in (501, 422)
     assert client.post(
-        "/api/files/upload/verify",
+        "/api/v2/files/upload/verify",
         json={"bucket_name": "b", "object_key": "k"},
     ).status_code in (501, 422)
 
     assert client.post(
-        "/api/files/workset-usage/record",
+        "/api/v2/files/workset-usage/record",
         json={"file_id": "file-001", "workset_id": "ws-123", "customer_id": "cust-001"},
     ).status_code != 404
     assert client.post(
-        "/api/files/worksets/ws-123/update-state",
+        "/api/v2/files/worksets/ws-123/update-state",
         json={"new_state": "ready"},
     ).status_code != 404
-    assert client.put("/api/files/file-001/tags", json=["tag-a"]).status_code != 404
+    assert client.put("/api/v2/files/file-001/tags", json=["tag-a"]).status_code != 404

@@ -26,8 +26,8 @@ def mock_state_db():
 def mock_file_registry():
     """Mock FileRegistry."""
     registry = MagicMock(spec=FileRegistry)
-    registry.register_file.return_value = True
-    registry.create_fileset.return_value = True
+    registry.register_file.return_value = "file-euid-mock-001"
+    registry.create_fileset.return_value = "fileset-euid-mock-001"
     registry.list_customer_files.return_value = []
     # By default, simulate no existing registrations for any S3 URI so
     # integration tests exercise the successful registration path.
@@ -64,10 +64,10 @@ class TestFileAPIIntegrationWithoutAuth:
         
         # Verify file endpoints are present
         paths = openapi.get("paths", {})
-        assert "/api/files/register" in paths
-        assert "/api/files/list" in paths
-        assert "/api/files/filesets" in paths
-        assert "/api/files/bulk-import" in paths
+        assert "/api/v2/files/register" in paths
+        assert "/api/v2/files/list" in paths
+        assert "/api/v2/files/filesets" in paths
+        assert "/api/v2/files/bulk-import" in paths
     
     def test_register_file_without_auth(self, client_without_auth, mock_file_registry):
         """Test file registration without authentication."""
@@ -87,7 +87,7 @@ class TestFileAPIIntegrationWithoutAuth:
         }
         
         response = client_without_auth.post(
-            "/api/files/register?customer_id=test-customer",
+            "/api/v2/files/register?customer_id=test-customer",
             json=payload,
         )
         
@@ -99,7 +99,7 @@ class TestFileAPIIntegrationWithoutAuth:
     
     def test_list_files_without_auth(self, client_without_auth):
         """Test listing files without authentication."""
-        response = client_without_auth.get("/api/files/list?customer_id=test-customer")
+        response = client_without_auth.get("/api/v2/files/list?customer_id=test-customer")
         
         assert response.status_code == 200
         data = response.json()
@@ -114,7 +114,7 @@ class TestFileAPIIntegrationWithoutAuth:
         }
         
         response = client_without_auth.post(
-            "/api/files/filesets?customer_id=test-customer",
+            "/api/v2/files/filesets?customer_id=test-customer",
             json=payload,
         )
         
@@ -145,7 +145,7 @@ class TestFileAPIIntegrationWithoutAuth:
         }
         
         response = client_without_auth.post(
-            "/api/files/bulk-import?customer_id=test-customer",
+            "/api/v2/files/bulk-import?customer_id=test-customer",
             json=payload,
         )
         

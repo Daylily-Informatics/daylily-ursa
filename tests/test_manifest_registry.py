@@ -172,6 +172,42 @@ class TestGetManifestAndTsv:
         assert manifest_registry.get_manifest(customer_id="cust-001", manifest_id="m-1") is None
 
 
+class TestGetManifestByEuid:
+    def test_get_manifest_by_euid_returns_manifest(self, manifest_registry: ManifestRegistry):
+        tsv_content = "RUN_ID\tSAMPLE_ID\nR0\tHG002\n"
+        row = MagicMock(
+            euid="m-euid-99",
+            name="Run 1",
+            created_dt=None,
+            modified_dt=None,
+            bstatus="active",
+            json_addl={
+                "manifest_id": "m-1",
+                "customer_id": "cust-001",
+                "name": "Run 1",
+                "description": "",
+                "created_at": "2026-01-01T00:00:00Z",
+                "sample_count": 1,
+                "tsv_sha256": _sha256_hex(tsv_content),
+                "tsv_gzip_b64": _gzip_b64_encode(tsv_content),
+            },
+        )
+        manifest_registry.backend.find_instance_by_euid.return_value = row
+
+        saved = manifest_registry.get_manifest_by_euid("m-euid-99")
+
+        assert saved is not None
+        assert saved.manifest_euid == "m-euid-99"
+        assert saved.manifest_id == "m-1"
+        manifest_registry.backend.find_instance_by_euid.assert_called_once_with(
+            manifest_registry._session, "m-euid-99"
+        )
+
+    def test_get_manifest_by_euid_not_found(self, manifest_registry: ManifestRegistry):
+        manifest_registry.backend.find_instance_by_euid.return_value = None
+        assert manifest_registry.get_manifest_by_euid("no-such-euid") is None
+
+
 class TestBootstrap:
     def test_bootstrap_ensures_templates(self, manifest_registry: ManifestRegistry):
         manifest_registry.bootstrap()

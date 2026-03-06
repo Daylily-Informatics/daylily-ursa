@@ -6,7 +6,6 @@ import base64
 import datetime as dt
 import gzip
 import hashlib
-import uuid
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
@@ -46,10 +45,12 @@ def _utc_now_iso() -> str:
     return dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def _generate_manifest_id(now: Optional[dt.datetime] = None) -> str:
+def _generate_manifest_id(tsv_content: str, *, now: Optional[dt.datetime] = None) -> str:
+    """Generate a deterministic manifest ID from timestamp + content hash."""
     now = now or dt.datetime.now(dt.timezone.utc)
     ts = now.strftime("%Y%m%dT%H%M%S%fZ")
-    return f"m-{ts}-{uuid.uuid4().hex[:10]}"
+    content_hash = hashlib.sha256(tsv_content.encode("utf-8")).hexdigest()[:10]
+    return f"m-{ts}-{content_hash}"
 
 
 def _gzip_b64_encode(text: str) -> str:
@@ -153,7 +154,7 @@ class ManifestRegistry:
         name: Optional[str] = None,
         description: Optional[str] = None,
     ) -> SavedManifest:
-        manifest_id = _generate_manifest_id()
+        manifest_id = _generate_manifest_id(tsv_content)
         created_at = _utc_now_iso()
         sample_count = _estimate_sample_count(tsv_content)
         tsv_sha256 = _sha256_hex(tsv_content)
@@ -251,6 +252,25 @@ class ManifestRegistry:
             payload = from_json_addl(row)
             if payload.get("customer_id") != customer_id:
                 return None
+            return SavedManifest(
+                manifest_id=payload["manifest_id"],
+                customer_id=payload["customer_id"],
+                name=payload.get("name"),
+                description=payload.get("description"),
+                created_at=payload.get("created_at", _utc_now_iso()),
+                sample_count=int(payload.get("sample_count", 0) or 0),
+                tsv_sha256=payload.get("tsv_sha256", ""),
+                tsv_gzip_b64=payload.get("tsv_gzip_b64", ""),
+                manifest_euid=row.euid,
+            )
+
+    def get_manifest_by_euid(self, euid: str) -> Optional[SavedManifest]:
+        """Look up a manifest by its TapDB EUID."""
+        with self.backend.session_scope(commit=False) as session:
+            row = self.backend.find_instance_by_euid(session, euid)
+            if row is None:
+                return None
+            payload = from_json_addl(row)
             return SavedManifest(
                 manifest_id=payload["manifest_id"],
                 customer_id=payload["customer_id"],

@@ -91,9 +91,9 @@ def test_register_file_creates_customer_and_file(file_registry: FileRegistry, sa
     file_registry.backend.find_instance_by_external_id.side_effect = [None, None]
     file_registry.backend.create_instance.side_effect = [customer_row, file_row]
 
-    ok = file_registry.register_file(sample_registration)
+    euid = file_registry.register_file(sample_registration)
 
-    assert ok is True
+    assert euid == "file-euid"
     assert file_registry.backend.create_instance.call_count == 2
     payload = file_registry.backend.create_instance.call_args_list[1].kwargs["json_addl"]
     assert payload["file_id"] == "file-001"
@@ -106,9 +106,9 @@ def test_register_file_updates_existing(file_registry: FileRegistry, sample_regi
     existing = _instance({"file_id": "file-001"}, euid="file-old")
     file_registry.backend.find_instance_by_external_id.return_value = existing
 
-    ok = file_registry.register_file(sample_registration)
+    euid = file_registry.register_file(sample_registration)
 
-    assert ok is True
+    assert euid == "file-old"
     file_registry.backend.update_instance_json.assert_called_once()
     file_registry.backend.create_instance.assert_not_called()
 
@@ -151,6 +151,7 @@ def test_get_file_returns_registration(file_registry: FileRegistry):
 
     assert reg is not None
     assert reg.file_id == "file-001"
+    assert reg.file_euid == "file-euid"
     assert reg.customer_id == "cust-001"
     assert reg.file_metadata.s3_uri == "s3://bucket/sample_R1.fastq.gz"
     assert reg.tags == ["wgs"]
@@ -232,10 +233,71 @@ def test_create_fileset_links_customer_and_files(file_registry: FileRegistry):
         file_ids=["file-001", "file-002"],
     )
 
-    ok = file_registry.create_fileset(fileset)
+    euid = file_registry.create_fileset(fileset)
 
-    assert ok is True
+    assert euid == "fs-euid"
     assert file_registry.backend.create_lineage.call_count == 3
+
+
+def test_get_file_by_euid(file_registry: FileRegistry):
+    payload = {
+        "file_id": "file-001",
+        "customer_id": "cust-001",
+        "file_metadata": {
+            "file_id": "file-001",
+            "s3_uri": "s3://bucket/sample_R1.fastq.gz",
+            "file_size_bytes": 1024,
+            "file_format": "fastq",
+            "md5_checksum": None,
+            "created_at": "2026-01-01T00:00:00Z",
+        },
+        "sequencing_metadata": {
+            "platform": "ILLUMINA_NOVASEQ_X", "vendor": "ILMN", "run_id": "run-001",
+            "lane": 1, "barcode_id": "S1", "flowcell_id": None, "run_date": None,
+        },
+        "biosample_metadata": {
+            "biosample_id": "bio-001", "subject_id": "subj-001", "sample_type": "blood",
+            "tissue_type": None, "collection_date": None, "preservation_method": None, "tumor_fraction": None,
+        },
+        "tags": [],
+    }
+    row = _instance(payload, euid="file-euid-123")
+    file_registry.backend.find_instance_by_euid.return_value = row
+
+    reg = file_registry.get_file_by_euid("file-euid-123")
+
+    assert reg is not None
+    assert reg.file_euid == "file-euid-123"
+    assert reg.file_id == "file-001"
+    file_registry.backend.find_instance_by_euid.assert_called_once()
+
+
+def test_get_file_by_euid_not_found(file_registry: FileRegistry):
+    file_registry.backend.find_instance_by_euid.return_value = None
+    assert file_registry.get_file_by_euid("no-such-euid") is None
+
+
+def test_get_fileset_by_euid(file_registry: FileRegistry):
+    payload = {
+        "fileset_id": "fs-001",
+        "customer_id": "cust-001",
+        "name": "Test set",
+        "file_ids": ["file-001"],
+        "tags": [],
+    }
+    row = _instance(payload, euid="fs-euid-456")
+    file_registry.backend.find_instance_by_euid.return_value = row
+
+    fs = file_registry.get_fileset_by_euid("fs-euid-456")
+
+    assert fs is not None
+    assert fs.fileset_euid == "fs-euid-456"
+    assert fs.fileset_id == "fs-001"
+
+
+def test_get_fileset_by_euid_not_found(file_registry: FileRegistry):
+    file_registry.backend.find_instance_by_euid.return_value = None
+    assert file_registry.get_fileset_by_euid("no-such-euid") is None
 
 
 def test_register_file_workset_usage_updates_history(file_registry: FileRegistry):
