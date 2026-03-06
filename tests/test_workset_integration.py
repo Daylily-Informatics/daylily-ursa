@@ -2848,7 +2848,7 @@ class TestCostReportIntegration:
         # Verify update_cost_report was called with correct arguments
         mock_state_db.update_cost_report.assert_called_once()
         call_kwargs = mock_state_db.update_cost_report.call_args.kwargs
-        assert call_kwargs["workset_id"] == "test-ws-cost"
+        assert call_kwargs["euid"] == mock_workset.euid
         assert call_kwargs["total_compute_cost_usd"] == 12.5
         assert call_kwargs["per_sample_costs"] == {"HG002": 12.5}
         assert call_kwargs["rule_count"] == 10
@@ -2942,7 +2942,7 @@ class TestStorageMetricsIntegration:
         # Verify update_storage_metrics was called with correct arguments
         mock_state_db.update_storage_metrics.assert_called_once()
         call_kwargs = mock_state_db.update_storage_metrics.call_args.kwargs
-        assert call_kwargs["workset_id"] == "test-ws-storage"
+        assert call_kwargs["euid"] == mock_workset.euid
         assert call_kwargs["results_storage_bytes"] == storage_bytes
         assert call_kwargs["fsx_storage_bytes"] is None
 
