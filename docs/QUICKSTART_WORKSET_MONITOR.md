@@ -33,7 +33,7 @@ ursa aws setup
 ## 2) Register Your First Workset
 
 ```python
-from daylib.workset_state_db import WorksetPriority, WorksetStateDB
+from daylily_ursa.workset_state_db import WorksetPriority, WorksetStateDB
 
 db = WorksetStateDB()
 db.bootstrap()
@@ -58,10 +58,18 @@ ursa server start --foreground
 Or run directly:
 
 ```bash
-daylily-workset-api --host 0.0.0.0 --port 8914 --bootstrap-tapdb --verbose
+daylily-workset-api \
+  --host 0.0.0.0 \
+  --port 8914 \
+  --bootstrap-tapdb \
+  --ssl-certfile ~/.config/ursa/certs/ursa-localhost.pem \
+  --ssl-keyfile ~/.config/ursa/certs/ursa-localhost-key.pem \
+  --verbose
 ```
 
-The API will be available at `https://localhost:8914` if you start via `ursa server start` (it configures TLS cert paths).
+The API is HTTPS-only and returns `426 HTTPS Required` for insecure requests.
+`ursa server start` configures TLS cert paths automatically.
+If you run behind a reverse proxy that terminates TLS, set `HTTPS_TRUSTED_PROXY_IPS` so forwarded HTTPS is trusted.
 
 ## 4) Run the Monitor
 
@@ -72,7 +80,7 @@ daylily-workset-monitor ~/.config/ursa/workset-monitor-config.yaml --enable-tapd
 ## Basic Usage (Python)
 
 ```python
-from daylib.workset_state_db import WorksetState, WorksetStateDB
+from daylily_ursa.workset_state_db import WorksetState, WorksetStateDB
 
 db = WorksetStateDB()
 
@@ -85,4 +93,3 @@ db.update_state(
     reason="Processing started",
 )
 ```
-

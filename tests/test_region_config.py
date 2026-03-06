@@ -11,35 +11,42 @@ import os
 from unittest.mock import MagicMock, patch
 
 
-
 class TestSettingsGetEffectiveRegion:
     """Tests for Settings.get_effective_region() method."""
 
     def test_returns_day_aws_region_when_set(self):
         """Test DAY_AWS_REGION takes highest priority."""
-        from daylib.config import Settings
+        from daylily_ursa.config import Settings
 
-        with patch.dict(os.environ, {
-            "DAY_AWS_REGION": "eu-central-1",
-            "AWS_REGION": "us-east-1",
-        }, clear=True):
+        with patch.dict(
+            os.environ,
+            {
+                "DAY_AWS_REGION": "eu-central-1",
+                "AWS_REGION": "us-east-1",
+            },
+            clear=True,
+        ):
             # Need to create new instance to pick up env vars
             settings = Settings()
             assert settings.get_effective_region() == "eu-central-1"
 
     def test_returns_aws_region_when_day_aws_region_not_set(self):
         """Test AWS_REGION is used when DAY_AWS_REGION not set."""
-        from daylib.config import Settings
+        from daylily_ursa.config import Settings
 
-        with patch.dict(os.environ, {
-            "AWS_REGION": "ap-southeast-1",
-        }, clear=True):
+        with patch.dict(
+            os.environ,
+            {
+                "AWS_REGION": "ap-southeast-1",
+            },
+            clear=True,
+        ):
             settings = Settings()
             assert settings.get_effective_region() == "ap-southeast-1"
 
     def test_returns_fallback_when_no_env_vars(self):
         """Test fallback to 'us-west-2' when no env vars set."""
-        from daylib.config import Settings
+        from daylily_ursa.config import Settings
 
         with patch.dict(os.environ, {}, clear=True):
             # Remove any region env vars
@@ -51,11 +58,15 @@ class TestSettingsGetEffectiveRegion:
 
     def test_ignores_aws_default_region(self):
         """Test AWS_DEFAULT_REGION is intentionally ignored."""
-        from daylib.config import Settings
+        from daylily_ursa.config import Settings
 
-        with patch.dict(os.environ, {
-            "AWS_DEFAULT_REGION": "eu-west-1",  # This should be ignored
-        }, clear=True):
+        with patch.dict(
+            os.environ,
+            {
+                "AWS_DEFAULT_REGION": "eu-west-1",  # This should be ignored
+            },
+            clear=True,
+        ):
             os.environ.pop("DAY_AWS_REGION", None)
             os.environ.pop("AWS_REGION", None)
             settings = Settings()
@@ -64,12 +75,16 @@ class TestSettingsGetEffectiveRegion:
 
     def test_aws_region_takes_priority_over_aws_default_region(self):
         """Test AWS_REGION is used even when AWS_DEFAULT_REGION is set."""
-        from daylib.config import Settings
+        from daylily_ursa.config import Settings
 
-        with patch.dict(os.environ, {
-            "AWS_DEFAULT_REGION": "eu-west-1",  # Should be ignored
-            "AWS_REGION": "us-east-2",  # Should be used
-        }, clear=True):
+        with patch.dict(
+            os.environ,
+            {
+                "AWS_DEFAULT_REGION": "eu-west-1",  # Should be ignored
+                "AWS_REGION": "us-east-2",  # Should be used
+            },
+            clear=True,
+        ):
             os.environ.pop("DAY_AWS_REGION", None)
             settings = Settings()
             assert settings.get_effective_region() == "us-east-2"
@@ -80,7 +95,7 @@ class TestClusterServiceRegionFallback:
 
     def test_fallback_to_us_west_2_when_no_regions(self):
         """Test ClusterService falls back to us-west-2 when no regions configured."""
-        from daylib.cluster_service import get_cluster_service, reset_cluster_service
+        from daylily_ursa.cluster_service import get_cluster_service, reset_cluster_service
 
         # Reset any existing singleton
         reset_cluster_service()
@@ -98,8 +113,8 @@ class TestClusterServiceRegionFallback:
             mock_config.aws_profile = "test-profile"
 
             # Patch at source module where import happens
-            with patch("daylib.ursa_config.get_ursa_config", return_value=mock_config):
-                with patch("daylib.cluster_service.ClusterService") as MockClusterService:
+            with patch("daylily_ursa.ursa_config.get_ursa_config", return_value=mock_config):
+                with patch("daylily_ursa.cluster_service.ClusterService") as MockClusterService:
                     MockClusterService.return_value = MagicMock()
                     get_cluster_service()
 
@@ -113,7 +128,7 @@ class TestClusterServiceRegionFallback:
 
     def test_uses_ursa_allowed_regions_when_set(self):
         """Test URSA_ALLOWED_REGIONS is used when set."""
-        from daylib.cluster_service import get_cluster_service, reset_cluster_service
+        from daylily_ursa.cluster_service import get_cluster_service, reset_cluster_service
 
         reset_cluster_service()
 
@@ -124,8 +139,8 @@ class TestClusterServiceRegionFallback:
             mock_config.aws_profile = "test-profile"
 
             # Patch at source module
-            with patch("daylib.ursa_config.get_ursa_config", return_value=mock_config):
-                with patch("daylib.cluster_service.ClusterService") as MockClusterService:
+            with patch("daylily_ursa.ursa_config.get_ursa_config", return_value=mock_config):
+                with patch("daylily_ursa.cluster_service.ClusterService") as MockClusterService:
                     MockClusterService.return_value = MagicMock()
                     get_cluster_service()
 

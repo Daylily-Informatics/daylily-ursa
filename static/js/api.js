@@ -72,70 +72,70 @@ const UrsaAPI = {
     // === Customer Endpoints ===
     customers: {
         async list(params = {}) {
-            return UrsaAPI.get('/api/customers', params);
+            return UrsaAPI.get('/api/v2/customers', params);
         },
         async get(customerId) {
-            return UrsaAPI.get(`/api/customers/${customerId}`);
+            return UrsaAPI.get(`/api/v2/customers/${customerId}`);
         },
         async create(data) {
-            return UrsaAPI.post('/api/customers', data);
+            return UrsaAPI.post('/api/v2/customers', data);
         },
         async update(customerId, data) {
-            return UrsaAPI.put(`/api/customers/${customerId}`, data);
+            return UrsaAPI.put(`/api/v2/customers/${customerId}`, data);
         },
     },
     
     // === Workset Endpoints ===
     worksets: {
         async list(customerId, params = {}) {
-            return UrsaAPI.get(`/api/customers/${customerId}/worksets`, params);
+            return UrsaAPI.get(`/api/v2/customers/${customerId}/worksets`, params);
         },
         async get(customerId, worksetId) {
-            return UrsaAPI.get(`/api/customers/${customerId}/worksets/${worksetId}`);
+            return UrsaAPI.get(`/api/v2/customers/${customerId}/worksets/${worksetId}`);
         },
         async create(customerId, data) {
-            return UrsaAPI.post(`/api/customers/${customerId}/worksets`, data);
+            return UrsaAPI.post(`/api/v2/customers/${customerId}/worksets`, data);
         },
         async cancel(customerId, worksetId) {
-            return UrsaAPI.post(`/api/customers/${customerId}/worksets/${worksetId}/cancel`);
+            return UrsaAPI.post(`/api/v2/customers/${customerId}/worksets/${worksetId}/cancel`);
         },
         async retry(customerId, worksetId) {
-            return UrsaAPI.post(`/api/customers/${customerId}/worksets/${worksetId}/retry`);
+            return UrsaAPI.post(`/api/v2/customers/${customerId}/worksets/${worksetId}/retry`);
         },
         async getLogs(customerId, worksetId) {
-            return UrsaAPI.get(`/api/customers/${customerId}/worksets/${worksetId}/logs`);
+            return UrsaAPI.get(`/api/v2/customers/${customerId}/worksets/${worksetId}/logs`);
         },
         async archive(customerId, worksetId, reason) {
-            return UrsaAPI.post(`/api/customers/${customerId}/worksets/${worksetId}/archive`, { reason });
+            return UrsaAPI.post(`/api/v2/customers/${customerId}/worksets/${worksetId}/archive`, { reason });
         },
         async delete(customerId, worksetId, hardDelete, reason) {
-            return UrsaAPI.post(`/api/customers/${customerId}/worksets/${worksetId}/delete`, { hard_delete: hardDelete, reason });
+            return UrsaAPI.post(`/api/v2/customers/${customerId}/worksets/${worksetId}/delete`, { hard_delete: hardDelete, reason });
         },
         async restore(customerId, worksetId) {
-            return UrsaAPI.post(`/api/customers/${customerId}/worksets/${worksetId}/restore`);
+            return UrsaAPI.post(`/api/v2/customers/${customerId}/worksets/${worksetId}/restore`);
         },
         async listArchived(customerId) {
-            return UrsaAPI.get(`/api/customers/${customerId}/worksets/archived`);
+            return UrsaAPI.get(`/api/v2/customers/${customerId}/worksets/archived`);
         },
     },
 
     // === Manifest Endpoints ===
     manifests: {
         async list(customerId, limit = 200) {
-            return UrsaAPI.get(`/api/customers/${customerId}/manifests`, { limit });
+            return UrsaAPI.get(`/api/v2/customers/${customerId}/manifests`, { limit });
         },
         async get(customerId, manifestId) {
-            return UrsaAPI.get(`/api/customers/${customerId}/manifests/${manifestId}`);
+            return UrsaAPI.get(`/api/v2/customers/${customerId}/manifests/${manifestId}`);
         },
         async save(customerId, tsvContent, name = null, description = null) {
-            return UrsaAPI.post(`/api/customers/${customerId}/manifests`, {
+            return UrsaAPI.post(`/api/v2/customers/${customerId}/manifests`, {
                 tsv_content: tsvContent,
                 name: name,
                 description: description,
             });
         },
         async download(customerId, manifestId) {
-            const response = await fetch(`${UrsaAPI.baseUrl}/api/customers/${customerId}/manifests/${manifestId}/download`);
+            const response = await fetch(`${UrsaAPI.baseUrl}/api/v2/customers/${customerId}/manifests/${manifestId}/download`);
             if (!response.ok) {
                 const error = await response.json().catch(() => ({ detail: response.statusText }));
                 throw new Error(error.detail || `HTTP ${response.status}`);
@@ -147,7 +147,7 @@ const UrsaAPI = {
     // === File Endpoints ===
     files: {
         async list(customerId, prefix = '') {
-            return UrsaAPI.get(`/api/customers/${customerId}/files`, { prefix });
+            return UrsaAPI.get(`/api/v2/customers/${customerId}/files`, { prefix });
         },
         async upload(customerId, file, prefix = '') {
             // Use FormData for file upload
@@ -155,7 +155,7 @@ const UrsaAPI = {
             formData.append('file', file);
             formData.append('prefix', prefix);
 
-            const url = `${UrsaAPI.baseUrl}/api/customers/${customerId}/files/upload`;
+            const url = `${UrsaAPI.baseUrl}/api/v2/customers/${customerId}/files/upload`;
             console.log(`Uploading file to: ${url}`);
 
             const response = await fetch(url, {
@@ -172,38 +172,38 @@ const UrsaAPI = {
             return await response.json();
         },
         async createFolder(customerId, folderPath) {
-            return UrsaAPI.post(`/api/customers/${customerId}/files/create-folder`, {
+            return UrsaAPI.post(`/api/v2/customers/${customerId}/files/create-folder`, {
                 folder_path: folderPath,
             });
         },
         async delete(customerId, key) {
-            return UrsaAPI.delete(`/api/customers/${customerId}/files/${encodeURIComponent(key)}`);
+            return UrsaAPI.delete(`/api/v2/customers/${customerId}/files/${encodeURIComponent(key)}`);
         },
         async getDownloadUrl(customerId, key) {
-            return UrsaAPI.get(`/api/customers/${customerId}/files/${encodeURIComponent(key)}/download-url`);
+            return UrsaAPI.get(`/api/v2/customers/${customerId}/files/${encodeURIComponent(key)}/download-url`);
         },
         async preview(customerId, key, lines = 20) {
-            return UrsaAPI.get(`/api/customers/${customerId}/files/${encodeURIComponent(key)}/preview`, { lines });
+            return UrsaAPI.get(`/api/v2/customers/${customerId}/files/${encodeURIComponent(key)}/preview`, { lines });
         },
     },
     
     // === Usage Endpoints ===
     usage: {
         async get(customerId, params = {}) {
-            return UrsaAPI.get(`/api/customers/${customerId}/usage`, params);
+            return UrsaAPI.get(`/api/v2/customers/${customerId}/usage`, params);
         },
         async getDetails(customerId, params = {}) {
-            return UrsaAPI.get(`/api/customers/${customerId}/usage/details`, params);
+            return UrsaAPI.get(`/api/v2/customers/${customerId}/usage/details`, params);
         },
     },
     
     // === Dashboard Stats ===
     dashboard: {
         async getStats(customerId) {
-            return UrsaAPI.get(`/api/customers/${customerId}/dashboard/stats`);
+            return UrsaAPI.get(`/api/v2/customers/${customerId}/dashboard/stats`);
         },
         async getActivity(customerId, days = 30) {
-            return UrsaAPI.get(`/api/customers/${customerId}/dashboard/activity`, { days });
+            return UrsaAPI.get(`/api/v2/customers/${customerId}/dashboard/activity`, { days });
         },
     },
 };

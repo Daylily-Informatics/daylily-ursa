@@ -18,7 +18,9 @@ dependencies = [
     # Cognito auth library
     "daylily-cognito>=0.1.24",
     # TapDB graph persistence
-    "daylily-tapdb>=0.1.28,<0.2.0",
+    "daylily-tapdb==0.1.30",
+    # Ephemeral cluster control plane (in-env dependency)
+    "daylily-ephemeral-cluster==0.7.605",
     "fastapi>=0.104.0",
     "uvicorn[standard]>=0.24.0",
     "pydantic>=2.0.0",
@@ -29,7 +31,9 @@ dependencies = [
     "httpx>=0.25.0",
     "jsonschema>=4.17.0",
     "itsdangerous>=2.2.0",
-    "tabulate>=0.9.0",
+    # Keep compatible with aws-parallelcluster transitively required by
+    # daylily-ephemeral-cluster.
+    "tabulate>=0.8.10,<0.9.0",
     "typer>=0.9.0",
     "rich>=13.0.0",
 ]
@@ -53,21 +57,16 @@ dev = [
     "boto3-stubs[s3,sns,cloudwatch]>=1.28.0",
 ]
 
-# Cluster integration (optional - for workset_monitor cluster operations)
-cluster = [
-    "daylily-ephemeral-cluster",
-]
-
 [project.scripts]
-ursa = "daylib.cli:main"
-daylily-workset-api = "daylib.workset_api_cli:main"
-daylily-workset-monitor = "daylib.workset_monitor_cli:main"
-daylily-stage-samples-from-local-to-headnode = "daylib.stage_samples:main"
-daylily-export-fsx-to-s3-from-local = "daylib.export_fsx:main"
-daylily-purge-customer-data = "daylib.purge_customer:main"
-daylily-workset-report = "daylib.workset_report:main"
-daylily-workset-worker = "daylib.workset_worker:main"
-daylily-workset-metrics = "daylib.workset_metrics:main"
+ursa = "daylily_ursa.cli:main"
+daylily-workset-api = "daylily_ursa.workset_api_cli:main"
+daylily-workset-monitor = "daylily_ursa.workset_monitor_cli:main"
+daylily-stage-samples-from-local-to-headnode = "daylily_ursa.stage_samples:main"
+daylily-export-fsx-to-s3-from-local = "daylily_ursa.export_fsx:main"
+daylily-purge-customer-data = "daylily_ursa.purge_customer:main"
+daylily-workset-report = "daylily_ursa.workset_report:main"
+daylily-workset-worker = "daylily_ursa.workset_worker:main"
+daylily-workset-metrics = "daylily_ursa.workset_metrics:main"
 
 [tool.setuptools_scm]
 version_scheme = "guess-next-dev"
@@ -75,7 +74,7 @@ local_scheme = "node-and-date"
 fallback_version = "0.0.0"
 
 [tool.setuptools.packages.find]
-include = ["daylib*"]
+include = ["daylily_ursa*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

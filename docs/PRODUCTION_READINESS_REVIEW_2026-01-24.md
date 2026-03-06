@@ -22,7 +22,7 @@ Read-only review of code + docs focused on “what remains” for production rea
 
 ## Production blockers (fix before go-live)
 1. **(Resolved) CLI server launcher is production-package-safe**
-   - `daylib/cli/server.py` uses module execution (`python -m daylib.workset_api_cli`), which works in installed environments.
+   - `daylily_ursa/cli/server.py` uses module execution (`python -m daylily_ursa.workset_api_cli`), which works in installed environments.
    - Ensure docs and runbooks reference the packaged entry points from `pyproject.toml`.
 
 2. **No visible CI configuration in-repo**
@@ -32,7 +32,7 @@ Read-only review of code + docs focused on “what remains” for production rea
 
 ## High-risk gaps (strongly recommended)
 - **Rate limiting is not distributed**
-  - `daylib/rate_limiting.py` implements in-memory token buckets.
+  - `daylily_ursa/rate_limiting.py` implements in-memory token buckets.
   - In production (multiple pods/instances), rate limiting must be shared (e.g., Redis) or enforced at the edge.
   - TODO: add to new document 'FUTURE_DEVELOPMENT_PLAN.md`
 
@@ -42,7 +42,7 @@ Read-only review of code + docs focused on “what remains” for production rea
   - TODO: MAke tis change to fail fast
 
 - **Portal S3 access consistency**
-  - `daylib/routes/portal.py` imports `RegionAwareS3Client`, but some routes still create a plain boto3 S3 client for presigned URLs.
+  - `daylily_ursa/routes/portal.py` imports `RegionAwareS3Client`, but some routes still create a plain boto3 S3 client for presigned URLs.
   - For BYOB/cross-region buckets this will reintroduce 301/region mismatch failures.
   - TODO: make sure all S3 access is region-aware and consistent
 

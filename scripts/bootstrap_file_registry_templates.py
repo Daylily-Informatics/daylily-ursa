@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Bootstrap TapDB templates for the file registry.
 
-This ensures the TapDB templates used by `daylib.file_registry.FileRegistry` exist
+This ensures the TapDB templates used by `daylily_ursa.file_registry.FileRegistry` exist
 in the configured TapDB namespace (strict namespace mode).
 
 Usage:
@@ -12,13 +12,16 @@ from __future__ import annotations
 
 import argparse
 import os
-import sys
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Bootstrap TapDB templates for FileRegistry")
-    parser.add_argument("--region", default=os.environ.get("AWS_REGION", "us-west-2"), help="AWS region (optional)")
-    parser.add_argument("--profile", default=os.environ.get("AWS_PROFILE"), help="AWS profile (optional)")
+    parser.add_argument(
+        "--region", default=os.environ.get("AWS_REGION", "us-west-2"), help="AWS region (optional)"
+    )
+    parser.add_argument(
+        "--profile", default=os.environ.get("AWS_PROFILE"), help="AWS profile (optional)"
+    )
     args = parser.parse_args()
 
     if args.profile:
@@ -27,7 +30,7 @@ def main() -> int:
         os.environ.setdefault("AWS_REGION", args.region)
 
     try:
-        from daylib.file_registry import FileRegistry
+        from daylily_ursa.file_registry import FileRegistry
     except ImportError as exc:
         print(f"Error importing FileRegistry: {exc}")
         return 1
@@ -45,4 +48,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

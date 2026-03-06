@@ -4,8 +4,8 @@ from unittest.mock import MagicMock, Mock
 
 import pytest
 
-from daylib.workset_concurrent_processor import ConcurrentWorksetProcessor, ProcessorConfig
-from daylib.workset_state_db import WorksetPriority, WorksetState
+from daylily_ursa.workset_concurrent_processor import ConcurrentWorksetProcessor, ProcessorConfig
+from daylily_ursa.workset_state_db import WorksetPriority, WorksetState
 
 
 @pytest.fixture
@@ -15,7 +15,8 @@ def mock_state_db():
     db.get_concurrent_worksets_count.return_value = 2
     db.list_worksets_by_state.return_value = [
         {
-            "workset_id": "ws-001",
+            "euid": "ws-001",
+            "name": "ws-001",
             "state": WorksetState.READY.value,
             "priority": WorksetPriority.NORMAL.value,
             "bucket": "test-bucket",
@@ -35,7 +36,7 @@ def mock_scheduler():
     """Mock WorksetScheduler."""
     scheduler = MagicMock()
     scheduler.schedule_workset.return_value = Mock(
-        workset_id="ws-001",
+        workset_euid="ws-001",
         cluster_name="test-cluster",
         should_create_cluster=False,
         estimated_start_delay_minutes=0,
@@ -104,7 +105,8 @@ def test_process_retries(processor, mock_state_db):
     """Test retry processing."""
     mock_state_db.get_retryable_worksets.return_value = [
         {
-            "workset_id": "ws-retry",
+            "euid": "ws-retry",
+            "name": "ws-retry",
             "state": WorksetState.RETRYING.value,
             "retry_count": 1,
         }
@@ -129,7 +131,8 @@ def test_validate_workset_success(processor, mock_state_db):
     processor.config.enable_validation = True
 
     workset = {
-        "workset_id": "ws-001",
+        "euid": "ws-001",
+        "name": "ws-001",
         "bucket": "test-bucket",
         "prefix": "worksets/ws-001/",
         "metadata": {},
@@ -153,7 +156,8 @@ def test_validate_workset_failure(processor, mock_state_db):
     processor.config.enable_validation = True
 
     workset = {
-        "workset_id": "ws-001",
+        "euid": "ws-001",
+        "name": "ws-001",
         "bucket": "test-bucket",
         "prefix": "worksets/ws-001/",
         "metadata": {},
@@ -163,4 +167,3 @@ def test_validate_workset_failure(processor, mock_state_db):
 
     assert result is False
     mock_state_db.record_failure.assert_called_once()
-

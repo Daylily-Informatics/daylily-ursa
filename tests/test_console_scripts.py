@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 import typer
 
+
 def _read_project_scripts(pyproject: Path) -> dict[str, str]:
     """Parse the [project.scripts] table from pyproject.toml.
 
@@ -50,8 +51,8 @@ def test_console_script_entrypoints_are_importable_and_callable():
 
 
 def test_ursa_server_start_uses_packaged_entrypoint(monkeypatch):
-    from daylib.cli import server as server_mod
-    import daylib.ursa_config as ursa_config_mod
+    from daylily_ursa.cli import server as server_mod
+    import daylily_ursa.ursa_config as ursa_config_mod
 
     class DummyUrsaConfig:
         aws_profile = "test-profile"
@@ -68,7 +69,9 @@ def test_ursa_server_start_uses_packaged_entrypoint(monkeypatch):
     monkeypatch.setattr(server_mod, "_ensure_dir", lambda: None)
     monkeypatch.setattr(server_mod, "_get_pid", lambda: None)
     monkeypatch.setattr(server_mod, "_source_env_file", lambda: False)
-    monkeypatch.setattr(server_mod, "_resolve_https_cert_paths", lambda host: ("/tmp/cert.pem", "/tmp/key.pem"))
+    monkeypatch.setattr(
+        server_mod, "_resolve_https_cert_paths", lambda host: ("/tmp/cert.pem", "/tmp/key.pem")
+    )
 
     captured: dict[str, object] = {}
 
@@ -76,6 +79,7 @@ def test_ursa_server_start_uses_packaged_entrypoint(monkeypatch):
         captured["cmd"] = cmd
         captured["cwd"] = cwd
         captured["kwargs"] = kwargs
+
         class _DummyCompletedProcess:
             def __init__(self, returncode: int):
                 self.returncode = returncode
@@ -94,7 +98,7 @@ def test_ursa_server_start_uses_packaged_entrypoint(monkeypatch):
 
     cmd = captured.get("cmd")
     assert isinstance(cmd, list)
-    assert cmd[:3] == [sys.executable, "-m", "daylib.workset_api_cli"]
+    assert cmd[:3] == [sys.executable, "-m", "daylily_ursa.workset_api_cli"]
     assert not any("bin/daylily-workset-api" in str(part) for part in cmd)
 
     kwargs = captured.get("kwargs")
@@ -104,7 +108,7 @@ def test_ursa_server_start_uses_packaged_entrypoint(monkeypatch):
 
 
 def test_validate_cognito_oauth_uris_detects_port_mismatch():
-    from daylib.cli import server as server_mod
+    from daylily_ursa.cli import server as server_mod
 
     errors = server_mod._validate_cognito_oauth_uris(
         app_client={
@@ -124,7 +128,7 @@ def test_validate_cognito_oauth_uris_detects_port_mismatch():
 
 
 def test_validate_cognito_oauth_uris_accepts_matching_port():
-    from daylib.cli import server as server_mod
+    from daylily_ursa.cli import server as server_mod
 
     errors = server_mod._validate_cognito_oauth_uris(
         app_client={
@@ -144,8 +148,8 @@ def test_validate_cognito_oauth_uris_accepts_matching_port():
 
 
 def test_ursa_server_start_auth_fails_when_cognito_uri_ports_mismatch(monkeypatch):
-    from daylib.cli import server as server_mod
-    import daylib.ursa_config as ursa_config_mod
+    from daylily_ursa.cli import server as server_mod
+    import daylily_ursa.ursa_config as ursa_config_mod
 
     class DummyUrsaConfig:
         aws_profile = "test-profile"
@@ -164,7 +168,9 @@ def test_ursa_server_start_auth_fails_when_cognito_uri_ports_mismatch(monkeypatc
     monkeypatch.setattr(server_mod, "_ensure_dir", lambda: None)
     monkeypatch.setattr(server_mod, "_get_pid", lambda: None)
     monkeypatch.setattr(server_mod, "_source_env_file", lambda: False)
-    monkeypatch.setattr(server_mod, "_resolve_https_cert_paths", lambda host: ("/tmp/cert.pem", "/tmp/key.pem"))
+    monkeypatch.setattr(
+        server_mod, "_resolve_https_cert_paths", lambda host: ("/tmp/cert.pem", "/tmp/key.pem")
+    )
     monkeypatch.setattr(server_mod, "_require_auth_dependencies", lambda: None)
     monkeypatch.setattr(
         server_mod,
@@ -182,9 +188,11 @@ def test_ursa_server_start_auth_fails_when_cognito_uri_ports_mismatch(monkeypatc
 
     def _fake_run(cmd, cwd=None, **kwargs):
         called["run"] = True
+
         class _DummyCompletedProcess:
             def __init__(self, returncode: int):
                 self.returncode = returncode
+
         return _DummyCompletedProcess(0)
 
     monkeypatch.setattr(server_mod.subprocess, "run", _fake_run)
@@ -202,7 +210,7 @@ def test_ursa_server_start_auth_fails_when_cognito_uri_ports_mismatch(monkeypatc
 
 
 def test_validate_cognito_oauth_uris_rejects_default_redirect_not_in_callback_urls():
-    from daylib.cli import server as server_mod
+    from daylily_ursa.cli import server as server_mod
 
     errors = server_mod._validate_cognito_oauth_uris(
         app_client={
@@ -222,7 +230,7 @@ def test_validate_cognito_oauth_uris_rejects_default_redirect_not_in_callback_ur
 
 
 def test_validate_cognito_oauth_uris_rejects_client_name_mismatch():
-    from daylib.cli import server as server_mod
+    from daylily_ursa.cli import server as server_mod
 
     errors = server_mod._validate_cognito_oauth_uris(
         app_client={

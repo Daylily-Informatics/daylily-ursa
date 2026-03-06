@@ -2,10 +2,10 @@
 
 ## 1. Planning assumptions
 Repo-verified assumptions:
-- Ursa API assembly and route composition are in `daylib/workset_api.py:create_app` with route modules in `daylib/routes/*`.
-- Current workflow persistence is TapDB-centric via `daylib/workset_state_db.py:WorksetStateDB`, `daylib/workset_customer.py:CustomerManager`, `daylib/file_registry.py:FileRegistry`, and `daylib/manifest_registry.py:ManifestRegistry`.
-- Current worker/scheduler/monitor lifecycle mutation paths are in `daylib/workset_worker.py`, `daylib/workset_concurrent_processor.py`, `daylib/workset_monitor.py`, and `daylib/workset_scheduler.py`.
-- Current auth/session/Cognito startup behavior is in `daylib/routes/portal.py`, `daylib/workset_api.py` combined dependency, and `daylib/cli/server.py` preflight.
+- Ursa API assembly and route composition are in `daylily_ursa/workset_api.py:create_app` with route modules in `daylily_ursa/routes/*`.
+- Current workflow persistence is TapDB-centric via `daylily_ursa/workset_state_db.py:WorksetStateDB`, `daylily_ursa/workset_customer.py:CustomerManager`, `daylily_ursa/file_registry.py:FileRegistry`, and `daylily_ursa/manifest_registry.py:ManifestRegistry`.
+- Current worker/scheduler/monitor lifecycle mutation paths are in `daylily_ursa/workset_worker.py`, `daylily_ursa/workset_concurrent_processor.py`, `daylily_ursa/workset_monitor.py`, and `daylily_ursa/workset_scheduler.py`.
+- Current auth/session/Cognito startup behavior is in `daylily_ursa/routes/portal.py`, `daylily_ursa/workset_api.py` combined dependency, and `daylily_ursa/cli/server.py` preflight.
 - Atlas local patterns for tenant/RBAC/service auth are available in `app/auth/rbac.py`, `app/auth/dependencies.py`, `app/api/routes/internal.py`.
 - TapDB local conventions for explicit session ownership, audit attribution, EUID/soft-delete triggers, and namespace-aware config are available in `daylily_tapdb/connection.py`, `daylily_tapdb/cli/db_config.py`, `schema/tapdb_schema.sql`.
 
@@ -41,9 +41,9 @@ What risk it isolates:
 - Prevents unbounded hidden behavior changes while introducing migration scaffolding.
 
 Exact files/directories to add or modify:
-- Modify: `daylib/config.py`, `daylib/workset_api.py`, `daylib/workset_api_cli.py`
+- Modify: `daylily_ursa/config.py`, `daylily_ursa/workset_api.py`, `daylily_ursa/workset_api_cli.py`
 - Add: `docs/adr/0001-ursa-postgres-migration.md`
-- Add: `daylib/services/workflow_backend.py`
+- Add: `daylily_ursa/services/workflow_backend.py`
 - Add: `tests/test_migration_flags.py`
 
 Schema or migration changes:
@@ -84,12 +84,12 @@ What risk it isolates:
 - Isolates DB/bootstrap risk from application behavior changes.
 
 Exact files/directories to add or modify:
-- Add: `daylib/db/engine.py`
-- Add: `daylib/db/session.py`
-- Add: `daylib/db/models/workflow.py`
-- Add: `daylib/migrations/README.md`
-- Add: `daylib/migrations/env.py`
-- Add: `daylib/migrations/versions/0001_initial_workflow_schema.py`
+- Add: `daylily_ursa/db/engine.py`
+- Add: `daylily_ursa/db/session.py`
+- Add: `daylily_ursa/db/models/workflow.py`
+- Add: `daylily_ursa/migrations/README.md`
+- Add: `daylily_ursa/migrations/env.py`
+- Add: `daylily_ursa/migrations/versions/0001_initial_workflow_schema.py`
 - Modify: `pyproject.toml` (migration/runtime deps if needed)
 - Add: `tests/persistence/test_db_bootstrap.py`
 
@@ -133,11 +133,11 @@ What risk it isolates:
 - Isolates core data logic correctness from scheduler/worker complexity.
 
 Exact files/directories to add or modify:
-- Add: `daylib/db/repositories/workset_repository.py`
-- Add: `daylib/db/repositories/analysis_request_repository.py`
-- Add: `daylib/db/repositories/outbox_repository.py`
-- Add: `daylib/services/workflow_state_service.py`
-- Modify: `daylib/workset_api.py`, `daylib/routes/worksets.py`, `daylib/routes/customer_worksets.py`
+- Add: `daylily_ursa/db/repositories/workset_repository.py`
+- Add: `daylily_ursa/db/repositories/analysis_request_repository.py`
+- Add: `daylily_ursa/db/repositories/outbox_repository.py`
+- Add: `daylily_ursa/services/workflow_state_service.py`
+- Modify: `daylily_ursa/workset_api.py`, `daylily_ursa/routes/worksets.py`, `daylily_ursa/routes/customer_worksets.py`
 - Add: `tests/persistence/test_postgres_workset_repository.py`
 - Add: `tests/persistence/test_postgres_state_transitions.py`
 
@@ -222,13 +222,13 @@ What risk it isolates:
 - Prevents privilege escalation and tenant leakage during migration.
 
 Exact files/directories to add or modify:
-- Add: `daylib/auth/rbac.py`
-- Add: `daylib/auth/dependencies.py`
-- Add: `daylib/services/tenant_mapping.py`
-- Modify: `daylib/routes/dependencies.py`
-- Modify: `daylib/routes/worksets.py`
-- Modify: `daylib/routes/customer_worksets.py`
-- Modify: `daylib/routes/portal.py`
+- Add: `daylily_ursa/auth/rbac.py`
+- Add: `daylily_ursa/auth/dependencies.py`
+- Add: `daylily_ursa/services/tenant_mapping.py`
+- Modify: `daylily_ursa/routes/dependencies.py`
+- Modify: `daylily_ursa/routes/worksets.py`
+- Modify: `daylily_ursa/routes/customer_worksets.py`
+- Modify: `daylily_ursa/routes/portal.py`
 - Add: `tests/auth/test_rbac_permissions.py`
 - Add: `tests/auth/test_tenant_scope.py`
 - Modify: `tests/test_portal_authz_matrix.py`
@@ -270,11 +270,11 @@ What risk it isolates:
 - Isolates concurrency correctness in background processing paths.
 
 Exact files/directories to add or modify:
-- Modify: `daylib/workset_worker.py`
-- Modify: `daylib/workset_concurrent_processor.py`
-- Modify: `daylib/workset_monitor.py`
-- Modify: `daylib/workset_scheduler.py`
-- Modify: `daylib/workset_api.py`
+- Modify: `daylily_ursa/workset_worker.py`
+- Modify: `daylily_ursa/workset_concurrent_processor.py`
+- Modify: `daylily_ursa/workset_monitor.py`
+- Modify: `daylily_ursa/workset_scheduler.py`
+- Modify: `daylily_ursa/workset_api.py`
 - Add: `tests/concurrency/test_worker_claims.py`
 - Add: `tests/concurrency/test_stale_lease_takeover.py`
 - Modify: `tests/test_workset_concurrent_processor.py`
@@ -316,12 +316,12 @@ What risk it isolates:
 - Prevents duplicate/missed Atlas status updates under retries/failures.
 
 Exact files/directories to add or modify:
-- Add: `daylib/services/outbox.py`
-- Add: `daylib/services/atlas_status_sync.py`
-- Add: `daylib/workers/outbox_dispatcher.py`
-- Add: `daylib/clients/atlas_client.py`
-- Modify: `daylib/services/workflow_state_service.py`
-- Modify: `daylib/config.py`
+- Add: `daylily_ursa/services/outbox.py`
+- Add: `daylily_ursa/services/atlas_status_sync.py`
+- Add: `daylily_ursa/workers/outbox_dispatcher.py`
+- Add: `daylily_ursa/clients/atlas_client.py`
+- Modify: `daylily_ursa/services/workflow_state_service.py`
+- Modify: `daylily_ursa/config.py`
 - Add: `tests/integration/test_atlas_status_sync.py`
 - Add: `tests/unit/test_outbox_retry_dedup.py`
 
@@ -362,11 +362,11 @@ What risk it isolates:
 - Isolates contract/auth risks before full cutover.
 
 Exact files/directories to add or modify:
-- Add: `daylib/routes/internal_atlas.py`
-- Add: `daylib/auth/service_auth.py`
-- Add: `daylib/schemas/internal_atlas.py`
-- Modify: `daylib/workset_api.py`
-- Modify: `daylib/config.py`
+- Add: `daylily_ursa/routes/internal_atlas.py`
+- Add: `daylily_ursa/auth/service_auth.py`
+- Add: `daylily_ursa/schemas/internal_atlas.py`
+- Modify: `daylily_ursa/workset_api.py`
+- Modify: `daylily_ursa/config.py`
 - Add: `tests/contract/test_internal_atlas_trigger.py`
 - Add: `tests/auth/test_service_auth_delegation.py`
 
@@ -414,9 +414,9 @@ Exact files/directories to add or modify:
 - Add: `scripts/rollback_to_tapdb.py`
 - Add: `docs/runbooks/ursa_postgres_cutover.md`
 - Add: `docs/runbooks/ursa_postgres_rollback.md`
-- Modify: `daylib/config.py`
-- Modify: `daylib/workset_api.py`
-- Modify: `daylib/workset_monitor.py`
+- Modify: `daylily_ursa/config.py`
+- Modify: `daylily_ursa/workset_api.py`
+- Modify: `daylily_ursa/workset_monitor.py`
 - Add: `tests/migration/test_backfill_parity.py`
 - Add: `tests/migration/test_cutover_rehearsal.py`
 - Add: `tests/migration/test_rollback_rehearsal.py`

@@ -72,7 +72,7 @@ Example: `WS-RES-001` (Resource - Out of Memory)
 ### Classify an Error
 
 ```python
-from daylib.workset_diagnostics import classify_error
+from daylily_ursa.workset_diagnostics import classify_error
 
 result = classify_error("Out of memory: Cannot allocate 16GB")
 print(result)
@@ -93,7 +93,7 @@ print(result)
 ### Get Remediation Suggestions
 
 ```python
-from daylib.workset_diagnostics import get_remediation_for_error
+from daylily_ursa.workset_diagnostics import get_remediation_for_error
 
 suggestions = get_remediation_for_error("No space left on device")
 for suggestion in suggestions:
@@ -103,7 +103,7 @@ for suggestion in suggestions:
 ### Check if Retryable
 
 ```python
-from daylib.workset_diagnostics import is_retryable
+from daylily_ursa.workset_diagnostics import is_retryable
 
 if is_retryable("ThrottlingException"):
     print("Error is retryable, scheduling retry...")
@@ -114,7 +114,7 @@ else:
 ### Analyze Logs
 
 ```python
-from daylib.workset_diagnostics import ErrorAnalyzer
+from daylily_ursa.workset_diagnostics import ErrorAnalyzer
 
 analyzer = ErrorAnalyzer()
 results = analyzer.analyze_logs("ws-001", log_content)
@@ -127,7 +127,7 @@ for result in results:
 ### Generate Diagnostic Report
 
 ```python
-from daylib.workset_diagnostics import (
+from daylily_ursa.workset_diagnostics import (
     ErrorAnalyzer,
     format_diagnostic_report,
 )
@@ -143,8 +143,8 @@ print(report)
 The diagnostics system integrates with the workset state database:
 
 ```python
-from daylib.workset_state_db import WorksetStateDB, ErrorCategory
-from daylib.workset_diagnostics import classify_error
+from daylily_ursa.workset_state_db import WorksetStateDB, ErrorCategory
+from daylily_ursa.workset_diagnostics import classify_error
 
 # Classify the error
 classification = classify_error(error_text)
@@ -175,7 +175,7 @@ state_db.record_failure(
 To add custom error codes, use the `_register_error` function:
 
 ```python
-from daylib.workset_diagnostics import (
+from daylily_ursa.workset_diagnostics import (
     _register_error,
     ErrorCode,
     ErrorSeverity,

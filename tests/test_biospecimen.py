@@ -1,4 +1,4 @@
-"""Graph-native tests for daylib.biospecimen."""
+"""Graph-native tests for daylily_ursa.biospecimen."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from daylib.biospecimen import (
+from daylily_ursa.biospecimen import (
     Biosample,
     Biospecimen,
     BiospecimenRegistry,
@@ -30,11 +30,19 @@ class _SessionCtx:
         return False
 
 
-def _instance(payload: dict, *, euid: str = "euid-1", template_uuid: int = 1, bstatus: str = "active"):
+def _instance(
+    payload: dict, *, euid: str = "euid-1", template_uuid: int = 1, bstatus: str = "active"
+):
     row = MagicMock()
     row.json_addl = dict(payload)
     row.euid = euid
-    row.name = payload.get("subject_id") or payload.get("biospecimen_id") or payload.get("biosample_id") or payload.get("library_id") or "node"
+    row.name = (
+        payload.get("subject_id")
+        or payload.get("biospecimen_id")
+        or payload.get("biosample_id")
+        or payload.get("library_id")
+        or "node"
+    )
     row.created_dt = None
     row.modified_dt = None
     row.bstatus = bstatus
@@ -105,7 +113,9 @@ def test_id_generation_is_stable_and_prefixed():
     assert generate_library_id("cust", "lib").startswith("lib-")
 
 
-def test_create_subject_creates_customer_lineage(registry: BiospecimenRegistry, sample_subject: Subject):
+def test_create_subject_creates_customer_lineage(
+    registry: BiospecimenRegistry, sample_subject: Subject
+):
     customer = _instance({"customer_id": sample_subject.customer_id}, euid="cust-euid")
     subject_row = _instance({"subject_id": sample_subject.subject_id}, euid="subj-euid")
 
@@ -120,7 +130,9 @@ def test_create_subject_creates_customer_lineage(registry: BiospecimenRegistry, 
 
 
 def test_get_subject_returns_dataclass(registry: BiospecimenRegistry, sample_subject: Subject):
-    registry.backend.find_instance_by_external_id.return_value = _instance(sample_subject.__dict__, euid="subj-euid")
+    registry.backend.find_instance_by_external_id.return_value = _instance(
+        sample_subject.__dict__, euid="subj-euid"
+    )
 
     subject = registry.get_subject(sample_subject.subject_id)
 
@@ -129,7 +141,9 @@ def test_get_subject_returns_dataclass(registry: BiospecimenRegistry, sample_sub
     assert subject.customer_id == sample_subject.customer_id
 
 
-def test_create_biospecimen_requires_subject(registry: BiospecimenRegistry, sample_biospecimen: Biospecimen):
+def test_create_biospecimen_requires_subject(
+    registry: BiospecimenRegistry, sample_biospecimen: Biospecimen
+):
     registry.backend.find_instance_by_external_id.return_value = None
     assert registry.create_biospecimen(sample_biospecimen) is False
 
@@ -147,7 +161,9 @@ def test_create_biospecimen_success(registry: BiospecimenRegistry, sample_biospe
     registry.backend.create_lineage.assert_called_once()
 
 
-def test_create_biosample_and_library(registry: BiospecimenRegistry, sample_biosample: Biosample, sample_library: Library):
+def test_create_biosample_and_library(
+    registry: BiospecimenRegistry, sample_biosample: Biosample, sample_library: Library
+):
     bspec_row = _instance({"biospecimen_id": sample_biosample.biospecimen_id}, euid="bspec-euid")
     biosample_row = _instance({"biosample_id": sample_biosample.biosample_id}, euid="bio-euid")
     library_row = _instance({"library_id": sample_library.library_id}, euid="lib-euid")
@@ -163,7 +179,9 @@ def test_create_biosample_and_library(registry: BiospecimenRegistry, sample_bios
     assert registry.create_library(sample_library) is True
 
 
-def test_list_biospecimens_for_subject_filters_children(registry: BiospecimenRegistry, sample_subject: Subject, sample_biospecimen: Biospecimen):
+def test_list_biospecimens_for_subject_filters_children(
+    registry: BiospecimenRegistry, sample_subject: Subject, sample_biospecimen: Biospecimen
+):
     subject_row = _instance({"subject_id": sample_subject.subject_id}, euid="subj-euid")
     valid = _instance(sample_biospecimen.__dict__, euid="bspec-euid")
     invalid = _instance({"other": "value"}, euid="x-euid")
@@ -177,7 +195,13 @@ def test_list_biospecimens_for_subject_filters_children(registry: BiospecimenReg
     assert biospecimens[0].biospecimen_id == sample_biospecimen.biospecimen_id
 
 
-def test_get_subject_hierarchy_and_stats(registry: BiospecimenRegistry, sample_subject: Subject, sample_biospecimen: Biospecimen, sample_biosample: Biosample, sample_library: Library):
+def test_get_subject_hierarchy_and_stats(
+    registry: BiospecimenRegistry,
+    sample_subject: Subject,
+    sample_biospecimen: Biospecimen,
+    sample_biosample: Biosample,
+    sample_library: Library,
+):
     registry.get_subject = MagicMock(return_value=sample_subject)
     registry.list_biospecimens_for_subject = MagicMock(return_value=[sample_biospecimen])
     registry.list_biosamples_for_biospecimen = MagicMock(return_value=[sample_biosample])
@@ -187,7 +211,10 @@ def test_get_subject_hierarchy_and_stats(registry: BiospecimenRegistry, sample_s
 
     assert hierarchy["subject"]["subject_id"] == sample_subject.subject_id
     assert len(hierarchy["biospecimens"]) == 1
-    assert hierarchy["biospecimens"][0]["biospecimen"]["biospecimen_id"] == sample_biospecimen.biospecimen_id
+    assert (
+        hierarchy["biospecimens"][0]["biospecimen"]["biospecimen_id"]
+        == sample_biospecimen.biospecimen_id
+    )
 
     registry.list_subjects = MagicMock(return_value=[sample_subject])
     registry.list_biospecimens = MagicMock(return_value=[sample_biospecimen])

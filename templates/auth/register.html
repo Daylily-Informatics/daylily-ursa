@@ -281,7 +281,7 @@ async function validateBucket() {
     resultDiv.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Validating bucket...';
 
     try {
-        const response = await fetch('/api/s3/validate-bucket', {
+        const response = await fetch('/api/v2/s3/validate-bucket', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ bucket })

@@ -273,7 +273,7 @@
 const BUCKET_ID = '{{ bucket.bucket_id }}';
 const CUSTOMER_ID = '{{ customer.customer_id if customer else "default-customer" }}';
 const CURRENT_PREFIX = '{{ current_prefix }}';
-const FILE_API_BASE = '/api/files';
+const FILE_API_BASE = '/api/v2/files';
 
 // Store file to delete
 let pendingDeleteKey = null;

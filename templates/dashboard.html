@@ -328,7 +328,7 @@ async function saveAccountDetails() {
     if (costCenter) updateData.cost_center = costCenter;
 
     try {
-        const response = await fetch(`/api/v1/customers/${customerId}`, {
+        const response = await fetch(`/api/v2/customers/${customerId}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(updateData)

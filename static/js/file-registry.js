@@ -4,7 +4,7 @@
  */
 
 // API Base URL
-const FILE_API_BASE = '/api/files';
+const FILE_API_BASE = '/api/v2/files';
 
 // ============================================================================
 // Utility Functions

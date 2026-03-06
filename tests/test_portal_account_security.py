@@ -4,8 +4,8 @@ from unittest.mock import MagicMock
 
 from fastapi.testclient import TestClient
 
-from daylib.workset_api import create_app
-from daylib.workset_state_db import WorksetStateDB
+from daylily_ursa.workset_api import create_app
+from daylily_ursa.workset_state_db import WorksetStateDB
 
 
 def _make_state_db() -> MagicMock:
@@ -14,7 +14,10 @@ def _make_state_db() -> MagicMock:
 
 def test_change_password_challenge_rejects_short_password() -> None:
     cognito_auth = MagicMock()
-    cognito_auth.authenticate.return_value = {"challenge": "NEW_PASSWORD_REQUIRED", "session": "sess"}
+    cognito_auth.authenticate.return_value = {
+        "challenge": "NEW_PASSWORD_REQUIRED",
+        "session": "sess",
+    }
 
     customer_manager = MagicMock()
     customer = MagicMock()
@@ -28,7 +31,7 @@ def test_change_password_challenge_rejects_short_password() -> None:
         cognito_auth=cognito_auth,
         customer_manager=customer_manager,
     )
-    client = TestClient(app)
+    client = TestClient(app, base_url="https://testserver")
 
     login = client.post(
         "/portal/login",
@@ -58,11 +61,16 @@ def test_reset_password_rejects_short_password() -> None:
         cognito_auth=cognito_auth,
         customer_manager=customer_manager,
     )
-    client = TestClient(app)
+    client = TestClient(app, base_url="https://testserver")
 
     resp = client.post(
         "/portal/reset-password",
-        data={"email": "user@example.com", "code": "123456", "password": "1234567", "confirm_password": "1234567"},
+        data={
+            "email": "user@example.com",
+            "code": "123456",
+            "password": "1234567",
+            "confirm_password": "1234567",
+        },
         follow_redirects=False,
     )
     assert resp.status_code == 302
@@ -86,7 +94,7 @@ def test_api_change_password_returns_user_friendly_error_on_short_password() -> 
         cognito_auth=cognito_auth,
         customer_manager=customer_manager,
     )
-    client = TestClient(app)
+    client = TestClient(app, base_url="https://testserver")
 
     client.post(
         "/portal/login",
@@ -95,7 +103,7 @@ def test_api_change_password_returns_user_friendly_error_on_short_password() -> 
     )
 
     resp = client.post(
-        "/api/v1/auth/change-password",
+        "/api/v2/auth/change-password",
         json={"current_password": "old", "new_password": "1234567"},
     )
     assert resp.status_code == 400
@@ -110,11 +118,22 @@ def test_api_tokens_endpoints_work_for_authenticated_session() -> None:
     customer_manager.get_customer_by_email.return_value = customer
 
     customer_manager.list_api_tokens.return_value = [
-        {"id": "t1", "name": "Token 1", "created_at": "2024-01-01T00:00:00Z", "expires_at": None, "revoked": False},
+        {
+            "id": "t1",
+            "name": "Token 1",
+            "created_at": "2024-01-01T00:00:00Z",
+            "expires_at": None,
+            "revoked": False,
+        },
     ]
     customer_manager.add_api_token.return_value = {
         "secret": "sekret",
-        "token": {"id": "t2", "name": "New", "created_at": "2024-01-01T00:00:00Z", "expires_at": None},
+        "token": {
+            "id": "t2",
+            "name": "New",
+            "created_at": "2024-01-01T00:00:00Z",
+            "expires_at": None,
+        },
     }
     customer_manager.revoke_api_token.return_value = True
 
@@ -123,7 +142,7 @@ def test_api_tokens_endpoints_work_for_authenticated_session() -> None:
         enable_auth=False,
         customer_manager=customer_manager,
     )
-    client = TestClient(app)
+    client = TestClient(app, base_url="https://testserver")
 
     client.post(
         "/portal/login",
@@ -131,14 +150,14 @@ def test_api_tokens_endpoints_work_for_authenticated_session() -> None:
         follow_redirects=False,
     )
 
-    listed = client.get("/api/v1/auth/tokens")
+    listed = client.get("/api/v2/auth/tokens")
     assert listed.status_code == 200
     assert listed.json()[0]["id"] == "t1"
 
-    created = client.post("/api/v1/auth/tokens", json={"name": "New", "expiry_days": 0})
+    created = client.post("/api/v2/auth/tokens", json={"name": "New", "expiry_days": 0})
     assert created.status_code == 200
     assert created.json()["token"] == "sekret"
 
-    revoked = client.delete("/api/v1/auth/tokens/t2")
+    revoked = client.delete("/api/v2/auth/tokens/t2")
     assert revoked.status_code == 200
     assert revoked.json()["revoked"] is True

@@ -22,7 +22,7 @@ ursa server start --foreground
 daylily-workset-api --host 0.0.0.0 --port 8914
 
 # With uvicorn directly (development)
-uvicorn daylib.workset_api:app --host 0.0.0.0 --port 8914 --reload
+uvicorn daylily_ursa.workset_api:app --host 0.0.0.0 --port 8914 --reload
 ```
 
 ## Common API Calls
@@ -118,10 +118,10 @@ curl -X POST http://localhost:8914/worksets/generate-yaml \
 ### Initialize Components
 
 ```python
-from daylib.workset_state_db import WorksetStateDB
-from daylib.workset_scheduler import WorksetScheduler
-from daylib.workset_validation import WorksetValidator
-from daylib.workset_customer import CustomerManager
+from daylily_ursa.workset_state_db import WorksetStateDB
+from daylily_ursa.workset_scheduler import WorksetScheduler
+from daylily_ursa.workset_validation import WorksetValidator
+from daylily_ursa.workset_customer import CustomerManager
 
 # State database
 state_db = WorksetStateDB()
@@ -139,7 +139,7 @@ customer_manager = CustomerManager("us-west-2")
 ### Concurrent Processing
 
 ```python
-from daylib.workset_concurrent_processor import ConcurrentWorksetProcessor, ProcessorConfig
+from daylily_ursa.workset_concurrent_processor import ConcurrentWorksetProcessor, ProcessorConfig
 
 config = ProcessorConfig(
     max_concurrent_worksets=10,
@@ -166,7 +166,7 @@ processor.stop()
 ### Workset Operations
 
 ```python
-from daylib.workset_state_db import WorksetState, WorksetPriority
+from daylily_ursa.workset_state_db import WorksetState, WorksetPriority
 
 # Register workset
 state_db.register_workset(
@@ -193,7 +193,7 @@ ready = state_db.get_ready_worksets_prioritized(limit=10)
 ### Error Handling and Retry
 
 ```python
-from daylib.workset_state_db import ErrorCategory
+from daylily_ursa.workset_state_db import ErrorCategory
 
 # Record failure
 should_retry = state_db.record_failure(
@@ -297,7 +297,7 @@ pytest tests/ -v
 pytest tests/test_workset_concurrent_processor.py -v
 
 # Run with coverage
-pytest tests/ --cov=daylib --cov-report=html
+pytest tests/ --cov=daylily_ursa --cov-report=html
 
 # Run specific test
 pytest tests/test_workset_state_db.py::test_record_failure_transient -v
@@ -307,7 +307,7 @@ pytest tests/test_workset_state_db.py::test_record_failure_transient -v
 
 ### Check TapDB Connection
 ```python
-from daylib.tapdb_graph import TapDBBackend
+from daylily_ursa.tapdb_graph import TapDBBackend
 
 backend = TapDBBackend(app_username="ursa-healthcheck")
 with backend.session_scope(commit=False) as session:

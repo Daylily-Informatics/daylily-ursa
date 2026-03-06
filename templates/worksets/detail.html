@@ -548,17 +548,8 @@
                 <div class="card metrics-card">
                     <h4 class="card-title-sm"><i class="fas fa-file-archive"></i> Results</h4>
                     <div class="metric-breakdown-vertical">
-                        <a href="/portal/worksets/{{ workset.workset_id }}/results/vcf" class="d-flex align-center gap-xs">
-                            <i class="fas fa-dna text-accent"></i> VCF Files
-                        </a>
-                        <a href="/portal/worksets/{{ workset.workset_id }}/results/bam" class="d-flex align-center gap-xs">
-                            <i class="fas fa-align-left text-accent"></i> BAM Files
-                        </a>
-                        <a href="/portal/worksets/{{ workset.workset_id }}/results/qc" class="d-flex align-center gap-xs">
-                            <i class="fas fa-chart-bar text-accent"></i> QC Reports
-                        </a>
-                        <a href="/portal/worksets/{{ workset.workset_id }}/results/all" class="d-flex align-center gap-xs">
-                            <i class="fas fa-download text-accent"></i> Download All
+                        <a href="/portal/worksets/{{ workset.workset_id }}/results/browse" class="d-flex align-center gap-xs">
+                            <i class="fas fa-folder-open text-accent"></i> Browse Results
                         </a>
                     </div>
                 </div>
@@ -782,7 +773,7 @@ async function loadPerformanceMetrics(forceRefresh = false) {
     content.style.display = 'none';
 
     try {
-        const url = `/api/customers/${customerId}/worksets/${worksetId}/performance-metrics${forceRefresh ? '?force_refresh=true' : ''}`;
+        const url = `/api/v2/customers/${customerId}/worksets/${worksetId}/performance-metrics${forceRefresh ? '?force_refresh=true' : ''}`;
         const response = await fetch(url);
         if (!response.ok) throw new Error('Failed to fetch metrics');
         const data = await response.json();
@@ -916,4 +907,3 @@ setInterval(() => loadPerformanceMetrics(false), 60000); // Refresh metrics ever
 {% endif %}
 </script>
 {% endblock %}
-

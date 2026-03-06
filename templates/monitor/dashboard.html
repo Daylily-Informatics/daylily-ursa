@@ -281,7 +281,7 @@ function stopAutoRefresh() {
 
 async function refreshLogs() {
     try {
-        const response = await fetch('/api/monitor/logs?lines=100');
+        const response = await fetch('/api/v2/monitor/logs?lines=100');
         if (response.ok) {
             const data = await response.json();
             updateLogViewer(data.lines);
@@ -295,7 +295,7 @@ async function refreshLogs() {
 
 async function refreshStats() {
     try {
-        const response = await fetch('/api/monitor/status');
+        const response = await fetch('/api/v2/monitor/status');
         if (response.ok) {
             const data = await response.json();
             // Update status indicators without full page reload

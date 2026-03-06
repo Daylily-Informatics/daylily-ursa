@@ -345,7 +345,7 @@ async function refreshCostEstimate() {
     `;
 
     try {
-        const response = await fetch('/api/estimate-cost', {
+        const response = await fetch('/api/v2/estimate-cost', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',

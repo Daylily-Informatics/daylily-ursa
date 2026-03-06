@@ -17,7 +17,7 @@ The billing integration provides:
 When a customer is onboarded, their S3 bucket and resources are automatically tagged:
 
 ```python
-from daylib.workset_customer import CustomerManager
+from daylily_ursa.workset_customer import CustomerManager
 
 manager = CustomerManager(region="us-west-2")
 config = manager.onboard_customer(

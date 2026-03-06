@@ -9,9 +9,13 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi.testclient import TestClient
 
-from daylib.manifest_registry import ManifestTooLargeError, SavedManifest, parse_tsv_to_samples
-from daylib.workset_api import create_app
-from daylib.workset_state_db import WorksetStateDB
+from daylily_ursa.manifest_registry import (
+    ManifestTooLargeError,
+    SavedManifest,
+    parse_tsv_to_samples,
+)
+from daylily_ursa.workset_api import create_app
+from daylily_ursa.workset_state_db import WorksetStateDB
 
 
 # ============================================================================
@@ -155,11 +159,11 @@ def client(mock_state_db, mock_customer_manager, mock_manifest_registry):
         manifest_registry=mock_manifest_registry,
         enable_auth=False,
     )
-    return TestClient(app)
+    return TestClient(app, base_url="https://testserver")
 
 
 def test_list_customer_manifests(client, mock_manifest_registry):
-    resp = client.get("/api/customers/cust-001/manifests")
+    resp = client.get("/api/v2/customers/cust-001/manifests")
     assert resp.status_code == 200
     data = resp.json()
     assert "manifests" in data
@@ -169,7 +173,7 @@ def test_list_customer_manifests(client, mock_manifest_registry):
 
 def test_save_customer_manifest(client, mock_manifest_registry):
     payload = {"tsv_content": "RUN_ID\tSAMPLE_ID\nR0\tHG002\n", "name": "Saved"}
-    resp = client.post("/api/customers/cust-001/manifests", json=payload)
+    resp = client.post("/api/v2/customers/cust-001/manifests", json=payload)
     assert resp.status_code == 201
     data = resp.json()
     assert data["manifest"]["manifest_id"] == "m-2"
@@ -178,7 +182,7 @@ def test_save_customer_manifest(client, mock_manifest_registry):
 
 
 def test_download_customer_manifest(client, mock_manifest_registry):
-    resp = client.get("/api/customers/cust-001/manifests/m-1/download")
+    resp = client.get("/api/v2/customers/cust-001/manifests/m-1/download")
     assert resp.status_code == 200
     assert resp.text.startswith("RUN_ID")
     assert "attachment" in resp.headers.get("content-disposition", "")
@@ -190,14 +194,16 @@ def test_download_customer_manifest(client, mock_manifest_registry):
 def test_save_customer_manifest_413_when_too_large(client, mock_manifest_registry):
     mock_manifest_registry.save_manifest.side_effect = ManifestTooLargeError("too big")
     resp = client.post(
-        "/api/customers/cust-001/manifests",
+        "/api/v2/customers/cust-001/manifests",
         json={"tsv_content": "X" * 10, "name": "big"},
     )
     assert resp.status_code == 413
 
 
-def test_manifest_storage_not_configured_returns_503(mock_state_db, mock_customer_manager, monkeypatch):
-    import daylib.workset_api as workset_api
+def test_manifest_storage_not_configured_returns_503(
+    mock_state_db, mock_customer_manager, monkeypatch
+):
+    import daylily_ursa.workset_api as workset_api
 
     # Ensure create_app does not auto-initialize manifest registry.
     monkeypatch.setattr(workset_api, "MANIFEST_STORAGE_AVAILABLE", False)
@@ -208,8 +214,8 @@ def test_manifest_storage_not_configured_returns_503(mock_state_db, mock_custome
         manifest_registry=None,
         enable_auth=False,
     )
-    test_client = TestClient(app)
-    resp = test_client.get("/api/customers/cust-001/manifests")
+    test_client = TestClient(app, base_url="https://testserver")
+    resp = test_client.get("/api/v2/customers/cust-001/manifests")
     assert resp.status_code == 503
 
 
@@ -245,7 +251,9 @@ def client_with_integration(
     mock_cluster_service = MagicMock()
     mock_cluster_service.get_cluster_by_name.return_value = mock_cluster_info
 
-    with patch("daylib.cluster_service.get_cluster_service", return_value=mock_cluster_service):
+    with patch(
+        "daylily_ursa.cluster_service.get_cluster_service", return_value=mock_cluster_service
+    ):
         app = create_app(
             state_db=mock_state_db,
             customer_manager=mock_customer_manager,
@@ -253,7 +261,7 @@ def client_with_integration(
             integration=mock_integration,
             enable_auth=False,
         )
-        yield TestClient(app)
+        yield TestClient(app, base_url="https://testserver")
 
 
 def _build_workset_payload(**overrides):
@@ -288,7 +296,7 @@ def test_create_workset_from_saved_manifest_id(
 
     payload = _build_workset_payload(manifest_id="m-1")
 
-    resp = client_with_integration.post("/api/customers/cust-001/worksets", json=payload)
+    resp = client_with_integration.post("/api/v2/customers/cust-001/worksets", json=payload)
     assert resp.status_code == 200
 
     mock_manifest_registry.get_manifest_tsv.assert_called_once_with(
@@ -331,7 +339,7 @@ def test_create_workset_from_raw_manifest_tsv_content(client_with_integration, m
 
     payload = _build_workset_payload(manifest_tsv_content=tsv_content)
 
-    resp = client_with_integration.post("/api/customers/cust-001/worksets", json=payload)
+    resp = client_with_integration.post("/api/v2/customers/cust-001/worksets", json=payload)
     assert resp.status_code == 200
 
     # When using raw TSV content, ManifestRegistry is not consulted
@@ -351,5 +359,3 @@ def test_create_workset_from_raw_manifest_tsv_content(client_with_integration, m
     prefix = call_kwargs["prefix"]
     assert prefix.startswith("worksets/hg002-wgs-")
     assert prefix.endswith("/")
-
-

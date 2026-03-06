@@ -665,35 +665,58 @@ p { margin-bottom: var(--spacing-md); }
     background: var(--color-gray-100);
 }
 
-.table th.sortable {
+.table th.sortable,
+.job-table th.sortable {
     cursor: pointer;
     user-select: none;
     transition: background 0.15s ease;
 }
 
-.table th.sortable:hover {
+.table th.sortable:hover,
+.job-table th.sortable:hover {
     background: var(--color-gray-200);
 }
 
-.table th .sort-indicator {
+.table th .sort-indicator,
+.job-table th .sort-indicator {
     opacity: 0.4;
     margin-left: 4px;
     transition: opacity 0.15s ease;
 }
 
-.table th.sortable:hover .sort-indicator {
+.table th.sortable:hover .sort-indicator,
+.job-table th.sortable:hover .sort-indicator {
     opacity: 0.7;
 }
 
 .table th .sort-indicator .fa-sort-up,
-.table th .sort-indicator .fa-sort-down {
+.table th .sort-indicator .fa-sort-down,
+.job-table th .sort-indicator .fa-sort-up,
+.job-table th .sort-indicator .fa-sort-down {
     opacity: 1;
     color: var(--color-accent);
 }
 
-/* Table Actions (download button container) */
+/* Table Actions */
 .table-actions {
     padding: var(--spacing-sm) 0;
+}
+
+.table-tools-shell {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--spacing-sm);
+}
+
+.table-filter-wrap {
+    min-width: 220px;
+    flex: 1 1 auto;
+    max-width: 420px;
+}
+
+.table-filter-input {
+    width: 100%;
 }
 
 .table-download-btn {
