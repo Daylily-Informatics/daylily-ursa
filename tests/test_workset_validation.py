@@ -191,8 +191,8 @@ def test_check_reference_data_dry_run(validator):
 # ========== New Tests for Enhanced Validation ==========
 
 
-def test_validate_workset_id_valid(validator):
-    """Test workset ID validation with valid IDs."""
+def test_validate_workset_name_valid(validator):
+    """Test workset name validation with valid names."""
     valid_ids = [
         "my-workset",
         "workset_123",
@@ -201,12 +201,12 @@ def test_validate_workset_id_valid(validator):
         "abc",  # Min length
     ]
     for ws_id in valid_ids:
-        errors = validator.validate_workset_id(ws_id)
+        errors = validator.validate_workset_name(ws_id)
         assert len(errors) == 0, f"Expected no errors for '{ws_id}', got: {errors}"
 
 
-def test_validate_workset_id_invalid(validator):
-    """Test workset ID validation with invalid IDs."""
+def test_validate_workset_name_invalid(validator):
+    """Test workset name validation with invalid names."""
     invalid_ids = [
         "",  # Empty
         "ab",  # Too short
@@ -216,7 +216,7 @@ def test_validate_workset_id_invalid(validator):
         "a" * 65,  # Too long
     ]
     for ws_id in invalid_ids:
-        errors = validator.validate_workset_id(ws_id)
+        errors = validator.validate_workset_name(ws_id)
         assert len(errors) > 0, f"Expected errors for '{ws_id}', got none"
 
 
@@ -239,24 +239,24 @@ def test_validate_config_dict(validator):
         "samples": [{"sample_id": "s1", "fastq_r1": "s1.fq.gz"}],
         "reference_genome": "hg38",
     }
-    result = validator.validate_config_dict(config, workset_id="test-workset")
+    result = validator.validate_config_dict(config, workset_name="test-workset")
 
     assert result.is_valid
     assert len(result.errors) == 0
     assert result.estimated_cost_usd is not None
 
 
-def test_validate_config_dict_with_invalid_workset_id(validator):
-    """Test config validation catches invalid workset ID."""
+def test_validate_config_dict_with_invalid_workset_name(validator):
+    """Test config validation catches invalid workset name."""
     config = {
         "samples": [{"sample_id": "s1", "fastq_r1": "s1.fq.gz"}],
         "reference_genome": "hg38",
     }
-    result = validator.validate_config_dict(config, workset_id="ab")  # Too short
+    result = validator.validate_config_dict(config, workset_name="ab")  # Too short
 
     assert not result.is_valid
     assert len(result.errors) > 0
-    assert any("workset_id" in str(e).lower() for e in result.detailed_errors)
+    assert any("name" in str(e).lower() for e in result.detailed_errors)
 
 
 def test_validation_result_to_dict(validator):

@@ -73,14 +73,14 @@ class TestWorksetBillingCalculation:
         }
 
         workset = {
-            "workset_id": "test-ws-001",
+            "euid": "test-ws-001",
             "customer_id": "cust-001",
             "completed_at": "2026-01-24T10:00:00Z",
         }
 
         item = billing_calculator.calculate_workset_billing(workset)
 
-        assert item.workset_id == "test-ws-001"
+        assert item.workset_euid == "test-ws-001"
         assert item.customer_id == "cust-001"
         assert item.compute_cost_usd == 25.50
         assert item.sample_count == 2
@@ -122,7 +122,7 @@ class TestWorksetBillingCalculation:
         mock_state_db.get_storage_metrics.return_value = None
 
         workset = {
-            "workset_id": "test-ws-002",
+            "euid": "test-ws-002",
             "customer_id": "cust-001",
             "metadata": {
                 "estimated_cost_usd": 10.0,
@@ -143,7 +143,7 @@ class TestWorksetBillingCalculation:
         mock_state_db.get_storage_metrics.return_value = None
 
         workset = {
-            "workset_id": "test-ws-003",
+            "euid": "test-ws-003",
             "customer_id": "cust-001",
             "performance_metrics": {
                 "cost_summary": {
@@ -178,7 +178,7 @@ class TestWorksetBillingCalculation:
         mock_state_db.get_storage_metrics.return_value = None
 
         workset = {
-            "workset_id": "test-ws-004",
+            "euid": "test-ws-004",
             "customer_id": "cust-001",
         }
 
@@ -197,13 +197,13 @@ class TestCustomerBillingCalculation:
         """Test customer billing aggregates multiple worksets."""
         mock_state_db.list_worksets_by_customer.return_value = [
             {
-                "workset_id": "ws-001",
+                "euid": "ws-001",
                 "customer_id": "cust-001",
                 "state": "complete",
                 "completed_at": "2026-02-20T10:00:00Z",
             },
             {
-                "workset_id": "ws-002",
+                "euid": "ws-002",
                 "customer_id": "cust-001",
                 "state": "complete",
                 "completed_at": "2026-02-21T10:00:00Z",
@@ -234,9 +234,9 @@ class TestCustomerBillingCalculation:
     def test_customer_billing_filters_by_state(self, billing_calculator, mock_state_db):
         """Test customer billing only includes specified states."""
         mock_state_db.list_worksets_by_customer.return_value = [
-            {"workset_id": "ws-001", "customer_id": "cust-001", "state": "complete"},
-            {"workset_id": "ws-002", "customer_id": "cust-001", "state": "error"},
-            {"workset_id": "ws-003", "customer_id": "cust-001", "state": "in_progress"},
+            {"euid": "ws-001", "customer_id": "cust-001", "state": "complete"},
+            {"euid": "ws-002", "customer_id": "cust-001", "state": "error"},
+            {"euid": "ws-003", "customer_id": "cust-001", "state": "in_progress"},
         ]
         mock_state_db.get_cost_report.return_value = {"total_compute_cost_usd": 10.0}
 
@@ -249,13 +249,13 @@ class TestCustomerBillingCalculation:
         """Test customer billing filters by date period."""
         mock_state_db.list_worksets_by_customer.return_value = [
             {
-                "workset_id": "ws-001",
+                "euid": "ws-001",
                 "customer_id": "cust-001",
                 "state": "complete",
                 "completed_at": "2026-01-15T10:00:00Z",  # Within period
             },
             {
-                "workset_id": "ws-002",
+                "euid": "ws-002",
                 "customer_id": "cust-001",
                 "state": "complete",
                 "completed_at": "2025-12-01T10:00:00Z",  # Outside period
@@ -290,7 +290,7 @@ class TestInvoiceGeneration:
         """Test invoice data generation."""
         mock_state_db.list_worksets_by_customer.return_value = [
             {
-                "workset_id": "ws-001",
+                "euid": "ws-001",
                 "customer_id": "cust-001",
                 "state": "complete",
                 "completed_at": "2026-02-20T10:00:00Z",
@@ -320,7 +320,7 @@ class TestInvoiceGeneration:
         assert invoice["summary"]["transfer_cost_usd"] == 0.9
         assert len(invoice["line_items"]) == 1
         item = invoice["line_items"][0]
-        assert item["workset_id"] == "ws-001"
+        assert item["workset_euid"] == "ws-001"
         assert item["transfer_intra_region_gb"] == 0.0
         assert item["transfer_intra_region_usd"] == 0.0
         assert item["transfer_cross_region_gb"] == 0.0
@@ -404,13 +404,13 @@ class TestBillingAPIEndpoints:
         assert "rates" in data
 
     def test_billing_workset_endpoint(self, mock_app_dependencies):
-        """Test /api/v2/customers/{customer_id}/billing/workset/{workset_id} endpoint."""
+        """Test /api/v2/customers/{customer_id}/billing/workset/{euid} endpoint."""
         from fastapi.testclient import TestClient
         from daylily_ursa.workset_api import create_app
 
         mock_state_db, mock_customer_manager = mock_app_dependencies
         mock_state_db.get_workset.return_value = {
-            "workset_id": "ws-001",
+            "euid": "ws-001",
             "customer_id": "cust-001",
             "state": "complete",
         }
@@ -432,7 +432,7 @@ class TestBillingAPIEndpoints:
 
         assert response.status_code == 200
         data = response.json()
-        assert data["workset_id"] == "ws-001"
+        assert data["workset_euid"] == "ws-001"
         assert data["samples"] == 2
         assert data["costs"]["compute_usd"] == 25.0
         assert data["accuracy"]["has_actual_compute_cost"] is True
@@ -462,7 +462,7 @@ class TestBillingAPIEndpoints:
 
         mock_state_db, mock_customer_manager = mock_app_dependencies
         mock_state_db.get_workset.return_value = {
-            "workset_id": "ws-001",
+            "euid": "ws-001",
             "customer_id": "other-customer",  # Different customer
             "state": "complete",
         }

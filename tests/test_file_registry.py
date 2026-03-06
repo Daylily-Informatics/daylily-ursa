@@ -334,13 +334,14 @@ def test_register_file_workset_usage_updates_history(file_registry: FileRegistry
         },
         euid="file-euid",
     )
-    workset_row = _instance({"workset_id": "ws-001"}, euid="ws-euid")
+    workset_row = _instance({}, euid="ws-euid")
 
-    file_registry.backend.find_instance_by_external_id.side_effect = [file_row, workset_row]
+    file_registry.backend.find_instance_by_external_id.return_value = file_row
+    file_registry.backend.find_instance_by_euid.return_value = workset_row
 
     ok = file_registry.register_file_workset_usage(
         file_id="file-001",
-        workset_id="ws-001",
+        workset_euid="ws-euid",
         customer_id="cust-001",
         usage_type="input",
         workset_state="ready",
@@ -349,7 +350,7 @@ def test_register_file_workset_usage_updates_history(file_registry: FileRegistry
     assert ok is True
     payload = file_registry.backend.update_instance_json.call_args.args[2]
     assert len(payload["workset_usage"]) == 1
-    assert payload["workset_usage"][0]["workset_id"] == "ws-001"
+    assert payload["workset_usage"][0]["workset_euid"] == "ws-euid"
     file_registry.backend.create_lineage.assert_called_once()
 
 
@@ -386,7 +387,7 @@ def test_get_file_workset_history(file_registry: FileRegistry):
             "workset_usage": [
                 {
                     "file_id": "file-001",
-                    "workset_id": "ws-001",
+                    "workset_euid": "ws-001",
                     "customer_id": "cust-001",
                     "usage_type": "input",
                     "added_at": "2026-01-01T00:00:00Z",
@@ -403,13 +404,13 @@ def test_get_file_workset_history(file_registry: FileRegistry):
 
     assert len(history) == 1
     assert isinstance(history[0], FileWorksetUsage)
-    assert history[0].workset_id == "ws-001"
+    assert history[0].workset_euid == "ws-001"
 
 
 def test_get_files_for_workset_recreation_deduplicates(file_registry: FileRegistry):
     usage = FileWorksetUsage(
         file_id="file-001",
-        workset_id="ws-001",
+        workset_euid="ws-001",
         customer_id="cust-001",
         usage_type="input",
     )

@@ -1076,13 +1076,15 @@ class TestPortalBucketsEditDialog:
 
         mock_state_db.list_worksets_by_customer.return_value = [
             {
-                "workset_id": "ws-001",
+                "euid": "ws-001",
+                "name": "ws-001",
                 "state": "completed",
                 "customer_id": "customer-A",
                 "completed_at": "2024-01-15T10:00:00Z",
             },
             {
-                "workset_id": "ws-002",
+                "euid": "ws-002",
+                "name": "ws-002",
                 "state": "completed",
                 "customer_id": "customer-A",
                 "completed_at": "2024-01-16T10:00:00Z",

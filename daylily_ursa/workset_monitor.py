@@ -307,6 +307,7 @@ class Workset:
     has_required_files: bool = False
     is_archived: bool = False
     bucket: Optional[str] = None  # Workset-specific bucket from TapDB
+    euid: str = ""  # TapDB EUID — primary identity handle for state_db lookups
 
     def sentinel_timestamp(self, sentinel: str) -> Optional[str]:
         return self.sentinels.get(sentinel)
@@ -627,8 +628,8 @@ class WorksetMonitor:
         if not self.scheduler:
             return worksets
 
-        # Build a lookup from workset_id to Workset object
-        workset_lookup = {w.name: w for w in worksets}
+        # Build a lookup from euid to Workset object
+        workset_lookup = {w.euid: w for w in worksets}
 
         # Get prioritized order from scheduler
         prioritized: List[Workset] = []
@@ -639,19 +640,19 @@ class WorksetMonitor:
             if not next_workset_data:
                 break
 
-            workset_id = next_workset_data.get("workset_id")
-            if not workset_id or workset_id in processed_ids:
+            euid = next_workset_data.get("workset_euid")
+            if not euid or euid in processed_ids:
                 break
 
-            processed_ids.add(workset_id)
+            processed_ids.add(euid)
 
             # Map scheduler result back to our Workset object
-            if workset_id in workset_lookup:
-                prioritized.append(workset_lookup[workset_id])
+            if euid in workset_lookup:
+                prioritized.append(workset_lookup[euid])
 
         # Append any worksets not returned by scheduler (edge case)
         for workset in worksets:
-            if workset.name not in processed_ids:
+            if workset.euid not in processed_ids:
                 prioritized.append(workset)
 
         return prioritized
@@ -678,15 +679,16 @@ class WorksetMonitor:
             Returns:
                 True if processing succeeded, False otherwise
             """
-            workset_id = workset_data.get("workset_id", "")
-            if not workset_id:
-                LOGGER.error("Workset data missing workset_id")
+            euid = workset_data.get("euid", "")
+            if not euid:
+                LOGGER.error("Workset data missing euid")
                 return False
 
             try:
                 # Build Workset object from dict
+                ws_name = workset_data.get("name", "")
                 bucket = workset_data.get("bucket", "")
-                prefix = workset_data.get("prefix", f"{self.config.monitor.normalised_prefix()}{workset_id}/")
+                prefix = workset_data.get("prefix", f"{self.config.monitor.normalised_prefix()}{ws_name}/")
                 state = workset_data.get("state", "ready")
 
                 sentinels: Dict[str, str] = {}
@@ -699,12 +701,13 @@ class WorksetMonitor:
                 has_required = self._verify_core_files(prefix, bucket=bucket)
 
                 workset = Workset(
-                    name=workset_id,
+                    name=ws_name,
                     prefix=prefix,
                     sentinels=sentinels,
                     has_required_files=has_required,
                     is_archived=False,
                     bucket=bucket,
+                    euid=euid,
                 )
 
                 # Process the workset
@@ -712,7 +715,7 @@ class WorksetMonitor:
                 return True
 
             except Exception as e:
-                LOGGER.error("Executor failed for %s: %s", workset_id, str(e))
+                LOGGER.error("Executor failed for %s: %s", euid, str(e))
                 return False
 
         return executor
@@ -1239,7 +1242,8 @@ class WorksetMonitor:
 
     def build_workset(
         self,
-        workset_id: str,
+        euid: str,
+        name: str,
         *,
         prefix: Optional[str] = None,
         sentinels: Optional[Dict[str, str]] = None,
@@ -1250,21 +1254,23 @@ class WorksetMonitor:
         """Create a Workset object for direct processing.
 
         Args:
-            workset_id: Workset identifier
-            prefix: S3 prefix (defaults to monitor prefix + workset_id)
+            euid: TapDB EUID — primary identity handle
+            name: Human-readable workset name (used for S3 prefix)
+            prefix: S3 prefix (defaults to monitor prefix + name)
             sentinels: Sentinel file timestamps
             has_required_files: Whether all required files are present
             is_archived: Whether workset is archived
             bucket: S3 bucket (defaults to monitor bucket if not specified)
         """
-        normalized_prefix = prefix or f"{self.config.monitor.normalised_prefix()}{workset_id}/"
+        normalized_prefix = prefix or f"{self.config.monitor.normalised_prefix()}{name}/"
         return Workset(
-            name=workset_id,
+            name=name,
             prefix=normalized_prefix,
             sentinels=sentinels or {},
             has_required_files=has_required_files,
             is_archived=is_archived,
             bucket=bucket,
+            euid=euid,
         )
 
     def write_sentinel(self, workset: Workset, sentinel_name: str, value: str) -> None:
@@ -1308,9 +1314,10 @@ class WorksetMonitor:
             return
 
         for db_workset in worksets:
-            workset_id = db_workset.get("workset_id", "")
-            if not workset_id:
+            euid = db_workset.get("euid", "")
+            if not euid:
                 continue
+            ws_name = db_workset.get("name", "")
 
             # Get workset details from TapDB
             bucket = db_workset.get("bucket")
@@ -1319,10 +1326,10 @@ class WorksetMonitor:
                     "Workset %s has no bucket assigned in TapDB. "
                     "Worksets must be created via the portal with a cluster selection "
                     "to assign a region-specific bucket from ~/.ursa/ursa-config.yaml.",
-                    workset_id
+                    euid
                 )
                 continue
-            prefix = db_workset.get("prefix", f"{self.config.monitor.normalised_prefix()}{workset_id}/")
+            prefix = db_workset.get("prefix", f"{self.config.monitor.normalised_prefix()}{ws_name}/")
             state = db_workset.get("state", "ready")
             lock_owner = db_workset.get("lock_owner")
             lock_acquired_at = db_workset.get("lock_acquired_at")
@@ -1331,7 +1338,7 @@ class WorksetMonitor:
             if not self._s3_folder_exists(bucket, prefix):
                 LOGGER.warning(
                     "Workset %s registered in TapDB but S3 folder not found: s3://%s/%s",
-                    workset_id, bucket, prefix
+                    euid, bucket, prefix
                 )
                 continue
 
@@ -1354,12 +1361,13 @@ class WorksetMonitor:
             has_required = self._verify_core_files(prefix, bucket=bucket)
 
             yield Workset(
-                name=workset_id,
+                name=ws_name,
                 prefix=prefix,
                 sentinels=sentinels,
                 has_required_files=has_required,
                 is_archived=False,
                 bucket=bucket,
+                euid=euid,
             )
 
     def _s3_folder_exists(self, bucket: str, prefix: str) -> bool:
@@ -1863,7 +1871,7 @@ class WorksetMonitor:
 
                 # Send notification
                 self._notify_workset_event(
-                    workset.name,
+                    workset.euid,
                     event_type="completion",
                     state="complete",
                     message=f"Workset {workset.name} completed successfully (resumed)",
@@ -1881,7 +1889,7 @@ class WorksetMonitor:
                 self._delete_sentinel(workset, SENTINEL_FILES["in_progress"])
                 workset.sentinels.pop(SENTINEL_FILES["in_progress"], None)
                 self._notify_workset_event(
-                    workset.name,
+                    workset.euid,
                     event_type="error",
                     state="error",
                     message=f"Workset {workset.name} export failed",
@@ -1908,7 +1916,7 @@ class WorksetMonitor:
             self._delete_sentinel(workset, SENTINEL_FILES["in_progress"])
             workset.sentinels.pop(SENTINEL_FILES["in_progress"], None)
             self._notify_workset_event(
-                workset.name,
+                workset.euid,
                 event_type="error",
                 state="error",
                 message=f"Workset {workset.name} pipeline failed",
@@ -1945,7 +1953,7 @@ class WorksetMonitor:
                         self._delete_sentinel(workset, SENTINEL_FILES["in_progress"])
                         workset.sentinels.pop(SENTINEL_FILES["in_progress"], None)
                         self._notify_workset_event(
-                            workset.name,
+                            workset.euid,
                             event_type="error",
                             state="error",
                             message=f"Workset {workset.name} pipeline session disappeared",
@@ -2016,7 +2024,7 @@ class WorksetMonitor:
         # Release TapDB lock if configured
         if self.state_db:
             try:
-                released = self.state_db.release_lock(workset.name, self.lock_owner_id)
+                released = self.state_db.release_lock(workset.euid, self.lock_owner_id)
                 if released:
                     LOGGER.info("Released TapDB lock for %s", workset.name)
                 else:
@@ -2051,7 +2059,7 @@ class WorksetMonitor:
             )
             # Send notification on failure
             self._notify_workset_event(
-                workset.name,
+                workset.euid,
                 event_type="error",
                 state="error",
                 message=f"Workset {workset.name} processing failed",
@@ -2067,7 +2075,7 @@ class WorksetMonitor:
             )
             # Send notification on completion
             self._notify_workset_event(
-                workset.name,
+                workset.euid,
                 event_type="completion",
                 state="complete",
                 message=f"Workset {workset.name} completed successfully",
@@ -2084,7 +2092,7 @@ class WorksetMonitor:
 
     def _notify_workset_event(
         self,
-        workset_id: str,
+        workset_euid: str,
         event_type: str,
         state: str,
         message: str,
@@ -2093,7 +2101,7 @@ class WorksetMonitor:
         """Send notification for workset event.
 
         Args:
-            workset_id: Workset identifier
+            workset_euid: TapDB EUID of the workset
             event_type: Type of event (state_change, error, completion)
             state: Current workset state
             message: Event message
@@ -2106,7 +2114,7 @@ class WorksetMonitor:
             from daylily_ursa.workset_notifications import NotificationEvent
 
             event = NotificationEvent(
-                workset_id=workset_id,
+                workset_euid=workset_euid,
                 event_type=event_type,
                 state=state,
                 message=message,
@@ -2114,14 +2122,14 @@ class WorksetMonitor:
             )
             self.notification_manager.notify(event)
         except Exception as e:
-            LOGGER.warning("Failed to send notification for %s: %s", workset_id, str(e))
+            LOGGER.warning("Failed to send notification for %s: %s", workset_euid, str(e))
 
     def _attempt_acquire(self, workset: Workset) -> bool:
         initial_snapshot = dict(workset.sentinels)
         timestamp = dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
         if self.state_db:
             try:
-                acquired = self.state_db.acquire_lock(workset.name, self.lock_owner_id)
+                acquired = self.state_db.acquire_lock(workset.euid, self.lock_owner_id)
             except Exception as exc:
                 LOGGER.warning(
                     "Failed to acquire TapDB lock for %s: %s",
@@ -2154,7 +2162,7 @@ class WorksetMonitor:
             )
             self._delete_sentinel(workset, SENTINEL_FILES["lock"])
             if self.state_db:
-                self.state_db.release_lock(workset.name, self.lock_owner_id)
+                self.state_db.release_lock(workset.euid, self.lock_owner_id)
             return False
         LOGGER.info("Acquired workset %s", workset.name)
         in_progress_value = dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
@@ -2538,7 +2546,7 @@ class WorksetMonitor:
         try:
             # Store legacy fields for backward compatibility
             self.state_db.update_execution_environment(
-                workset_id=workset.name,
+                euid=workset.euid,
                 cluster_name=cluster_name,
                 cluster_region=effective_region,
                 headnode_ip=headnode_ip,
@@ -2549,7 +2557,7 @@ class WorksetMonitor:
 
             # Store new consolidated ExecutionContext
             self.state_db.set_execution_context(
-                workset_id=workset.name,
+                euid=workset.euid,
                 execution_context=exec_context.to_dict(),
             )
 
@@ -2577,7 +2585,7 @@ class WorksetMonitor:
         now_iso = dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
         try:
             self.state_db.update_execution_environment(
-                workset_id=workset.name,
+                euid=workset.euid,
                 execution_ended_at=now_iso,
             )
             LOGGER.debug("Recorded execution end time for %s", workset.name)
@@ -2703,10 +2711,10 @@ class WorksetMonitor:
             except ValueError:
                 LOGGER.warning("Unknown progress step '%s'; using raw value", step)
                 # Use update_progress with raw string
-                self.state_db.update_progress(workset.name, current_step=step)
+                self.state_db.update_progress(workset.euid, current_step=step)
                 return
 
-            self.state_db.update_progress_step(workset.name, progress_step, message)
+            self.state_db.update_progress_step(workset.euid, progress_step, message)
         except Exception as exc:
             LOGGER.warning(
                 "Failed to update progress step for %s to %s: %s",
@@ -3213,7 +3221,7 @@ class WorksetMonitor:
         if self.state_db:
             try:
                 self.state_db.update_execution_environment(
-                    workset.name,
+                    workset.euid,
                     headnode_analysis_path=str(location),
                 )
                 LOGGER.debug(
@@ -3755,7 +3763,7 @@ class WorksetMonitor:
                         try:
                             cost_summary = perf_metrics["cost_summary"]
                             self.state_db.update_cost_report(
-                                workset_id=workset.name,
+                                euid=workset.euid,
                                 total_compute_cost_usd=cost_summary.get("total_cost", 0.0),
                                 per_sample_costs=cost_summary.get("per_sample_costs"),
                                 rule_count=cost_summary.get("rule_count"),
@@ -3773,7 +3781,7 @@ class WorksetMonitor:
         if self.state_db and metrics.get("analysis_directory_size_bytes"):
             try:
                 self.state_db.update_storage_metrics(
-                    workset_id=workset.name,
+                    euid=workset.euid,
                     results_storage_bytes=metrics["analysis_directory_size_bytes"],
                     fsx_storage_bytes=None,  # FSx size not available after export
                 )
@@ -4636,7 +4644,7 @@ class WorksetMonitor:
         if s3_uri and self.state_db:
             try:
                 self.state_db.update_execution_environment(
-                    workset.name,
+                    workset.euid,
                     results_s3_uri=s3_uri,
                 )
                 LOGGER.info(
@@ -5213,15 +5221,15 @@ class WorksetMonitor:
         self._record_terminal_metrics(workset, sentinel_name, value)
 
         # Also update TapDB state if integration layer is available
-        self._sync_sentinel_to_tapdb(workset.name, sentinel_name, value)
+        self._sync_sentinel_to_tapdb(workset.euid, sentinel_name, value)
 
     def _sync_sentinel_to_tapdb(
-        self, workset_id: str, sentinel_name: str, value: str
+        self, euid: str, sentinel_name: str, value: str
     ) -> None:
         """Sync sentinel state change to TapDB.
 
         Args:
-            workset_id: Workset identifier
+            euid: TapDB EUID of the workset
             sentinel_name: Name of sentinel file written
             value: Timestamp/content of sentinel
         """
@@ -5243,10 +5251,10 @@ class WorksetMonitor:
 
         # Only update state for worksets that already exist in TapDB
         # Monitor should NEVER create worksets - that's the UI's job
-        if not self._workset_exists_in_tapdb(workset_id):
+        if not self._workset_exists_in_tapdb(euid):
             LOGGER.debug(
                 "Skipping TapDB state sync for %s: workset not registered via UI",
-                workset_id
+                euid
             )
             return
 
@@ -5255,22 +5263,22 @@ class WorksetMonitor:
             ws_state = WorksetState(new_state)
 
             self.state_db.update_state(
-                workset_id=workset_id,
+                euid=euid,
                 new_state=ws_state,
                 reason=f"Sentinel {sentinel_name} written by monitor",
             )
             LOGGER.debug("Synced sentinel %s to TapDB state %s", sentinel_name, new_state)
         except Exception as e:
-            LOGGER.warning("Failed to sync sentinel to TapDB for %s: %s", workset_id, str(e))
+            LOGGER.warning("Failed to sync sentinel to TapDB for %s: %s", euid, str(e))
 
-    def _workset_exists_in_tapdb(self, workset_id: str) -> bool:
+    def _workset_exists_in_tapdb(self, euid: str) -> bool:
         """Check if workset exists in TapDB.
 
         The monitor should NEVER create worksets - only the UI creates worksets.
         This method checks if a workset exists before attempting to update its state.
 
         Args:
-            workset_id: The workset ID to check
+            euid: TapDB EUID to check
 
         Returns:
             True if workset exists in TapDB, False otherwise
@@ -5278,14 +5286,14 @@ class WorksetMonitor:
         if not self.state_db:
             return False
 
-        existing = self.state_db.get_workset(workset_id)
+        existing = self.state_db.get_workset(euid)
         if existing:
             return True
 
         LOGGER.debug(
             "Workset %s not found in TapDB - monitor will skip state updates. "
             "Worksets must be created via the UI, not discovered by monitor.",
-            workset_id
+            euid
         )
         return False
 
@@ -5356,7 +5364,7 @@ class WorksetMonitor:
                 from daylily_ursa.workset_state_db import WorksetState
                 ws_state = WorksetState(s3_state)
                 self.state_db.update_state(
-                    workset_id=workset.name,
+                    euid=workset.euid,
                     new_state=ws_state,
                     reason=f"Reconciled from S3 sentinel (was {db_state})",
                 )
@@ -5379,7 +5387,7 @@ class WorksetMonitor:
             try:
                 from daylily_ursa.workset_state_db import WorksetState
                 self.state_db.update_state(
-                    workset_id=workset.name,
+                    euid=workset.euid,
                     new_state=WorksetState.IN_PROGRESS,
                     reason="Reconciled from S3 in_progress sentinel",
                 )

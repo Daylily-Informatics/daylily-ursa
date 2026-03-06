@@ -142,10 +142,10 @@ def create_billing_router(deps: BillingDependencies) -> APIRouter:
         return invoice_data
 
 
-    @router.get("/api/v2/customers/{customer_id}/billing/workset/{workset_id}")
+    @router.get("/api/v2/customers/{customer_id}/billing/workset/{euid}")
     async def get_workset_billing(
         customer_id: str,
-        workset_id: str,
+        euid: str,
     ):
         """Get billing details for a specific workset.
 
@@ -158,11 +158,11 @@ def create_billing_router(deps: BillingDependencies) -> APIRouter:
                 detail=f"Customer {customer_id} not found",
             )
 
-        workset = state_db.get_workset(workset_id)
+        workset = state_db.get_workset(euid)
         if not workset:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Workset {workset_id} not found",
+                detail=f"Workset {euid} not found",
             )
 
         if not verify_workset_ownership(workset, customer_id):
@@ -174,7 +174,7 @@ def create_billing_router(deps: BillingDependencies) -> APIRouter:
         item = billing_calculator.calculate_workset_billing(workset)
 
         return {
-            "workset_id": item.workset_id,
+            "workset_euid": item.workset_euid,
             "customer_id": item.customer_id,
             "completed_at": item.completed_at,
             "samples": item.sample_count,

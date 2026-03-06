@@ -19,7 +19,8 @@ def mock_state_db():
     mock_db = MagicMock()
     mock_db.register_workset.return_value = "euid-test-ws-001"  # returns euid on success
     mock_db.get_workset.return_value = {
-        "workset_id": "test-ws-001",
+        "euid": "euid-test-ws-001",
+        "name": "test-ws-001",
         "state": "ready",
         "priority": "normal",
         "bucket": "test-bucket",
@@ -261,13 +262,15 @@ class TestGetReadyWorksets:
         """Test getting ready worksets from TapDB."""
         mock_state_db.get_ready_worksets_prioritized.return_value = [
             {
-                "workset_id": "ws-001",
+                "euid": "ws-001",
+                "name": "ws-001",
                 "bucket": "test-bucket",
                 "prefix": "worksets/ws-001/",
                 "priority": "high",
             },
             {
-                "workset_id": "ws-002",
+                "euid": "ws-002",
+                "name": "ws-002",
                 "bucket": "test-bucket",
                 "prefix": "worksets/ws-002/",
                 "priority": "normal",
@@ -277,7 +280,7 @@ class TestGetReadyWorksets:
         worksets = integration.get_ready_worksets()
 
         assert len(worksets) == 2
-        assert worksets[0]["workset_id"] == "ws-001"
+        assert worksets[0]["euid"] == "ws-001"
         mock_state_db.get_ready_worksets_prioritized.assert_called_once()
 
 
@@ -339,7 +342,8 @@ class TestSyncTapDBToS3:
         """Test syncing a single workset to S3."""
         # Return a dict with metadata as a dict, not a JSON string
         mock_state_db.get_workset.return_value = {
-            "workset_id": "sync-ws",
+            "euid": "euid-sync-ws",
+            "name": "sync-ws",
             "state": "ready",
             "bucket": "test-bucket",
             "prefix": "worksets/sync-ws/",
@@ -392,7 +396,8 @@ class TestMonitorWorksetExistenceCheck:
         from daylily_ursa.workset_monitor import WorksetMonitor
 
         mock_state_db_for_monitor.get_workset.return_value = {
-            "workset_id": "test-ws-001",
+            "euid": "euid-test-ws-001",
+            "name": "test-ws-001",
             "state": "ready",
         }
 
@@ -478,9 +483,10 @@ class TestMonitorReconcileTapDBState:
             sentinels={SENTINEL_FILES["complete"]: "2024-01-15T10:00:00Z"},
             has_required_files=True,
             is_archived=False,
+            euid="euid-test-ws-001",
         )
         monitor.state_db.get_workset.return_value = {
-            "workset_id": "test-ws-001",
+            "euid": "euid-test-ws-001",
             "state": "in_progress",
         }
 
@@ -489,7 +495,7 @@ class TestMonitorReconcileTapDBState:
         # Verify TapDB state was updated to complete
         monitor.state_db.update_state.assert_called_once()
         call_kwargs = monitor.state_db.update_state.call_args.kwargs
-        assert call_kwargs["workset_id"] == "test-ws-001"
+        assert call_kwargs["euid"] == "euid-test-ws-001"
         assert "Reconciled" in call_kwargs["reason"]
 
     def test_reconcile_updates_tapdb_when_s3_shows_error(self, mock_monitor_for_reconciliation):
@@ -505,9 +511,10 @@ class TestMonitorReconcileTapDBState:
             sentinels={SENTINEL_FILES["error"]: "2024-01-15T10:00:00Z\tFailed"},
             has_required_files=True,
             is_archived=False,
+            euid="euid-test-ws-002",
         )
         monitor.state_db.get_workset.return_value = {
-            "workset_id": "test-ws-002",
+            "euid": "euid-test-ws-002",
             "state": "ready",
         }
 
@@ -516,7 +523,7 @@ class TestMonitorReconcileTapDBState:
         # Verify TapDB state was updated to error
         monitor.state_db.update_state.assert_called_once()
         call_kwargs = monitor.state_db.update_state.call_args.kwargs
-        assert call_kwargs["workset_id"] == "test-ws-002"
+        assert call_kwargs["euid"] == "euid-test-ws-002"
 
     def test_reconcile_does_not_overwrite_terminal_tapdb_state(self, mock_monitor_for_reconciliation):
         """Test that terminal states in TapDB are not overwritten."""
@@ -531,9 +538,10 @@ class TestMonitorReconcileTapDBState:
             sentinels={SENTINEL_FILES["error"]: "2024-01-15T10:00:00Z"},
             has_required_files=True,
             is_archived=False,
+            euid="euid-test-ws-003",
         )
         monitor.state_db.get_workset.return_value = {
-            "workset_id": "test-ws-003",
+            "euid": "euid-test-ws-003",
             "state": "complete",
         }
 
@@ -558,9 +566,10 @@ class TestMonitorReconcileTapDBState:
             },
             has_required_files=True,
             is_archived=False,
+            euid="euid-test-ws-004",
         )
         monitor.state_db.get_workset.return_value = {
-            "workset_id": "test-ws-004",
+            "euid": "euid-test-ws-004",
             "state": "ready",
         }
 
@@ -620,9 +629,10 @@ class TestMonitorReconcileTapDBState:
             sentinels={SENTINEL_FILES["complete"]: "2024-01-15T10:00:00Z"},
             has_required_files=True,
             is_archived=False,
+            euid="euid-test-ws-006",
         )
         monitor.state_db.get_workset.return_value = {
-            "workset_id": "test-ws-006",
+            "euid": "euid-test-ws-006",
             "state": "in_progress",
         }
         monitor.state_db.update_state.side_effect = Exception("TapDB error")
@@ -647,9 +657,10 @@ class TestMonitorReconcileTapDBState:
             sentinels={SENTINEL_FILES["complete"]: "2024-01-15T10:00:00Z"},
             has_required_files=True,
             is_archived=False,
+            euid="euid-test-ws-007",
         )
         monitor.state_db.get_workset.return_value = {
-            "workset_id": "test-ws-007",
+            "euid": "euid-test-ws-007",
             "state": "in_progress",
         }
 
@@ -1146,6 +1157,7 @@ class TestHeadnodeAnalysisPath:
 
         workset = MagicMock()
         workset.name = "test-ws-path-001"
+        workset.euid = "euid-test-ws-path-001"
 
         # Use temp directory for local state
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1158,7 +1170,7 @@ class TestHeadnodeAnalysisPath:
 
             # Verify TapDB was called with headnode_analysis_path
             monitor.state_db.update_execution_environment.assert_called_once_with(
-                "test-ws-path-001",
+                "euid-test-ws-path-001",
                 headnode_analysis_path="/fsx/analysis_results/ubuntu/test-ws-path-001/daylily-omics-analysis",
             )
 
@@ -3182,16 +3194,16 @@ class TestSchedulerIntegration:
 
         # Create worksets
         worksets = [
-            Workset(name="ws-low", prefix="p1/", sentinels={}, bucket="b"),
-            Workset(name="ws-high", prefix="p2/", sentinels={}, bucket="b"),
-            Workset(name="ws-normal", prefix="p3/", sentinels={}, bucket="b"),
+            Workset(name="ws-low", prefix="p1/", sentinels={}, bucket="b", euid="euid-ws-low"),
+            Workset(name="ws-high", prefix="p2/", sentinels={}, bucket="b", euid="euid-ws-high"),
+            Workset(name="ws-normal", prefix="p3/", sentinels={}, bucket="b", euid="euid-ws-normal"),
         ]
 
         # Scheduler returns in priority order
         mock_scheduler.get_next_workset.side_effect = [
-            {"workset_id": "ws-high"},
-            {"workset_id": "ws-normal"},
-            {"workset_id": "ws-low"},
+            {"workset_euid": "euid-ws-high"},
+            {"workset_euid": "euid-ws-normal"},
+            {"workset_euid": "euid-ws-low"},
             None,
         ]
 
@@ -3319,7 +3331,8 @@ class TestConcurrentProcessorIntegration:
         executor = monitor.create_workset_executor()
 
         workset_data = {
-            "workset_id": "test-ws-exec",
+            "euid": "euid-test-ws-exec",
+            "name": "test-ws-exec",
             "bucket": "test-bucket",
             "prefix": "worksets/test-ws-exec/",
             "state": "ready",
@@ -3338,15 +3351,15 @@ class TestConcurrentProcessorIntegration:
         assert ws_arg.name == "test-ws-exec"
         assert ws_arg.bucket == "test-bucket"
 
-    def test_workset_executor_handles_missing_workset_id(self, monitor_with_all_components):
-        """Test executor returns False for missing workset_id."""
+    def test_workset_executor_handles_missing_euid(self, monitor_with_all_components):
+        """Test executor returns False for missing euid."""
         monitor, _, _ = monitor_with_all_components
 
         executor = monitor.create_workset_executor()
 
         workset_data = {
             "bucket": "test-bucket",
-            # Missing workset_id
+            # Missing euid
         }
         decision = MagicMock()
 
@@ -3361,7 +3374,8 @@ class TestConcurrentProcessorIntegration:
         executor = monitor.create_workset_executor()
 
         workset_data = {
-            "workset_id": "test-ws-error",
+            "euid": "euid-test-ws-error",
+            "name": "test-ws-error",
             "bucket": "test-bucket",
             "prefix": "worksets/test-ws-error/",
         }

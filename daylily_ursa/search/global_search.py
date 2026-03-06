@@ -442,7 +442,7 @@ def _search_worksets(
             ):
                 continue
 
-            ws_id = _to_str(workset.get("workset_id"))
+            ws_id = _to_str(workset.get("euid"))
             ws_name = _to_str(workset.get("name"))
             ws_state = _to_str(workset.get("state"))
             metadata = workset.get("metadata") if isinstance(workset.get("metadata"), dict) else {}
@@ -468,7 +468,7 @@ def _search_worksets(
                 continue
 
             fields = {
-                "workset_id": ws_id,
+                "euid": ws_id,
                 "name": ws_name,
                 "state": ws_state,
                 "workset_type": _to_str(metadata.get("workset_type")),

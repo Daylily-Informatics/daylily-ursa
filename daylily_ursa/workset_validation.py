@@ -145,30 +145,30 @@ class WorksetValidator:
         self.cost_config_path = cost_config_path or "config/daylily_ephemeral_cost_config.yaml"
         self.strictness = strictness
 
-    def validate_workset_id(self, workset_id: str) -> List[ValidationError]:
-        """Validate workset ID format.
+    def validate_workset_name(self, workset_name: str) -> List[ValidationError]:
+        """Validate workset name format.
 
         Args:
-            workset_id: The workset ID to validate
+            workset_name: The workset name to validate
 
         Returns:
             List of validation errors
         """
         errors = []
-        if not workset_id:
+        if not workset_name:
             errors.append(ValidationError(
-                field="workset_id",
-                message="Workset ID is required",
-                code="WORKSET_ID_REQUIRED",
-                remediation="Provide a unique workset identifier",
+                field="name",
+                message="Workset name is required",
+                code="WORKSET_NAME_REQUIRED",
+                remediation="Provide a unique workset name",
             ))
-        elif not self.WORKSET_ID_PATTERN.match(workset_id):
+        elif not self.WORKSET_ID_PATTERN.match(workset_name):
             errors.append(ValidationError(
-                field="workset_id",
-                message=f"Invalid workset ID format: '{workset_id}'",
-                code="WORKSET_ID_FORMAT",
+                field="name",
+                message=f"Invalid workset name format: '{workset_name}'",
+                code="WORKSET_NAME_FORMAT",
                 remediation="Use 3-64 alphanumeric characters, hyphens, or underscores. Must start with alphanumeric.",
-                context={"value": workset_id, "pattern": self.WORKSET_ID_PATTERN.pattern},
+                context={"value": workset_name, "pattern": self.WORKSET_ID_PATTERN.pattern},
             ))
         return errors
 
@@ -537,7 +537,7 @@ class WorksetValidator:
     def validate_config_dict(
         self,
         config: Dict[str, Any],
-        workset_id: Optional[str] = None,
+        workset_name: Optional[str] = None,
     ) -> ValidationResult:
         """Validate a workset configuration dictionary directly.
 
@@ -545,7 +545,7 @@ class WorksetValidator:
 
         Args:
             config: Workset configuration dictionary
-            workset_id: Optional workset ID to validate
+            workset_name: Optional workset name to validate
 
         Returns:
             ValidationResult
@@ -555,8 +555,8 @@ class WorksetValidator:
         detailed_errors: List[ValidationError] = []
 
         # Validate workset ID if provided
-        if workset_id:
-            id_errors = self.validate_workset_id(workset_id)
+        if workset_name:
+            id_errors = self.validate_workset_name(workset_name)
             for ve in id_errors:
                 detailed_errors.append(ve)
                 errors.append(str(ve))

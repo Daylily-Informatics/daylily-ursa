@@ -1,7 +1,7 @@
 """Monitoring and admin routes for Daylily API.
 
 Contains routes for admin workset monitoring:
-- GET /api/v2/admin/worksets/{workset_id}/command-log
+- GET /api/v2/admin/worksets/{euid}/command-log
 
 Note: Queue stats, scheduler stats, and worksets/next are in routes/worksets.py.
 """
@@ -39,10 +39,10 @@ def create_monitoring_router(deps: MonitoringDependencies) -> APIRouter:
     router = APIRouter()
     state_db = deps.state_db
 
-    @router.get("/api/v2/admin/worksets/{workset_id}/command-log", tags=["admin"])
+    @router.get("/api/v2/admin/worksets/{euid}/command-log", tags=["admin"])
     async def get_workset_command_log(
         request: Request,
-        workset_id: str,
+        euid: str,
         grep: Optional[str] = Query(None, description="Filter log entries containing this text"),
         label: Optional[str] = Query(None, description="Filter by command label"),
         limit: int = Query(1000, ge=1, le=10000, description="Maximum lines to return"),
@@ -55,9 +55,9 @@ def create_monitoring_router(deps: MonitoringDependencies) -> APIRouter:
                 detail="Admin access required to view command logs",
             )
 
-        workset = state_db.get_workset(workset_id)
+        workset = state_db.get_workset(euid)
         if not workset:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Workset {workset_id} not found")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Workset {euid} not found")
 
         bucket = workset.get("bucket")
         prefix = workset.get("prefix", "").rstrip("/") + "/"
@@ -79,12 +79,12 @@ def create_monitoring_router(deps: MonitoringDependencies) -> APIRouter:
                 log_content = response["Body"].read().decode("utf-8")
             except s3_client.exceptions.NoSuchKey:
                 return {
-                    "workset_id": workset_id, "log_available": False,
+                    "euid": euid, "log_available": False,
                     "message": "No command log found for this workset",
                     "entries": [], "entry_count": 0,
                 }
         except Exception as e:
-            LOGGER.warning("Failed to fetch command log for %s: %s", sanitize_for_log(workset_id), str(e))
+            LOGGER.warning("Failed to fetch command log for %s: %s", sanitize_for_log(euid), str(e))
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to fetch command log: {str(e)}")
 
         # Parse and filter log entries
@@ -140,7 +140,7 @@ def create_monitoring_router(deps: MonitoringDependencies) -> APIRouter:
             entries = limited_entries
 
         return {
-            "workset_id": workset_id, "log_available": True, "bucket": bucket,
+            "euid": euid, "log_available": True, "bucket": bucket,
             "key": command_log_key, "entry_count": entry_count,
             "entries_returned": len(entries),
             "filters_applied": {"grep": grep, "label": label, "limit": limit},

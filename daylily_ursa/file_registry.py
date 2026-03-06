@@ -118,7 +118,7 @@ class FileSet:
 @dataclass
 class FileWorksetUsage:
     file_id: str
-    workset_id: str
+    workset_euid: str
     customer_id: str
     usage_type: str = "input"
     added_at: str = field(default_factory=_utc_now_iso)
@@ -691,19 +691,18 @@ class FileRegistry:
                 out.append(reg)
         return out
 
-    def _get_workset_row(self, session, workset_id: str):
-        return self.backend.find_instance_by_external_id(
+    def _get_workset_row(self, session, workset_euid: str):
+        return self.backend.find_instance_by_euid(
             session,
             template_code=self.WORKSET_TEMPLATE,
-            key="workset_id",
-            value=workset_id,
+            euid=workset_euid,
         )
 
     def register_file_workset_usage(
         self,
         *,
         file_id: str,
-        workset_id: str,
+        workset_euid: str,
         customer_id: str,
         usage_type: str = "input",
         workset_state: Optional[str] = None,
@@ -716,7 +715,7 @@ class FileRegistry:
                 key="file_id",
                 value=file_id,
             )
-            workset_row = self._get_workset_row(session, workset_id)
+            workset_row = self._get_workset_row(session, workset_euid)
             if file_row is None or workset_row is None:
                 return False
             self.backend.create_lineage(
@@ -724,14 +723,14 @@ class FileRegistry:
                 parent=workset_row,
                 child=file_row,
                 relationship_type=f"uses_{usage_type}",
-                name=f"{workset_id}:{usage_type}:{file_id}",
+                name=f"{workset_euid}:{usage_type}:{file_id}",
             )
             payload = from_json_addl(file_row)
             usage = list(payload.get("workset_usage", []))
             usage.append(
                 {
                     "file_id": file_id,
-                    "workset_id": workset_id,
+                    "workset_euid": workset_euid,
                     "customer_id": customer_id,
                     "usage_type": usage_type,
                     "added_at": utc_now_iso(),
@@ -748,7 +747,7 @@ class FileRegistry:
         self,
         *,
         file_id: str,
-        workset_id: str,
+        workset_euid: str,
         customer_id: str,
         usage_type: str = "input",
         workset_state: Optional[str] = None,
@@ -756,7 +755,7 @@ class FileRegistry:
     ) -> bool:
         return self.register_file_workset_usage(
             file_id=file_id,
-            workset_id=workset_id,
+            workset_euid=workset_euid,
             customer_id=customer_id,
             usage_type=usage_type,
             workset_state=workset_state,
@@ -782,10 +781,10 @@ class FileRegistry:
                 hist.append(FileWorksetUsage(**rec))
             return hist
 
-    def get_workset_files(self, workset_id: str) -> List[FileWorksetUsage]:
+    def get_workset_files(self, workset_euid: str) -> List[FileWorksetUsage]:
         usages: List[FileWorksetUsage] = []
         with self.backend.session_scope(commit=False) as session:
-            workset = self._get_workset_row(session, workset_id)
+            workset = self._get_workset_row(session, workset_euid)
             if workset is None:
                 return []
             file_template = self.backend.templates.get_template(session, self.FILE_TEMPLATE)
@@ -797,14 +796,14 @@ class FileRegistry:
                     continue
                 payload = from_json_addl(row)
                 for rec in payload.get("workset_usage", []):
-                    if rec.get("workset_id") == workset_id:
+                    if rec.get("workset_euid") == workset_euid:
                         usages.append(FileWorksetUsage(**rec))
         return usages
 
-    def update_workset_usage_state(self, workset_id: str, new_state: str) -> int:
+    def update_workset_usage_state(self, workset_euid: str, new_state: str) -> int:
         updated = 0
         with self.backend.session_scope(commit=True) as session:
-            files = self.get_workset_files(workset_id)
+            files = self.get_workset_files(workset_euid)
             for usage in files:
                 row = self.backend.find_instance_by_external_id(
                     session,
@@ -819,7 +818,7 @@ class FileRegistry:
                 hist = []
                 for rec in payload.get("workset_usage", []):
                     item = dict(rec)
-                    if item.get("workset_id") == workset_id:
+                    if item.get("workset_euid") == workset_euid:
                         item["workset_state"] = new_state
                         changed = True
                     hist.append(item)
@@ -830,9 +829,9 @@ class FileRegistry:
                     updated += 1
         return updated
 
-    def get_files_for_workset_recreation(self, workset_id: str) -> List[FileRegistration]:
+    def get_files_for_workset_recreation(self, workset_euid: str) -> List[FileRegistration]:
         out: List[FileRegistration] = []
-        for usage in self.get_workset_files(workset_id):
+        for usage in self.get_workset_files(workset_euid):
             if usage.usage_type != "input":
                 continue
             file_reg = self.get_file(usage.file_id)

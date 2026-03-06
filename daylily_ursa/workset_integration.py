@@ -191,7 +191,7 @@ class WorksetIntegration:
                 self._write_s3_workset_files(
                     bucket=target_bucket,
                     prefix=workset_prefix,
-                    workset_id=name,
+                    workset_name=name,
                     metadata=metadata or {},
                     timestamp=now,
                 )
@@ -374,7 +374,7 @@ class WorksetIntegration:
                 self._write_s3_workset_files(
                     bucket=bucket_name,
                     prefix=prefix,
-                    workset_id=workset_name,
+                    workset_name=workset_name,
                     metadata=metadata,
                     timestamp=now,
                 )
@@ -494,7 +494,7 @@ class WorksetIntegration:
         self,
         bucket: str,
         prefix: str,
-        workset_id: str,  # NOTE: this is the workset *name*, used for S3 paths
+        workset_name: str,  # Human-readable name, used for S3 paths
         metadata: Dict[str, Any],
         timestamp: str,
     ) -> None:
@@ -506,7 +506,7 @@ class WorksetIntegration:
             prefix += "/"
 
         # Build daylily_work.yaml from template (returns string, not dict)
-        work_yaml_content = self._build_work_yaml(workset_id, metadata, bucket, prefix)
+        work_yaml_content = self._build_work_yaml(workset_name, metadata, bucket, prefix)
         work_key = f"{prefix}{WORK_YAML_NAME}"
         self._s3.put_object(
             Bucket=bucket,
@@ -521,8 +521,8 @@ class WorksetIntegration:
         samples = metadata.get("samples", [])
         info_yaml = {
             # Identification
-            "workset_id": workset_id,
-            "workset_name": metadata.get("workset_name", workset_id),
+            "workset_id": workset_name,  # Legacy field: S3 info yaml uses human-readable name
+            "workset_name": metadata.get("workset_name", workset_name),
             "customer_id": metadata.get("submitted_by", "unknown"),
 
             # Timestamps
@@ -595,7 +595,7 @@ class WorksetIntegration:
                 if sample_id:
                     # Build row with defaults for optional columns
                     row = {
-                        "RUN_ID": workset_id,
+                        "RUN_ID": workset_name,
                         "SAMPLE_ID": sample_id,
                         "EXPERIMENTID": sample.get("experiment_id", sample_id),
                         "SAMPLE_TYPE": sample.get("sample_type", "WGS"),
@@ -644,7 +644,7 @@ class WorksetIntegration:
         self._write_sentinel(bucket, prefix, "ready", timestamp)
 
     def _build_work_yaml(
-        self, workset_id: str, metadata: Dict[str, Any], bucket: str, prefix: str
+        self, workset_name: str, metadata: Dict[str, Any], bucket: str, prefix: str
     ) -> str:
         """Build daylily_work.yaml content using the template file.
 
@@ -693,7 +693,7 @@ class WorksetIntegration:
         )
 
         # Optionally replace {workdir_name} placeholder if present
-        template_content = template_content.replace("{workdir_name}", workset_id)
+        template_content = template_content.replace("{workdir_name}", workset_name)
 
         return template_content
 
@@ -849,7 +849,7 @@ notes: "Daylily Snakemake; hg38; slurm profile; 192 jobs; rerun-incomplete."
         from daylily_ursa.workset_notifications import NotificationEvent
 
         event = NotificationEvent(
-            workset_id=identifier,  # TODO: rename field in NotificationEvent to euid
+            workset_euid=identifier,
             event_type="state_change",
             state=state,
             message=message,

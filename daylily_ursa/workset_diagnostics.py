@@ -360,7 +360,7 @@ E_SLURM_ERROR = _register_error(ErrorCode(
 @dataclass
 class DiagnosticResult:
     """Result of error diagnosis."""
-    workset_id: str
+    workset_euid: str
     error_code: Optional[ErrorCode]
     matched_patterns: List[str] = field(default_factory=list)
     confidence: float = 0.0  # 0.0 to 1.0
@@ -370,7 +370,7 @@ class DiagnosticResult:
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
         return {
-            "workset_id": self.workset_id,
+            "workset_euid": self.workset_euid,
             "error_code": self.error_code.code if self.error_code else None,
             "error_name": self.error_code.name if self.error_code else None,
             "severity": self.error_code.severity.value if self.error_code else None,
@@ -414,7 +414,7 @@ class ErrorAnalyzer:
 
     def analyze(
         self,
-        workset_id: str,
+        workset_euid: str,
         error_text: str,
         logs: Optional[List[str]] = None,
         context: Optional[Dict[str, Any]] = None,
@@ -422,7 +422,7 @@ class ErrorAnalyzer:
         """Analyze an error and return diagnostics.
 
         Args:
-            workset_id: Workset identifier
+            workset_euid: TapDB EUID of the workset
             error_text: Error message or exception text
             logs: Optional list of log lines
             context: Optional additional context
@@ -457,7 +457,7 @@ class ErrorAnalyzer:
                     matched_patterns = current_patterns
 
         return DiagnosticResult(
-            workset_id=workset_id,
+            workset_euid=workset_euid,
             error_code=best_match,
             matched_patterns=matched_patterns,
             confidence=best_confidence,
@@ -466,13 +466,13 @@ class ErrorAnalyzer:
 
     def analyze_logs(
         self,
-        workset_id: str,
+        workset_euid: str,
         log_content: str,
     ) -> List[DiagnosticResult]:
         """Analyze log file content for multiple errors.
 
         Args:
-            workset_id: Workset identifier
+            workset_euid: TapDB EUID of the workset
             log_content: Full log file content
 
         Returns:
@@ -487,7 +487,7 @@ class ErrorAnalyzer:
                 if matches and code not in seen_codes:
                     seen_codes.add(code)
                     results.append(DiagnosticResult(
-                        workset_id=workset_id,
+                        workset_euid=workset_euid,
                         error_code=ERROR_CODES[code],
                         matched_patterns=[pattern.pattern],
                         confidence=0.8,
@@ -602,7 +602,7 @@ def format_diagnostic_report(result: DiagnosticResult) -> str:
         Formatted report string
     """
     lines = [
-        f"=== Diagnostic Report for {result.workset_id} ===",
+        f"=== Diagnostic Report for {result.workset_euid} ===",
         f"Timestamp: {result.timestamp.isoformat()}",
         "",
     ]

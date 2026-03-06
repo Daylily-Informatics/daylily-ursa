@@ -175,7 +175,7 @@ class TestDiagnosticResult:
     def test_to_dict(self):
         """Test conversion to dictionary."""
         result = DiagnosticResult(
-            workset_id="test-ws-001",
+            workset_euid="test-ws-001",
             error_code=E_OUT_OF_MEMORY,
             matched_patterns=["Out of memory"],
             confidence=0.9,
@@ -183,7 +183,7 @@ class TestDiagnosticResult:
 
         d = result.to_dict()
 
-        assert d["workset_id"] == "test-ws-001"
+        assert d["workset_euid"] == "test-ws-001"
         assert d["error_code"] == "WS-RES-001"
         assert d["error_name"] == "OutOfMemory"
         assert d["severity"] == "error"
@@ -194,7 +194,7 @@ class TestDiagnosticResult:
     def test_to_dict_no_error_code(self):
         """Test to_dict with no error code."""
         result = DiagnosticResult(
-            workset_id="test-ws-001",
+            workset_euid="test-ws-001",
             error_code=None,
         )
 
@@ -240,7 +240,7 @@ class TestUtilityFunctions:
     def test_format_diagnostic_report(self):
         """Test diagnostic report formatting."""
         result = DiagnosticResult(
-            workset_id="test-ws-001",
+            workset_euid="test-ws-001",
             error_code=E_OUT_OF_MEMORY,
             matched_patterns=["Out of memory"],
             confidence=0.9,
@@ -256,7 +256,7 @@ class TestUtilityFunctions:
     def test_format_diagnostic_report_unknown(self):
         """Test report formatting for unknown error."""
         result = DiagnosticResult(
-            workset_id="test-ws-001",
+            workset_euid="test-ws-001",
             error_code=None,
         )
 

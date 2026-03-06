@@ -21,7 +21,7 @@ LOGGER = logging.getLogger("daylily.workset_concurrent_processor")
 
 def _send_notification(
     manager: Optional[NotificationManager],
-    workset_id: str,
+    workset_euid: str,
     event_type: str,
     message: str,
     state: str = "unknown",
@@ -30,7 +30,7 @@ def _send_notification(
     if manager is None:
         return
     event = NotificationEvent(
-        workset_id=workset_id,
+        workset_euid=workset_euid,
         event_type=event_type,
         state=state,
         message=message,
@@ -137,7 +137,7 @@ class ConcurrentWorksetProcessor:
 
             # Schedule workset
             decision = self.scheduler.schedule_workset(
-                workset["workset_id"],
+                workset["euid"],
                 workset.get("metadata", {}),
             )
 
@@ -153,15 +153,15 @@ class ConcurrentWorksetProcessor:
         retryable = self.state_db.get_retryable_worksets()
 
         for workset in retryable:
-            workset_id = workset["workset_id"]
-            LOGGER.info("Resetting workset %s for retry", workset_id)
+            euid = workset["euid"]
+            LOGGER.info("Resetting workset %s for retry", euid)
 
-            if self.state_db.reset_for_retry(workset_id):
+            if self.state_db.reset_for_retry(euid):
                 _send_notification(
                     self.notification_manager,
-                    workset_id=workset_id,
+                    workset_euid=euid,
                     event_type="retry",
-                    message=f"Workset {workset_id} reset for retry",
+                    message=f"Workset {euid} reset for retry",
                 )
 
     def _validate_workset(self, workset: Dict) -> bool:
@@ -173,12 +173,12 @@ class ConcurrentWorksetProcessor:
         Returns:
             True if valid
         """
-        workset_id = workset["workset_id"]
+        euid = workset["euid"]
         bucket = workset["bucket"]
         prefix = workset["prefix"]
 
         if self.validator is None:
-            LOGGER.warning("Validator not configured, skipping validation for %s", workset_id)
+            LOGGER.warning("Validator not configured, skipping validation for %s", euid)
             return True
 
         try:
@@ -186,17 +186,17 @@ class ConcurrentWorksetProcessor:
 
             if not result.is_valid:
                 error_msg = "; ".join(result.errors)
-                LOGGER.error("Workset %s validation failed: %s", workset_id, error_msg)
+                LOGGER.error("Workset %s validation failed: %s", euid, error_msg)
 
                 self.state_db.record_failure(
-                    workset_id,
+                    euid,
                     error_msg,
                     ErrorCategory.CONFIGURATION,
                 )
 
                 _send_notification(
                     self.notification_manager,
-                    workset_id=workset_id,
+                    workset_euid=euid,
                     event_type="validation_failed",
                     message=f"Validation failed: {error_msg}",
                     state="error",
@@ -215,12 +215,12 @@ class ConcurrentWorksetProcessor:
                 # Note: Would need to add update_metadata method to state_db
 
             if result.warnings:
-                LOGGER.warning("Workset %s has warnings: %s", workset_id, result.warnings)
+                LOGGER.warning("Workset %s has warnings: %s", euid, result.warnings)
 
             return True
 
         except Exception as e:
-            LOGGER.error("Validation error for %s: %s", workset_id, str(e))
+            LOGGER.error("Validation error for %s: %s", euid, str(e))
             return False
 
     def _process_worksets_parallel(self, worksets_and_decisions: List) -> None:
@@ -240,19 +240,19 @@ class ConcurrentWorksetProcessor:
                     workset,
                     decision,
                 )
-                futures[future] = workset["workset_id"]
+                futures[future] = workset["euid"]
 
             # Wait for completion and handle results
             for future in as_completed(futures):
-                workset_id = futures[future]
+                euid = futures[future]
                 try:
                     success = future.result()
                     if success:
-                        LOGGER.info("Workset %s completed successfully", workset_id)
+                        LOGGER.info("Workset %s completed successfully", euid)
                     else:
-                        LOGGER.error("Workset %s failed", workset_id)
+                        LOGGER.error("Workset %s failed", euid)
                 except Exception as e:
-                    LOGGER.error("Exception processing %s: %s", workset_id, e, exc_info=True)
+                    LOGGER.error("Exception processing %s: %s", euid, e, exc_info=True)
 
     def _process_single_workset(self, workset: Dict, decision) -> bool:
         """Process a single workset.
@@ -264,18 +264,18 @@ class ConcurrentWorksetProcessor:
         Returns:
             True if successful
         """
-        workset_id = workset["workset_id"]
+        euid = workset["euid"]
 
         try:
             # Acquire lock
             owner_id = f"processor-{time.time()}"
-            if not self.state_db.acquire_lock(workset_id, owner_id):
-                LOGGER.warning("Failed to acquire lock for %s", workset_id)
+            if not self.state_db.acquire_lock(euid, owner_id):
+                LOGGER.warning("Failed to acquire lock for %s", euid)
                 return False
 
             # Update to in-progress
             self.state_db.update_state(
-                workset_id,
+                euid,
                 WorksetState.IN_PROGRESS,
                 reason=f"Processing on cluster {decision.cluster_name or 'new'}",
                 cluster_name=decision.cluster_name,
@@ -283,7 +283,7 @@ class ConcurrentWorksetProcessor:
 
             _send_notification(
                 self.notification_manager,
-                workset_id=workset_id,
+                workset_euid=euid,
                 event_type="started",
                 message=f"Processing started on {decision.cluster_name or 'new cluster'}",
                 state="in_progress",
@@ -295,42 +295,42 @@ class ConcurrentWorksetProcessor:
             # Update final state
             if success:
                 self.state_db.update_state(
-                    workset_id,
+                    euid,
                     WorksetState.COMPLETE,
                     reason="Processing completed successfully",
                 )
 
                 _send_notification(
                     self.notification_manager,
-                    workset_id=workset_id,
+                    workset_euid=euid,
                     event_type="completed",
                     message="Processing completed successfully",
                     state="complete",
                 )
             else:
                 self.state_db.record_failure(
-                    workset_id,
+                    euid,
                     "Workset execution returned failure",
                     ErrorCategory.TRANSIENT,
                 )
 
             # Release lock
-            self.state_db.release_lock(workset_id, owner_id)
+            self.state_db.release_lock(euid, owner_id)
 
             return success
 
         except Exception as e:
-            LOGGER.error("Error processing %s: %s", workset_id, e, exc_info=True)
+            LOGGER.error("Error processing %s: %s", euid, e, exc_info=True)
 
             self.state_db.record_failure(
-                workset_id,
+                euid,
                 str(e),
                 ErrorCategory.TRANSIENT,
             )
 
             _send_notification(
                 self.notification_manager,
-                workset_id=workset_id,
+                workset_euid=euid,
                 event_type="error",
                 message=f"Processing error: {e}",
                 state="error",
@@ -350,7 +350,7 @@ class ConcurrentWorksetProcessor:
         """
         LOGGER.info(
             "Executing workset %s (cluster=%s)",
-            workset["workset_id"],
+            workset["euid"],
             decision.cluster_name,
         )
 

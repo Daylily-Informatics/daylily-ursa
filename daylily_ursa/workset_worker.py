@@ -85,11 +85,11 @@ class ProgressTracker:
     def __init__(
         self,
         state_db: WorksetStateDB,
-        workset_id: str,
+        euid: str,
         cluster_name: Optional[str] = None,
     ):
         self.state_db = state_db
-        self.workset_id = workset_id
+        self.euid = euid
         self.cluster_name = cluster_name
         self.started_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         self._current_step: Optional[str] = None
@@ -97,10 +97,10 @@ class ProgressTracker:
     def update_step(self, step: str, metrics: Optional[Dict[str, Any]] = None) -> None:
         """Update current processing step in TapDB."""
         self._current_step = step
-        LOGGER.info("Workset %s: step=%s", self.workset_id, step)
+        LOGGER.info("Workset %s: step=%s", self.euid, step)
         try:
             self.state_db.update_progress(
-                workset_id=self.workset_id,
+                euid=self.euid,
                 current_step=step,
                 cluster_name=self.cluster_name,
                 started_at=self.started_at,
@@ -109,7 +109,7 @@ class ProgressTracker:
         except Exception as e:
             LOGGER.warning(
                 "Failed to update progress for %s (step=%s): %s",
-                self.workset_id,
+                self.euid,
                 step,
                 str(e),
             )
@@ -124,7 +124,7 @@ class ProgressTracker:
         finished_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         try:
             self.state_db.update_progress(
-                workset_id=self.workset_id,
+                euid=self.euid,
                 current_step="complete",
                 finished_at=finished_at,
                 metrics=metrics,
@@ -132,7 +132,7 @@ class ProgressTracker:
         except Exception as e:
             LOGGER.warning(
                 "Failed to update finish progress for %s: %s",
-                self.workset_id,
+                self.euid,
                 str(e),
             )
 
@@ -145,21 +145,22 @@ def process_workset(
     owner_id: str,
     write_sentinels: bool,
 ) -> None:
-    workset_id = workset_record.get("workset_id")
-    if not workset_id:
-        LOGGER.warning("Skipping workset with missing workset_id: %s", workset_record)
+    euid = workset_record.get("euid")
+    if not euid:
+        LOGGER.warning("Skipping workset with missing euid: %s", workset_record)
+        return
+    ws_name = workset_record.get("name", euid)
+
+    if not state_db.acquire_lock(euid, owner_id):
+        LOGGER.debug("Lock contention for %s", euid)
         return
 
-    if not state_db.acquire_lock(workset_id, owner_id):
-        LOGGER.debug("Lock contention for %s", workset_id)
-        return
-
-    prefix = workset_record.get("prefix") or f"{monitor.config.monitor.normalised_prefix()}{workset_id}/"
-    workset = monitor.build_workset(workset_id, prefix=prefix)
+    prefix = workset_record.get("prefix") or f"{monitor.config.monitor.normalised_prefix()}{ws_name}/"
+    workset = monitor.build_workset(euid, ws_name, prefix=prefix)
     timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
     # Initialize progress tracker
-    progress = ProgressTracker(state_db, workset_id)
+    progress = ProgressTracker(state_db, euid)
     progress.update_step("initializing")
 
     try:
@@ -167,7 +168,7 @@ def process_workset(
             monitor.write_sentinel(workset, SENTINEL_FILES["lock"], timestamp)
 
         state_db.update_state(
-            workset_id=workset_id,
+            euid=euid,
             new_state=WorksetState.IN_PROGRESS,
             reason=f"Workset claimed by {owner_id}",
         )
@@ -185,7 +186,7 @@ def process_workset(
 
         # Update final state with metrics
         state_db.update_state(
-            workset_id=workset_id,
+            euid=euid,
             new_state=WorksetState.COMPLETE,
             reason=f"Workset completed by {owner_id}",
             metrics=metrics,
@@ -198,13 +199,13 @@ def process_workset(
                 SENTINEL_FILES["complete"],
                 time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             )
-        LOGGER.info("Workset %s completed successfully", workset_id)
+        LOGGER.info("Workset %s completed successfully", euid)
 
     except Exception as exc:
-        LOGGER.exception("Workset %s failed", workset_id)
+        LOGGER.exception("Workset %s failed", euid)
         metrics = monitor.load_workset_metrics(workset)
         state_db.update_state(
-            workset_id=workset_id,
+            euid=euid,
             new_state=WorksetState.ERROR,
             reason=f"Workset failed in worker {owner_id}",
             error_details=str(exc),
@@ -214,7 +215,7 @@ def process_workset(
             error_message = f"{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}\t{exc}"
             monitor.write_sentinel(workset, SENTINEL_FILES["error"], error_message)
     finally:
-        state_db.release_lock(workset_id, owner_id)
+        state_db.release_lock(euid, owner_id)
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:

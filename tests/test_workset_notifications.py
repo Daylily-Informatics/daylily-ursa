@@ -16,7 +16,7 @@ from daylily_ursa.workset_notifications import (
 def sample_event():
     """Create a sample notification event."""
     return NotificationEvent(
-        workset_id="test-workset-001",
+        workset_euid="test-workset-001",
         event_type="state_change",
         state="in_progress",
         message="Workset processing started",
@@ -29,7 +29,7 @@ def sample_event():
 def error_event():
     """Create an error notification event."""
     return NotificationEvent(
-        workset_id="test-workset-002",
+        workset_euid="test-workset-002",
         event_type="error",
         state="error",
         message="Pipeline failed",

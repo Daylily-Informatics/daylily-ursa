@@ -2684,7 +2684,7 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                             {
                                 "date": completed_date,
                                 "type": "Compute",
-                                "workset_id": item.workset_id,
+                                "workset_id": item.workset_euid,
                                 "quantity": item.sample_count or 1,
                                 "unit": "samples",
                                 "cost": item.compute_cost_usd,
@@ -2695,7 +2695,7 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                     if item.storage_bytes > 0:
                         workset_storage_breakdown.append(
                             {
-                                "workset_id": item.workset_id,
+                                "workset_id": item.workset_euid,
                                 "storage_bytes": item.storage_bytes,
                                 "storage_human": _format_bytes(item.storage_bytes),
                                 "storage_gb": round(item.storage_gb, 2),
@@ -2840,7 +2840,7 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
             writer.writerow(
                 [
                     completed_date,
-                    item.workset_id,
+                    item.workset_euid,
                     item.sample_count,
                     round(item.compute_cost_usd, 2),
                     round(item.storage_gb, 2),

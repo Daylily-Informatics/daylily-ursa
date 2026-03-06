@@ -2054,7 +2054,7 @@ def create_file_api_router(
     @router.post("/workset-usage/record")
     async def record_file_workset_usage(
         file_id: str = Body(..., embed=True),
-        workset_id: str = Body(..., embed=True),
+        workset_euid: str = Body(..., embed=True),
         customer_id: str = Body(..., embed=True),
         usage_type: str = Body("input", embed=True),
         workset_state: Optional[str] = Body(None, embed=True),
@@ -2065,7 +2065,7 @@ def create_file_api_router(
         try:
             success = file_registry.record_file_workset_usage(
                 file_id=file_id,
-                workset_id=workset_id,
+                workset_euid=workset_euid,
                 customer_id=customer_id,
                 usage_type=usage_type,
                 workset_state=workset_state,
@@ -2076,7 +2076,7 @@ def create_file_api_router(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail="Failed to record file-workset usage",
                 )
-            return {"status": "recorded", "file_id": file_id, "workset_id": workset_id}
+            return {"status": "recorded", "file_id": file_id, "workset_euid": workset_euid}
         except HTTPException:
             raise
         except Exception as e:
@@ -2099,7 +2099,7 @@ def create_file_api_router(
                 "usage_count": len(usages),
                 "usages": [
                     {
-                        "workset_id": u.workset_id,
+                        "workset_euid": u.workset_euid,
                         "usage_type": u.usage_type,
                         "added_at": u.added_at,
                         "workset_state": u.workset_state,
@@ -2115,16 +2115,16 @@ def create_file_api_router(
                 detail=f"Failed to get file workset history: {str(e)}",
             )
 
-    @router.get("/worksets/{workset_id}/files")
+    @router.get("/worksets/{euid}/files")
     async def get_workset_file_usage(
-        workset_id: str,
+        euid: str,
         current_user: Optional[Dict] = Depends(auth_dependency),
     ):
         """Get all files used in a workset."""
         try:
-            usages = file_registry.get_workset_files(workset_id)
+            usages = file_registry.get_workset_files(euid)
             return {
-                "workset_id": workset_id,
+                "euid": euid,
                 "file_count": len(usages),
                 "files": [
                     {
@@ -2143,16 +2143,16 @@ def create_file_api_router(
                 detail=f"Failed to get workset files: {str(e)}",
             )
 
-    @router.get("/worksets/{workset_id}/recreation-files")
+    @router.get("/worksets/{euid}/recreation-files")
     async def get_workset_recreation_files(
-        workset_id: str,
+        euid: str,
         current_user: Optional[Dict] = Depends(auth_dependency),
     ):
         """Get all input files needed to recreate a workset."""
         try:
-            files = file_registry.get_files_for_workset_recreation(workset_id)
+            files = file_registry.get_files_for_workset_recreation(euid)
             return {
-                "workset_id": workset_id,
+                "euid": euid,
                 "file_count": len(files),
                 "files": [
                     {
@@ -2172,17 +2172,17 @@ def create_file_api_router(
                 detail=f"Failed to get workset recreation files: {str(e)}",
             )
 
-    @router.post("/worksets/{workset_id}/update-state")
+    @router.post("/worksets/{euid}/update-state")
     async def update_workset_file_states(
-        workset_id: str,
+        euid: str,
         new_state: str = Body(..., embed=True),
         current_user: Optional[Dict] = Depends(auth_dependency),
     ):
         """Update the workset state for all file usages in a workset."""
         try:
-            updated = file_registry.update_workset_usage_state(workset_id, new_state)
+            updated = file_registry.update_workset_usage_state(euid, new_state)
             return {
-                "workset_id": workset_id,
+                "euid": euid,
                 "new_state": new_state,
                 "updated_count": updated,
             }

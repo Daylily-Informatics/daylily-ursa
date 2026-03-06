@@ -53,7 +53,7 @@ class BillingRates:
 @dataclass
 class WorksetBillingItem:
     """Billing details for a single workset."""
-    workset_id: str
+    workset_euid: str
     customer_id: str
     completed_at: Optional[str] = None
     
@@ -175,17 +175,17 @@ class BillingCalculator:
         Returns:
             WorksetBillingItem with calculated costs
         """
-        workset_id = workset.get("workset_id", "unknown")
+        workset_euid = workset.get("euid", "unknown")
         customer_id = workset.get("customer_id", "unknown")
 
         item = WorksetBillingItem(
-            workset_id=workset_id,
+            workset_euid=workset_euid,
             customer_id=customer_id,
             completed_at=workset.get("completed_at"),
         )
 
         # Get actual cost report data (Phase 5B)
-        cost_report = self.state_db.get_cost_report(workset_id)
+        cost_report = self.state_db.get_cost_report(workset_euid)
         if cost_report:
             item.compute_cost_usd = cost_report.get("total_compute_cost_usd", 0.0)
             item.sample_count = cost_report.get("cost_report_sample_count", 0)
@@ -212,7 +212,7 @@ class BillingCalculator:
                     item.sample_count = int(metadata.get("sample_count", 0))
 
         # Get actual storage metrics (Phase 5C)
-        storage_metrics = self.state_db.get_storage_metrics(workset_id)
+        storage_metrics = self.state_db.get_storage_metrics(workset_euid)
         if storage_metrics:
             item.storage_bytes = storage_metrics.get("results_storage_bytes", 0)
             item.has_actual_storage = True
@@ -423,7 +423,7 @@ class BillingCalculator:
         for item in summary.workset_items:
             line_items.append(
                 {
-                    "workset_id": item.workset_id,
+                    "workset_euid": item.workset_euid,
                     "completed_at": item.completed_at,
                     "samples": item.sample_count,
                     "compute_usd": self._round_currency(item.compute_cost_usd, 2),

@@ -21,7 +21,7 @@ LOGGER = logging.getLogger("daylily.workset_notifications")
 @dataclass
 class NotificationEvent:
     """Workset event to be notified."""
-    workset_id: str
+    workset_euid: str
     event_type: str  # state_change, error, completion, timeout
     state: str
     message: str
@@ -73,10 +73,10 @@ class SNSNotificationChannel(NotificationChannel):
     
     def send(self, event: NotificationEvent) -> bool:
         """Send SNS notification."""
-        subject = f"Daylily Workset {event.event_type.replace('_', ' ').title()}: {event.workset_id}"
-        
+        subject = f"Daylily Workset {event.event_type.replace('_', ' ').title()}: {event.workset_euid}"
+
         message_lines = [
-            f"Workset: {event.workset_id}",
+            f"Workset: {event.workset_euid}",
             f"Event: {event.event_type}",
             f"State: {event.state}",
             f"Priority: {event.priority}",
@@ -109,13 +109,13 @@ class SNSNotificationChannel(NotificationChannel):
                 Subject=subject[:100],  # SNS subject limit
                 Message=message,
                 MessageAttributes={
-                    "workset_id": {"DataType": "String", "StringValue": event.workset_id},
+                    "workset_euid": {"DataType": "String", "StringValue": event.workset_euid},
                     "event_type": {"DataType": "String", "StringValue": event.event_type},
                     "state": {"DataType": "String", "StringValue": event.state},
                     "priority": {"DataType": "String", "StringValue": event.priority},
                 },
             )
-            LOGGER.info("Sent SNS notification for workset %s", event.workset_id)
+            LOGGER.info("Sent SNS notification for workset %s", event.workset_euid)
             return True
         except ClientError as e:
             LOGGER.error("Failed to send SNS notification: %s", str(e))
@@ -149,10 +149,10 @@ class LinearNotificationChannel(NotificationChannel):
         if event.event_type not in ["error", "completion"]:
             return True
 
-        title = f"[Daylily] {event.workset_id} - {event.state}"
+        title = f"[Daylily] {event.workset_euid} - {event.state}"
 
         description_parts = [
-            f"**Workset:** {event.workset_id}",
+            f"**Workset:** {event.workset_euid}",
             f"**Event:** {event.event_type}",
             f"**State:** {event.state}",
             f"**Priority:** {event.priority}",
@@ -225,7 +225,7 @@ class LinearNotificationChannel(NotificationChannel):
                     LOGGER.info(
                         "Created Linear issue %s for workset %s: %s",
                         issue["identifier"],
-                        event.workset_id,
+                        event.workset_euid,
                         issue["url"],
                     )
                     return True

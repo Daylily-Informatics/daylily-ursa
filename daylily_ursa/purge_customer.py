@@ -66,7 +66,7 @@ def display_worksets(worksets: list, max_display: int = 20) -> None:
     print("-" * 80)
     
     for i, ws in enumerate(worksets[:max_display]):
-        workset_id = ws.get("workset_id", "N/A")[:38]
+        workset_id = ws.get("euid", "N/A")[:38]
         state = ws.get("state", "N/A")
         customer = ws.get("customer_id") or "(empty/null)"
         if customer == "Unknown":
@@ -209,9 +209,9 @@ Examples:
     failed_count = 0
 
     for ws in target_worksets:
-        workset_id = ws.get("workset_id")
+        workset_id = ws.get("euid")
         if not workset_id:
-            LOGGER.warning("Skipping record with no workset_id")
+            LOGGER.warning("Skipping record with no euid")
             failed_count += 1
             continue
 

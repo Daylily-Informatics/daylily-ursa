@@ -43,7 +43,7 @@ class ClusterCapacity:
 @dataclass
 class SchedulingDecision:
     """Result of scheduling decision."""
-    workset_id: str
+    workset_euid: str
     cluster_name: Optional[str]
     should_create_cluster: bool
     estimated_start_delay_minutes: int
@@ -126,13 +126,13 @@ class WorksetScheduler:
     
     def schedule_workset(
         self,
-        workset_id: str,
+        workset_euid: str,
         requirements: Optional[WorksetRequirements] = None,
     ) -> SchedulingDecision:
         """Make scheduling decision for a workset.
-        
+
         Args:
-            workset_id: Workset to schedule
+            workset_euid: TapDB EUID of the workset to schedule
             requirements: Resource requirements (optional)
             
         Returns:
@@ -147,7 +147,7 @@ class WorksetScheduler:
             # Check if cluster has capacity
             if capacity.active_worksets < capacity.max_concurrent_worksets:
                 return SchedulingDecision(
-                    workset_id=workset_id,
+                    workset_euid=workset_euid,
                     cluster_name=best_cluster,
                     should_create_cluster=False,
                     estimated_start_delay_minutes=0,
@@ -157,7 +157,7 @@ class WorksetScheduler:
                 # Estimate wait time based on average workset duration
                 avg_duration = 120  # Default 2 hours
                 return SchedulingDecision(
-                    workset_id=workset_id,
+                    workset_euid=workset_euid,
                     cluster_name=best_cluster,
                     should_create_cluster=False,
                     estimated_start_delay_minutes=avg_duration // capacity.active_worksets,
@@ -166,7 +166,7 @@ class WorksetScheduler:
         
         # No suitable cluster found, need to create one
         return SchedulingDecision(
-            workset_id=workset_id,
+            workset_euid=workset_euid,
             cluster_name=None,
             should_create_cluster=True,
             estimated_start_delay_minutes=15,  # Cluster creation time
