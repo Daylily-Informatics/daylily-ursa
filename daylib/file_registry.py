@@ -200,11 +200,13 @@ class BucketFileDiscovery:
     ) -> List[DiscoveredFile]:
         for discovered in discovered_files:
             try:
-                file_id = generate_file_id(discovered.s3_uri, customer_id)
-                existing = registry.get_file(file_id)
+                existing = registry.find_file_by_s3_uri(
+                    customer_id=customer_id,
+                    s3_uri=discovered.s3_uri,
+                )
                 if existing:
                     discovered.is_registered = True
-                    discovered.file_id = file_id
+                    discovered.file_id = existing.file_id
             except Exception as exc:
                 LOGGER.warning(
                     "Failed registration check for %s: %s",
@@ -229,13 +231,12 @@ class BucketFileDiscovery:
             if discovered.is_registered:
                 skipped += 1
                 continue
-            file_id = generate_file_id(discovered.s3_uri, customer_id)
             read_number = 2 if any(token in discovered.key for token in ("_R2", "_2.fastq", "_2.fq")) else 1
             registration = FileRegistration(
-                file_id=file_id,
+                file_id="",
                 customer_id=customer_id,
                 file_metadata=FileMetadata(
-                    file_id=file_id,
+                    file_id="",
                     s3_uri=discovered.s3_uri,
                     file_size_bytes=discovered.file_size_bytes,
                     md5_checksum=discovered.etag or None,
@@ -252,7 +253,7 @@ class BucketFileDiscovery:
                 if registry.register_file(registration):
                     registered += 1
                     discovered.is_registered = True
-                    discovered.file_id = file_id
+                    discovered.file_id = registration.file_id
                 else:
                     skipped += 1
             except Exception as exc:

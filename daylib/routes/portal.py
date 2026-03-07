@@ -45,7 +45,6 @@ from daylib.file_registry import (
     FileRegistration as _FileRegistration,
     SequencingMetadata as _SequencingMetadata,
     detect_file_format as _detect_file_format,
-    generate_file_id as _generate_file_id,
 )
 from daylib.search import search_portal
 from daylib.routes.dependencies import (
@@ -2339,7 +2338,6 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
 
             if auto_register and deps.file_registry:
                 s3_uri = f"s3://{bucket_obj.bucket_name}/{s3_key}"
-                file_id = _generate_file_id(s3_uri, customer_id)
                 content_length = 0
                 etag: Optional[str] = None
                 try:
@@ -2358,10 +2356,10 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
 
                 read_number = 2 if any(token in filename for token in ("_R2", "_2.fastq", "_2.fq")) else 1
                 registration = _FileRegistration(
-                    file_id=file_id,
+                    file_id="",
                     customer_id=customer_id,
                     file_metadata=_FileMetadata(
-                        file_id=file_id,
+                        file_id="",
                         s3_uri=s3_uri,
                         file_size_bytes=content_length,
                         md5_checksum=etag,
@@ -2381,7 +2379,7 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                     LOGGER.error(
                         "Portal upload registration returned False: customer_id=%s file_id=%s s3_uri=%s",
                         sanitize_for_log(customer_id),
-                        sanitize_for_log(file_id),
+                        sanitize_for_log(registration.file_id or ""),
                         sanitize_for_log(s3_uri),
                     )
                     raise HTTPException(
@@ -2389,7 +2387,7 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                         detail="Upload succeeded, but file registration failed. Use auto-register from linked buckets to recover.",
                     )
                 response_payload["registered"] = True
-                response_payload["file_id"] = file_id
+                response_payload["file_id"] = registration.file_id
             elif auto_register and not deps.file_registry:
                 LOGGER.warning(
                     "Portal upload auto-register requested but file registry is unavailable for customer_id=%s",

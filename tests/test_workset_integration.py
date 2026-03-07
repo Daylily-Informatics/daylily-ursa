@@ -3530,32 +3530,6 @@ class TestWorksetRetrySemantics:
         assert original["state"] == "error"
         assert original["error_details"] == "Pipeline failed"
 
-    def test_new_workset_id_has_different_datetime_suffix(self):
-        """Test that new workset ID has different datetime suffix."""
-        import re
-        import uuid
-        import datetime as dt
-
-        original_id = "my-analysis-abc12345-20250120"
-
-        # Extract base name
-        match = re.match(r"^(.+)-[a-f0-9]{8}-\d{8}$", original_id)
-        base_name = match.group(1)
-
-        # Generate new ID (simulating what the API does)
-        date_suffix = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d")
-        new_id = f"{base_name}-{uuid.uuid4().hex[:8]}-{date_suffix}"
-
-        # New ID should have same base name but different uuid and possibly different date
-        new_match = re.match(r"^(.+)-([a-f0-9]{8})-(\d{8})$", new_id)
-        assert new_match is not None
-        assert new_match.group(1) == base_name
-
-        # The uuid part should be different
-        original_uuid = "abc12345"
-        new_uuid = new_match.group(2)
-        assert new_uuid != original_uuid
-
     def test_update_metadata_method_merges_fields(self):
         """Test that update_metadata properly merges with existing metadata."""
         from daylib.workset_state_db import WorksetStateDB

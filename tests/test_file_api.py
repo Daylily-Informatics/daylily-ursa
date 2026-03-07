@@ -103,6 +103,17 @@ class TestFileRegistrationEndpoint:
     
     def test_register_file_success(self, client, mock_file_registry):
         """Test successful file registration."""
+        observed: dict[str, str] = {}
+
+        def register_file_side_effect(registration):
+            observed["file_id_before"] = registration.file_id
+            observed["file_metadata_id_before"] = registration.file_metadata.file_id
+            registration.file_id = "file-euid-001"
+            registration.file_metadata.file_id = "file-euid-001"
+            return True
+
+        mock_file_registry.register_file.side_effect = register_file_side_effect
+
         payload = {
             "file_metadata": {
                 "s3_uri": "s3://bucket/sample_R1.fastq.gz",
@@ -133,10 +144,13 @@ class TestFileRegistrationEndpoint:
         
         assert response.status_code == 200
         data = response.json()
+        assert data["file_id"] == "file-euid-001"
         assert data["customer_id"] == "cust-001"
         assert data["s3_uri"] == "s3://bucket/sample_R1.fastq.gz"
         assert data["subject_id"] == "HG002"
         assert data["status"] == "registered"
+        assert observed["file_id_before"] == ""
+        assert observed["file_metadata_id_before"] == ""
     
     def test_register_file_conflict(self, client, mock_file_registry):
         """Test registering a file that already exists."""
@@ -227,6 +241,15 @@ class TestCreateFilesetEndpoint:
     
     def test_create_fileset_success(self, client, mock_file_registry):
         """Test successful file set creation."""
+        observed: dict[str, str] = {}
+
+        def create_fileset_side_effect(fileset):
+            observed["fileset_id_before"] = fileset.fileset_id
+            fileset.fileset_id = "fs-euid-001"
+            return True
+
+        mock_file_registry.create_fileset.side_effect = create_fileset_side_effect
+
         payload = {
             "name": "HG002 WGS",
             "description": "Whole genome sequencing of HG002",
@@ -245,12 +268,20 @@ class TestCreateFilesetEndpoint:
         
         assert response.status_code == 200
         data = response.json()
+        assert data["fileset_id"] == "fs-euid-001"
         assert data["customer_id"] == "cust-001"
         assert data["name"] == "HG002 WGS"
         assert data["file_count"] == 2
+        assert observed["fileset_id_before"] == ""
     
     def test_create_fileset_minimal(self, client, mock_file_registry):
         """Test file set creation with minimal fields."""
+        def create_fileset_side_effect(fileset):
+            fileset.fileset_id = "fs-euid-002"
+            return True
+
+        mock_file_registry.create_fileset.side_effect = create_fileset_side_effect
+
         payload = {
             "name": "Test FileSet",
         }
@@ -262,6 +293,7 @@ class TestCreateFilesetEndpoint:
         
         assert response.status_code == 200
         data = response.json()
+        assert data["fileset_id"] == "fs-euid-002"
         assert data["name"] == "Test FileSet"
         assert data["file_count"] == 0
 
@@ -271,6 +303,22 @@ class TestBulkImportEndpoint:
     
     def test_bulk_import_success(self, client, mock_file_registry):
         """Test successful bulk import."""
+        seen_file_ids: list[tuple[str, str]] = []
+
+        def register_file_side_effect(registration):
+            seen_file_ids.append((registration.file_id, registration.file_metadata.file_id))
+            assigned_id = f"file-euid-{len(seen_file_ids):03d}"
+            registration.file_id = assigned_id
+            registration.file_metadata.file_id = assigned_id
+            return True
+
+        def create_fileset_side_effect(fileset):
+            fileset.fileset_id = "fs-euid-003"
+            return True
+
+        mock_file_registry.register_file.side_effect = register_file_side_effect
+        mock_file_registry.create_fileset.side_effect = create_fileset_side_effect
+
         payload = {
             "files": [
                 {
@@ -314,7 +362,8 @@ class TestBulkImportEndpoint:
         data = response.json()
         assert data["imported_count"] == 2
         assert data["failed_count"] == 0
-        assert data["fileset_id"] is not None
+        assert data["fileset_id"] == "fs-euid-003"
+        assert seen_file_ids == [("", ""), ("", "")]
     
     def test_bulk_import_partial_failure(self, client, mock_file_registry):
         """Test bulk import with some failures."""
@@ -1112,7 +1161,7 @@ class TestDeleteFileEndpoint:
         """Test successful file deletion."""
         mock_s3 = MagicMock()
         mock_session.return_value.client.return_value = mock_s3
-        mock_file_registry.get_file.return_value = None  # File not registered
+        mock_file_registry.find_file_by_s3_uri.return_value = None  # File not registered
 
         response = client_with_delete.delete(
             "/api/files/buckets/bucket-123/files?customer_id=cust-001&file_key=test-file.txt"
@@ -1124,7 +1173,7 @@ class TestDeleteFileEndpoint:
 
     def test_delete_registered_file_blocked(self, client_with_delete, mock_file_registry):
         """Test that registered files cannot be deleted."""
-        mock_file_registry.get_file.return_value = MagicMock()  # File is registered
+        mock_file_registry.find_file_by_s3_uri.return_value = MagicMock()  # File is registered
 
         response = client_with_delete.delete(
             "/api/files/buckets/bucket-123/files?customer_id=cust-001&file_key=registered-file.fastq.gz"

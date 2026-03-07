@@ -2370,7 +2370,17 @@ class TestPortalFileUpload:
     @pytest.fixture
     def mock_file_registry(self):
         registry = MagicMock()
-        registry.register_file.return_value = True
+        counter = {"value": 0}
+
+        def register_file_side_effect(registration):
+            counter["value"] += 1
+            if not registration.file_id:
+                assigned_id = f"file-euid-{counter['value']:03d}"
+                registration.file_id = assigned_id
+                registration.file_metadata.file_id = assigned_id
+            return True
+
+        registry.register_file.side_effect = register_file_side_effect
         return registry
 
     def _make_client_with_file_upload(
@@ -2531,7 +2541,7 @@ class TestPortalFileUpload:
         assert data["bucket"] == "test-linked-bucket"
         assert data["key"] == "foo/bar/hello.txt"
         assert data["registered"] is True
-        assert data["file_id"].startswith("file-")
+        assert data["file_id"] == "file-euid-001"
 
         assert mock_s3.upload_fileobj.call_count == 1
         _args, kwargs = mock_s3.upload_fileobj.call_args
@@ -2592,8 +2602,18 @@ class TestPortalFileAutoRegistration:
     def mock_file_registry(self):
         """Mock FileRegistry for registration tests."""
         registry = MagicMock()
-        registry.register_file.return_value = True
-        registry.get_file.return_value = None  # File not already registered
+        counter = {"value": 0}
+
+        def register_file_side_effect(registration):
+            counter["value"] += 1
+            if not registration.file_id:
+                assigned_id = f"file-euid-{counter['value']:03d}"
+                registration.file_id = assigned_id
+                registration.file_metadata.file_id = assigned_id
+            return True
+
+        registry.register_file.side_effect = register_file_side_effect
+        registry.find_file_by_s3_uri.return_value = None  # File not already registered
         return registry
 
     @pytest.fixture
@@ -2659,6 +2679,8 @@ class TestPortalFileAutoRegistration:
         assert skipped == 0
         assert len(errors) == 0
         assert mock_file_registry.register_file.call_count == 2
+        assert mock_bucket_discovery[0].file_id == "file-euid-001"
+        assert mock_bucket_discovery[1].file_id == "file-euid-002"
 
     def test_auto_register_files_skips_already_registered(self, mock_file_registry, mock_bucket_discovery):
         """Test that already-registered files are skipped."""
@@ -2702,10 +2724,12 @@ class TestPortalFileAutoRegistration:
 
         # R1 file should have read_number=1
         r1_registration = calls[0][0][0]  # First positional arg of first call
+        assert r1_registration.file_id == "file-euid-001"
         assert r1_registration.read_number == 1
 
         # R2 file should have read_number=2
         r2_registration = calls[1][0][0]
+        assert r2_registration.file_id == "file-euid-002"
         assert r2_registration.read_number == 2
 
     def test_auto_register_handles_registration_failure(self, mock_file_registry, mock_bucket_discovery):
@@ -2748,6 +2772,7 @@ class TestPortalFileAutoRegistration:
         call = mock_file_registry.register_file.call_args_list[0]
         registration = call[0][0]
 
+        assert registration.file_metadata.file_id == "file-euid-001"
         assert registration.customer_id == "cust-001"
         assert registration.biosample_metadata.biosample_id == "my-biosample"
         assert registration.biosample_metadata.subject_id == "HG002"
