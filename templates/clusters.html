@@ -74,6 +74,132 @@
         Scanning regions: <strong>{{ regions | join(', ') }}</strong>
     </div>
 
+    {% if is_admin %}
+    <div class="mb-lg d-flex justify-end">
+        <button class="btn btn-primary" data-testid="create-cluster-toggle" onclick="toggleCreateClusterPanel()">
+            <i class="fas fa-plus-circle"></i> Create Cluster
+        </button>
+    </div>
+
+    <!-- Create Cluster (admin-only) -->
+    <details class="card mb-xl" id="create-cluster-panel" data-testid="create-cluster-panel" {% if create_mode %}open{% endif %}>
+        <summary class="card-header cursor-pointer d-flex justify-between align-center">
+            <div>
+                <h3 class="card-title" style="margin-bottom: 0.25rem;">
+                    <i class="fas fa-plus-circle"></i> Create Cluster
+                </h3>
+                <div class="text-sm text-muted">Runs <code>daylily-ec create</code> as a background job and streams logs</div>
+            </div>
+            <span class="badge badge-sm" style="background: var(--color-bg-secondary);">Admin only</span>
+        </summary>
+        <div class="card-body">
+            <div class="grid grid-2 gap-lg">
+                <div>
+                    <label class="form-label">Region</label>
+                    <select class="form-select" id="cc-region">
+                        <option value="">Select region</option>
+                        {% for r in regions %}
+                        <option value="{{ r }}" {% if prefill_region == r %}selected{% endif %}>{{ r }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div>
+                    <label class="form-label">Availability Zone Suffix</label>
+                    <select class="form-select" id="cc-az-suffix">
+                        <option value="a">a</option>
+                        <option value="b">b</option>
+                        <option value="c">c</option>
+                        <option value="d">d</option>
+                    </select>
+                    <div class="text-xs text-muted mt-xs">Example: <code>us-west-2</code> + <code>a</code> => <code>us-west-2a</code></div>
+                </div>
+                <div>
+                    <label class="form-label">Cluster Name</label>
+                    <input class="form-input" id="cc-cluster-name" type="text" placeholder="daylily-1700000000" />
+                    <div class="text-xs text-muted mt-xs">Must start with a letter; letters/numbers/hyphen only; max 60 chars.</div>
+                </div>
+                <div>
+                    <label class="form-label">Config Path (Optional)</label>
+                    <input class="form-input" id="cc-config-path" type="text" placeholder="~/.config/daylily-ec/config.yaml" />
+                    <div class="text-xs text-muted mt-xs">If set, Ursa will use this config as-is (no generation).</div>
+                </div>
+                <div>
+                    <label class="form-label">SSH Keypair</label>
+                    <select class="form-select" id="cc-ssh-key-select" onchange="syncManualField('cc-ssh-key-select', 'cc-ssh-key')">
+                        <option value="">Select keypair (or type below)</option>
+                    </select>
+                    <input class="form-input mt-xs" id="cc-ssh-key" type="text" placeholder="lsmc-omics-us-west-2" />
+                </div>
+                <div>
+                    <label class="form-label">S3 Bucket Name</label>
+                    <select class="form-select" id="cc-s3-bucket-select" onchange="syncManualField('cc-s3-bucket-select', 'cc-s3-bucket')">
+                        <option value="">Select bucket (or type below)</option>
+                    </select>
+                    <input class="form-input mt-xs" id="cc-s3-bucket" type="text" placeholder="omics-analysis-..." />
+                </div>
+            </div>
+            <div class="d-flex gap-lg align-center mt-md flex-wrap">
+                <label class="d-flex align-center gap-sm text-sm">
+                    <input type="checkbox" id="cc-pass-on-warn" />
+                    <span>Pass on warning</span>
+                </label>
+                <label class="d-flex align-center gap-sm text-sm">
+                    <input type="checkbox" id="cc-debug" />
+                    <span>Debug</span>
+                </label>
+            </div>
+            <div class="d-flex gap-md mt-md flex-wrap">
+                <button class="btn btn-outline" onclick="loadCreateOptions()" id="cc-load-options-btn" title="Fetch keypairs and buckets for the selected region">
+                    <i class="fas fa-cloud-download-alt"></i> Load Keypairs & Buckets
+                </button>
+                <button class="btn btn-primary" onclick="createCluster()" id="cc-submit-btn">
+                    <i class="fas fa-play"></i> Start Create Job
+                </button>
+            </div>
+            <div class="text-xs text-muted mt-sm">
+                Jobs are stored under <code>~/.ursa/cluster-create/</code> on the Ursa server host.
+            </div>
+        </div>
+    </details>
+
+    <div class="card mb-xl" id="cluster-create-jobs-card">
+        <div class="card-header d-flex justify-between align-center flex-wrap gap-md">
+            <div>
+                <h3 class="card-title" style="margin-bottom: 0.25rem;">
+                    <i class="fas fa-list"></i> Recent Cluster Create Jobs
+                </h3>
+                <div class="text-sm text-muted">View background job status and logs</div>
+            </div>
+            <button class="btn btn-outline btn-sm" onclick="refreshCreateJobs()">
+                <i class="fas fa-sync-alt"></i> Refresh Jobs
+            </button>
+        </div>
+        <div class="card-body">
+            <div id="cluster-create-jobs-empty" class="text-muted text-sm">Loading…</div>
+            <div class="table-wrapper" style="overflow-x: auto;">
+                <table class="table" id="cluster-create-jobs-table" style="display: none;">
+                    <thead>
+                        <tr>
+                            <th>Job ID</th>
+                            <th>Cluster</th>
+                            <th>Region/AZ</th>
+                            <th>Status</th>
+                            <th>Return</th>
+                            <th>Created</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody id="cluster-create-jobs-tbody"></tbody>
+                </table>
+            </div>
+            <details class="mt-md" id="cluster-create-log-viewer" style="display: none;">
+                <summary class="cursor-pointer text-sm text-muted">Job Logs</summary>
+                <pre class="mt-sm" id="cluster-create-log-text" style="max-height: 300px; overflow: auto; background: var(--color-bg-secondary); padding: 0.75rem; border-radius: 0.5rem;"></pre>
+            </details>
+        </div>
+    </div>
+    {% endif %}
+
     <!-- Clusters Grid -->
     {% if clusters %}
     <div class="grid grid-2 mb-xl" id="clusters-grid">
@@ -525,6 +651,264 @@ async function refreshClusters() {
     }
 }
 
+function toggleCreateClusterPanel() {
+    const panel = document.getElementById('create-cluster-panel');
+    if (!panel) return;
+    panel.open = !panel.open;
+    if (panel.open) {
+        panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+}
+
+function syncManualField(selectId, inputId) {
+    const selectEl = document.getElementById(selectId);
+    const inputEl = document.getElementById(inputId);
+    if (!selectEl || !inputEl) return;
+    if (selectEl.value) {
+        inputEl.value = selectEl.value;
+    }
+}
+
+async function loadCreateOptions() {
+    const regionEl = document.getElementById('cc-region');
+    const keySelect = document.getElementById('cc-ssh-key-select');
+    const bucketSelect = document.getElementById('cc-s3-bucket-select');
+
+    if (!regionEl || !keySelect || !bucketSelect) return;
+    const region = (regionEl.value || '').trim();
+    if (!region) {
+        showToast('Select a region first', 'error');
+        return;
+    }
+
+    const btn = document.getElementById('cc-load-options-btn');
+    const originalHtml = btn ? btn.innerHTML : null;
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Loading…';
+    }
+
+    try {
+        const resp = await fetch(`/api/clusters/create/options?region=${encodeURIComponent(region)}`);
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) {
+            const detail = data.detail || data.error || 'Failed to load options';
+            showToast(detail, 'error');
+            return;
+        }
+
+        const keypairs = Array.isArray(data.keypairs) ? data.keypairs : [];
+        const buckets = Array.isArray(data.buckets) ? data.buckets : [];
+
+        keySelect.innerHTML = '<option value="">Select keypair (or type below)</option>';
+        keypairs.forEach(k => {
+            const opt = document.createElement('option');
+            opt.value = k;
+            opt.textContent = k;
+            keySelect.appendChild(opt);
+        });
+
+        bucketSelect.innerHTML = '<option value="">Select bucket (or type below)</option>';
+        buckets.forEach(b => {
+            const opt = document.createElement('option');
+            opt.value = b;
+            opt.textContent = b;
+            bucketSelect.appendChild(opt);
+        });
+
+        showToast('Options loaded', 'success');
+    } catch (e) {
+        showToast(`Failed to load options: ${e.message || e}`, 'error');
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = originalHtml;
+        }
+    }
+}
+
+async function createCluster() {
+    const regionEl = document.getElementById('cc-region');
+    const azEl = document.getElementById('cc-az-suffix');
+    const nameEl = document.getElementById('cc-cluster-name');
+    const keyEl = document.getElementById('cc-ssh-key');
+    const bucketEl = document.getElementById('cc-s3-bucket');
+    const cfgEl = document.getElementById('cc-config-path');
+    const passOnWarnEl = document.getElementById('cc-pass-on-warn');
+    const debugEl = document.getElementById('cc-debug');
+
+    if (!regionEl || !azEl || !nameEl || !keyEl || !bucketEl) return;
+
+    const region = (regionEl.value || '').trim();
+    const azSuffix = (azEl.value || '').trim();
+    const regionAz = region && azSuffix ? `${region}${azSuffix}` : '';
+    const clusterName = (nameEl.value || '').trim();
+    const sshKeyName = (keyEl.value || '').trim();
+    const s3BucketName = (bucketEl.value || '').trim();
+    const configPath = cfgEl ? (cfgEl.value || '').trim() : '';
+
+    if (!regionAz) {
+        showToast('Select a region and AZ suffix', 'error');
+        return;
+    }
+    if (!clusterName) {
+        showToast('Cluster name is required', 'error');
+        return;
+    }
+    if (!sshKeyName) {
+        showToast('SSH keypair is required', 'error');
+        return;
+    }
+    if (!s3BucketName) {
+        showToast('S3 bucket name is required', 'error');
+        return;
+    }
+
+    const payload = {
+        region_az: regionAz,
+        cluster_name: clusterName,
+        ssh_key_name: sshKeyName,
+        s3_bucket_name: s3BucketName,
+        config_path: configPath || null,
+        pass_on_warn: !!(passOnWarnEl && passOnWarnEl.checked),
+        debug: !!(debugEl && debugEl.checked),
+    };
+
+    const btn = document.getElementById('cc-submit-btn');
+    const originalHtml = btn ? btn.innerHTML : null;
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Starting…';
+    }
+
+    try {
+        const resp = await fetch('/api/clusters/create', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) {
+            const detail = data.detail || data.error || 'Failed to start cluster create job';
+            showToast(detail, 'error');
+            return;
+        }
+
+        showToast(`Cluster create job started: ${data.job_id}`, 'success');
+        await refreshCreateJobs();
+        await viewCreateJobLogs(data.job_id);
+    } catch (e) {
+        showToast(`Failed to start cluster create job: ${e.message || e}`, 'error');
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = originalHtml;
+        }
+    }
+}
+
+async function refreshCreateJobs() {
+    const emptyEl = document.getElementById('cluster-create-jobs-empty');
+    const tableEl = document.getElementById('cluster-create-jobs-table');
+    const tbodyEl = document.getElementById('cluster-create-jobs-tbody');
+
+    if (!emptyEl || !tableEl || !tbodyEl) return;
+
+    emptyEl.style.display = '';
+    emptyEl.textContent = 'Loading…';
+    tableEl.style.display = 'none';
+    tbodyEl.innerHTML = '';
+
+    try {
+        const resp = await fetch('/api/clusters/create/jobs?limit=20');
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) {
+            const detail = data.detail || data.error || 'Failed to load jobs';
+            emptyEl.textContent = detail;
+            return;
+        }
+
+        const jobs = Array.isArray(data.jobs) ? data.jobs : [];
+        if (!jobs.length) {
+            emptyEl.textContent = 'No create jobs yet.';
+            return;
+        }
+
+        jobs.forEach(job => {
+            const tr = document.createElement('tr');
+
+            const jobId = String(job.job_id || '');
+            const status = String(job.status || '');
+            const returnCode = job.return_code === null || job.return_code === undefined ? '' : String(job.return_code);
+            const createdAt = String(job.created_at || '');
+
+            const tdJobId = document.createElement('td');
+            tdJobId.textContent = jobId;
+            tr.appendChild(tdJobId);
+
+            const tdCluster = document.createElement('td');
+            tdCluster.textContent = String(job.cluster_name || '');
+            tr.appendChild(tdCluster);
+
+            const tdRegionAz = document.createElement('td');
+            tdRegionAz.textContent = String(job.region_az || '');
+            tr.appendChild(tdRegionAz);
+
+            const tdStatus = document.createElement('td');
+            tdStatus.textContent = status;
+            tr.appendChild(tdStatus);
+
+            const tdRc = document.createElement('td');
+            tdRc.textContent = returnCode;
+            tr.appendChild(tdRc);
+
+            const tdCreated = document.createElement('td');
+            tdCreated.textContent = createdAt ? createdAt.slice(0, 19) : '';
+            tr.appendChild(tdCreated);
+
+            const tdActions = document.createElement('td');
+            const btn = document.createElement('button');
+            btn.className = 'btn btn-outline btn-sm';
+            btn.textContent = 'View logs';
+            btn.onclick = () => viewCreateJobLogs(jobId);
+            tdActions.appendChild(btn);
+            tr.appendChild(tdActions);
+
+            tbodyEl.appendChild(tr);
+        });
+
+        emptyEl.style.display = 'none';
+        tableEl.style.display = '';
+    } catch (e) {
+        emptyEl.textContent = `Failed to load jobs: ${e.message || e}`;
+    }
+}
+
+async function viewCreateJobLogs(jobId) {
+    if (!jobId) return;
+    const viewer = document.getElementById('cluster-create-log-viewer');
+    const pre = document.getElementById('cluster-create-log-text');
+    if (!viewer || !pre) return;
+
+    viewer.style.display = '';
+    viewer.open = true;
+    pre.textContent = 'Loading…';
+
+    try {
+        const resp = await fetch(`/api/clusters/create/jobs/${encodeURIComponent(jobId)}/logs?lines=200`);
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) {
+            const detail = data.detail || data.error || 'Failed to load logs';
+            pre.textContent = detail;
+            return;
+        }
+        pre.textContent = data.log || '';
+        viewer.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } catch (e) {
+        pre.textContent = `Failed to load logs: ${e.message || e}`;
+    }
+}
+
 async function deleteCluster(buttonEl) {
     if (!buttonEl) return;
 
@@ -612,22 +996,38 @@ function copySSHCommand(elementId) {
     });
 }
 
-// Expand/collapse job lists
-document.querySelectorAll('.expand-jobs-link').forEach(link => {
-    link.addEventListener('click', function() {
-        const clusterName = this.dataset.cluster;
-        const hiddenRows = document.querySelectorAll(`.job-row-hidden[data-cluster="${clusterName}"]`);
-        const expandText = this.querySelector('.expand-text');
-        const collapseText = this.querySelector('.collapse-text');
+document.addEventListener('DOMContentLoaded', () => {
+    const clusterNameEl = document.getElementById('cc-cluster-name');
+    if (clusterNameEl && !clusterNameEl.value) {
+        clusterNameEl.value = `daylily-${Math.floor(Date.now() / 1000)}`;
+    }
 
-        const isExpanded = hiddenRows[0]?.style.display !== 'none';
+    const createPanel = document.getElementById('create-cluster-panel');
+    const regionEl = document.getElementById('cc-region');
+    if (createPanel && createPanel.open && regionEl && regionEl.value) {
+        loadCreateOptions();
+    }
 
-        hiddenRows.forEach(row => {
-            row.style.display = isExpanded ? 'none' : '';
+    if (document.getElementById('cluster-create-jobs-card')) {
+        refreshCreateJobs();
+    }
+
+    document.querySelectorAll('.expand-jobs-link').forEach(link => {
+        link.addEventListener('click', function() {
+            const clusterName = this.dataset.cluster;
+            const hiddenRows = document.querySelectorAll(`.job-row-hidden[data-cluster="${clusterName}"]`);
+            const expandText = this.querySelector('.expand-text');
+            const collapseText = this.querySelector('.collapse-text');
+
+            const isExpanded = hiddenRows[0]?.style.display !== 'none';
+
+            hiddenRows.forEach(row => {
+                row.style.display = isExpanded ? 'none' : '';
+            });
+
+            expandText.style.display = isExpanded ? '' : 'none';
+            collapseText.style.display = isExpanded ? 'none' : '';
         });
-
-        expandText.style.display = isExpanded ? '' : 'none';
-        collapseText.style.display = isExpanded ? 'none' : '';
     });
 });
 </script>
