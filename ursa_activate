@@ -167,6 +167,21 @@ if [ "$_URSA_ACTIVATE_OK" -eq 1 ]; then
             ;;
     esac
 
+    # Ensure this checkout wins over any stale site-packages copy when
+    # console scripts like `ursa` import `daylib`.
+    case ":${PYTHONPATH}:" in
+        *":${SCRIPT_DIR}:"*)
+            ;;
+        *)
+            if [ -n "${PYTHONPATH}" ]; then
+                export PYTHONPATH="${SCRIPT_DIR}:${PYTHONPATH}"
+            else
+                export PYTHONPATH="${SCRIPT_DIR}"
+            fi
+            log_success "Added ${SCRIPT_DIR} to PYTHONPATH"
+            ;;
+    esac
+
     # ========== Install Package in Development Mode ==========
     log_info "Installing ursa in development mode..."
     if pip install -e "${SCRIPT_DIR}" -q 2>/dev/null; then
