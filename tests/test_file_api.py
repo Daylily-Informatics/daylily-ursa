@@ -1219,7 +1219,7 @@ class TestUpdateFileMetadataEndpoint:
         mock_file_registry_with_get.update_file.assert_called_once()
         call_kwargs = mock_file_registry_with_get.update_file.call_args[1]
         assert call_kwargs["file_id"] == "file-001"
-        assert call_kwargs["file_metadata"]["md5_checksum"] == "new_md5_hash_123456"
+        assert call_kwargs["updates"]["file_metadata"]["md5_checksum"] == "new_md5_hash_123456"
 
     def test_update_file_metadata_file_format(self, client_with_update, mock_file_registry_with_get):
         """Test updating file format in file metadata."""
@@ -1236,7 +1236,7 @@ class TestUpdateFileMetadataEndpoint:
 
         assert response.status_code == 200
         call_kwargs = mock_file_registry_with_get.update_file.call_args[1]
-        assert call_kwargs["file_metadata"]["file_format"] == "bam"
+        assert call_kwargs["updates"]["file_metadata"]["file_format"] == "bam"
 
     def test_update_file_metadata_multiple_fields(self, client_with_update, mock_file_registry_with_get):
         """Test updating multiple file metadata fields at once."""
@@ -1254,8 +1254,8 @@ class TestUpdateFileMetadataEndpoint:
 
         assert response.status_code == 200
         call_kwargs = mock_file_registry_with_get.update_file.call_args[1]
-        assert call_kwargs["file_metadata"]["md5_checksum"] == "new_md5_hash"
-        assert call_kwargs["file_metadata"]["file_format"] == "bam"
+        assert call_kwargs["updates"]["file_metadata"]["md5_checksum"] == "new_md5_hash"
+        assert call_kwargs["updates"]["file_metadata"]["file_format"] == "bam"
 
 
 class TestFileDownloadEndpoint:
@@ -1458,7 +1458,7 @@ class TestAddFileToFilesetEndpoint:
 
         assert response.status_code == 200
         call_kwargs = mock_file_registry_with_get.update_file.call_args[1]
-        assert call_kwargs["biosample_metadata"]["biosample_id"] == "bio-updated"
+        assert call_kwargs["updates"]["biosample_metadata"]["biosample_id"] == "bio-updated"
 
     def test_update_biosample_metadata_subject_id(self, client_with_update, mock_file_registry_with_get):
         """Test updating subject ID."""
@@ -1475,7 +1475,7 @@ class TestAddFileToFilesetEndpoint:
 
         assert response.status_code == 200
         call_kwargs = mock_file_registry_with_get.update_file.call_args[1]
-        assert call_kwargs["biosample_metadata"]["subject_id"] == "HG003"
+        assert call_kwargs["updates"]["biosample_metadata"]["subject_id"] == "HG003"
 
     def test_update_biosample_metadata_sample_type(self, client_with_update, mock_file_registry_with_get):
         """Test updating sample type."""
@@ -1492,7 +1492,7 @@ class TestAddFileToFilesetEndpoint:
 
         assert response.status_code == 200
         call_kwargs = mock_file_registry_with_get.update_file.call_args[1]
-        assert call_kwargs["biosample_metadata"]["sample_type"] == "tissue"
+        assert call_kwargs["updates"]["biosample_metadata"]["sample_type"] == "tissue"
 
     def test_update_biosample_metadata_all_fields(self, client_with_update, mock_file_registry_with_get):
         """Test updating all biosample metadata fields."""
@@ -1515,7 +1515,7 @@ class TestAddFileToFilesetEndpoint:
 
         assert response.status_code == 200
         call_kwargs = mock_file_registry_with_get.update_file.call_args[1]
-        bio_meta = call_kwargs["biosample_metadata"]
+        bio_meta = call_kwargs["updates"]["biosample_metadata"]
         assert bio_meta["biosample_id"] == "bio-new"
         assert bio_meta["subject_id"] == "HG004"
         assert bio_meta["sample_type"] == "saliva"
@@ -1539,7 +1539,7 @@ class TestAddFileToFilesetEndpoint:
 
         assert response.status_code == 200
         call_kwargs = mock_file_registry_with_get.update_file.call_args[1]
-        assert call_kwargs["sequencing_metadata"]["platform"] == "ILLUMINA_HISEQ"
+        assert call_kwargs["updates"]["sequencing_metadata"]["platform"] == "ILLUMINA_HISEQ"
 
     def test_update_sequencing_metadata_vendor(self, client_with_update, mock_file_registry_with_get):
         """Test updating sequencing vendor."""
@@ -1556,7 +1556,7 @@ class TestAddFileToFilesetEndpoint:
 
         assert response.status_code == 200
         call_kwargs = mock_file_registry_with_get.update_file.call_args[1]
-        assert call_kwargs["sequencing_metadata"]["vendor"] == "10X"
+        assert call_kwargs["updates"]["sequencing_metadata"]["vendor"] == "10X"
 
     def test_update_sequencing_metadata_run_id(self, client_with_update, mock_file_registry_with_get):
         """Test updating run ID."""
@@ -1573,7 +1573,7 @@ class TestAddFileToFilesetEndpoint:
 
         assert response.status_code == 200
         call_kwargs = mock_file_registry_with_get.update_file.call_args[1]
-        assert call_kwargs["sequencing_metadata"]["run_id"] == "run-new-123"
+        assert call_kwargs["updates"]["sequencing_metadata"]["run_id"] == "run-new-123"
 
     def test_update_sequencing_metadata_lane(self, client_with_update, mock_file_registry_with_get):
         """Test updating lane number."""
@@ -1590,7 +1590,7 @@ class TestAddFileToFilesetEndpoint:
 
         assert response.status_code == 200
         call_kwargs = mock_file_registry_with_get.update_file.call_args[1]
-        assert call_kwargs["sequencing_metadata"]["lane"] == 3
+        assert call_kwargs["updates"]["sequencing_metadata"]["lane"] == 3
 
     def test_update_sequencing_metadata_barcode_id(self, client_with_update, mock_file_registry_with_get):
         """Test updating barcode ID."""
@@ -1607,7 +1607,7 @@ class TestAddFileToFilesetEndpoint:
 
         assert response.status_code == 200
         call_kwargs = mock_file_registry_with_get.update_file.call_args[1]
-        assert call_kwargs["sequencing_metadata"]["barcode_id"] == "S42"
+        assert call_kwargs["updates"]["sequencing_metadata"]["barcode_id"] == "S42"
 
     def test_update_sequencing_metadata_flowcell_id(self, client_with_update, mock_file_registry_with_get):
         """Test updating flowcell ID."""
@@ -1624,7 +1624,7 @@ class TestAddFileToFilesetEndpoint:
 
         assert response.status_code == 200
         call_kwargs = mock_file_registry_with_get.update_file.call_args[1]
-        assert call_kwargs["sequencing_metadata"]["flowcell_id"] == "FLOWCELL123"
+        assert call_kwargs["updates"]["sequencing_metadata"]["flowcell_id"] == "FLOWCELL123"
 
     def test_update_sequencing_metadata_run_date(self, client_with_update, mock_file_registry_with_get):
         """Test updating run date."""
@@ -1641,7 +1641,7 @@ class TestAddFileToFilesetEndpoint:
 
         assert response.status_code == 200
         call_kwargs = mock_file_registry_with_get.update_file.call_args[1]
-        assert call_kwargs["sequencing_metadata"]["run_date"] == "2024-01-15"
+        assert call_kwargs["updates"]["sequencing_metadata"]["run_date"] == "2024-01-15"
 
     def test_update_sequencing_metadata_all_fields(self, client_with_update, mock_file_registry_with_get):
         """Test updating all sequencing metadata fields."""
@@ -1664,7 +1664,7 @@ class TestAddFileToFilesetEndpoint:
 
         assert response.status_code == 200
         call_kwargs = mock_file_registry_with_get.update_file.call_args[1]
-        seq_meta = call_kwargs["sequencing_metadata"]
+        seq_meta = call_kwargs["updates"]["sequencing_metadata"]
         assert seq_meta["platform"] == "ILLUMINA_HISEQ"
         assert seq_meta["vendor"] == "ILMN"
         assert seq_meta["run_id"] == "run-updated"
@@ -1686,7 +1686,7 @@ class TestAddFileToFilesetEndpoint:
 
         assert response.status_code == 200
         call_kwargs = mock_file_registry_with_get.update_file.call_args[1]
-        assert call_kwargs["read_number"] == 2
+        assert call_kwargs["updates"]["read_number"] == 2
 
     def test_update_paired_with(self, client_with_update, mock_file_registry_with_get):
         """Test updating paired file reference."""
@@ -1701,7 +1701,7 @@ class TestAddFileToFilesetEndpoint:
 
         assert response.status_code == 200
         call_kwargs = mock_file_registry_with_get.update_file.call_args[1]
-        assert call_kwargs["paired_with"] == "file-002"
+        assert call_kwargs["updates"]["paired_with"] == "file-002"
 
     def test_update_quality_score(self, client_with_update, mock_file_registry_with_get):
         """Test updating quality score."""
@@ -1716,7 +1716,7 @@ class TestAddFileToFilesetEndpoint:
 
         assert response.status_code == 200
         call_kwargs = mock_file_registry_with_get.update_file.call_args[1]
-        assert call_kwargs["quality_score"] == 38.5
+        assert call_kwargs["updates"]["quality_score"] == 38.5
 
     def test_update_percent_q30(self, client_with_update, mock_file_registry_with_get):
         """Test updating percent Q30."""
@@ -1731,7 +1731,7 @@ class TestAddFileToFilesetEndpoint:
 
         assert response.status_code == 200
         call_kwargs = mock_file_registry_with_get.update_file.call_args[1]
-        assert call_kwargs["percent_q30"] == 92.5
+        assert call_kwargs["updates"]["percent_q30"] == 92.5
 
     def test_update_is_positive_control(self, client_with_update, mock_file_registry_with_get):
         """Test updating positive control flag."""
@@ -1746,7 +1746,7 @@ class TestAddFileToFilesetEndpoint:
 
         assert response.status_code == 200
         call_kwargs = mock_file_registry_with_get.update_file.call_args[1]
-        assert call_kwargs["is_positive_control"] is True
+        assert call_kwargs["updates"]["is_positive_control"] is True
 
     def test_update_is_negative_control(self, client_with_update, mock_file_registry_with_get):
         """Test updating negative control flag."""
@@ -1761,7 +1761,7 @@ class TestAddFileToFilesetEndpoint:
 
         assert response.status_code == 200
         call_kwargs = mock_file_registry_with_get.update_file.call_args[1]
-        assert call_kwargs["is_negative_control"] is True
+        assert call_kwargs["updates"]["is_negative_control"] is True
 
     def test_update_tags(self, client_with_update, mock_file_registry_with_get):
         """Test updating tags."""
@@ -1776,7 +1776,7 @@ class TestAddFileToFilesetEndpoint:
 
         assert response.status_code == 200
         call_kwargs = mock_file_registry_with_get.update_file.call_args[1]
-        assert call_kwargs["tags"] == ["wgs", "high-quality", "validated"]
+        assert call_kwargs["updates"]["tags"] == ["wgs", "high-quality", "validated"]
 
     def test_update_all_fields_together(self, client_with_update, mock_file_registry_with_get):
         """Test updating all metadata fields at once."""
@@ -1814,18 +1814,18 @@ class TestAddFileToFilesetEndpoint:
 
         # Verify all fields were passed
         assert call_kwargs["file_id"] == "file-001"
-        assert call_kwargs["file_metadata"]["md5_checksum"] == "new_md5"
-        assert call_kwargs["file_metadata"]["file_format"] == "bam"
-        assert call_kwargs["biosample_metadata"]["biosample_id"] == "bio-new"
-        assert call_kwargs["biosample_metadata"]["subject_id"] == "HG005"
-        assert call_kwargs["sequencing_metadata"]["platform"] == "ILLUMINA_HISEQ"
-        assert call_kwargs["read_number"] == 2
-        assert call_kwargs["paired_with"] == "file-002"
-        assert call_kwargs["quality_score"] == 40.0
-        assert call_kwargs["percent_q30"] == 95.0
-        assert call_kwargs["is_positive_control"] is False
-        assert call_kwargs["is_negative_control"] is False
-        assert call_kwargs["tags"] == ["wgs", "validated"]
+        assert call_kwargs["updates"]["file_metadata"]["md5_checksum"] == "new_md5"
+        assert call_kwargs["updates"]["file_metadata"]["file_format"] == "bam"
+        assert call_kwargs["updates"]["biosample_metadata"]["biosample_id"] == "bio-new"
+        assert call_kwargs["updates"]["biosample_metadata"]["subject_id"] == "HG005"
+        assert call_kwargs["updates"]["sequencing_metadata"]["platform"] == "ILLUMINA_HISEQ"
+        assert call_kwargs["updates"]["read_number"] == 2
+        assert call_kwargs["updates"]["paired_with"] == "file-002"
+        assert call_kwargs["updates"]["quality_score"] == 40.0
+        assert call_kwargs["updates"]["percent_q30"] == 95.0
+        assert call_kwargs["updates"]["is_positive_control"] is False
+        assert call_kwargs["updates"]["is_negative_control"] is False
+        assert call_kwargs["updates"]["tags"] == ["wgs", "validated"]
 
     def test_update_file_not_found(self, client_with_update, mock_file_registry_with_get):
         """Test updating a file that doesn't exist."""
@@ -1877,6 +1877,7 @@ class TestAddFileToFilesetEndpoint:
         mock_file_registry_with_get.update_file.assert_called_once()
         call_kwargs = mock_file_registry_with_get.update_file.call_args[1]
         assert call_kwargs["file_id"] == "file-001"
+        assert call_kwargs["updates"] == {}
 
 
 class TestManifestGenerationEndpoints:

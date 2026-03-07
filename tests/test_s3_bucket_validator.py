@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from daylib.s3_bucket_validator import BucketValidationResult, LinkedBucketManager
+from daylib.s3_bucket_validator import BucketValidationResult, LinkedBucketManager, S3BucketValidator
 
 
 class _SessionCtx:
@@ -75,4 +75,31 @@ def test_link_bucket_skips_validation_when_disabled():
     assert bucket.can_write is False
     assert bucket.can_list is False
     mgr.validator.validate_bucket.assert_not_called()
+
+
+def test_generate_iam_policy_for_bucket_includes_write_actions_by_default():
+    validator = S3BucketValidator.__new__(S3BucketValidator)
+
+    policy = validator.generate_iam_policy_for_bucket("my-bucket")
+
+    assert policy["Version"] == "2012-10-17"
+    assert policy["Statement"][0]["Action"] == ["s3:ListBucket"]
+    assert policy["Statement"][0]["Resource"] == "arn:aws:s3:::my-bucket"
+    assert policy["Statement"][1]["Resource"] == "arn:aws:s3:::my-bucket/*"
+    assert "s3:GetObject" in policy["Statement"][1]["Action"]
+    assert "s3:PutObject" in policy["Statement"][1]["Action"]
+    assert "s3:DeleteObject" in policy["Statement"][1]["Action"]
+
+
+def test_generate_iam_policy_for_bucket_omits_write_actions_when_read_only():
+    validator = S3BucketValidator.__new__(S3BucketValidator)
+
+    policy = validator.generate_iam_policy_for_bucket("my-bucket", read_only=True)
+
+    assert policy["Statement"][1]["Resource"] == "arn:aws:s3:::my-bucket/*"
+    assert policy["Statement"][1]["Action"] == [
+        "s3:GetObject",
+        "s3:GetObjectVersion",
+        "s3:GetObjectTagging",
+    ]
 

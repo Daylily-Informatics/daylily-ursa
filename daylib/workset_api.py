@@ -591,6 +591,9 @@ def create_app(
     # Setup templates directory
     templates_dir = Path(__file__).parent.parent / "templates"
     static_dir = Path(__file__).parent.parent / "static"
+    cw_router: Optional[APIRouter] = None
+    dash_router: Optional[APIRouter] = None
+    billing_router: Optional[APIRouter] = None
 
     if templates_dir.exists():
         templates = Jinja2Templates(directory=str(templates_dir))
@@ -627,50 +630,51 @@ def create_app(
         app.include_router(portal_router)
         LOGGER.info("Portal routes registered via create_portal_router")
 
-        # Customer workset routes (extracted from this file)
-        from daylib.routes.customer_worksets import (
-            create_customer_worksets_router,
-            CustomerWorksetDependencies,
-        )
-        cw_deps = CustomerWorksetDependencies(
-            state_db=state_db,
-            settings=settings,
-            customer_manager=customer_manager,
-            integration=integration,
-            manifest_registry=manifest_registry,
-            get_current_user=get_current_user,
-        )
-        cw_router = create_customer_worksets_router(cw_deps)
-        app.include_router(cw_router)
-        LOGGER.info("Customer workset routes registered via create_customer_worksets_router")
+        if customer_manager is not None:
+            # Customer workset routes (extracted from this file)
+            from daylib.routes.customer_worksets import (
+                create_customer_worksets_router,
+                CustomerWorksetDependencies,
+            )
+            cw_deps = CustomerWorksetDependencies(
+                state_db=state_db,
+                settings=settings,
+                customer_manager=customer_manager,
+                integration=integration,
+                manifest_registry=manifest_registry,
+                get_current_user=get_current_user,
+            )
+            cw_router = create_customer_worksets_router(cw_deps)
+            app.include_router(cw_router)
+            LOGGER.info("Customer workset routes registered via create_customer_worksets_router")
 
-        # Dashboard routes (extracted from this file)
-        from daylib.routes.dashboard import (
-            create_dashboard_router,
-            DashboardDependencies,
-        )
-        dash_deps = DashboardDependencies(
-            state_db=state_db,
-            settings=settings,
-            customer_manager=customer_manager,
-        )
-        dash_router = create_dashboard_router(dash_deps)
-        app.include_router(dash_router)
-        LOGGER.info("Dashboard routes registered via create_dashboard_router")
+            # Dashboard routes (extracted from this file)
+            from daylib.routes.dashboard import (
+                create_dashboard_router,
+                DashboardDependencies,
+            )
+            dash_deps = DashboardDependencies(
+                state_db=state_db,
+                settings=settings,
+                customer_manager=customer_manager,
+            )
+            dash_router = create_dashboard_router(dash_deps)
+            app.include_router(dash_router)
+            LOGGER.info("Dashboard routes registered via create_dashboard_router")
 
-        # Billing routes (extracted from this file)
-        from daylib.routes.billing import (
-            create_billing_router,
-            BillingDependencies,
-        )
-        billing_deps = BillingDependencies(
-            state_db=state_db,
-            settings=settings,
-            customer_manager=customer_manager,
-        )
-        billing_router = create_billing_router(billing_deps)
-        app.include_router(billing_router)
-        LOGGER.info("Billing routes registered via create_billing_router")
+            # Billing routes (extracted from this file)
+            from daylib.routes.billing import (
+                create_billing_router,
+                BillingDependencies,
+            )
+            billing_deps = BillingDependencies(
+                state_db=state_db,
+                settings=settings,
+                customer_manager=customer_manager,
+            )
+            billing_router = create_billing_router(billing_deps)
+            app.include_router(billing_router)
+            LOGGER.info("Billing routes registered via create_billing_router")
 
     # ========== File Management API Integration ==========
 
@@ -783,7 +787,7 @@ def create_app(
         v1_router.include_router(manifest_router)
 
     # Template-dependent API routers (customer worksets, dashboard, billing)
-    if templates_dir.exists():
+    if cw_router is not None and dash_router is not None and billing_router is not None:
         v1_router.include_router(cw_router)
         v1_router.include_router(dash_router)
         v1_router.include_router(billing_router)

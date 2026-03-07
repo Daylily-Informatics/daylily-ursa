@@ -1025,6 +1025,11 @@ def create_file_api_router(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail=f"Bucket {bucket_id} not found",
                 )
+            if validation_result is None:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Bucket {bucket_id} validation unavailable",
+                )
 
             return BucketValidationResponse(
                 bucket_name=validation_result.bucket_name,
@@ -1730,7 +1735,7 @@ def create_file_api_router(
     @router.patch("/{file_id}")
     async def update_file_metadata(
         file_id: str,
-        payload: Dict = Body(..., description="File metadata updates"),
+        payload: Dict[str, Any] = Body(..., description="File metadata updates"),
         current_user: Optional[Dict] = Depends(auth_dependency),
     ):
         """Update file metadata.
@@ -1750,18 +1755,25 @@ def create_file_api_router(
                 )
 
             LOGGER.info("Updating file %s with payload", file_id)
+            updates: Dict[str, Any] = {}
+            for key in (
+                "file_metadata",
+                "biosample_metadata",
+                "sequencing_metadata",
+                "tags",
+                "read_number",
+                "paired_with",
+                "quality_score",
+                "percent_q30",
+                "is_positive_control",
+                "is_negative_control",
+            ):
+                if key in payload:
+                    updates[key] = payload[key]
+
             success = file_registry.update_file(
                 file_id=file_id,
-                file_metadata=payload.get("file_metadata"),
-                biosample_metadata=payload.get("biosample_metadata"),
-                sequencing_metadata=payload.get("sequencing_metadata"),
-                tags=payload.get("tags"),
-                read_number=payload.get("read_number"),
-                paired_with=payload.get("paired_with"),
-                quality_score=payload.get("quality_score"),
-                percent_q30=payload.get("percent_q30"),
-                is_positive_control=payload.get("is_positive_control"),
-                is_negative_control=payload.get("is_negative_control"),
+                updates=updates,
             )
 
             if not success:
@@ -1955,10 +1967,14 @@ def create_file_api_router(
     ):
         """Update file set metadata."""
         try:
+            updates: Dict[str, Any] = {}
+            if name is not None:
+                updates["name"] = name
+            if description is not None:
+                updates["description"] = description
             success = file_registry.update_fileset_metadata(
                 fileset_id=fileset_id,
-                name=name,
-                description=description,
+                updates=updates,
             )
             if not success:
                 raise HTTPException(
@@ -1983,7 +1999,7 @@ def create_file_api_router(
     ):
         """Clone a file set with a new name."""
         try:
-            cloned = file_registry.clone_fileset(fileset_id, new_name)
+            cloned = file_registry.clone_fileset(fileset_id, name=new_name)
             if not cloned:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,

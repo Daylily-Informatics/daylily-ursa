@@ -4,7 +4,7 @@ import os
 import datetime as dt
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any, Dict, Generator, Optional
+from typing import Any, Dict, Generator, Optional, cast
 
 from sqlalchemy import and_, text
 from sqlalchemy.orm import Session
@@ -303,7 +303,7 @@ class TapDBBackend:
         template = self.templates.get_template(session, template_code)
         if template is None:
             return []
-        return (
+        return cast(list[generic_instance], (
             session.query(generic_instance)
             .filter(
                 generic_instance.template_uid == template.uid,
@@ -312,7 +312,7 @@ class TapDBBackend:
             .order_by(generic_instance.created_dt.desc())
             .limit(limit)
             .all()
-        )
+        ))
 
     def create_lineage(
         self,
@@ -377,7 +377,7 @@ class TapDBBackend:
         )
         if relationship_type:
             query = query.filter(generic_instance_lineage.relationship_type == relationship_type)
-        return query.all()
+        return cast(list[generic_instance], query.all())
 
     def list_parents(
         self,
@@ -400,7 +400,7 @@ class TapDBBackend:
         )
         if relationship_type:
             query = query.filter(generic_instance_lineage.relationship_type == relationship_type)
-        return query.all()
+        return cast(list[generic_instance], query.all())
 
     def get_customer_owned(
         self,
@@ -414,7 +414,7 @@ class TapDBBackend:
         template = self.templates.get_template(session, template_code)
         if template is None:
             return []
-        return (
+        return cast(list[generic_instance], (
             session.query(generic_instance)
             .join(
                 generic_instance_lineage,
@@ -432,7 +432,7 @@ class TapDBBackend:
             .order_by(generic_instance.created_dt.desc())
             .limit(limit)
             .all()
-        )
+        ))
 
 
 def from_json_addl(instance: generic_instance) -> Dict[str, Any]:

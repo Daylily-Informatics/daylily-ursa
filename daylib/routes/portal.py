@@ -750,6 +750,8 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         domain = _get_effective_cognito_domain(deps)
         client_id = deps.settings.cognito_app_client_id
         hosted_ui_enabled = bool(deps.enable_auth and deps.cognito_auth and domain and client_id)
+        hosted_ui_domain = domain or ""
+        hosted_ui_client_id = client_id or ""
 
         if hosted_ui_enabled and not error and not success:
             if sso or signup or not request.query_params:
@@ -760,15 +762,15 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
 
                 auth_url = (
                     _build_signup_url(
-                        domain=domain,
-                        client_id=client_id,
+                        domain=hosted_ui_domain,
+                        client_id=hosted_ui_client_id,
                         redirect_uri=callback_url,
                         state=state_token,
                     )
                     if signup
                     else build_authorization_url(
-                        domain=domain,
-                        client_id=client_id,
+                        domain=hosted_ui_domain,
+                        client_id=hosted_ui_client_id,
                         redirect_uri=callback_url,
                         state=state_token,
                     )
@@ -787,15 +789,15 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
 
             auth_url = (
                 _build_signup_url(
-                    domain=domain,
-                    client_id=client_id,
+                    domain=hosted_ui_domain,
+                    client_id=hosted_ui_client_id,
                     redirect_uri=callback_url,
                     state=state_token,
                 )
                 if signup
                 else build_authorization_url(
-                    domain=domain,
-                    client_id=client_id,
+                    domain=hosted_ui_domain,
+                    client_id=hosted_ui_client_id,
                     redirect_uri=callback_url,
                     state=state_token,
                 )
@@ -3522,7 +3524,16 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         desired_is_admin = is_admin_normalized in {"1", "true", "yes", "on"}
 
         try:
-            ok = deps.customer_manager.set_admin_status(email=email, is_admin=desired_is_admin)
+            target_customer = deps.customer_manager.get_customer_by_email(email)
+            if target_customer is None:
+                return RedirectResponse(
+                    url="/portal/admin/users?error=" + quote_plus(f"User not found: {email}"),
+                    status_code=302,
+                )
+            ok = deps.customer_manager.set_admin_status(
+                customer_id=target_customer.customer_id,
+                is_admin=desired_is_admin,
+            )
         except Exception as e:
             LOGGER.error("Failed to set admin status for %s: %s", sanitize_for_log(email), e)
             ok = False

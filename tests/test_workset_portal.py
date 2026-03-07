@@ -241,8 +241,15 @@ class TestPortalAdminUsers:
         admin.is_admin = True
         admin.email = "admin@example.com"
         admin.customer_name = "Admin"
+        other = MagicMock()
+        other.customer_id = "cust-other"
+        other.is_admin = False
+        other.email = "other@example.com"
+        other.customer_name = "Other"
 
-        mock_customer_manager.get_customer_by_email.side_effect = lambda e: admin if e == admin.email else None
+        mock_customer_manager.get_customer_by_email.side_effect = (
+            lambda e: admin if e == admin.email else other if e == other.email else None
+        )
         mock_customer_manager.set_admin_status.return_value = True
 
         app = create_app(
@@ -260,7 +267,7 @@ class TestPortalAdminUsers:
         )
         assert response.status_code == 302
         assert response.headers["location"].startswith("/portal/admin/users?success=")
-        mock_customer_manager.set_admin_status.assert_called_once_with(email="other@example.com", is_admin=True)
+        mock_customer_manager.set_admin_status.assert_called_once_with(customer_id="cust-other", is_admin=True)
 
     def test_admin_users_remove_admin_success(self, mock_state_db):
         mock_customer_manager = MagicMock()
@@ -269,8 +276,15 @@ class TestPortalAdminUsers:
         admin.is_admin = True
         admin.email = "admin@example.com"
         admin.customer_name = "Admin"
+        other = MagicMock()
+        other.customer_id = "cust-other"
+        other.is_admin = True
+        other.email = "other@example.com"
+        other.customer_name = "Other"
 
-        mock_customer_manager.get_customer_by_email.side_effect = lambda e: admin if e == admin.email else None
+        mock_customer_manager.get_customer_by_email.side_effect = (
+            lambda e: admin if e == admin.email else other if e == other.email else None
+        )
         mock_customer_manager.set_admin_status.return_value = True
 
         app = create_app(
@@ -288,7 +302,7 @@ class TestPortalAdminUsers:
         )
         assert response.status_code == 302
         assert response.headers["location"].startswith("/portal/admin/users?success=")
-        mock_customer_manager.set_admin_status.assert_called_once_with(email="other@example.com", is_admin=False)
+        mock_customer_manager.set_admin_status.assert_called_once_with(customer_id="cust-other", is_admin=False)
 
     def test_admin_users_set_password_non_admin_forbidden(self, mock_state_db):
         mock_customer_manager = MagicMock()

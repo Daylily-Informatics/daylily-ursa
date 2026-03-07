@@ -186,6 +186,9 @@ class ManifestRegistry:
             payload["manifest_euid"] = manifest.euid
             payload["manifest_id"] = manifest_id
 
+        manifest_euid_raw = payload.get("manifest_euid")
+        manifest_euid = manifest_euid_raw if isinstance(manifest_euid_raw, str) else None
+
         return SavedManifest(
             manifest_id=manifest_id,
             customer_id=customer_id,
@@ -195,7 +198,7 @@ class ManifestRegistry:
             sample_count=sample_count,
             tsv_sha256=tsv_sha256,
             tsv_gzip_b64=tsv_gzip_b64,
-            manifest_euid=payload.get("manifest_euid"),
+            manifest_euid=manifest_euid,
         )
 
     def list_customer_manifests(self, customer_id: str, limit: int = 200) -> List[Dict[str, Any]]:

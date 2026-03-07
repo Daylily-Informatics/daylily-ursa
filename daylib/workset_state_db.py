@@ -5,7 +5,7 @@ from __future__ import annotations
 import datetime as dt
 import logging
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 
 from daylib.config import normalize_bucket_name
 from daylib.tapdb_graph import TapDBBackend, from_json_addl, utc_now_iso
@@ -863,7 +863,7 @@ class WorksetStateDB:
         )
         if state is not None:
             query = query.filter(generic_instance.bstatus == state.value)
-        return query.order_by(generic_instance.created_dt.desc()).limit(limit).all()
+        return cast(List[generic_instance], query.order_by(generic_instance.created_dt.desc()).limit(limit).all())
 
     def list_worksets_by_state(
         self,
@@ -961,7 +961,7 @@ class WorksetStateDB:
                 return [convert(v) for v in obj]
             return obj
 
-        return convert(data)
+        return cast(Dict[str, Any], convert(data))
 
     def _deserialize_item(self, item: Dict[str, Any]) -> Dict[str, Any]:
         def convert(obj: Any) -> Any:

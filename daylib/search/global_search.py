@@ -444,7 +444,7 @@ def _search_worksets(
 
             ws_id = _to_str(workset.get("workset_id"))
             ws_name = _to_str(workset.get("name"))
-            ws_state = _to_str(workset.get("state"))
+            ws_state_value = _to_str(workset.get("state"))
             metadata = workset.get("metadata") if isinstance(workset.get("metadata"), dict) else {}
 
             ws_region = _to_lower(
@@ -456,7 +456,7 @@ def _search_worksets(
             if region_filter and ws_region != region_filter:
                 continue
 
-            if state_filter and _to_lower(ws_state) != state_filter:
+            if state_filter and _to_lower(ws_state_value) != state_filter:
                 continue
 
             tags = [
@@ -470,7 +470,7 @@ def _search_worksets(
             fields = {
                 "workset_id": ws_id,
                 "name": ws_name,
-                "state": ws_state,
+                "state": ws_state_value,
                 "workset_type": _to_str(metadata.get("workset_type")),
                 "pipeline_type": _to_str(metadata.get("pipeline_type")),
                 "notification_email": _to_str(metadata.get("notification_email")),
@@ -481,7 +481,7 @@ def _search_worksets(
             if not matched:
                 continue
 
-            subtitle_parts = [ws_state or "unknown"]
+            subtitle_parts = [ws_state_value or "unknown"]
             if fields["pipeline_type"]:
                 subtitle_parts.append(fields["pipeline_type"])
             subtitle_parts.append(ws_id)
@@ -495,7 +495,7 @@ def _search_worksets(
                 subtitle=" • ".join(part for part in subtitle_parts if part),
                 url=f"/portal/worksets/{quote_plus(ws_id)}",
                 customer_id=_to_str(workset.get("customer_id")) or customer_id,
-                badges=[ws_state, fields["workset_type"], ws_region],
+                badges=[ws_state_value, fields["workset_type"], ws_region],
                 score=score,
                 matched_fields=matched_fields,
                 created_at=_to_str(workset.get("created_at")),
@@ -1046,12 +1046,13 @@ def _search_clusters(
 
     for cluster_obj in clusters:
         try:
-            cluster = cluster_obj.to_dict(include_sensitive=False)
+            cluster_data = cluster_obj.to_dict(include_sensitive=False)
         except Exception:
             # Fallback for unexpected cluster object shapes
-            cluster = _to_str(cluster_obj)
-        if not isinstance(cluster, dict):
+            cluster_data = None
+        if not isinstance(cluster_data, dict):
             continue
+        cluster = cluster_data
 
         candidates += 1
         region = _to_lower(cluster.get("region"))
