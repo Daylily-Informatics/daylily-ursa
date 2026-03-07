@@ -26,8 +26,25 @@ def mock_state_db():
 def mock_file_registry():
     """Mock FileRegistry."""
     registry = MagicMock(spec=FileRegistry)
-    registry.register_file.return_value = True
-    registry.create_fileset.return_value = True
+    file_counter = {"value": 0}
+    fileset_counter = {"value": 0}
+
+    def register_file_side_effect(registration):
+        file_counter["value"] += 1
+        assigned_id = f"file-euid-{file_counter['value']:03d}"
+        if not registration.file_id:
+            registration.file_id = assigned_id
+            registration.file_metadata.file_id = assigned_id
+        return True
+
+    def create_fileset_side_effect(fileset):
+        fileset_counter["value"] += 1
+        if not fileset.fileset_id:
+            fileset.fileset_id = f"fs-euid-{fileset_counter['value']:03d}"
+        return True
+
+    registry.register_file.side_effect = register_file_side_effect
+    registry.create_fileset.side_effect = create_fileset_side_effect
     registry.list_customer_files.return_value = []
     # By default, simulate no existing registrations for any S3 URI so
     # integration tests exercise the successful registration path.
@@ -95,7 +112,7 @@ class TestFileAPIIntegrationWithoutAuth:
         data = response.json()
         assert data["customer_id"] == "test-customer"
         assert data["s3_uri"] == "s3://test-bucket/sample_R1.fastq.gz"
-        assert "file_id" in data
+        assert data["file_id"] == "file-euid-001"
     
     def test_list_files_without_auth(self, client_without_auth):
         """Test listing files without authentication."""
@@ -122,6 +139,7 @@ class TestFileAPIIntegrationWithoutAuth:
         data = response.json()
         assert data["name"] == "Test FileSet"
         assert data["customer_id"] == "test-customer"
+        assert data["fileset_id"] == "fs-euid-001"
     
     def test_bulk_import_without_auth(self, client_without_auth):
         """Test bulk import without authentication."""

@@ -241,8 +241,15 @@ class TestPortalAdminUsers:
         admin.is_admin = True
         admin.email = "admin@example.com"
         admin.customer_name = "Admin"
+        other = MagicMock()
+        other.customer_id = "cust-other"
+        other.is_admin = False
+        other.email = "other@example.com"
+        other.customer_name = "Other"
 
-        mock_customer_manager.get_customer_by_email.side_effect = lambda e: admin if e == admin.email else None
+        mock_customer_manager.get_customer_by_email.side_effect = (
+            lambda e: admin if e == admin.email else other if e == other.email else None
+        )
         mock_customer_manager.set_admin_status.return_value = True
 
         app = create_app(
@@ -260,7 +267,7 @@ class TestPortalAdminUsers:
         )
         assert response.status_code == 302
         assert response.headers["location"].startswith("/portal/admin/users?success=")
-        mock_customer_manager.set_admin_status.assert_called_once_with(email="other@example.com", is_admin=True)
+        mock_customer_manager.set_admin_status.assert_called_once_with(customer_id="cust-other", is_admin=True)
 
     def test_admin_users_remove_admin_success(self, mock_state_db):
         mock_customer_manager = MagicMock()
@@ -269,8 +276,15 @@ class TestPortalAdminUsers:
         admin.is_admin = True
         admin.email = "admin@example.com"
         admin.customer_name = "Admin"
+        other = MagicMock()
+        other.customer_id = "cust-other"
+        other.is_admin = True
+        other.email = "other@example.com"
+        other.customer_name = "Other"
 
-        mock_customer_manager.get_customer_by_email.side_effect = lambda e: admin if e == admin.email else None
+        mock_customer_manager.get_customer_by_email.side_effect = (
+            lambda e: admin if e == admin.email else other if e == other.email else None
+        )
         mock_customer_manager.set_admin_status.return_value = True
 
         app = create_app(
@@ -288,7 +302,7 @@ class TestPortalAdminUsers:
         )
         assert response.status_code == 302
         assert response.headers["location"].startswith("/portal/admin/users?success=")
-        mock_customer_manager.set_admin_status.assert_called_once_with(email="other@example.com", is_admin=False)
+        mock_customer_manager.set_admin_status.assert_called_once_with(customer_id="cust-other", is_admin=False)
 
     def test_admin_users_set_password_non_admin_forbidden(self, mock_state_db):
         mock_customer_manager = MagicMock()
@@ -1424,6 +1438,67 @@ class TestArchiveDeleteAPI:
         assert len(data) == 2
 
 
+class TestRetryAPI:
+    """Tests for retrying customer worksets via API."""
+
+    def test_retry_workset_creates_new_euid_first_workset(
+        self, mock_state_db, mock_customer_manager, mock_integration
+    ):
+        original = {
+            "workset_id": "failed-ws-001",
+            "state": "error",
+            "bucket": "test-bucket",
+            "customer_id": "cust-001",
+            "priority": "high",
+            "workset_type": "ruo",
+            "preferred_cluster": "cluster-a",
+            "cluster_region": "us-west-2",
+            "metadata": {
+                "workset_name": "Original Workset",
+                "archive_results": True,
+                "samples": [{"sample_id": "S1"}],
+                "sample_count": 1,
+                "data_bucket": "data-bucket",
+                "data_buckets": ["data-bucket"],
+                "created_by_email": "user@example.com",
+                "pipeline_type": "wgs",
+            },
+        }
+        retried = {
+            "workset_id": "retry-euid-001",
+            "state": "ready",
+            "bucket": "test-bucket",
+            "customer_id": "cust-001",
+        }
+        mock_state_db.get_workset.side_effect = [original, retried]
+        mock_integration.register_workset.return_value = "retry-euid-001"
+
+        app = create_app(
+            state_db=mock_state_db,
+            customer_manager=mock_customer_manager,
+            integration=mock_integration,
+            enable_auth=False,
+        )
+        client = TestClient(app)
+
+        response = client.post("/api/customers/cust-001/worksets/failed-ws-001/retry")
+
+        assert response.status_code == 200
+        assert response.json()["workset_id"] == "retry-euid-001"
+        mock_integration.register_workset.assert_called_once()
+        call_kwargs = mock_integration.register_workset.call_args.kwargs
+        assert call_kwargs["bucket"] == "test-bucket"
+        assert call_kwargs["prefix"] is None
+        assert "workset_id" not in call_kwargs
+        assert call_kwargs["customer_id"] == "cust-001"
+        assert call_kwargs["metadata"]["workset_name"] == "Original Workset"
+        assert call_kwargs["metadata"]["retried_from"] == "failed-ws-001"
+        mock_state_db.update_metadata.assert_called_once_with(
+            "failed-ws-001",
+            {"retried_as": "retry-euid-001"},
+        )
+
+
 # ==================== Workset Creation Validation Tests ====================
 
 
@@ -1450,7 +1525,7 @@ def mock_integration():
     Note: bucket is set to None so the control bucket env var is used.
     """
     mock_int = MagicMock()
-    mock_int.register_workset.return_value = True
+    mock_int.register_workset.return_value = "test-workset-12345678"
     mock_int.bucket = None  # Ensure env var is used for bucket
     return mock_int
 
@@ -1641,7 +1716,7 @@ class TestWorksetCreationValidation:
 
         Note: Worksets get bucket from cluster tags (aws-parallelcluster-monitor-bucket).
         """
-        mock_state_db.register_workset.return_value = True
+        mock_state_db.register_workset.return_value = "test-workset-12345678"
         mock_state_db.get_workset.return_value = {
             "workset_id": "test-workset-12345678",
             "state": "ready",
@@ -2309,7 +2384,17 @@ class TestPortalFileUpload:
     @pytest.fixture
     def mock_file_registry(self):
         registry = MagicMock()
-        registry.register_file.return_value = True
+        counter = {"value": 0}
+
+        def register_file_side_effect(registration):
+            counter["value"] += 1
+            if not registration.file_id:
+                assigned_id = f"file-euid-{counter['value']:03d}"
+                registration.file_id = assigned_id
+                registration.file_metadata.file_id = assigned_id
+            return True
+
+        registry.register_file.side_effect = register_file_side_effect
         return registry
 
     def _make_client_with_file_upload(
@@ -2470,7 +2555,7 @@ class TestPortalFileUpload:
         assert data["bucket"] == "test-linked-bucket"
         assert data["key"] == "foo/bar/hello.txt"
         assert data["registered"] is True
-        assert data["file_id"].startswith("file-")
+        assert data["file_id"] == "file-euid-001"
 
         assert mock_s3.upload_fileobj.call_count == 1
         _args, kwargs = mock_s3.upload_fileobj.call_args
@@ -2531,8 +2616,18 @@ class TestPortalFileAutoRegistration:
     def mock_file_registry(self):
         """Mock FileRegistry for registration tests."""
         registry = MagicMock()
-        registry.register_file.return_value = True
-        registry.get_file.return_value = None  # File not already registered
+        counter = {"value": 0}
+
+        def register_file_side_effect(registration):
+            counter["value"] += 1
+            if not registration.file_id:
+                assigned_id = f"file-euid-{counter['value']:03d}"
+                registration.file_id = assigned_id
+                registration.file_metadata.file_id = assigned_id
+            return True
+
+        registry.register_file.side_effect = register_file_side_effect
+        registry.find_file_by_s3_uri.return_value = None  # File not already registered
         return registry
 
     @pytest.fixture
@@ -2598,6 +2693,8 @@ class TestPortalFileAutoRegistration:
         assert skipped == 0
         assert len(errors) == 0
         assert mock_file_registry.register_file.call_count == 2
+        assert mock_bucket_discovery[0].file_id == "file-euid-001"
+        assert mock_bucket_discovery[1].file_id == "file-euid-002"
 
     def test_auto_register_files_skips_already_registered(self, mock_file_registry, mock_bucket_discovery):
         """Test that already-registered files are skipped."""
@@ -2641,10 +2738,12 @@ class TestPortalFileAutoRegistration:
 
         # R1 file should have read_number=1
         r1_registration = calls[0][0][0]  # First positional arg of first call
+        assert r1_registration.file_id == "file-euid-001"
         assert r1_registration.read_number == 1
 
         # R2 file should have read_number=2
         r2_registration = calls[1][0][0]
+        assert r2_registration.file_id == "file-euid-002"
         assert r2_registration.read_number == 2
 
     def test_auto_register_handles_registration_failure(self, mock_file_registry, mock_bucket_discovery):
@@ -2687,6 +2786,7 @@ class TestPortalFileAutoRegistration:
         call = mock_file_registry.register_file.call_args_list[0]
         registration = call[0][0]
 
+        assert registration.file_metadata.file_id == "file-euid-001"
         assert registration.customer_id == "cust-001"
         assert registration.biosample_metadata.biosample_id == "my-biosample"
         assert registration.biosample_metadata.subject_id == "HG002"
@@ -3000,7 +3100,7 @@ class TestWorksetCreationWithPreferredCluster:
 
     def test_create_workset_with_preferred_cluster(self, client, mock_state_db):
         """Test creating workset with preferred_cluster."""
-        mock_state_db.register_workset.return_value = True
+        mock_state_db.register_workset.return_value = "test-ws-cluster"
         mock_state_db.get_workset.return_value = {
             "workset_id": "test-ws-cluster",
             "state": "ready",
@@ -3016,7 +3116,6 @@ class TestWorksetCreationWithPreferredCluster:
         response = client.post(
             "/worksets",
             json={
-                "workset_id": "test-ws-cluster",
                 "bucket": "test-bucket",
                 "prefix": "worksets/test/",
                 "priority": "normal",
@@ -3035,7 +3134,7 @@ class TestWorksetCreationWithPreferredCluster:
 
     def test_create_workset_without_preferred_cluster(self, client, mock_state_db):
         """Test creating workset without preferred_cluster."""
-        mock_state_db.register_workset.return_value = True
+        mock_state_db.register_workset.return_value = "test-ws-no-cluster"
         mock_state_db.get_workset.return_value = {
             "workset_id": "test-ws-no-cluster",
             "state": "ready",
@@ -3050,7 +3149,6 @@ class TestWorksetCreationWithPreferredCluster:
         response = client.post(
             "/worksets",
             json={
-                "workset_id": "test-ws-no-cluster",
                 "bucket": "test-bucket",
                 "prefix": "worksets/test/",
                 "priority": "normal",

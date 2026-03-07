@@ -9,8 +9,6 @@ Contains routes tagged 'customer-worksets' for managing customer-scoped worksets
 from __future__ import annotations
 
 import logging
-import re
-import uuid
 from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
 
 import boto3
@@ -257,12 +255,6 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
                 detail=f"Customer {customer_id} not found",
             )
 
-        # Generate a unique workset ID from the name with date suffix
-        import datetime as dt
-        safe_name = workset_name.replace(" ", "-").lower()[:30]
-        date_suffix = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d")
-        workset_id = f"{safe_name}-{uuid.uuid4().hex[:8]}-{date_suffix}"
-
         # Determine bucket from cluster tags (aws-parallelcluster-monitor-bucket)
         # A cluster MUST be selected - bucket is discovered from its tags
         bucket = None
@@ -329,9 +321,7 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
                 parts = prefix.split("/", 1)
                 # bucket = parts[0]  # Could use this if needed
                 prefix = parts[1]
-        if not prefix:
-            prefix = f"worksets/{workset_id}/"
-        if not prefix.endswith("/"):
+        if prefix and not prefix.endswith("/"):
             prefix += "/"
 
         # Process samples from various sources (priority: samples > manifest_id > manifest_tsv_content > yaml_content)
@@ -443,10 +433,9 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
             )
 
         if effective_integration:
-            success = effective_integration.register_workset(
-                workset_id=workset_id,
+            created_workset_id = effective_integration.register_workset(
                 bucket=bucket,
-                prefix=prefix,
+                prefix=prefix or None,
                 priority=priority,
                 workset_type=ws_type.value,
                 metadata=metadata,
@@ -465,10 +454,9 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
                 ws_priority = WorksetPriority.NORMAL
 
             try:
-                success = state_db.register_workset(
-                    workset_id=workset_id,
+                created_workset_id = state_db.register_workset(
                     bucket=bucket,
-                    prefix=prefix,
+                    prefix=prefix or None,
                     priority=ws_priority,
                     workset_type=ws_type,
                     metadata=metadata,
@@ -482,13 +470,7 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
                     detail=str(e),
                 )
 
-        if not success:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"Workset {workset_id} already exists",
-            )
-
-        created = state_db.get_workset(workset_id)
+        created = state_db.get_workset(created_workset_id)
         return created
 
     @router.post("/api/customers/{customer_id}/worksets/{workset_id}/cancel")
@@ -542,8 +524,6 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
         Returns:
             The newly created retry workset (not the original).
         """
-        import datetime as dt
-
         if not customer_manager:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -571,25 +551,10 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
                 detail="Workset does not belong to this customer",
             )
 
-        # Extract base name from original workset ID (remove uuid8-YYYYMMDD suffix)
-        # Format: {safe-name}-{uuid8}-{YYYYMMDD}
-        match = re.match(r"^(.+)-[a-f0-9]{8}-\d{8}$", workset_id)
-        if match:
-            base_name = match.group(1)
-        else:
-            # Fallback: use original workset name from metadata or ID
-            original_meta = original.get("metadata", {})
-            base_name = original_meta.get("workset_name", workset_id)[:30]
-            base_name = base_name.replace(" ", "-").lower()
-
-        # Generate new workset ID with new datetime suffix
-        date_suffix = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d")
-        new_workset_id = f"{base_name}-{uuid.uuid4().hex[:8]}-{date_suffix}"
-
         # Clone metadata from original workset
         original_meta = original.get("metadata", {})
         new_metadata = {
-            "workset_name": original_meta.get("workset_name", base_name),
+            "workset_name": original_meta.get("workset_name", original.get("workset_id", workset_id)),
             "archive_results": original_meta.get("archive_results", True),
             "submitted_by": customer_id,
             "priority": original.get("priority", "normal"),
@@ -612,7 +577,7 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
 
         # Determine bucket and prefix for new workset
         bucket = original.get("bucket") or config.s3_bucket
-        prefix = f"worksets/{new_workset_id}/"
+        prefix = None
         priority = original.get("priority", "normal")
         workset_type_val = original.get("workset_type", "ruo")
         preferred_cluster = original.get("preferred_cluster")
@@ -633,8 +598,7 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
             )
 
         if effective_integration:
-            success = effective_integration.register_workset(
-                workset_id=new_workset_id,
+            new_workset_id = effective_integration.register_workset(
                 bucket=bucket,
                 prefix=prefix,
                 priority=priority,
@@ -657,8 +621,7 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
             except ValueError:
                 ws_type = WorksetType.RUO
 
-            success = state_db.register_workset(
-                workset_id=new_workset_id,
+            new_workset_id = state_db.register_workset(
                 bucket=bucket,
                 prefix=prefix,
                 priority=ws_priority,
@@ -667,12 +630,6 @@ def create_customer_worksets_router(deps: CustomerWorksetDependencies) -> APIRou
                 customer_id=customer_id,
                 preferred_cluster=preferred_cluster,
                 cluster_region=cluster_region,
-            )
-
-        if not success:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to create retry workset",
             )
 
         # Update original workset metadata to track retry

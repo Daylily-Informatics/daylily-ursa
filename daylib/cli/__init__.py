@@ -1,5 +1,6 @@
 """Ursa CLI - Workset Management CLI using Typer."""
 
+from importlib.metadata import PackageNotFoundError, version as package_version
 import os
 import sys
 from pathlib import Path
@@ -93,9 +94,8 @@ def version(
 ):
     """Show Ursa version and optional ecosystem compatibility matrix."""
     try:
-        from daylib import __version__
-        console.print(f"ursa [cyan]{__version__}[/cyan]")
-    except ImportError:
+        console.print(f"ursa [cyan]{package_version('daylily-ursa')}[/cyan]")
+    except PackageNotFoundError:
         console.print("ursa [cyan]dev[/cyan]")
 
     if ecosystem:

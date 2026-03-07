@@ -188,6 +188,36 @@ class S3BucketValidator:
             ],
         }
 
+    def generate_iam_policy_for_bucket(self, bucket_name: str, read_only: bool = False) -> Dict[str, Any]:
+        object_actions = [
+            "s3:GetObject",
+            "s3:GetObjectVersion",
+            "s3:GetObjectTagging",
+        ]
+        if not read_only:
+            object_actions.extend([
+                "s3:PutObject",
+                "s3:PutObjectTagging",
+                "s3:DeleteObject",
+            ])
+        return {
+            "Version": "2012-10-17",
+            "Statement": [
+                {
+                    "Sid": "BucketListAccess",
+                    "Effect": "Allow",
+                    "Action": ["s3:ListBucket"],
+                    "Resource": f"arn:aws:s3:::{bucket_name}",
+                },
+                {
+                    "Sid": "BucketObjectAccess",
+                    "Effect": "Allow",
+                    "Action": object_actions,
+                    "Resource": f"arn:aws:s3:::{bucket_name}/*",
+                },
+            ],
+        }
+
     def get_setup_instructions(self, bucket_name: str, validation_result: BucketValidationResult) -> List[str]:
         steps: List[str] = []
         if not validation_result.exists:

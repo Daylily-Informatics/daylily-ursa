@@ -5,7 +5,7 @@ from __future__ import annotations
 import datetime as dt
 import logging
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 
 from daylib.config import normalize_bucket_name
 from daylib.tapdb_graph import TapDBBackend, from_json_addl, utc_now_iso
@@ -155,29 +155,45 @@ class WorksetStateDB:
 
         raise ValueError("Workset must have at least one sample")
 
-    def _workset_template_uuid(self, session) -> int:
+    def _workset_template_uid(self, session) -> int:
         template = self.backend.templates.get_template(session, self.WORKSET_TEMPLATE)
         if template is None:
             self.backend.ensure_templates(session)
             template = self.backend.templates.get_template(session, self.WORKSET_TEMPLATE)
         if template is None:
             raise RuntimeError("Missing workset template")
-        return int(template.uuid)
+        return int(template.uid)
 
-    def _event_template_uuid(self, session, template_code: str) -> int:
+    def _event_template_uid(self, session, template_code: str) -> int:
         template = self.backend.templates.get_template(session, template_code)
         if template is None:
             self.backend.ensure_templates(session)
             template = self.backend.templates.get_template(session, template_code)
         if template is None:
             raise RuntimeError(f"Missing event template: {template_code}")
-        return int(template.uuid)
+        return int(template.uid)
 
     def _find_workset(self, session, workset_id: str, *, for_update: bool = False) -> Optional[generic_instance]:
+        return self.backend.find_instance_by_euid_or_external_id(
+            session,
+            template_code=self.WORKSET_TEMPLATE,
+            key="workset_id",
+            value=workset_id,
+            for_update=for_update,
+        )
+
+    def _find_workset_by_prefix(
+        self,
+        session,
+        prefix: str,
+        *,
+        for_update: bool = False,
+    ) -> Optional[generic_instance]:
+        normalized_prefix = prefix.rstrip("/") + "/"
         query = session.query(generic_instance).filter(
-            generic_instance.template_uuid == self._workset_template_uuid(session),
+            generic_instance.template_uid == self._workset_template_uid(session),
             generic_instance.is_deleted.is_(False),
-            generic_instance.json_addl["workset_id"].as_string() == workset_id,
+            generic_instance.json_addl["prefix"].as_string() == normalized_prefix,
         )
         if for_update:
             query = query.with_for_update()
@@ -190,7 +206,7 @@ class WorksetStateDB:
         return (
             session.query(generic_instance)
             .filter(
-                generic_instance.template_uuid == template.uuid,
+                generic_instance.template_uid == template.uid,
                 generic_instance.is_deleted.is_(False),
                 generic_instance.json_addl["customer_id"].as_string() == customer_id,
             )
@@ -199,6 +215,7 @@ class WorksetStateDB:
 
     def _to_dict(self, instance: generic_instance) -> Dict[str, Any]:
         result = from_json_addl(instance)
+        result.setdefault("workset_id", instance.euid)
         if "state" not in result:
             result["state"] = instance.bstatus
         metadata = result.get("metadata", {})
@@ -313,9 +330,8 @@ class WorksetStateDB:
 
     def register_workset(
         self,
-        workset_id: str,
         bucket: str,
-        prefix: str,
+        prefix: Optional[str] = None,
         priority: WorksetPriority = WorksetPriority.NORMAL,
         metadata: Optional[Dict[str, Any]] = None,
         customer_id: Optional[str] = None,
@@ -323,7 +339,7 @@ class WorksetStateDB:
         workset_type: Optional[WorksetType] = None,
         preferred_cluster: Optional[str] = None,
         cluster_region: Optional[str] = None,
-    ) -> bool:
+    ) -> str:
         if not skip_validation:
             customer_id = self._validate_customer_id(customer_id)
             self._validate_samples(metadata)
@@ -335,14 +351,16 @@ class WorksetStateDB:
         if not normalized_bucket:
             raise ValueError(f"Invalid bucket name: {bucket}")
 
+        normalized_prefix = None
+        if prefix:
+            normalized_prefix = prefix.rstrip("/") + "/"
+
         now = utc_now_iso()
         payload: Dict[str, Any] = {
-            "workset_id": workset_id,
             "state": WorksetState.READY.value,
             "priority": priority.value,
             "workset_type": workset_type.value,
             "bucket": normalized_bucket,
-            "prefix": prefix,
             "created_at": now,
             "updated_at": now,
             "state_history": [
@@ -355,6 +373,8 @@ class WorksetStateDB:
             "retry_count": 0,
             "max_retries": DEFAULT_MAX_RETRIES,
         }
+        if normalized_prefix:
+            payload["prefix"] = normalized_prefix
         if customer_id:
             payload["customer_id"] = customer_id
         if preferred_cluster:
@@ -367,16 +387,25 @@ class WorksetStateDB:
 
         with self.backend.session_scope(commit=True) as session:
             self.backend.ensure_templates(session)
-            if self._find_workset(session, workset_id) is not None:
-                LOGGER.warning("Workset %s already exists", workset_id)
-                return False
+            provisional_name = f"pending-workset-{dt.datetime.now(dt.timezone.utc).strftime('%Y%m%d%H%M%S%f')}"
 
             ws = self.backend.create_instance(
                 session,
                 self.WORKSET_TEMPLATE,
-                workset_id,
+                provisional_name,
                 json_addl=payload,
                 bstatus=WorksetState.READY.value,
+            )
+            workset_id = str(ws.euid)
+            resolved_prefix = normalized_prefix or f"worksets/{workset_id}/"
+            ws.name = workset_id
+            self.backend.update_instance_json(
+                session,
+                ws,
+                {
+                    "workset_id": workset_id,
+                    "prefix": resolved_prefix,
+                },
             )
 
             if customer_id:
@@ -398,7 +427,7 @@ class WorksetStateDB:
 
         self._emit_metric("WorksetRegistered", 1.0)
         LOGGER.info("Registered workset %s (priority=%s)", workset_id, priority.value)
-        return True
+        return workset_id
 
     def acquire_lock(
         self,
@@ -721,6 +750,13 @@ class WorksetStateDB:
                 return None
             return self._deserialize_item(self._to_dict(ws))
 
+    def get_workset_by_prefix(self, prefix: str) -> Optional[Dict[str, Any]]:
+        with self.backend.session_scope() as session:
+            ws = self._find_workset_by_prefix(session, prefix)
+            if ws is None:
+                return None
+            return self._deserialize_item(self._to_dict(ws))
+
     def update_performance_metrics(
         self,
         workset_id: str,
@@ -822,12 +858,12 @@ class WorksetStateDB:
 
     def _query_worksets(self, session, *, state: Optional[WorksetState] = None, limit: int = 100) -> List[generic_instance]:
         query = session.query(generic_instance).filter(
-            generic_instance.template_uuid == self._workset_template_uuid(session),
+            generic_instance.template_uid == self._workset_template_uid(session),
             generic_instance.is_deleted.is_(False),
         )
         if state is not None:
             query = query.filter(generic_instance.bstatus == state.value)
-        return query.order_by(generic_instance.created_dt.desc()).limit(limit).all()
+        return cast(List[generic_instance], query.order_by(generic_instance.created_dt.desc()).limit(limit).all())
 
     def list_worksets_by_state(
         self,
@@ -858,7 +894,7 @@ class WorksetStateDB:
             return []
         with self.backend.session_scope() as session:
             query = session.query(generic_instance).filter(
-                generic_instance.template_uuid == self._workset_template_uuid(session),
+                generic_instance.template_uid == self._workset_template_uid(session),
                 generic_instance.is_deleted.is_(False),
                 generic_instance.json_addl["customer_id"].as_string() == customer_id,
             )
@@ -925,7 +961,7 @@ class WorksetStateDB:
                 return [convert(v) for v in obj]
             return obj
 
-        return convert(data)
+        return cast(Dict[str, Any], convert(data))
 
     def _deserialize_item(self, item: Dict[str, Any]) -> Dict[str, Any]:
         def convert(obj: Any) -> Any:

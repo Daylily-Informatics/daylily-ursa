@@ -23,10 +23,18 @@ class _SessionCtx:
 
 
 class _Instance:
-    def __init__(self, *, name: str = "ws", bstatus: str = "ready", json_addl: dict | None = None):
+    def __init__(
+        self,
+        *,
+        name: str = "ws",
+        bstatus: str = "ready",
+        json_addl: dict | None = None,
+        euid: str = "ws-euid",
+    ):
         self.name = name
         self.bstatus = bstatus
         self.json_addl = dict(json_addl or {})
+        self.euid = euid
         self.is_deleted = False
 
 
@@ -43,6 +51,7 @@ def state_db() -> WorksetStateDB:
     db.backend.session_scope.return_value = _SessionCtx(db._session)
     db.backend.ensure_templates.return_value = None
     db.backend.create_lineage.return_value = None
+    db.backend.update_instance_json.return_value = None
 
     db._find_customer = MagicMock(return_value=None)
     db._write_state_event = MagicMock()
@@ -55,7 +64,7 @@ def state_db() -> WorksetStateDB:
 class TestWorksetLifecycle:
     def test_register_to_complete_workflow(self, state_db: WorksetStateDB):
         ws = _Instance(
-            name="integration-ws-001",
+            name="pending-workset",
             bstatus="ready",
             json_addl={
                 "workset_id": "integration-ws-001",
@@ -65,18 +74,19 @@ class TestWorksetLifecycle:
                 "prefix": "worksets/test/",
                 "metadata": {"samples": [{"sample_id": "S0"}]},
             },
+            euid="integration-ws-001",
         )
         state_db.backend.create_instance.return_value = ws
-        state_db._find_workset.side_effect = [None, ws, ws, ws]
+        state_db._find_workset.side_effect = [ws, ws, ws]
 
-        assert state_db.register_workset(
-            workset_id="integration-ws-001",
+        workset_id = state_db.register_workset(
             bucket="test-bucket",
             prefix="worksets/test/",
             priority=WorksetPriority.NORMAL,
             metadata={"samples": [{"sample_id": f"S{i}"} for i in range(5)], "sample_count": 5},
             customer_id="test-customer",
         )
+        assert workset_id == "integration-ws-001"
 
         assert state_db.acquire_lock("integration-ws-001", "processor-1") is True
 
@@ -140,18 +150,21 @@ class TestValidationToProcessing:
 
             jsonschema.validate(config, WorksetValidator.WORK_YAML_SCHEMA)
 
-            ws = _Instance(name="validated-ws-001", bstatus="ready", json_addl={"workset_id": "validated-ws-001", "state": "ready"})
+            ws = _Instance(
+                name="pending-workset",
+                bstatus="ready",
+                json_addl={"workset_id": "validated-ws-001", "state": "ready"},
+                euid="validated-ws-001",
+            )
             state_db.backend.create_instance.return_value = ws
-            state_db._find_workset.side_effect = [None]
 
             result = state_db.register_workset(
-                workset_id=config["workset_id"],
                 bucket="test-bucket",
                 prefix="worksets/validated-ws-001/",
                 metadata={"samples": config["samples"]},
                 customer_id="test-customer",
             )
-            assert result is True
+            assert result == "validated-ws-001"
 
 
 class TestDiagnosticsIntegration:

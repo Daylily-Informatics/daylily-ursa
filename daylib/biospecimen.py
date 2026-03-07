@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 
 from daylib.tapdb_graph import TapDBBackend, from_json_addl, utc_now_iso
 
@@ -172,19 +172,87 @@ class BiospecimenRegistry:
 
     @staticmethod
     def _to_subject(payload: Dict[str, Any]) -> Subject:
-        return Subject(**{k: payload.get(k) for k in Subject.__dataclass_fields__.keys()})
+        return Subject(
+            subject_id=cast(str, payload.get("subject_id")),
+            customer_id=cast(str, payload.get("customer_id")),
+            display_name=cast(Optional[str], payload.get("display_name")),
+            sex=cast(Optional[str], payload.get("sex")),
+            date_of_birth=cast(Optional[str], payload.get("date_of_birth")),
+            species=cast(str, payload.get("species", "Homo sapiens")),
+            cohort=cast(Optional[str], payload.get("cohort")),
+            external_ids=cast(List[str], payload.get("external_ids", [])),
+            notes=cast(Optional[str], payload.get("notes")),
+            tags=cast(List[str], payload.get("tags", [])),
+            created_at=cast(str, payload.get("created_at", _utc_now_iso())),
+            updated_at=cast(str, payload.get("updated_at", _utc_now_iso())),
+        )
 
     @staticmethod
     def _to_biospecimen(payload: Dict[str, Any]) -> Biospecimen:
-        return Biospecimen(**{k: payload.get(k) for k in Biospecimen.__dataclass_fields__.keys()})
+        return Biospecimen(
+            biospecimen_id=cast(str, payload.get("biospecimen_id")),
+            customer_id=cast(str, payload.get("customer_id")),
+            subject_id=cast(str, payload.get("subject_id")),
+            biospecimen_type=cast(str, payload.get("biospecimen_type", "tissue")),
+            collection_date=cast(Optional[str], payload.get("collection_date")),
+            collection_method=cast(Optional[str], payload.get("collection_method")),
+            preservation_method=cast(Optional[str], payload.get("preservation_method")),
+            tissue_type=cast(Optional[str], payload.get("tissue_type")),
+            anatomical_site=cast(Optional[str], payload.get("anatomical_site")),
+            tumor_fraction=cast(Optional[float], payload.get("tumor_fraction")),
+            is_tumor=cast(bool, payload.get("is_tumor", False)),
+            produced_date=cast(Optional[str], payload.get("produced_date")),
+            notes=cast(Optional[str], payload.get("notes")),
+            tags=cast(List[str], payload.get("tags", [])),
+            created_at=cast(str, payload.get("created_at", _utc_now_iso())),
+            updated_at=cast(str, payload.get("updated_at", _utc_now_iso())),
+        )
 
     @staticmethod
     def _to_biosample(payload: Dict[str, Any]) -> Biosample:
-        return Biosample(**{k: payload.get(k) for k in Biosample.__dataclass_fields__.keys()})
+        return Biosample(
+            biosample_id=cast(str, payload.get("biosample_id")),
+            customer_id=cast(str, payload.get("customer_id")),
+            biospecimen_id=cast(str, payload.get("biospecimen_id")),
+            subject_id=cast(str, payload.get("subject_id")),
+            sample_type=cast(str, payload.get("sample_type", "blood")),
+            tissue_type=cast(Optional[str], payload.get("tissue_type")),
+            anatomical_site=cast(Optional[str], payload.get("anatomical_site")),
+            collection_date=cast(Optional[str], payload.get("collection_date")),
+            collection_method=cast(Optional[str], payload.get("collection_method")),
+            preservation_method=cast(Optional[str], payload.get("preservation_method")),
+            tumor_fraction=cast(Optional[float], payload.get("tumor_fraction")),
+            tumor_grade=cast(Optional[str], payload.get("tumor_grade")),
+            tumor_stage=cast(Optional[str], payload.get("tumor_stage")),
+            is_tumor=cast(bool, payload.get("is_tumor", False)),
+            matched_normal_id=cast(Optional[str], payload.get("matched_normal_id")),
+            notes=cast(Optional[str], payload.get("notes")),
+            tags=cast(List[str], payload.get("tags", [])),
+            created_at=cast(str, payload.get("created_at", _utc_now_iso())),
+            updated_at=cast(str, payload.get("updated_at", _utc_now_iso())),
+        )
 
     @staticmethod
     def _to_library(payload: Dict[str, Any]) -> Library:
-        return Library(**{k: payload.get(k) for k in Library.__dataclass_fields__.keys()})
+        return Library(
+            library_id=cast(str, payload.get("library_id")),
+            customer_id=cast(str, payload.get("customer_id")),
+            biosample_id=cast(str, payload.get("biosample_id")),
+            library_prep=cast(str, payload.get("library_prep", "pcr_free_wgs")),
+            library_kit=cast(Optional[str], payload.get("library_kit")),
+            target_insert_size=cast(Optional[int], payload.get("target_insert_size")),
+            capture_kit=cast(Optional[str], payload.get("capture_kit")),
+            target_regions_bed=cast(Optional[str], payload.get("target_regions_bed")),
+            target_coverage=cast(Optional[float], payload.get("target_coverage")),
+            target_read_count=cast(Optional[int], payload.get("target_read_count")),
+            protocol_id=cast(Optional[str], payload.get("protocol_id")),
+            lab_id=cast(Optional[str], payload.get("lab_id")),
+            prep_date=cast(Optional[str], payload.get("prep_date")),
+            notes=cast(Optional[str], payload.get("notes")),
+            tags=cast(List[str], payload.get("tags", [])),
+            created_at=cast(str, payload.get("created_at", _utc_now_iso())),
+            updated_at=cast(str, payload.get("updated_at", _utc_now_iso())),
+        )
 
     def create_subject(self, subject: Subject) -> bool:
         payload = asdict(subject)
@@ -378,7 +446,7 @@ class BiospecimenRegistry:
         if subject is None:
             return {}
         biospecimens = self.list_biospecimens_for_subject(subject_id)
-        hierarchy = {
+        hierarchy: Dict[str, Any] = {
             "subject": asdict(subject),
             "biospecimens": [],
         }

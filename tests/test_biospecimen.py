@@ -30,16 +30,16 @@ class _SessionCtx:
         return False
 
 
-def _instance(payload: dict, *, euid: str = "euid-1", template_uuid: int = 1, bstatus: str = "active"):
+def _instance(payload: dict, *, euid: str = "euid-1", template_uid: int = 1, bstatus: str = "active"):
     row = MagicMock()
     row.json_addl = dict(payload)
     row.euid = euid
+    row.uid = hash(euid) & 0xFFFFFFFF
     row.name = payload.get("subject_id") or payload.get("biospecimen_id") or payload.get("biosample_id") or payload.get("library_id") or "node"
     row.created_dt = None
     row.modified_dt = None
     row.bstatus = bstatus
-    row.template_uuid = template_uuid
-    row.uuid = hash(euid) & 0xFFFFFFFF
+    row.template_uid = template_uid
     row.is_deleted = False
     return row
 

@@ -107,7 +107,7 @@ class WorksetIntegration:
 
     def register_workset(
         self,
-        workset_id: str,
+        workset_id: Optional[str] = None,
         bucket: Optional[str] = None,
         prefix: Optional[str] = None,
         priority: str = "normal",
@@ -119,7 +119,7 @@ class WorksetIntegration:
         *,
         write_s3: bool = True,
         write_tapdb: bool = True,
-    ) -> bool:
+    ) -> str:
         """Register a new workset in both TapDB and S3.
 
         Args:
@@ -136,18 +136,15 @@ class WorksetIntegration:
             write_tapdb: Whether to write TapDB record
 
         Returns:
-            True if registration successful
+            Canonical workset EUID if registration successful
         """
         target_bucket = normalize_bucket_name(bucket) or self.bucket
         if not target_bucket:
             raise ValueError("Bucket must be specified")
 
-        workset_prefix = prefix or f"{self.prefix}{workset_id}/"
-        if not workset_prefix.endswith("/"):
-            workset_prefix += "/"
-
         now = dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
-        success = True
+        canonical_workset_id = workset_id
+        workset_prefix = prefix.rstrip("/") + "/" if prefix else None
 
         # Write to TapDB first (if enabled and available)
         if write_tapdb and self.state_db:
@@ -170,8 +167,7 @@ class WorksetIntegration:
                 if not effective_cluster_region:
                     effective_cluster_region = metadata.get("cluster_region")
 
-            db_success = self.state_db.register_workset(
-                workset_id=workset_id,
+            canonical_workset_id = self.state_db.register_workset(
                 bucket=target_bucket,
                 prefix=workset_prefix,
                 priority=ws_priority,
@@ -181,29 +177,27 @@ class WorksetIntegration:
                 preferred_cluster=effective_preferred_cluster,
                 cluster_region=effective_cluster_region,
             )
-            if not db_success:
-                LOGGER.warning("TapDB registration failed for %s", workset_id)
-                success = False
+
+        if not canonical_workset_id:
+            raise ValueError("workset_id is required when TapDB creation is disabled")
+
+        if not workset_prefix:
+            workset_prefix = f"{self.prefix}{canonical_workset_id}/"
         
         # Write S3 sentinel files (if enabled)
         if write_s3:
-            try:
-                self._write_s3_workset_files(
-                    bucket=target_bucket,
-                    prefix=workset_prefix,
-                    workset_id=workset_id,
-                    metadata=metadata or {},
-                    timestamp=now,
-                )
-            except Exception as e:
-                LOGGER.error("S3 sentinel write failed for %s: %s", workset_id, str(e))
-                success = False
-        
-        if success:
-            LOGGER.info("Registered workset %s in bucket %s", workset_id, target_bucket)
-            self._notify_state_change(workset_id, "ready", "Workset registered")
+            self._write_s3_workset_files(
+                bucket=target_bucket,
+                prefix=workset_prefix,
+                workset_id=canonical_workset_id,
+                metadata=metadata or {},
+                timestamp=now,
+            )
 
-        return success
+        LOGGER.info("Registered workset %s in bucket %s", canonical_workset_id, target_bucket)
+        self._notify_state_change(canonical_workset_id, "ready", "Workset registered")
+
+        return canonical_workset_id
 
     def update_state(
         self,
@@ -293,19 +287,29 @@ class WorksetIntegration:
             LOGGER.warning("TapDB or bucket not configured for sync")
             return None
 
-        # Determine workset ID from prefix
-        workset_id = workset_prefix.rstrip("/").split("/")[-1]
+        normalized_prefix = workset_prefix.rstrip("/") + "/"
 
         # Read current state from S3
-        state = self._determine_s3_state(workset_prefix)
-        metadata = self._read_work_yaml(workset_prefix)
+        state = self._determine_s3_state(normalized_prefix)
+        metadata = self._read_work_yaml(normalized_prefix)
 
         from daylib.workset_state_db import WorksetPriority, WorksetState
 
         # Check if workset already exists in TapDB
-        existing = self.state_db.get_workset(workset_id)
+        existing = self.state_db.get_workset_by_prefix(normalized_prefix)
+        workset_id: Optional[str] = None
 
         if existing:
+            existing_workset_id = existing.get("workset_id")
+            if not isinstance(existing_workset_id, str) or not existing_workset_id:
+                LOGGER.warning(
+                    "Existing workset at prefix %s is missing workset_id",
+                    normalized_prefix,
+                )
+                return None
+
+            workset_id = existing_workset_id
+
             # Update state if changed
             try:
                 ws_state = WorksetState(state)
@@ -324,10 +328,9 @@ class WorksetIntegration:
             except ValueError:
                 ws_priority = WorksetPriority.NORMAL
 
-            self.state_db.register_workset(
-                workset_id=workset_id,
+            workset_id = self.state_db.register_workset(
                 bucket=self.bucket,
-                prefix=workset_prefix,
+                prefix=normalized_prefix,
                 priority=ws_priority,
                 metadata=metadata,
             )

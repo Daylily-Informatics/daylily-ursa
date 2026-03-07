@@ -132,10 +132,11 @@ def mock_manifest_registry():
         sample_count=1,
         tsv_sha256="abc",
         tsv_gzip_b64="Z3o=",  # not used in these API tests
+        manifest_euid="manifest-euid-1",
     )
     registry.get_manifest_tsv.return_value = "RUN_ID\tSAMPLE_ID\nR0\tHG002\n"
     registry.save_manifest.return_value = SavedManifest(
-        manifest_id="m-2",
+        manifest_id="manifest-euid-2",
         customer_id="cust-001",
         name="Saved",
         description=None,
@@ -143,6 +144,7 @@ def mock_manifest_registry():
         sample_count=1,
         tsv_sha256="def",
         tsv_gzip_b64="Z3o=",
+        manifest_euid="manifest-euid-2",
     )
     return registry
 
@@ -172,8 +174,9 @@ def test_save_customer_manifest(client, mock_manifest_registry):
     resp = client.post("/api/customers/cust-001/manifests", json=payload)
     assert resp.status_code == 201
     data = resp.json()
-    assert data["manifest"]["manifest_id"] == "m-2"
-    assert data["download_url"].endswith("/m-2/download")
+    assert data["manifest"]["manifest_id"] == "manifest-euid-2"
+    assert data["manifest"]["manifest_euid"] == "manifest-euid-2"
+    assert data["download_url"].endswith("/manifest-euid-2/download")
     mock_manifest_registry.save_manifest.assert_called_once()
 
 
@@ -224,7 +227,7 @@ def mock_integration():
 
     integ = MagicMock()
     integ.bucket = "control-bucket"
-    integ.register_workset.return_value = True
+    integ.register_workset.return_value = "test-workset-euid-001"
     return integ
 
 
@@ -311,10 +314,23 @@ def test_create_workset_from_saved_manifest_id(
     assert metadata["samples"][0]["sample_id"] == "HG002"
     assert metadata["stage_samples_tsv"].startswith("RUN_ID\tSAMPLE_ID")
 
-    # S3 prefix should follow worksets/<safe-name>-<uuid>/ pattern
-    prefix = call_kwargs["prefix"]
-    assert prefix.startswith("worksets/hg002-wgs-")
-    assert prefix.endswith("/")
+    # TapDB/EUID-first flow should not pre-mint a persisted prefix client-side
+    assert call_kwargs["prefix"] is None
+    assert "workset_id" not in call_kwargs
+
+
+def test_create_workset_from_saved_manifest_euid(
+    client_with_integration, mock_manifest_registry, mock_integration
+):
+    payload = _build_workset_payload(manifest_id="manifest-euid-1")
+
+    resp = client_with_integration.post("/api/customers/cust-001/worksets", json=payload)
+    assert resp.status_code == 200
+
+    mock_manifest_registry.get_manifest_tsv.assert_called_once_with(
+        customer_id="cust-001", manifest_id="manifest-euid-1"
+    )
+    assert mock_integration.register_workset.called
 
 
 def test_create_workset_from_raw_manifest_tsv_content(client_with_integration, mock_integration):
@@ -347,9 +363,8 @@ def test_create_workset_from_raw_manifest_tsv_content(client_with_integration, m
     assert metadata["samples"][0]["r2_file"].endswith("r2.fq.gz")
     assert metadata["stage_samples_tsv"] == tsv_content
 
-    # Prefix pattern should be the same for raw TSV-driven worksets
-    prefix = call_kwargs["prefix"]
-    assert prefix.startswith("worksets/hg002-wgs-")
-    assert prefix.endswith("/")
+    # TapDB/EUID-first flow should not pre-mint a persisted prefix client-side
+    assert call_kwargs["prefix"] is None
+    assert "workset_id" not in call_kwargs
 
 

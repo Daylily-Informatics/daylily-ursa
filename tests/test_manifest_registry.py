@@ -30,6 +30,7 @@ class _SessionCtx:
 def manifest_registry() -> ManifestRegistry:
     registry = ManifestRegistry.__new__(ManifestRegistry)
     registry.backend = MagicMock()
+    registry.backend.find_instance_by_euid_or_external_id = registry.backend.find_instance_by_external_id
     registry._session = MagicMock()
     registry.backend.session_scope.return_value = _SessionCtx(registry._session)
     return registry
@@ -39,7 +40,7 @@ class TestSaveManifestEncoding:
     def test_save_manifest_encodes_tsv_and_stores_metadata(self, manifest_registry: ManifestRegistry):
         tsv_content = "RUN_ID\tSAMPLE_ID\nR0\tHG002\n"
 
-        customer = MagicMock(uuid=101, euid="cust-euid")
+        customer = MagicMock(uid=101, euid="cust-euid")
         manifest = MagicMock(euid="manifest-euid")
         manifest_registry.backend.find_instance_by_external_id.return_value = None
         manifest_registry.backend.create_instance.side_effect = [customer, manifest]
@@ -53,7 +54,7 @@ class TestSaveManifestEncoding:
 
         assert isinstance(saved, SavedManifest)
         assert saved.customer_id == "cust-001"
-        assert saved.manifest_id.startswith("m-")
+        assert saved.manifest_id == "manifest-euid"
         assert saved.sample_count == _estimate_sample_count(tsv_content)
         assert saved.tsv_sha256 == _sha256_hex(tsv_content)
         assert _gzip_b64_decode(saved.tsv_gzip_b64) == tsv_content
@@ -64,6 +65,8 @@ class TestSaveManifestEncoding:
         assert manifest_payload["sample_count"] == saved.sample_count
         assert manifest_payload["tsv_sha256"] == saved.tsv_sha256
         assert _gzip_b64_decode(manifest_payload["tsv_gzip_b64"]) == tsv_content
+        update_payload = manifest_registry.backend.update_instance_json.call_args.args[2]
+        assert update_payload == {"manifest_id": "manifest-euid"}
 
         manifest_registry.backend.create_lineage.assert_called_once()
 
@@ -79,7 +82,7 @@ class TestSaveManifestEncoding:
 
 class TestListCustomerManifests:
     def test_list_customer_manifests_normalizes_fields(self, manifest_registry: ManifestRegistry):
-        customer = MagicMock(uuid=101)
+        customer = MagicMock(uid=101)
         row = MagicMock(
             euid="manifest-euid",
             name="Run 1",
@@ -145,9 +148,31 @@ class TestGetManifestAndTsv:
         assert saved.customer_id == "cust-001"
         assert saved.sample_count == 1
         assert saved.tsv_sha256 == _sha256_hex(tsv_content)
+        assert saved.manifest_euid == "manifest-euid"
 
         round_tripped = manifest_registry.get_manifest_tsv(customer_id="cust-001", manifest_id="m-1")
         assert round_tripped == tsv_content
+
+    def test_get_manifest_falls_back_to_row_euid_when_manifest_id_missing(self, manifest_registry: ManifestRegistry):
+        row = MagicMock(
+            euid="manifest-euid",
+            name="Run 1",
+            created_dt=None,
+            modified_dt=None,
+            bstatus="active",
+            json_addl={
+                "customer_id": "cust-001",
+                "name": "Run 1",
+                "tsv_gzip_b64": _gzip_b64_encode("RUN_ID\tSAMPLE_ID\nR0\tHG002\n"),
+            },
+        )
+        manifest_registry.backend.find_instance_by_external_id.return_value = row
+
+        saved = manifest_registry.get_manifest(customer_id="cust-001", manifest_id="manifest-euid")
+
+        assert saved is not None
+        assert saved.manifest_id == "manifest-euid"
+        assert saved.manifest_euid == "manifest-euid"
 
     def test_get_manifest_returns_none_when_not_found(self, manifest_registry: ManifestRegistry):
         manifest_registry.backend.find_instance_by_external_id.return_value = None

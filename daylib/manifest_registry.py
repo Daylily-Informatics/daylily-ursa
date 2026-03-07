@@ -6,7 +6,6 @@ import base64
 import datetime as dt
 import gzip
 import hashlib
-import uuid
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
@@ -44,12 +43,6 @@ class SavedManifest:
 
 def _utc_now_iso() -> str:
     return dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
-
-
-def _generate_manifest_id(now: Optional[dt.datetime] = None) -> str:
-    now = now or dt.datetime.now(dt.timezone.utc)
-    ts = now.strftime("%Y%m%dT%H%M%S%fZ")
-    return f"m-{ts}-{uuid.uuid4().hex[:10]}"
 
 
 def _gzip_b64_encode(text: str) -> str:
@@ -153,7 +146,6 @@ class ManifestRegistry:
         name: Optional[str] = None,
         description: Optional[str] = None,
     ) -> SavedManifest:
-        manifest_id = _generate_manifest_id()
         created_at = _utc_now_iso()
         sample_count = _estimate_sample_count(tsv_content)
         tsv_sha256 = _sha256_hex(tsv_content)
@@ -163,7 +155,6 @@ class ManifestRegistry:
             raise ManifestTooLargeError("Manifest payload exceeds safe object size")
 
         payload = {
-            "manifest_id": manifest_id,
             "customer_id": customer_id,
             "name": name,
             "description": description,
@@ -179,18 +170,24 @@ class ManifestRegistry:
             manifest = self.backend.create_instance(
                 session,
                 template_code=self.MANIFEST_TEMPLATE,
-                name=name or manifest_id,
+                name=name or customer_id,
                 json_addl=payload,
                 bstatus="active",
             )
+            manifest_id = manifest.euid
+            self.backend.update_instance_json(session, manifest, {"manifest_id": manifest_id})
             self.backend.create_lineage(
                 session,
                 parent=customer,
                 child=manifest,
                 relationship_type="owns",
-                name=f"{customer_id}:owns:{manifest_id}",
+                name=f"{customer_id}:owns:{manifest.euid}",
             )
             payload["manifest_euid"] = manifest.euid
+            payload["manifest_id"] = manifest_id
+
+        manifest_euid_raw = payload.get("manifest_euid")
+        manifest_euid = manifest_euid_raw if isinstance(manifest_euid_raw, str) else None
 
         return SavedManifest(
             manifest_id=manifest_id,
@@ -201,7 +198,7 @@ class ManifestRegistry:
             sample_count=sample_count,
             tsv_sha256=tsv_sha256,
             tsv_gzip_b64=tsv_gzip_b64,
-            manifest_euid=payload.get("manifest_euid"),
+            manifest_euid=manifest_euid,
         )
 
     def list_customer_manifests(self, customer_id: str, limit: int = 200) -> List[Dict[str, Any]]:
@@ -240,7 +237,7 @@ class ManifestRegistry:
 
     def get_manifest(self, *, customer_id: str, manifest_id: str) -> Optional[SavedManifest]:
         with self.backend.session_scope(commit=False) as session:
-            row = self.backend.find_instance_by_external_id(
+            row = self.backend.find_instance_by_euid_or_external_id(
                 session,
                 template_code=self.MANIFEST_TEMPLATE,
                 key="manifest_id",
@@ -252,7 +249,7 @@ class ManifestRegistry:
             if payload.get("customer_id") != customer_id:
                 return None
             return SavedManifest(
-                manifest_id=payload["manifest_id"],
+                manifest_id=payload.get("manifest_id") or row.euid,
                 customer_id=payload["customer_id"],
                 name=payload.get("name"),
                 description=payload.get("description"),

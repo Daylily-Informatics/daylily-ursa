@@ -151,9 +151,7 @@ def create_s3_router(deps: S3Dependencies) -> APIRouter:
 
             instructions = None
             if not result.is_fully_configured:
-                instructions = validator_inst.get_setup_instructions(
-                    bucket, result, daylily_account_id="108782052779"
-                )
+                instructions = validator_inst.get_setup_instructions(bucket, result)
 
             return {
                 "bucket": bucket, "valid": result.is_valid, "fully_configured": result.is_fully_configured,

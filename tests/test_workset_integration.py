@@ -17,7 +17,7 @@ from daylib.workset_integration import (
 def mock_state_db():
     """Create mock WorksetStateDB."""
     mock_db = MagicMock()
-    mock_db.register_workset.return_value = True
+    mock_db.register_workset.return_value = "test-ws-001"
     mock_db.get_workset.return_value = {
         "workset_id": "test-ws-001",
         "state": "ready",
@@ -107,16 +107,14 @@ class TestRegisterWorkset:
     def test_register_workset_dual_write(self, integration, mock_state_db, mock_s3_client):
         """Test registration writes to both TapDB and S3."""
         result = integration.register_workset(
-            workset_id="new-ws-001",
             bucket="test-bucket",
-            prefix="worksets/new-ws-001/",
             priority="high",
             metadata={"name": "Test Workset"},
             write_s3=True,
             write_tapdb=True,
         )
 
-        assert result is True
+        assert result == "test-ws-001"
         mock_state_db.register_workset.assert_called_once()
         # S3 sentinel should be written
         assert mock_s3_client.put_object.called
@@ -124,14 +122,12 @@ class TestRegisterWorkset:
     def test_register_workset_tapdb_only(self, integration, mock_state_db, mock_s3_client):
         """Test registration to TapDB only."""
         result = integration.register_workset(
-            workset_id="db-only-ws",
             bucket="test-bucket",
-            prefix="worksets/db-only-ws/",
             write_s3=False,
             write_tapdb=True,
         )
 
-        assert result is True
+        assert result == "test-ws-001"
         mock_state_db.register_workset.assert_called_once()
 
     def test_register_workset_s3_only(self, integration, mock_state_db, mock_s3_client):
@@ -144,7 +140,7 @@ class TestRegisterWorkset:
             write_tapdb=False,
         )
 
-        assert result is True
+        assert result == "s3-only-ws"
         mock_state_db.register_workset.assert_not_called()
         assert mock_s3_client.put_object.called
 
@@ -251,6 +247,36 @@ class TestUpdateState:
 
         mock_state_db.update_state.assert_not_called()
         assert mock_s3_client.put_object.called
+
+
+class TestSyncS3ToTapDB:
+    """Test syncing S3-discovered worksets into TapDB."""
+
+    def test_sync_s3_to_tapdb_updates_existing_workset(self, integration, mock_state_db):
+        """Test syncing updates an existing TapDB workset found by prefix."""
+        mock_state_db.get_workset_by_prefix.return_value = {"workset_id": "existing-ws"}
+        integration._determine_s3_state = MagicMock(return_value="ready")
+        integration._read_work_yaml = MagicMock(return_value={})
+
+        result = integration.sync_s3_to_tapdb("worksets/existing-ws")
+
+        assert result == "existing-ws"
+        mock_state_db.update_state.assert_called_once()
+        mock_state_db.register_workset.assert_not_called()
+
+    def test_sync_s3_to_tapdb_returns_none_when_existing_workset_id_missing(
+        self, integration, mock_state_db
+    ):
+        """Test syncing bails out when an existing prefix match lacks a workset id."""
+        mock_state_db.get_workset_by_prefix.return_value = {"prefix": "worksets/existing-ws/"}
+        integration._determine_s3_state = MagicMock(return_value="ready")
+        integration._read_work_yaml = MagicMock(return_value={})
+
+        result = integration.sync_s3_to_tapdb("worksets/existing-ws")
+
+        assert result is None
+        mock_state_db.update_state.assert_not_called()
+        mock_state_db.register_workset.assert_not_called()
 
 
 class TestGetReadyWorksets:
@@ -1506,7 +1532,6 @@ class TestBucketNormalizationAtIngress:
     def test_register_workset_normalizes_bucket_param(self, integration, mock_state_db, mock_s3_client):
         """Test register_workset normalizes bucket parameter with s3:// prefix."""
         result = integration.register_workset(
-            workset_id="test-ws-norm",
             bucket="s3://bucket-with-prefix",
             prefix="worksets/test/",
             priority="normal",
@@ -1515,7 +1540,7 @@ class TestBucketNormalizationAtIngress:
             write_tapdb=True,
         )
 
-        assert result is True
+        assert result == "test-ws-001"
         call_kwargs = mock_state_db.register_workset.call_args.kwargs
         assert call_kwargs["bucket"] == "bucket-with-prefix"
 
@@ -2229,7 +2254,7 @@ class TestListWorksetsByCustomerGSI:
 
         db = WorksetStateDB.__new__(WorksetStateDB)
         db.backend = MagicMock()
-        db._workset_template_uuid = MagicMock(return_value=1)
+        db._workset_template_uid = MagicMock(return_value=1)
         db._deserialize_item = lambda x: x
         db._to_dict = lambda row: row.json_addl
 
@@ -3534,32 +3559,6 @@ class TestWorksetRetrySemantics:
         # (retry creates a new workset, doesn't modify original)
         assert original["state"] == "error"
         assert original["error_details"] == "Pipeline failed"
-
-    def test_new_workset_id_has_different_datetime_suffix(self):
-        """Test that new workset ID has different datetime suffix."""
-        import re
-        import uuid
-        import datetime as dt
-
-        original_id = "my-analysis-abc12345-20250120"
-
-        # Extract base name
-        match = re.match(r"^(.+)-[a-f0-9]{8}-\d{8}$", original_id)
-        base_name = match.group(1)
-
-        # Generate new ID (simulating what the API does)
-        date_suffix = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d")
-        new_id = f"{base_name}-{uuid.uuid4().hex[:8]}-{date_suffix}"
-
-        # New ID should have same base name but different uuid and possibly different date
-        new_match = re.match(r"^(.+)-([a-f0-9]{8})-(\d{8})$", new_id)
-        assert new_match is not None
-        assert new_match.group(1) == base_name
-
-        # The uuid part should be different
-        original_uuid = "abc12345"
-        new_uuid = new_match.group(2)
-        assert new_uuid != original_uuid
 
     def test_update_metadata_method_merges_fields(self):
         """Test that update_metadata properly merges with existing metadata."""

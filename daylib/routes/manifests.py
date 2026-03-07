@@ -46,12 +46,13 @@ def create_manifests_router(deps: ManifestDependencies) -> APIRouter:
     except ImportError:
         ManifestTooLargeError = None  # type: ignore[misc, assignment]
 
-    def _check_manifest_registry():
-        if not manifest_registry:
+    def _check_manifest_registry() -> "ManifestRegistry":
+        if manifest_registry is None:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Manifest storage not configured",
             )
+        return manifest_registry
 
     @router.get("/api/customers/{customer_id}/manifests")
     async def list_customer_manifests(
@@ -61,13 +62,13 @@ def create_manifests_router(deps: ManifestDependencies) -> APIRouter:
         """List saved manifests for a customer (metadata only)."""
         if not customer_manager:
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Customer management not configured")
-        _check_manifest_registry()
+        registry = _check_manifest_registry()
 
         config = customer_manager.get_customer_config(customer_id)
         if not config:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Customer {customer_id} not found")
 
-        manifests = manifest_registry.list_customer_manifests(customer_id, limit=limit)
+        manifests = registry.list_customer_manifests(customer_id, limit=limit)
         return {"manifests": manifests}
 
     @router.post(
@@ -81,26 +82,27 @@ def create_manifests_router(deps: ManifestDependencies) -> APIRouter:
         description: Optional[str] = Body(None, embed=True),
     ):
         """Save a stage_samples.tsv manifest for later reuse."""
-        _check_manifest_registry()
+        registry = _check_manifest_registry()
         config = customer_manager.get_customer_config(customer_id)
         if not config:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Customer {customer_id} not found")
 
         try:
-            saved = manifest_registry.save_manifest(
+            saved = registry.save_manifest(
                 customer_id=customer_id,
                 tsv_content=tsv_content,
                 name=name,
                 description=description,
             )
         except Exception as e:
-            if ManifestTooLargeError and isinstance(e, ManifestTooLargeError):
+            if ManifestTooLargeError is not None and isinstance(e, ManifestTooLargeError):
                 raise HTTPException(status_code=413, detail=str(e))
             if isinstance(e, ValueError):
                 raise HTTPException(status_code=400, detail=str(e))
             raise
 
-        download_url = f"/api/customers/{customer_id}/manifests/{saved.manifest_id}/download"
+        manifest_ref = saved.manifest_euid or saved.manifest_id
+        download_url = f"/api/customers/{customer_id}/manifests/{manifest_ref}/download"
         return {
             "manifest": saved.to_metadata_dict(),
             "download_url": download_url,
@@ -109,12 +111,12 @@ def create_manifests_router(deps: ManifestDependencies) -> APIRouter:
     @router.get("/api/customers/{customer_id}/manifests/{manifest_id}")
     async def get_customer_manifest_metadata(customer_id: str, manifest_id: str):
         """Get saved manifest metadata (not content)."""
-        _check_manifest_registry()
+        registry = _check_manifest_registry()
         config = customer_manager.get_customer_config(customer_id)
         if not config:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Customer {customer_id} not found")
 
-        m = manifest_registry.get_manifest(customer_id=customer_id, manifest_id=manifest_id)
+        m = registry.get_manifest(customer_id=customer_id, manifest_id=manifest_id)
         if not m:
             raise HTTPException(status_code=404, detail="Manifest not found")
         return {"manifest": m.to_metadata_dict()}
@@ -122,12 +124,12 @@ def create_manifests_router(deps: ManifestDependencies) -> APIRouter:
     @router.get("/api/customers/{customer_id}/manifests/{manifest_id}/download")
     async def download_customer_manifest(customer_id: str, manifest_id: str):
         """Download the saved stage_samples.tsv content."""
-        _check_manifest_registry()
+        registry = _check_manifest_registry()
         config = customer_manager.get_customer_config(customer_id)
         if not config:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Customer {customer_id} not found")
 
-        tsv = manifest_registry.get_manifest_tsv(customer_id=customer_id, manifest_id=manifest_id)
+        tsv = registry.get_manifest_tsv(customer_id=customer_id, manifest_id=manifest_id)
         if tsv is None:
             raise HTTPException(status_code=404, detail="Manifest not found")
 

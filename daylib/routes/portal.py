@@ -45,7 +45,6 @@ from daylib.file_registry import (
     FileRegistration as _FileRegistration,
     SequencingMetadata as _SequencingMetadata,
     detect_file_format as _detect_file_format,
-    generate_file_id as _generate_file_id,
 )
 from daylib.search import search_portal
 from daylib.routes.dependencies import (
@@ -751,6 +750,8 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         domain = _get_effective_cognito_domain(deps)
         client_id = deps.settings.cognito_app_client_id
         hosted_ui_enabled = bool(deps.enable_auth and deps.cognito_auth and domain and client_id)
+        hosted_ui_domain = domain or ""
+        hosted_ui_client_id = client_id or ""
 
         if hosted_ui_enabled and not error and not success:
             if sso or signup or not request.query_params:
@@ -761,15 +762,15 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
 
                 auth_url = (
                     _build_signup_url(
-                        domain=domain,
-                        client_id=client_id,
+                        domain=hosted_ui_domain,
+                        client_id=hosted_ui_client_id,
                         redirect_uri=callback_url,
                         state=state_token,
                     )
                     if signup
                     else build_authorization_url(
-                        domain=domain,
-                        client_id=client_id,
+                        domain=hosted_ui_domain,
+                        client_id=hosted_ui_client_id,
                         redirect_uri=callback_url,
                         state=state_token,
                     )
@@ -788,15 +789,15 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
 
             auth_url = (
                 _build_signup_url(
-                    domain=domain,
-                    client_id=client_id,
+                    domain=hosted_ui_domain,
+                    client_id=hosted_ui_client_id,
                     redirect_uri=callback_url,
                     state=state_token,
                 )
                 if signup
                 else build_authorization_url(
-                    domain=domain,
-                    client_id=client_id,
+                    domain=hosted_ui_domain,
+                    client_id=hosted_ui_client_id,
                     redirect_uri=callback_url,
                     state=state_token,
                 )
@@ -2339,7 +2340,6 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
 
             if auto_register and deps.file_registry:
                 s3_uri = f"s3://{bucket_obj.bucket_name}/{s3_key}"
-                file_id = _generate_file_id(s3_uri, customer_id)
                 content_length = 0
                 etag: Optional[str] = None
                 try:
@@ -2358,10 +2358,10 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
 
                 read_number = 2 if any(token in filename for token in ("_R2", "_2.fastq", "_2.fq")) else 1
                 registration = _FileRegistration(
-                    file_id=file_id,
+                    file_id="",
                     customer_id=customer_id,
                     file_metadata=_FileMetadata(
-                        file_id=file_id,
+                        file_id="",
                         s3_uri=s3_uri,
                         file_size_bytes=content_length,
                         md5_checksum=etag,
@@ -2381,7 +2381,7 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                     LOGGER.error(
                         "Portal upload registration returned False: customer_id=%s file_id=%s s3_uri=%s",
                         sanitize_for_log(customer_id),
-                        sanitize_for_log(file_id),
+                        sanitize_for_log(registration.file_id or ""),
                         sanitize_for_log(s3_uri),
                     )
                     raise HTTPException(
@@ -2389,7 +2389,7 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                         detail="Upload succeeded, but file registration failed. Use auto-register from linked buckets to recover.",
                     )
                 response_payload["registered"] = True
-                response_payload["file_id"] = file_id
+                response_payload["file_id"] = registration.file_id
             elif auto_register and not deps.file_registry:
                 LOGGER.warning(
                     "Portal upload auto-register requested but file registry is unavailable for customer_id=%s",
@@ -3524,7 +3524,16 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         desired_is_admin = is_admin_normalized in {"1", "true", "yes", "on"}
 
         try:
-            ok = deps.customer_manager.set_admin_status(email=email, is_admin=desired_is_admin)
+            target_customer = deps.customer_manager.get_customer_by_email(email)
+            if target_customer is None:
+                return RedirectResponse(
+                    url="/portal/admin/users?error=" + quote_plus(f"User not found: {email}"),
+                    status_code=302,
+                )
+            ok = deps.customer_manager.set_admin_status(
+                customer_id=target_customer.customer_id,
+                is_admin=desired_is_admin,
+            )
         except Exception as e:
             LOGGER.error("Failed to set admin status for %s: %s", sanitize_for_log(email), e)
             ok = False
