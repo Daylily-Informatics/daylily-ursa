@@ -3575,6 +3575,58 @@ class TestPortalAuthzSurfaces:
         assert non_admin_response.status_code == 200
         assert b"data-testid=\"delete-cluster-btn\"" not in non_admin_response.content
 
+    def test_clusters_create_surface_is_admin_only(self, mock_state_db, monkeypatch):
+        """Create-cluster panel and job card must be visible only to admins."""
+
+        class _FakeUrsaConfig:
+            is_configured = True
+            aws_profile = None
+
+            def get_allowed_regions(self):
+                return ["us-west-2"]
+
+        monkeypatch.setattr("daylib.ursa_config.get_ursa_config", lambda: _FakeUrsaConfig())
+
+        mock_service = MagicMock()
+        mock_service.get_all_clusters_with_status.return_value = []
+        monkeypatch.setattr("daylib.cluster_service.get_cluster_service", lambda **kwargs: mock_service)
+
+        admin_client = _make_authenticated_client(mock_state_db, customer_id="cust-admin", is_admin=True)
+        admin_response = admin_client.get("/portal/clusters")
+        assert admin_response.status_code == 200
+        assert b"data-testid=\"create-cluster-toggle\"" in admin_response.content
+        assert b"data-testid=\"create-cluster-panel\"" in admin_response.content
+        assert b"Recent Cluster Create Jobs" in admin_response.content
+
+        non_admin_client = _make_authenticated_client(mock_state_db, customer_id="cust-user", is_admin=False)
+        non_admin_response = non_admin_client.get("/portal/clusters")
+        assert non_admin_response.status_code == 200
+        assert b"data-testid=\"create-cluster-toggle\"" not in non_admin_response.content
+        assert b"data-testid=\"create-cluster-panel\"" not in non_admin_response.content
+        assert b"Recent Cluster Create Jobs" not in non_admin_response.content
+
+    def test_clusters_create_mode_prefills_region_for_admin(self, mock_state_db, monkeypatch):
+        """Create-mode query params should open the panel and preselect the configured region."""
+
+        class _FakeUrsaConfig:
+            is_configured = True
+            aws_profile = None
+
+            def get_allowed_regions(self):
+                return ["us-east-1", "us-west-2"]
+
+        monkeypatch.setattr("daylib.ursa_config.get_ursa_config", lambda: _FakeUrsaConfig())
+
+        mock_service = MagicMock()
+        mock_service.get_all_clusters_with_status.return_value = []
+        monkeypatch.setattr("daylib.cluster_service.get_cluster_service", lambda **kwargs: mock_service)
+
+        admin_client = _make_authenticated_client(mock_state_db, customer_id="cust-admin", is_admin=True)
+        response = admin_client.get("/portal/clusters?action=create&region=us-west-2")
+        assert response.status_code == 200
+        assert b'id="create-cluster-panel" data-testid="create-cluster-panel" open' in response.content
+        assert b'<option value="us-west-2" selected>us-west-2</option>' in response.content
+
     def test_api_delete_cluster_requires_admin(self, mock_state_db, monkeypatch):
         """DELETE /api/clusters/* must be admin-only."""
 
@@ -3619,3 +3671,4 @@ class TestPortalAuthzSurfaces:
         assert payload["cluster_name"] == "test-cluster"
         assert payload["region"] == "us-west-2"
         assert payload["pcluster_command"] == "pcluster delete-cluster --region us-west-2 -n test-cluster"
+

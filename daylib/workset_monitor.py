@@ -5062,20 +5062,51 @@ class WorksetMonitor:
         return None
 
     def _create_cluster(self, work_yaml: Dict[str, object]) -> str:
+        from daylib.ephemeral_cluster import runner as ec_runner
+
         cluster_name_raw = work_yaml.get("cluster_name")
         cluster_name: str = str(cluster_name_raw) if cluster_name_raw else f"daylily-{int(time.time())}"
         LOGGER.info("Creating new ephemeral cluster %s", cluster_name)
-        cmd: List[str] = ["./bin/daylily-create-ephemeral-cluster", "--cluster-name", cluster_name]
-        if self.config.cluster.template_path:
-            cmd.extend(["--config", self.config.cluster.template_path])
-        env = os.environ.copy()
-        contact_email = self.config.cluster.contact_email or "you@email.com"
-        env["DAY_CONTACT_EMAIL"] = contact_email
-        env.pop("DAY_DISABLE_AUTO_SELECT", None)
-        result = self._run_command(cmd, check=True, env=env)
-        LOGGER.debug(
-            "Cluster creation stdout: %s", result.stdout.decode(errors="ignore")
+
+        region_az = self.config.cluster.preferred_availability_zone or f"{self.config.aws.region}a"
+        aws_profile = self.config.aws.profile
+        contact_email = self.config.cluster.contact_email
+
+        cfg_path: Optional[str] = self.config.cluster.template_path
+        if not cfg_path:
+            ssh_key_name = work_yaml.get("ssh_key_name") or work_yaml.get("ssh_key")
+            s3_bucket_name = work_yaml.get("s3_bucket_name") or work_yaml.get("s3_bucket")
+            if not ssh_key_name or not s3_bucket_name:
+                raise MonitorError(
+                    "Monitor cluster creation requires cluster.template_path, "
+                    "or work YAML fields ssh_key_name and s3_bucket_name."
+                )
+            cfg_dest = Path.home() / ".ursa" / "cluster-create" / "configs" / f"monitor_{int(time.time())}.yaml"
+            cfg_path = str(
+                ec_runner.write_generated_ec_config(
+                    dest=cfg_dest,
+                    cluster_name=cluster_name,
+                    ssh_key_name=str(ssh_key_name),
+                    s3_bucket_name=str(s3_bucket_name),
+                    contact_email=contact_email,
+                )
+            )
+
+        proc = ec_runner.run_create_sync(
+            region_az=region_az,
+            aws_profile=aws_profile,
+            config_path=cfg_path,
+            pass_on_warn=False,
+            debug=self.debug,
+            contact_email=contact_email,
         )
+        if proc.returncode != 0:
+            LOGGER.error("Cluster creation failed: rc=%s stdout=%s stderr=%s", proc.returncode, proc.stdout, proc.stderr)
+            raise MonitorError("Cluster creation failed")
+        if proc.stdout:
+            LOGGER.debug("Cluster creation stdout: %s", proc.stdout)
+        if proc.stderr:
+            LOGGER.debug("Cluster creation stderr: %s", proc.stderr)
         return cluster_name
 
     # ------------------------------------------------------------------
