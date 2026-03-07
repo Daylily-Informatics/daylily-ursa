@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
-import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import PurePosixPath
@@ -279,8 +278,42 @@ class FileRegistry:
             self.backend.ensure_templates(session)
 
     @staticmethod
-    def _norm_file_id(file_id: str) -> str:
-        return file_id or f"file-{uuid.uuid4().hex[:12]}"
+    def _set_file_identity(payload: Dict[str, Any], file_id: str) -> Dict[str, Any]:
+        payload["file_id"] = file_id
+        file_metadata = dict(payload.get("file_metadata") or {})
+        file_metadata["file_id"] = file_id
+        payload["file_metadata"] = file_metadata
+        return payload
+
+    @staticmethod
+    def _set_fileset_identity(payload: Dict[str, Any], fileset_id: str) -> Dict[str, Any]:
+        payload["fileset_id"] = fileset_id
+        return payload
+
+    def _find_file_row(self, session, file_id: str):
+        return self.backend.find_instance_by_euid_or_external_id(
+            session,
+            template_code=self.FILE_TEMPLATE,
+            key="file_id",
+            value=file_id,
+        )
+
+    def _find_fileset_row(self, session, fileset_id: str):
+        return self.backend.find_instance_by_euid_or_external_id(
+            session,
+            template_code=self.FILESET_TEMPLATE,
+            key="fileset_id",
+            value=fileset_id,
+        )
+
+    @staticmethod
+    def _workset_refs(workset_row, workset_id: str) -> set[str]:
+        refs = {workset_id, getattr(workset_row, "euid", "")}
+        legacy_id = (getattr(workset_row, "json_addl", {}) or {}).get("workset_id")
+        if legacy_id:
+            refs.add(str(legacy_id))
+        refs.discard("")
+        return refs
 
     def _ensure_customer(self, session, customer_id: str):
         customer = self.backend.find_instance_by_external_id(
@@ -331,8 +364,10 @@ class FileRegistry:
         file_meta = payload.get("file_metadata") or {}
         seq_meta = payload.get("sequencing_metadata") or {}
         bio_meta = payload.get("biosample_metadata") or {}
+        canonical_file_id = payload.get("file_id") or payload.get("euid") or ""
+        file_meta = {"file_id": canonical_file_id, **file_meta}
         return FileRegistration(
-            file_id=payload["file_id"],
+            file_id=canonical_file_id,
             customer_id=payload["customer_id"],
             file_metadata=FileMetadata(**file_meta),
             sequencing_metadata=SequencingMetadata(**seq_meta),
@@ -351,17 +386,14 @@ class FileRegistry:
         )
 
     def register_file(self, registration: FileRegistration) -> bool:
-        registration.file_id = self._norm_file_id(registration.file_id)
+        registration.file_id = (registration.file_id or "").strip()
+        if registration.file_id:
+            registration.file_metadata.file_id = registration.file_id
         if not registration.file_metadata.file_format:
             registration.file_metadata.file_format = detect_file_format(registration.file_metadata.s3_uri)
 
         with self.backend.session_scope(commit=True) as session:
-            existing = self.backend.find_instance_by_external_id(
-                session,
-                template_code=self.FILE_TEMPLATE,
-                key="file_id",
-                value=registration.file_id,
-            )
+            existing = self._find_file_row(session, registration.file_id) if registration.file_id else None
             payload = self._serialize_registration(registration)
             payload["updated_at"] = utc_now_iso()
             if existing is not None:
@@ -376,6 +408,11 @@ class FileRegistry:
                 json_addl=payload,
                 bstatus="active",
             )
+            if not registration.file_id:
+                registration.file_id = row.euid
+                registration.file_metadata.file_id = row.euid
+                payload = self._set_file_identity(payload, row.euid)
+                self.backend.update_instance_json(session, row, payload)
             self.backend.create_lineage(
                 session,
                 parent=customer,
@@ -386,12 +423,7 @@ class FileRegistry:
 
     def get_file(self, file_id: str) -> Optional[FileRegistration]:
         with self.backend.session_scope(commit=False) as session:
-            row = self.backend.find_instance_by_external_id(
-                session,
-                template_code=self.FILE_TEMPLATE,
-                key="file_id",
-                value=file_id,
-            )
+            row = self._find_file_row(session, file_id)
             if row is None:
                 return None
             return self._to_registration(from_json_addl(row))
@@ -429,12 +461,7 @@ class FileRegistry:
 
     def update_file(self, file_id: str, updates: Dict[str, Any]) -> bool:
         with self.backend.session_scope(commit=True) as session:
-            row = self.backend.find_instance_by_external_id(
-                session,
-                template_code=self.FILE_TEMPLATE,
-                key="file_id",
-                value=file_id,
-            )
+            row = self._find_file_row(session, file_id)
             if row is None:
                 return False
             payload = from_json_addl(row)
@@ -481,10 +508,11 @@ class FileRegistry:
     def _to_fileset(payload: Dict[str, Any]) -> FileSet:
         biosample_metadata = payload.get("biosample_metadata")
         sequencing_metadata = payload.get("sequencing_metadata")
+        canonical_fileset_id = payload.get("fileset_id") or payload.get("euid") or ""
         return FileSet(
-            fileset_id=payload["fileset_id"],
+            fileset_id=canonical_fileset_id,
             customer_id=payload["customer_id"],
-            name=payload.get("name", payload["fileset_id"]),
+            name=payload.get("name", canonical_fileset_id),
             description=payload.get("description"),
             biosample_metadata=BiosampleMetadata(**biosample_metadata) if biosample_metadata else None,
             sequencing_metadata=SequencingMetadata(**sequencing_metadata) if sequencing_metadata else None,
@@ -496,16 +524,10 @@ class FileRegistry:
         )
 
     def create_fileset(self, fileset: FileSet) -> bool:
-        if not fileset.fileset_id:
-            fileset.fileset_id = f"fs-{uuid.uuid4().hex[:12]}"
+        fileset.fileset_id = (fileset.fileset_id or "").strip()
         payload = self._serialize_fileset(fileset)
         with self.backend.session_scope(commit=True) as session:
-            existing = self.backend.find_instance_by_external_id(
-                session,
-                template_code=self.FILESET_TEMPLATE,
-                key="fileset_id",
-                value=fileset.fileset_id,
-            )
+            existing = self._find_fileset_row(session, fileset.fileset_id) if fileset.fileset_id else None
             if existing is not None:
                 self.backend.update_instance_json(session, existing, payload)
                 return True
@@ -517,26 +539,20 @@ class FileRegistry:
                 json_addl=payload,
                 bstatus="active",
             )
+            if not fileset.fileset_id:
+                fileset.fileset_id = row.euid
+                payload = self._set_fileset_identity(payload, row.euid)
+                self.backend.update_instance_json(session, row, payload)
             self.backend.create_lineage(session, parent=customer, child=row, relationship_type="owns")
             for fid in fileset.file_ids:
-                file_row = self.backend.find_instance_by_external_id(
-                    session,
-                    template_code=self.FILE_TEMPLATE,
-                    key="file_id",
-                    value=fid,
-                )
+                file_row = self._find_file_row(session, fid)
                 if file_row is not None:
                     self.backend.create_lineage(session, parent=row, child=file_row, relationship_type="contains")
             return True
 
     def get_fileset(self, fileset_id: str) -> Optional[FileSet]:
         with self.backend.session_scope(commit=False) as session:
-            row = self.backend.find_instance_by_external_id(
-                session,
-                template_code=self.FILESET_TEMPLATE,
-                key="fileset_id",
-                value=fileset_id,
-            )
+            row = self._find_fileset_row(session, fileset_id)
             if row is None:
                 return None
             return self._to_fileset(from_json_addl(row))
@@ -571,21 +587,11 @@ class FileRegistry:
         if not updated:
             return False
         with self.backend.session_scope(commit=True) as session:
-            fileset_row = self.backend.find_instance_by_external_id(
-                session,
-                template_code=self.FILESET_TEMPLATE,
-                key="fileset_id",
-                value=fileset_id,
-            )
+            fileset_row = self._find_fileset_row(session, fileset_id)
             if fileset_row is None:
                 return False
             for fid in file_ids:
-                file_row = self.backend.find_instance_by_external_id(
-                    session,
-                    template_code=self.FILE_TEMPLATE,
-                    key="file_id",
-                    value=fid,
-                )
+                file_row = self._find_file_row(session, fid)
                 if file_row is not None:
                     self.backend.create_lineage(session, parent=fileset_row, child=file_row, relationship_type="contains")
         return True
@@ -607,12 +613,7 @@ class FileRegistry:
         payload.update(updates)
         payload["updated_at"] = utc_now_iso()
         with self.backend.session_scope(commit=True) as session:
-            row = self.backend.find_instance_by_external_id(
-                session,
-                template_code=self.FILESET_TEMPLATE,
-                key="fileset_id",
-                value=fileset_id,
-            )
+            row = self._find_fileset_row(session, fileset_id)
             if row is None:
                 return False
             self.backend.update_instance_json(session, row, payload)
@@ -620,12 +621,7 @@ class FileRegistry:
 
     def delete_fileset(self, fileset_id: str) -> bool:
         with self.backend.session_scope(commit=True) as session:
-            row = self.backend.find_instance_by_external_id(
-                session,
-                template_code=self.FILESET_TEMPLATE,
-                key="fileset_id",
-                value=fileset_id,
-            )
+            row = self._find_fileset_row(session, fileset_id)
             if row is None:
                 return False
             row.is_deleted = True
@@ -638,7 +634,7 @@ class FileRegistry:
         if src is None:
             return None
         cloned = FileSet(
-            fileset_id=new_fileset_id or f"fs-{uuid.uuid4().hex[:12]}",
+            fileset_id=(new_fileset_id or "").strip(),
             customer_id=src.customer_id,
             name=name or f"{src.name}-copy",
             description=src.description,
@@ -663,7 +659,7 @@ class FileRegistry:
         return out
 
     def _get_workset_row(self, session, workset_id: str):
-        return self.backend.find_instance_by_external_id(
+        return self.backend.find_instance_by_euid_or_external_id(
             session,
             template_code=self.WORKSET_TEMPLATE,
             key="workset_id",
@@ -681,12 +677,7 @@ class FileRegistry:
         notes: Optional[str] = None,
     ) -> bool:
         with self.backend.session_scope(commit=True) as session:
-            file_row = self.backend.find_instance_by_external_id(
-                session,
-                template_code=self.FILE_TEMPLATE,
-                key="file_id",
-                value=file_id,
-            )
+            file_row = self._find_file_row(session, file_id)
             workset_row = self._get_workset_row(session, workset_id)
             if file_row is None or workset_row is None:
                 return False
@@ -739,12 +730,7 @@ class FileRegistry:
         if reg is None:
             return []
         with self.backend.session_scope(commit=False) as session:
-            row = self.backend.find_instance_by_external_id(
-                session,
-                template_code=self.FILE_TEMPLATE,
-                key="file_id",
-                value=file_id,
-            )
+            row = self._find_file_row(session, file_id)
             if row is None:
                 return []
             payload = from_json_addl(row)
@@ -759,30 +745,28 @@ class FileRegistry:
             workset = self._get_workset_row(session, workset_id)
             if workset is None:
                 return []
+            workset_refs = self._workset_refs(workset, workset_id)
             file_template = self.backend.templates.get_template(session, self.FILE_TEMPLATE)
             if file_template is None:
                 return []
             files = self.backend.list_children(session, parent=workset)
             for row in files:
-                if row.template_uuid != file_template.uuid:
+                if row.template_uid != file_template.uid:
                     continue
                 payload = from_json_addl(row)
                 for rec in payload.get("workset_usage", []):
-                    if rec.get("workset_id") == workset_id:
+                    if rec.get("workset_id") in workset_refs:
                         usages.append(FileWorksetUsage(**rec))
         return usages
 
     def update_workset_usage_state(self, workset_id: str, new_state: str) -> int:
         updated = 0
         with self.backend.session_scope(commit=True) as session:
+            workset_row = self._get_workset_row(session, workset_id)
+            workset_refs = self._workset_refs(workset_row, workset_id)
             files = self.get_workset_files(workset_id)
             for usage in files:
-                row = self.backend.find_instance_by_external_id(
-                    session,
-                    template_code=self.FILE_TEMPLATE,
-                    key="file_id",
-                    value=usage.file_id,
-                )
+                row = self._find_file_row(session, usage.file_id)
                 if row is None:
                     continue
                 payload = from_json_addl(row)
@@ -790,7 +774,7 @@ class FileRegistry:
                 hist = []
                 for rec in payload.get("workset_usage", []):
                     item = dict(rec)
-                    if item.get("workset_id") == workset_id:
+                    if item.get("workset_id") in workset_refs:
                         item["workset_state"] = new_state
                         changed = True
                     hist.append(item)

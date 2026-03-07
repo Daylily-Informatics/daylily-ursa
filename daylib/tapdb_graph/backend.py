@@ -243,6 +243,24 @@ class TapDBBackend:
         instance.json_addl = payload
         session.flush()
 
+    def _template_instance_query(
+        self,
+        session: Session,
+        *,
+        template_code: str,
+        for_update: bool = False,
+    ):
+        template = self.templates.get_template(session, template_code)
+        if template is None:
+            return None
+        query = session.query(generic_instance).filter(
+            generic_instance.template_uid == template.uid,
+            generic_instance.is_deleted.is_(False),
+        )
+        if for_update:
+            query = query.with_for_update()
+        return query
+
     def find_instance_by_external_id(
         self,
         session: Session,
@@ -251,18 +269,29 @@ class TapDBBackend:
         key: str,
         value: str,
     ) -> Optional[generic_instance]:
-        template = self.templates.get_template(session, template_code)
-        if template is None:
+        query = self._template_instance_query(session, template_code=template_code)
+        if query is None:
             return None
-        return (
-            session.query(generic_instance)
-            .filter(
-                generic_instance.template_uuid == template.uuid,
-                generic_instance.is_deleted.is_(False),
-                generic_instance.json_addl[key].as_string() == value,
-            )
-            .first()
-        )
+        return query.filter(generic_instance.json_addl[key].as_string() == value).first()
+
+    def find_instance_by_euid_or_external_id(
+        self,
+        session: Session,
+        *,
+        template_code: str,
+        key: str,
+        value: str,
+        for_update: bool = False,
+    ) -> Optional[generic_instance]:
+        if not value:
+            return None
+        query = self._template_instance_query(session, template_code=template_code, for_update=for_update)
+        if query is None:
+            return None
+        row = query.filter(generic_instance.euid == value).first()
+        if row is not None:
+            return row
+        return query.filter(generic_instance.json_addl[key].as_string() == value).first()
 
     def list_instances_by_template(
         self,
@@ -277,7 +306,7 @@ class TapDBBackend:
         return (
             session.query(generic_instance)
             .filter(
-                generic_instance.template_uuid == template.uuid,
+                generic_instance.template_uid == template.uid,
                 generic_instance.is_deleted.is_(False),
             )
             .order_by(generic_instance.created_dt.desc())
@@ -297,8 +326,8 @@ class TapDBBackend:
         existing = (
             session.query(generic_instance_lineage)
             .filter(
-                generic_instance_lineage.parent_instance_uuid == parent.uuid,
-                generic_instance_lineage.child_instance_uuid == child.uuid,
+                generic_instance_lineage.parent_instance_uid == parent.uid,
+                generic_instance_lineage.child_instance_uid == child.uid,
                 generic_instance_lineage.relationship_type == relationship_type,
                 generic_instance_lineage.is_deleted.is_(False),
             )
@@ -320,8 +349,8 @@ class TapDBBackend:
             parent_type=parent.polymorphic_discriminator,
             child_type=child.polymorphic_discriminator,
             relationship_type=relationship_type,
-            parent_instance_uuid=parent.uuid,
-            child_instance_uuid=child.uuid,
+            parent_instance_uid=parent.uid,
+            child_instance_uid=child.uid,
         )
         session.add(lineage)
         session.flush()
@@ -338,10 +367,10 @@ class TapDBBackend:
             session.query(generic_instance)
             .join(
                 generic_instance_lineage,
-                generic_instance_lineage.child_instance_uuid == generic_instance.uuid,
+                generic_instance_lineage.child_instance_uid == generic_instance.uid,
             )
             .filter(
-                generic_instance_lineage.parent_instance_uuid == parent.uuid,
+                generic_instance_lineage.parent_instance_uid == parent.uid,
                 generic_instance_lineage.is_deleted.is_(False),
                 generic_instance.is_deleted.is_(False),
             )
@@ -361,10 +390,10 @@ class TapDBBackend:
             session.query(generic_instance)
             .join(
                 generic_instance_lineage,
-                generic_instance_lineage.parent_instance_uuid == generic_instance.uuid,
+                generic_instance_lineage.parent_instance_uid == generic_instance.uid,
             )
             .filter(
-                generic_instance_lineage.child_instance_uuid == child.uuid,
+                generic_instance_lineage.child_instance_uid == child.uid,
                 generic_instance_lineage.is_deleted.is_(False),
                 generic_instance.is_deleted.is_(False),
             )
@@ -390,14 +419,14 @@ class TapDBBackend:
             .join(
                 generic_instance_lineage,
                 and_(
-                    generic_instance_lineage.child_instance_uuid == generic_instance.uuid,
-                    generic_instance_lineage.parent_instance_uuid == customer.uuid,
+                    generic_instance_lineage.child_instance_uid == generic_instance.uid,
+                    generic_instance_lineage.parent_instance_uid == customer.uid,
                     generic_instance_lineage.relationship_type == relationship_type,
                     generic_instance_lineage.is_deleted.is_(False),
                 ),
             )
             .filter(
-                generic_instance.template_uuid == template.uuid,
+                generic_instance.template_uid == template.uid,
                 generic_instance.is_deleted.is_(False),
             )
             .order_by(generic_instance.created_dt.desc())

@@ -100,7 +100,8 @@ def create_manifests_router(deps: ManifestDependencies) -> APIRouter:
                 raise HTTPException(status_code=400, detail=str(e))
             raise
 
-        download_url = f"/api/customers/{customer_id}/manifests/{saved.manifest_id}/download"
+        manifest_ref = saved.manifest_euid or saved.manifest_id
+        download_url = f"/api/customers/{customer_id}/manifests/{manifest_ref}/download"
         return {
             "manifest": saved.to_metadata_dict(),
             "download_url": download_url,

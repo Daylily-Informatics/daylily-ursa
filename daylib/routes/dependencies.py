@@ -173,9 +173,8 @@ def verify_workset_access(
 class WorksetCreate(BaseModel):
     """Request model for creating a workset."""
 
-    workset_id: str = Field(..., description="Unique workset identifier")
     bucket: str = Field(..., description="S3 bucket name")
-    prefix: str = Field(..., description="S3 prefix for workset files")
+    prefix: Optional[str] = Field(None, description="Optional S3 prefix for workset files")
     priority: WorksetPriority = Field(WorksetPriority.NORMAL, description="Execution priority")
     workset_type: WorksetType = Field(WorksetType.RUO, description="Workset classification type (clinical, ruo, lsmc)")
     metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata (must include samples)")

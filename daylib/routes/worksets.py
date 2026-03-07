@@ -52,8 +52,7 @@ def create_worksets_router(
     async def create_workset(workset: WorksetCreate):
         """Register a new workset."""
         try:
-            success = state_db.register_workset(
-                workset_id=workset.workset_id,
+            created_workset_id = state_db.register_workset(
                 bucket=workset.bucket,
                 prefix=workset.prefix,
                 priority=workset.priority,
@@ -69,14 +68,8 @@ def create_worksets_router(
                 detail=str(e),
             )
 
-        if not success:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"Workset {workset.workset_id} already exists",
-            )
-
         # Retrieve the created workset
-        created = state_db.get_workset(workset.workset_id)
+        created = state_db.get_workset(created_workset_id)
         if not created:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

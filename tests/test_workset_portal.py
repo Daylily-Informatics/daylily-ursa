@@ -1424,6 +1424,67 @@ class TestArchiveDeleteAPI:
         assert len(data) == 2
 
 
+class TestRetryAPI:
+    """Tests for retrying customer worksets via API."""
+
+    def test_retry_workset_creates_new_euid_first_workset(
+        self, mock_state_db, mock_customer_manager, mock_integration
+    ):
+        original = {
+            "workset_id": "failed-ws-001",
+            "state": "error",
+            "bucket": "test-bucket",
+            "customer_id": "cust-001",
+            "priority": "high",
+            "workset_type": "ruo",
+            "preferred_cluster": "cluster-a",
+            "cluster_region": "us-west-2",
+            "metadata": {
+                "workset_name": "Original Workset",
+                "archive_results": True,
+                "samples": [{"sample_id": "S1"}],
+                "sample_count": 1,
+                "data_bucket": "data-bucket",
+                "data_buckets": ["data-bucket"],
+                "created_by_email": "user@example.com",
+                "pipeline_type": "wgs",
+            },
+        }
+        retried = {
+            "workset_id": "retry-euid-001",
+            "state": "ready",
+            "bucket": "test-bucket",
+            "customer_id": "cust-001",
+        }
+        mock_state_db.get_workset.side_effect = [original, retried]
+        mock_integration.register_workset.return_value = "retry-euid-001"
+
+        app = create_app(
+            state_db=mock_state_db,
+            customer_manager=mock_customer_manager,
+            integration=mock_integration,
+            enable_auth=False,
+        )
+        client = TestClient(app)
+
+        response = client.post("/api/customers/cust-001/worksets/failed-ws-001/retry")
+
+        assert response.status_code == 200
+        assert response.json()["workset_id"] == "retry-euid-001"
+        mock_integration.register_workset.assert_called_once()
+        call_kwargs = mock_integration.register_workset.call_args.kwargs
+        assert call_kwargs["bucket"] == "test-bucket"
+        assert call_kwargs["prefix"] is None
+        assert "workset_id" not in call_kwargs
+        assert call_kwargs["customer_id"] == "cust-001"
+        assert call_kwargs["metadata"]["workset_name"] == "Original Workset"
+        assert call_kwargs["metadata"]["retried_from"] == "failed-ws-001"
+        mock_state_db.update_metadata.assert_called_once_with(
+            "failed-ws-001",
+            {"retried_as": "retry-euid-001"},
+        )
+
+
 # ==================== Workset Creation Validation Tests ====================
 
 
@@ -1450,7 +1511,7 @@ def mock_integration():
     Note: bucket is set to None so the control bucket env var is used.
     """
     mock_int = MagicMock()
-    mock_int.register_workset.return_value = True
+    mock_int.register_workset.return_value = "test-workset-12345678"
     mock_int.bucket = None  # Ensure env var is used for bucket
     return mock_int
 
@@ -1641,7 +1702,7 @@ class TestWorksetCreationValidation:
 
         Note: Worksets get bucket from cluster tags (aws-parallelcluster-monitor-bucket).
         """
-        mock_state_db.register_workset.return_value = True
+        mock_state_db.register_workset.return_value = "test-workset-12345678"
         mock_state_db.get_workset.return_value = {
             "workset_id": "test-workset-12345678",
             "state": "ready",
@@ -3000,7 +3061,7 @@ class TestWorksetCreationWithPreferredCluster:
 
     def test_create_workset_with_preferred_cluster(self, client, mock_state_db):
         """Test creating workset with preferred_cluster."""
-        mock_state_db.register_workset.return_value = True
+        mock_state_db.register_workset.return_value = "test-ws-cluster"
         mock_state_db.get_workset.return_value = {
             "workset_id": "test-ws-cluster",
             "state": "ready",
@@ -3016,7 +3077,6 @@ class TestWorksetCreationWithPreferredCluster:
         response = client.post(
             "/worksets",
             json={
-                "workset_id": "test-ws-cluster",
                 "bucket": "test-bucket",
                 "prefix": "worksets/test/",
                 "priority": "normal",
@@ -3035,7 +3095,7 @@ class TestWorksetCreationWithPreferredCluster:
 
     def test_create_workset_without_preferred_cluster(self, client, mock_state_db):
         """Test creating workset without preferred_cluster."""
-        mock_state_db.register_workset.return_value = True
+        mock_state_db.register_workset.return_value = "test-ws-no-cluster"
         mock_state_db.get_workset.return_value = {
             "workset_id": "test-ws-no-cluster",
             "state": "ready",
@@ -3050,7 +3110,6 @@ class TestWorksetCreationWithPreferredCluster:
         response = client.post(
             "/worksets",
             json={
-                "workset_id": "test-ws-no-cluster",
                 "bucket": "test-bucket",
                 "prefix": "worksets/test/",
                 "priority": "normal",

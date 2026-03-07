@@ -25,11 +25,11 @@ def _instance(payload: dict, *, euid: str = "cust-euid"):
     row = MagicMock()
     row.json_addl = dict(payload)
     row.euid = euid
+    row.uid = hash(euid) & 0xFFFFFFFF
     row.name = payload.get("customer_name") or payload.get("customer_id") or "customer"
     row.created_dt = None
     row.modified_dt = None
     row.bstatus = "active"
-    row.uuid = hash(euid) & 0xFFFFFFFF
     row.is_deleted = False
     return row
 

@@ -30,16 +30,16 @@ class _SessionCtx:
         return False
 
 
-def _instance(payload: dict, *, euid: str = "euid-1", template_uuid: int = 1, bstatus: str = "active"):
+def _instance(payload: dict, *, euid: str = "euid-1", template_uid: int = 1, bstatus: str = "active"):
     row = MagicMock()
     row.json_addl = dict(payload)
     row.euid = euid
+    row.uid = hash(euid) & 0xFFFFFFFF
     row.name = payload.get("file_id") or payload.get("fileset_id") or "node"
     row.created_dt = None
     row.modified_dt = None
     row.bstatus = bstatus
-    row.template_uuid = template_uuid
-    row.uuid = hash(euid) & 0xFFFFFFFF
+    row.template_uid = template_uid
     row.is_deleted = False
     return row
 
@@ -49,9 +49,10 @@ def file_registry() -> FileRegistry:
     reg = FileRegistry.__new__(FileRegistry)
 
     reg.backend = MagicMock()
+    reg.backend.find_instance_by_euid_or_external_id = reg.backend.find_instance_by_external_id
     reg._session = MagicMock()
     reg.backend.session_scope.return_value = _SessionCtx(reg._session)
-    reg.backend.templates.get_template.return_value = MagicMock(uuid=1)
+    reg.backend.templates.get_template.return_value = MagicMock(uid=1)
     return reg
 
 
@@ -156,6 +157,27 @@ def test_get_file_returns_registration(file_registry: FileRegistry):
     assert reg.tags == ["wgs"]
 
 
+def test_get_file_falls_back_to_euid_when_legacy_file_id_missing(file_registry: FileRegistry):
+    payload = {
+        "customer_id": "cust-001",
+        "file_metadata": {
+            "s3_uri": "s3://bucket/sample_R1.fastq.gz",
+            "file_size_bytes": 1024,
+            "file_format": "fastq",
+        },
+        "sequencing_metadata": {"run_id": "run-001"},
+        "biosample_metadata": {"biosample_id": "bio-001", "subject_id": "subj-001"},
+    }
+    file_registry.backend.find_instance_by_external_id.return_value = _instance(payload, euid="file-euid")
+
+    reg = file_registry.get_file("file-euid")
+
+    assert reg is not None
+    assert reg.file_id == "file-euid"
+    assert reg.file_metadata.file_id == "file-euid"
+    assert reg.file_euid == "file-euid"
+
+
 def test_list_customer_files(file_registry: FileRegistry):
     customer = _instance({"customer_id": "cust-001"}, euid="cust-euid")
     row = _instance(
@@ -236,6 +258,43 @@ def test_create_fileset_links_customer_and_files(file_registry: FileRegistry):
 
     assert ok is True
     assert file_registry.backend.create_lineage.call_count == 3
+
+
+def test_register_file_without_legacy_id_uses_tapdb_euid(
+    file_registry: FileRegistry,
+    sample_registration: FileRegistration,
+):
+    customer_row = _instance({"customer_id": "cust-001"}, euid="cust-euid")
+    file_row = _instance({"customer_id": "cust-001"}, euid="file-euid")
+    sample_registration.file_id = ""
+    sample_registration.file_metadata.file_id = ""
+
+    file_registry.backend.find_instance_by_external_id.return_value = None
+    file_registry.backend.create_instance.side_effect = [customer_row, file_row]
+
+    ok = file_registry.register_file(sample_registration)
+
+    assert ok is True
+    assert sample_registration.file_id == "file-euid"
+    payload = file_registry.backend.update_instance_json.call_args.args[2]
+    assert payload["file_id"] == "file-euid"
+    assert payload["file_metadata"]["file_id"] == "file-euid"
+
+
+def test_create_fileset_without_legacy_id_uses_tapdb_euid(file_registry: FileRegistry):
+    customer = _instance({"customer_id": "cust-001"}, euid="cust-euid")
+    fileset_row = _instance({"customer_id": "cust-001"}, euid="fs-euid")
+    file_registry.backend.find_instance_by_external_id.return_value = None
+    file_registry.backend.create_instance.side_effect = [customer, fileset_row]
+
+    fileset = FileSet(fileset_id="", customer_id="cust-001", name="Tumor set")
+
+    ok = file_registry.create_fileset(fileset)
+
+    assert ok is True
+    assert fileset.fileset_id == "fs-euid"
+    payload = file_registry.backend.update_instance_json.call_args.args[2]
+    assert payload["fileset_id"] == "fs-euid"
 
 
 def test_register_file_workset_usage_updates_history(file_registry: FileRegistry):
@@ -341,6 +400,32 @@ def test_get_file_workset_history(file_registry: FileRegistry):
 
     assert len(history) == 1
     assert isinstance(history[0], FileWorksetUsage)
+    assert history[0].workset_id == "ws-001"
+
+
+def test_get_workset_files_matches_legacy_usage_when_lookup_uses_euid(file_registry: FileRegistry):
+    workset_row = _instance({"workset_id": "ws-001"}, euid="ws-euid")
+    file_row = _instance(
+        {
+            "file_id": "file-001",
+            "customer_id": "cust-001",
+            "workset_usage": [
+                {
+                    "file_id": "file-001",
+                    "workset_id": "ws-001",
+                    "customer_id": "cust-001",
+                    "usage_type": "input",
+                }
+            ],
+        },
+        euid="file-euid",
+    )
+    file_registry.backend.find_instance_by_external_id.return_value = workset_row
+    file_registry.backend.list_children.return_value = [file_row]
+
+    history = file_registry.get_workset_files("ws-euid")
+
+    assert len(history) == 1
     assert history[0].workset_id == "ws-001"
 
 
