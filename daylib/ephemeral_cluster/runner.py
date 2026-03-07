@@ -9,9 +9,9 @@ import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 
-import yaml
+import yaml  # type: ignore[import-untyped]
 
 _DAYLILY_EC_BIN_ENV = "URSA_DAYLILY_EC_BIN"
 
@@ -33,7 +33,7 @@ def _atomic_write_json(path: Path, data: Dict[str, Any]) -> None:
 
 
 def _read_json(path: Path) -> Dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
+    return cast(Dict[str, Any], json.loads(path.read_text(encoding="utf-8")))
 
 
 def _job_base_dir() -> Path:
