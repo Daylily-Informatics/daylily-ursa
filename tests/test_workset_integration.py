@@ -249,6 +249,36 @@ class TestUpdateState:
         assert mock_s3_client.put_object.called
 
 
+class TestSyncS3ToTapDB:
+    """Test syncing S3-discovered worksets into TapDB."""
+
+    def test_sync_s3_to_tapdb_updates_existing_workset(self, integration, mock_state_db):
+        """Test syncing updates an existing TapDB workset found by prefix."""
+        mock_state_db.get_workset_by_prefix.return_value = {"workset_id": "existing-ws"}
+        integration._determine_s3_state = MagicMock(return_value="ready")
+        integration._read_work_yaml = MagicMock(return_value={})
+
+        result = integration.sync_s3_to_tapdb("worksets/existing-ws")
+
+        assert result == "existing-ws"
+        mock_state_db.update_state.assert_called_once()
+        mock_state_db.register_workset.assert_not_called()
+
+    def test_sync_s3_to_tapdb_returns_none_when_existing_workset_id_missing(
+        self, integration, mock_state_db
+    ):
+        """Test syncing bails out when an existing prefix match lacks a workset id."""
+        mock_state_db.get_workset_by_prefix.return_value = {"prefix": "worksets/existing-ws/"}
+        integration._determine_s3_state = MagicMock(return_value="ready")
+        integration._read_work_yaml = MagicMock(return_value={})
+
+        result = integration.sync_s3_to_tapdb("worksets/existing-ws")
+
+        assert result is None
+        mock_state_db.update_state.assert_not_called()
+        mock_state_db.register_workset.assert_not_called()
+
+
 class TestGetReadyWorksets:
     """Test getting ready worksets from TapDB."""
 

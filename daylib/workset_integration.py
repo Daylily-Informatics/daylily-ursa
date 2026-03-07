@@ -297,9 +297,19 @@ class WorksetIntegration:
 
         # Check if workset already exists in TapDB
         existing = self.state_db.get_workset_by_prefix(normalized_prefix)
-        workset_id = existing.get("workset_id") if existing else None
+        workset_id: Optional[str] = None
 
         if existing:
+            existing_workset_id = existing.get("workset_id")
+            if not isinstance(existing_workset_id, str) or not existing_workset_id:
+                LOGGER.warning(
+                    "Existing workset at prefix %s is missing workset_id",
+                    normalized_prefix,
+                )
+                return None
+
+            workset_id = existing_workset_id
+
             # Update state if changed
             try:
                 ws_state = WorksetState(state)
