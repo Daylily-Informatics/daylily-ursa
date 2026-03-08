@@ -415,17 +415,33 @@ def create_app(
 
         return None
 
-    @app.get("/", tags=["health"], operation_id="api_health_root")
-    async def root(request: Request):
-        """Health check endpoint."""
-        accept = request.headers.get("accept", "")
-        if "text/html" in accept:
-            return RedirectResponse(url="/portal/login" if enable_auth else "/portal", status_code=302)
-        return {
+    def _health_payload(*, ready: bool = False) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {
             "status": "healthy",
             "service": "daylily-workset-monitor",
             "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         }
+        if ready:
+            payload["ready"] = True
+        return payload
+
+    @app.get("/", tags=["health"], operation_id="api_health_root")
+    async def root(request: Request):
+        """Root health check endpoint."""
+        accept = request.headers.get("accept", "")
+        if "text/html" in accept:
+            return RedirectResponse(url="/portal/login" if enable_auth else "/portal", status_code=302)
+        return _health_payload()
+
+    @app.get("/healthz", tags=["health"], operation_id="api_health_liveness")
+    async def healthz() -> Dict[str, Any]:
+        """Explicit liveness endpoint for orchestration probes."""
+        return _health_payload()
+
+    @app.get("/readyz", tags=["health"], operation_id="api_health_readiness")
+    async def readyz() -> Dict[str, Any]:
+        """Explicit readiness endpoint for orchestration probes."""
+        return _health_payload(ready=True)
     
     # ========== Wire up extracted routers ==========
 
