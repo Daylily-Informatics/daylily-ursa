@@ -4,6 +4,7 @@
 
 // Debounce timer for search input
 let searchDebounceTimer = null;
+window.pendingClusterBootstrap = null;
 
 // Filter worksets - navigates to URL with filter parameters for server-side filtering
 function filterWorksets(isSearchInput = false) {
@@ -372,18 +373,30 @@ async function submitWorkset(event) {
             data.manifest_tsv_content = window.manifestTsvContent;
         }
 
-        // Cluster selection is required - bucket is derived from cluster tags
         const preferredCluster = document.getElementById('preferred_cluster')?.value;
-        if (!preferredCluster || preferredCluster === '__create_cluster__') {
-            showToast('error', 'Cluster Required', 'Please select a cluster for workset execution. The S3 bucket is derived from the cluster tags.');
+        const bootstrapConfig = window.pendingClusterBootstrap;
+
+        if (preferredCluster && preferredCluster !== '__create_cluster__') {
+            data.preferred_cluster = preferredCluster;
+        } else if (window.UrsaConfig?.isAdmin && bootstrapConfig?.region) {
+            data.target_region = bootstrapConfig.region;
+            data.cluster_bootstrap = bootstrapConfig;
+        } else {
+            showToast(
+                'error',
+                'Cluster Required',
+                'Select a running cluster or configure cluster bootstrap for the target region.'
+            );
             hideLoading();
             return;
         }
-        data.preferred_cluster = preferredCluster;
 
         showLoading('Creating workset...');
         const result = await UrsaAPI.worksets.create(customerId, data);
-        showToast('success', 'Workset Submitted', 'Your workset has been queued for processing');
+        const successMessage = result.state === 'pending_cluster_creation'
+            ? 'Workset saved and waiting for cluster creation'
+            : 'Your workset has been queued for processing';
+        showToast('success', 'Workset Submitted', successMessage);
         setTimeout(() => {
             window.location.href = `/portal/worksets/${result.workset_id}`;
         }, 1500);
@@ -931,6 +944,10 @@ function handleClusterSelectChange(event) {
  * Show the create cluster modal dialog.
  */
 function showCreateClusterModal() {
+    if (!window.UrsaConfig?.isAdmin) {
+        showToast('error', 'Admin Required', 'Only admins can bootstrap a cluster from this form.');
+        return;
+    }
     const modal = document.getElementById('create-cluster-modal');
     if (modal) {
         modal.style.display = 'flex';
@@ -957,8 +974,90 @@ function openClusterCreation() {
     const region = regionSelect ? regionSelect.value : 'us-west-2';
     // Open cluster manager with region pre-selected
     window.open(`/portal/clusters?action=create&region=${region}`, '_blank');
+}
+
+function syncWorksetManualField(selectId, inputId) {
+    const selectEl = document.getElementById(selectId);
+    const inputEl = document.getElementById(inputId);
+    if (!selectEl || !inputEl) return;
+    if (selectEl.value) {
+        inputEl.value = selectEl.value;
+    }
+}
+
+async function loadWorksetCreateOptions() {
+    const region = document.getElementById('new-cluster-region')?.value;
+    if (!region) {
+        showToast('error', 'Region Required', 'Select a region first.');
+        return;
+    }
+
+    try {
+        const resp = await fetch(`/api/clusters/create/options?region=${encodeURIComponent(region)}`);
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) {
+            throw new Error(data.detail || data.error || 'Failed to load create options');
+        }
+
+        const keySelect = document.getElementById('new-cluster-ssh-key-select');
+        const bucketSelect = document.getElementById('new-cluster-bucket-select');
+        if (keySelect) {
+            keySelect.innerHTML = '<option value="">Select keypair (or type below)</option>';
+            (data.keypairs || []).forEach(item => {
+                const option = document.createElement('option');
+                option.value = item;
+                option.textContent = item;
+                keySelect.appendChild(option);
+            });
+        }
+        if (bucketSelect) {
+            bucketSelect.innerHTML = '<option value="">Select bucket (or type below)</option>';
+            (data.buckets || []).forEach(item => {
+                const option = document.createElement('option');
+                option.value = item;
+                option.textContent = item;
+                bucketSelect.appendChild(option);
+            });
+        }
+        showToast('success', 'Options Loaded', 'Keypairs and buckets loaded for the selected region.');
+    } catch (error) {
+        showToast('error', 'Load Failed', error.message || String(error));
+    }
+}
+
+function applyClusterBootstrapConfig() {
+    const region = document.getElementById('new-cluster-region')?.value || '';
+    const azSuffix = document.getElementById('new-cluster-az-suffix')?.value || 'a';
+    const clusterName = document.getElementById('new-cluster-name')?.value?.trim() || '';
+    const sshKeyName = document.getElementById('new-cluster-ssh-key')?.value?.trim() || '';
+    const s3BucketName = document.getElementById('new-cluster-bucket')?.value?.trim() || '';
+
+    if (!region || !sshKeyName || !s3BucketName) {
+        showToast('error', 'Missing Bootstrap Details', 'Region, SSH keypair, and S3 bucket are required.');
+        return;
+    }
+
+    window.pendingClusterBootstrap = {
+        region,
+        az_suffix: azSuffix,
+        cluster_name: clusterName || undefined,
+        ssh_key_name: sshKeyName,
+        s3_bucket_name: s3BucketName,
+    };
+
+    const summary = document.getElementById('cluster-bootstrap-summary');
+    const summaryText = document.getElementById('cluster-bootstrap-summary-text');
+    if (summary && summaryText) {
+        summaryText.innerHTML = `Submitting to <code>${region}</code> with cluster bootstrap enabled using keypair <code>${sshKeyName}</code> and bucket <code>${s3BucketName}</code>.`;
+        summary.classList.remove('d-none');
+    }
+
+    const select = document.getElementById('preferred_cluster');
+    if (select) {
+        select.value = '';
+    }
     closeCreateClusterModal();
-    showToast('info', 'Cluster Manager Opened', 'Create your cluster in the new tab, then refresh this page to select it.');
+    showToast('success', 'Bootstrap Ready', 'The workset will trigger cluster creation if no running cluster exists in that region.');
 }
 
 /**
@@ -968,6 +1067,11 @@ function selectCluster(clusterName) {
     const select = document.getElementById('preferred_cluster');
     if (select) {
         select.value = clusterName;
+    }
+    window.pendingClusterBootstrap = null;
+    const summary = document.getElementById('cluster-bootstrap-summary');
+    if (summary) {
+        summary.classList.add('d-none');
     }
     // Update radio button
     const radio = document.querySelector(`input[name="cluster_radio"][value="${clusterName}"]`);
@@ -980,4 +1084,3 @@ document.addEventListener('DOMContentLoaded', () => {
         refreshClusterList();
     }
 });
-

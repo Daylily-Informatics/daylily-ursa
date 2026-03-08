@@ -5,7 +5,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import MagicMock, call, patch
 
-from daylib.tapdb_graph.backend import TEMPLATE_DEFINITIONS, TapDBBackend
+from daylib_ursa.tapdb_graph.backend import TEMPLATE_DEFINITIONS, TapDBBackend
 
 
 def test_ensure_templates_calls_sequence_readiness():
@@ -25,7 +25,7 @@ def test_ensure_instance_sequences_ensures_each_required_prefix_once():
     backend._required_instance_prefixes = MagicMock(return_value=["AN", "AF", "AN"])
     session = MagicMock()
 
-    with patch("daylib.tapdb_graph.backend.ensure_instance_prefix_sequence") as ensure_seq:
+    with patch("daylib_ursa.tapdb_graph.backend.ensure_instance_prefix_sequence") as ensure_seq:
         backend.ensure_instance_sequences(session)
 
     ensure_seq.assert_has_calls(
@@ -51,7 +51,7 @@ def test_create_instance_ensures_template_and_sequence():
     backend.factory.create_instance.return_value = row
     session = MagicMock()
 
-    with patch("daylib.tapdb_graph.backend.ensure_instance_prefix_sequence") as ensure_seq:
+    with patch("daylib_ursa.tapdb_graph.backend.ensure_instance_prefix_sequence") as ensure_seq:
         created = backend.create_instance(
             session=session,
             template_code="workflow/analysis/run-linked/1.0/",

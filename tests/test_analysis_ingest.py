@@ -4,9 +4,15 @@ from dataclasses import replace
 
 from fastapi.testclient import TestClient
 
-from daylib.analysis_store import AnalysisArtifact, AnalysisRecord, AnalysisState, ReviewState, RunResolution
-from daylib.config import Settings
-from daylib.workset_api import create_app
+from daylib_ursa.analysis_store import (
+    AnalysisArtifact,
+    AnalysisRecord,
+    AnalysisState,
+    ReviewState,
+    RunResolution,
+)
+from daylib_ursa.config import Settings
+from daylib_ursa.workset_api import create_app
 
 
 class DummyStore:

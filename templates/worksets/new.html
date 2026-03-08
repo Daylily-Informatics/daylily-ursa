@@ -232,7 +232,7 @@
                         <button type="button" class="close" onclick="closeCreateClusterModal()">&times;</button>
                     </div>
                     <div class="modal-body">
-                        <p class="text-muted mb-md">Select the region where you want to create a new cluster. This should match where your data is stored.</p>
+                        <p class="text-muted mb-md">Use this when no running cluster exists in the target region for this workset.</p>
                         <div class="form-group">
                             <label for="new-cluster-region" class="form-label">Region</label>
                             <select id="new-cluster-region" class="form-control form-select">
@@ -241,14 +241,65 @@
                                 {% endfor %}
                             </select>
                         </div>
+                        {% if is_admin %}
+                        <div class="grid grid-2">
+                            <div class="form-group">
+                                <label for="new-cluster-az-suffix" class="form-label">AZ Suffix</label>
+                                <select id="new-cluster-az-suffix" class="form-control form-select">
+                                    <option value="a">a</option>
+                                    <option value="b">b</option>
+                                    <option value="c">c</option>
+                                    <option value="d">d</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="new-cluster-name" class="form-label">Cluster Name (Optional)</label>
+                                <input id="new-cluster-name" class="form-control" type="text" placeholder="Auto-generated if blank">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <button type="button" class="btn btn-outline btn-sm" onclick="loadWorksetCreateOptions()">
+                                <i class="fas fa-cloud-download-alt"></i> Load Keypairs & Buckets
+                            </button>
+                        </div>
+                        <div class="form-group">
+                            <label for="new-cluster-ssh-key-select" class="form-label">SSH Keypair</label>
+                            <select id="new-cluster-ssh-key-select" class="form-control form-select" onchange="syncWorksetManualField('new-cluster-ssh-key-select', 'new-cluster-ssh-key')">
+                                <option value="">Select keypair (or type below)</option>
+                            </select>
+                            <input id="new-cluster-ssh-key" class="form-control mt-sm" type="text" placeholder="lsmc-omics-us-west-2">
+                        </div>
+                        <div class="form-group">
+                            <label for="new-cluster-bucket-select" class="form-label">S3 Bucket</label>
+                            <select id="new-cluster-bucket-select" class="form-control form-select" onchange="syncWorksetManualField('new-cluster-bucket-select', 'new-cluster-bucket')">
+                                <option value="">Select bucket (or type below)</option>
+                            </select>
+                            <input id="new-cluster-bucket" class="form-control mt-sm" type="text" placeholder="omics-analysis-bucket">
+                        </div>
+                        {% else %}
+                        <div class="alert alert-warning">
+                            <i class="fas fa-exclamation-triangle"></i>
+                            Only admins can bootstrap clusters from this form. Contact an administrator if this region has no running cluster.
+                        </div>
+                        {% endif %}
                     </div>
                     <div class="modal-footer">
                         <button type="button" class="btn btn-secondary" onclick="closeCreateClusterModal()">Cancel</button>
-                        <button type="button" class="btn btn-primary" onclick="openClusterCreation()">
+                        {% if is_admin %}
+                        <button type="button" class="btn btn-outline" onclick="openClusterCreation()">
                             <i class="fas fa-external-link-alt"></i> Open Cluster Manager
                         </button>
+                        <button type="button" class="btn btn-primary" onclick="applyClusterBootstrapConfig()">
+                            <i class="fas fa-check"></i> Use For This Workset
+                        </button>
+                        {% endif %}
                     </div>
                 </div>
+            </div>
+
+            <div id="cluster-bootstrap-summary" class="alert alert-info mt-md d-none">
+                <i class="fas fa-server"></i>
+                <span id="cluster-bootstrap-summary-text"></span>
             </div>
 
             <div id="cluster-list-container" class="mt-md" style="display: none;">
@@ -368,4 +419,3 @@
 {% block extra_js %}
 <script src="/static/js/worksets.js?v={{ cache_bust | default('1') }}"></script>
 {% endblock %}
-

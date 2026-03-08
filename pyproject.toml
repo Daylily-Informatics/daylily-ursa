@@ -59,8 +59,8 @@ cluster = [
 ]
 
 [project.scripts]
-ursa = "daylib.cli:main"
-daylily-workset-api = "daylib.workset_api_cli:main"
+ursa = "daylib_ursa.cli:main"
+daylily-workset-api = "daylib_ursa.workset_api_cli:main"
 
 [tool.setuptools_scm]
 version_scheme = "guess-next-dev"
@@ -68,7 +68,7 @@ local_scheme = "node-and-date"
 fallback_version = "0.0.0"
 
 [tool.setuptools.packages.find]
-include = ["daylib*"]
+include = ["daylib_ursa*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

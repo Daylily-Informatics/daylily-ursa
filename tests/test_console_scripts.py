@@ -4,6 +4,7 @@ import importlib
 import sys
 from pathlib import Path
 
+
 def _read_project_scripts(pyproject: Path) -> dict[str, str]:
     """Parse the [project.scripts] table from pyproject.toml.
 
@@ -47,8 +48,8 @@ def test_console_script_entrypoints_are_importable_and_callable():
 
 
 def test_ursa_server_start_uses_packaged_entrypoint(monkeypatch):
-    from daylib.cli import server as server_mod
-    import daylib.ursa_config as ursa_config_mod
+    from daylib_ursa.cli import server as server_mod
+    import daylib_ursa.ursa_config as ursa_config_mod
 
     class DummyUrsaConfig:
         aws_profile = "test-profile"
@@ -65,7 +66,9 @@ def test_ursa_server_start_uses_packaged_entrypoint(monkeypatch):
     monkeypatch.setattr(server_mod, "_ensure_dir", lambda: None)
     monkeypatch.setattr(server_mod, "_get_pid", lambda: None)
     monkeypatch.setattr(server_mod, "_source_env_file", lambda: False)
-    monkeypatch.setattr(server_mod, "_resolve_https_cert_paths", lambda host: ("/tmp/cert.pem", "/tmp/key.pem"))
+    monkeypatch.setattr(
+        server_mod, "_resolve_https_cert_paths", lambda host: ("/tmp/cert.pem", "/tmp/key.pem")
+    )
 
     captured: dict[str, object] = {}
 
@@ -73,6 +76,7 @@ def test_ursa_server_start_uses_packaged_entrypoint(monkeypatch):
         captured["cmd"] = cmd
         captured["cwd"] = cwd
         captured["kwargs"] = kwargs
+
         class _DummyCompletedProcess:
             def __init__(self, returncode: int):
                 self.returncode = returncode
@@ -90,7 +94,7 @@ def test_ursa_server_start_uses_packaged_entrypoint(monkeypatch):
 
     cmd = captured.get("cmd")
     assert isinstance(cmd, list)
-    assert cmd[:3] == [sys.executable, "-m", "daylib.workset_api_cli"]
+    assert cmd[:3] == [sys.executable, "-m", "daylib_ursa.workset_api_cli"]
     assert not any("bin/daylily-workset-api" in str(part) for part in cmd)
 
     kwargs = captured.get("kwargs")

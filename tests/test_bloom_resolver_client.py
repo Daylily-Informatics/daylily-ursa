@@ -3,7 +3,7 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from daylib.bloom_resolver_client import BloomResolverClient, BloomResolverError
+from daylib_ursa.bloom_resolver_client import BloomResolverClient, BloomResolverError
 
 
 def test_resolve_run_index_returns_resolution():

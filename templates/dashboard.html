@@ -250,6 +250,38 @@
             <canvas id="activity-chart"></canvas>
         </div>
     </div>
+
+    <div class="card mt-xl">
+        <div class="card-header d-flex justify-between align-center flex-wrap gap-md">
+            <div>
+                <h3 class="card-title">Compute Price Monitor</h3>
+                <div class="text-sm text-muted" id="pricing-last-run">Loading pricing snapshots…</div>
+            </div>
+            <div class="d-flex gap-sm flex-wrap align-center">
+                <div class="d-flex gap-sm" id="pricing-region-tabs">
+                    <button class="btn btn-outline btn-sm pricing-region-tab active" data-region="us-west-2">us-west-2</button>
+                    <button class="btn btn-outline btn-sm pricing-region-tab" data-region="us-east-1">us-east-1</button>
+                    <button class="btn btn-outline btn-sm pricing-region-tab" data-region="eu-central-1">eu-central-1</button>
+                </div>
+                {% if is_admin %}
+                <button class="btn btn-primary btn-sm" id="pricing-run-now-btn">
+                    <i class="fas fa-play"></i> Run Now
+                </button>
+                {% endif %}
+            </div>
+        </div>
+        <div class="card-body">
+            <div class="d-flex gap-sm flex-wrap mb-md" id="pricing-partition-filters">
+                {% for partition in ['i8', 'i128', 'i192', 'i192mem', 'i192bigmem'] %}
+                <button class="btn btn-outline btn-sm pricing-partition-chip active" data-partition="{{ partition }}">{{ partition }}</button>
+                {% endfor %}
+            </div>
+            <div class="chart-container" style="height: 420px;">
+                <canvas id="pricing-snapshot-chart"></canvas>
+            </div>
+            <div class="text-sm text-muted mt-md" id="pricing-cheapest-az">Cheapest AZ summary will appear here.</div>
+        </div>
+    </div>
 </div>
 
 <!-- Edit Account Modal -->
@@ -293,12 +325,22 @@
 {% endblock %}
 
 {% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/@sgratzl/chartjs-chart-boxplot@4.4.5/build/index.umd.min.js"></script>
 <script src="/static/js/charts.js?v={{ cache_bust | default('1') }}"></script>
 <script>
 document.addEventListener('DOMContentLoaded', function() {
     // Initialize activity chart with real data from API
     const customerId = window.UrsaConfig?.customerId;
     initActivityChart('activity-chart', customerId);
+    initPricingSnapshotChart({
+        canvasId: 'pricing-snapshot-chart',
+        statusId: 'pricing-last-run',
+        summaryId: 'pricing-cheapest-az',
+        runButtonId: 'pricing-run-now-btn',
+        regionTabsId: 'pricing-region-tabs',
+        partitionFiltersId: 'pricing-partition-filters',
+        isAdmin: !!window.UrsaConfig?.isAdmin,
+    });
 
     // Refresh stats periodically
     setInterval(refreshDashboardStats, 60000);
@@ -358,4 +400,3 @@ async function saveAccountDetails() {
 }
 </script>
 {% endblock %}
-

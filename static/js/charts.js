@@ -17,6 +17,14 @@ const chartColors = {
     gray: '#6c757d',
 };
 
+const pricingChartState = {
+    chart: null,
+    region: 'us-west-2',
+    partitions: ['i8', 'i128', 'i192', 'i192mem', 'i192bigmem'],
+};
+
+const azPalette = ['#0f3460', '#00d9a6', '#e94560', '#ffc107', '#4f46e5', '#f97316'];
+
 // Initialize activity chart (dashboard) - fetches real data from API
 async function initActivityChart(canvasId, customerId) {
     const ctx = document.getElementById(canvasId);
@@ -274,3 +282,253 @@ async function updateChartData(chart, customerId, endpoint) {
     }
 }
 
+function formatSnapshotTimestamp(timestamp) {
+    if (!timestamp) return '';
+    return new Date(timestamp).toLocaleString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+    });
+}
+
+function buildPricingDatasets(snapshotPayload, selectedRegion, selectedPartitions) {
+    const snapshots = (snapshotPayload.snapshots || []).filter(item => item.region === selectedRegion);
+    const labels = [];
+    const azNames = new Set();
+    const boxLookup = {};
+    const pointLookup = {};
+
+    snapshots.forEach(snapshot => {
+        (snapshot.partitions || []).forEach(partitionEntry => {
+            if (!selectedPartitions.includes(partitionEntry.partition)) return;
+            const label = `${formatSnapshotTimestamp(snapshot.captured_at)}\n${partitionEntry.partition}`;
+            labels.push(label);
+
+            (partitionEntry.availability_zones || []).forEach(zoneEntry => {
+                azNames.add(zoneEntry.availability_zone);
+                if (!boxLookup[zoneEntry.availability_zone]) {
+                    boxLookup[zoneEntry.availability_zone] = {};
+                    pointLookup[zoneEntry.availability_zone] = [];
+                }
+                boxLookup[zoneEntry.availability_zone][label] = zoneEntry.box;
+                (zoneEntry.points || []).forEach(point => {
+                    pointLookup[zoneEntry.availability_zone].push({
+                        x: label,
+                        y: point.vcpu_cost_per_hour,
+                        instanceType: point.instance_type,
+                        hourlySpotPrice: point.hourly_spot_price,
+                    });
+                });
+            });
+        });
+    });
+
+    const azList = Array.from(azNames).sort();
+    const datasets = [];
+
+    azList.forEach((azName, index) => {
+        const color = azPalette[index % azPalette.length];
+        datasets.push({
+            type: 'boxplot',
+            label: azName,
+            data: labels.map(label => boxLookup[azName][label] || null),
+            backgroundColor: `${color}33`,
+            borderColor: color,
+            borderWidth: 1.5,
+            itemRadius: 0,
+        });
+        datasets.push({
+            type: 'scatter',
+            label: `${azName} instances`,
+            data: pointLookup[azName],
+            pointRadius: 4,
+            pointHoverRadius: 5,
+            pointBackgroundColor: color,
+            pointBorderColor: '#ffffff',
+            pointBorderWidth: 1,
+            showLine: false,
+        });
+    });
+
+    return { labels, datasets };
+}
+
+function renderCheapestAzSummary(snapshotPayload, selectedRegion, summaryEl) {
+    if (!summaryEl) return;
+    const entries = (snapshotPayload.latest_cheapest_az || []).filter(item => item.region === selectedRegion);
+    if (!entries.length) {
+        summaryEl.textContent = 'No pricing history captured yet.';
+        return;
+    }
+    summaryEl.innerHTML = entries
+        .sort((a, b) => a.partition.localeCompare(b.partition))
+        .map(item => `${item.partition}: <code>${item.availability_zone}</code> @ $${item.median_vcpu_cost_per_hour.toFixed(4)}/vCPU-hr`)
+        .join(' | ');
+}
+
+async function loadPricingSnapshotChart(state, els) {
+    const params = new URLSearchParams();
+    params.set('region', state.region);
+    params.set('partitions', state.partitions.join(','));
+
+    const response = await fetch(`/api/pricing-snapshots?${params.toString()}`);
+    if (!response.ok) {
+        throw new Error(`Failed to load pricing snapshots (${response.status})`);
+    }
+
+    const payload = await response.json();
+    const latestRun = (payload.runs || [])[0];
+    if (els.statusEl) {
+        if (latestRun?.snapshot_captured_at) {
+            const prefix = latestRun.status === 'running' ? 'Capture running.' : 'Last capture';
+            els.statusEl.textContent = `${prefix} ${formatSnapshotTimestamp(latestRun.snapshot_captured_at)}`;
+        } else if (latestRun) {
+            els.statusEl.textContent = `Latest pricing job is ${latestRun.status}.`;
+        } else {
+            els.statusEl.textContent = 'No pricing snapshots captured yet.';
+        }
+    }
+
+    renderCheapestAzSummary(payload, state.region, els.summaryEl);
+    const { labels, datasets } = buildPricingDatasets(payload, state.region, state.partitions);
+
+    if (state.chart) {
+        state.chart.destroy();
+    }
+
+    state.chart = new Chart(els.canvas, {
+        data: {
+            labels,
+            datasets,
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    labels: {
+                        filter: item => !String(item.text || '').endsWith('instances'),
+                    },
+                },
+                tooltip: {
+                    callbacks: {
+                        label(context) {
+                            if (context.dataset.type === 'scatter') {
+                                const raw = context.raw || {};
+                                return `${raw.instanceType}: $${Number(raw.y || 0).toFixed(4)}/vCPU-hr`;
+                            }
+                            const raw = context.raw || {};
+                            return `median $${Number(raw.median || 0).toFixed(4)} (min ${Number(raw.min || 0).toFixed(4)}, max ${Number(raw.max || 0).toFixed(4)})`;
+                        },
+                    },
+                },
+            },
+            scales: {
+                x: {
+                    ticks: {
+                        callback(value, index) {
+                            const label = labels[index] || '';
+                            return label.split('\n');
+                        },
+                    },
+                },
+                y: {
+                    title: {
+                        display: true,
+                        text: 'vCPU Cost / Hour (USD)',
+                    },
+                },
+            },
+        },
+    });
+}
+
+async function triggerPricingSnapshot(els) {
+    const response = await fetch('/api/pricing-snapshots/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        throw new Error(payload.detail || payload.error || 'Failed to queue pricing snapshot');
+    }
+    if (els.statusEl) {
+        els.statusEl.textContent = `Pricing capture queued (run ${payload.run_id}). Refreshing shortly…`;
+    }
+}
+
+async function initPricingSnapshotChart(options) {
+    const canvas = document.getElementById(options.canvasId);
+    if (!canvas) return null;
+
+    const statusEl = document.getElementById(options.statusId);
+    const summaryEl = document.getElementById(options.summaryId);
+    const runButtonEl = options.runButtonId ? document.getElementById(options.runButtonId) : null;
+    const regionTabsEl = document.getElementById(options.regionTabsId);
+    const partitionFiltersEl = document.getElementById(options.partitionFiltersId);
+    const els = { canvas, statusEl, summaryEl };
+
+    async function refresh() {
+        try {
+            await loadPricingSnapshotChart(pricingChartState, els);
+        } catch (error) {
+            console.error('Failed to render pricing snapshot chart:', error);
+            if (statusEl) {
+                statusEl.textContent = error.message || 'Failed to load pricing data';
+            }
+        }
+    }
+
+    if (regionTabsEl) {
+        regionTabsEl.querySelectorAll('.pricing-region-tab').forEach(tab => {
+            tab.addEventListener('click', async () => {
+                pricingChartState.region = tab.dataset.region || 'us-west-2';
+                regionTabsEl.querySelectorAll('.pricing-region-tab').forEach(el => el.classList.remove('active'));
+                tab.classList.add('active');
+                await refresh();
+            });
+        });
+    }
+
+    if (partitionFiltersEl) {
+        partitionFiltersEl.querySelectorAll('.pricing-partition-chip').forEach(chip => {
+            chip.addEventListener('click', async () => {
+                chip.classList.toggle('active');
+                const selected = Array.from(partitionFiltersEl.querySelectorAll('.pricing-partition-chip.active'))
+                    .map(el => el.dataset.partition)
+                    .filter(Boolean);
+                pricingChartState.partitions = selected.length
+                    ? selected
+                    : ['i8', 'i128', 'i192', 'i192mem', 'i192bigmem'];
+                if (selected.length === 0) {
+                    partitionFiltersEl.querySelectorAll('.pricing-partition-chip').forEach(el => el.classList.add('active'));
+                }
+                await refresh();
+            });
+        });
+    }
+
+    if (runButtonEl && options.isAdmin) {
+        runButtonEl.addEventListener('click', async () => {
+            const originalHtml = runButtonEl.innerHTML;
+            runButtonEl.disabled = true;
+            runButtonEl.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Running…';
+            try {
+                await triggerPricingSnapshot(els);
+                setTimeout(refresh, 3000);
+            } catch (error) {
+                console.error('Failed to queue pricing snapshot:', error);
+                if (statusEl) {
+                    statusEl.textContent = error.message || 'Failed to queue pricing snapshot';
+                }
+            } finally {
+                runButtonEl.disabled = false;
+                runButtonEl.innerHTML = originalHtml;
+            }
+        });
+    }
+
+    await refresh();
+    return pricingChartState.chart;
+}
