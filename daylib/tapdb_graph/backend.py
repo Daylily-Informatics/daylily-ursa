@@ -43,24 +43,39 @@ class TemplateDefinition:
 
 
 TEMPLATE_DEFINITIONS: tuple[TemplateDefinition, ...] = (
-    TemplateDefinition("actor/customer/account/1.0/", "actor_template", "actor_instance", "CT", "Customer"),
-    TemplateDefinition("actor/user/account/1.0/", "actor_template", "actor_instance", "AG", "User"),
-    TemplateDefinition("workflow/workset/analysis/1.0/", "workflow_template", "workflow_instance", "WS", "Workset"),
-    TemplateDefinition("action/workset/state-transition/1.0/", "action_template", "action_instance", "ST", "State Transition"),
-    TemplateDefinition("action/workset/lock-event/1.0/", "action_template", "action_instance", "CK", "Lock Event"),
-    TemplateDefinition("file/object/registered/1.0/", "file_template", "file_instance", "FF", "Registered File"),
-    TemplateDefinition("container/fileset/group/1.0/", "container_template", "container_instance", "FT", "Fileset"),
-    TemplateDefinition("content/manifest/stage-samples/1.0/", "content_template", "content_instance", "MF", "Manifest"),
-    TemplateDefinition("subject/person/participant/1.0/", "subject_template", "subject_instance", "SJ", "Subject"),
-    TemplateDefinition("content/biospecimen/entity/1.0/", "content_template", "content_instance", "BP", "Biospecimen"),
-    TemplateDefinition("content/biosample/entity/1.0/", "content_template", "content_instance", "BS", "Biosample"),
-    TemplateDefinition("content/library/entity/1.0/", "content_template", "content_instance", "BR", "Library"),
-    TemplateDefinition("data/storage/s3-bucket-link/1.0/", "data_template", "data_instance", "BK", "Linked Bucket"),
+    TemplateDefinition(
+        "workflow/analysis/run-linked/1.0/",
+        "workflow_template",
+        "workflow_instance",
+        "AN",
+        "Run Linked Analysis",
+    ),
+    TemplateDefinition(
+        "data/artifact/analysis-output/1.0/",
+        "data_template",
+        "data_instance",
+        "AF",
+        "Analysis Artifact",
+    ),
+    TemplateDefinition(
+        "action/analysis/review-event/1.0/",
+        "action_template",
+        "action_instance",
+        "RV",
+        "Review Event",
+    ),
+    TemplateDefinition(
+        "action/analysis/atlas-return/1.0/",
+        "action_template",
+        "action_instance",
+        "RT",
+        "Atlas Return Event",
+    ),
 )
 
 
 class TapDBBackend:
-    """Shared TapDB backend wiring for Ursa graph persistence."""
+    """Shared TapDB backend wiring for Ursa beta analysis persistence."""
 
     def __init__(self, app_username: str = "ursa"):
         # Ursa uses TapDB in strict namespace mode to avoid cross-app collisions.

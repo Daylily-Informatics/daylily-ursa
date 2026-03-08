@@ -1,253 +1,101 @@
 # daylily-ursa
 
-[![CI](https://github.com/Daylily-Informatics/daylily-ursa/actions/workflows/ci.yml/badge.svg)](https://github.com/Daylily-Informatics/daylily-ursa/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/github/v/tag/Daylily-Informatics/daylily-ursa?label=version)](https://github.com/Daylily-Informatics/daylily-ursa/tags)
+**Daylily Ursa beta analysis API**.
 
-**Daylily Workset Management API** — Automated analysis workset manager for genomics pipelines.
+Ursa is the analysis-only service in the beta stack. It no longer owns customer, biospecimen, manifest, portal, or workset truth.
 
-## Overview
+## Scope
 
-Daylily Ursa provides a comprehensive workset management system for orchestrating genomics analysis pipelines. It handles:
+Ursa now handles:
 
-- **Workset Lifecycle Management** — Create, monitor, and manage analysis worksets through TapDB-backed state machine
-- **File Registry** — Track and validate input/output files across S3 buckets
-- **Customer Portal** — Web-based interface for customers to submit and monitor worksets
-- **Biospecimen Management** — Track samples, manifests, and metadata
-- **Multi-Region Support** — Coordinate worksets across AWS regions
-- **Notifications** — SNS-based alerts for workset state changes
-- **Storage Metrics** — Track and display workset directory sizes and storage consumption
-- **Cognito Authentication** — Optional AWS Cognito integration for secure multi-tenant access
+- run-linked analysis ingest
+- Bloom resolver lookups for `run_euid + index_string`
+- TapDB-backed analysis execution and review state
+- analysis artifact registration
+- Atlas result and artifact return
 
-## Quick Start (Development)
+Ursa no longer serves:
+
+- workset lifecycle APIs
+- customer portal routes
+- biospecimen or manifest ownership APIs
+- file-registry-as-primary ownership
+- monitor or workflow-runtime beta entrypoints
+
+## Runtime Contract
+
+1. Atlas and Bloom create the order, material, queue, and run context.
+2. Ursa ingests `run_euid` and `index_string`.
+3. Ursa resolves Atlas order and TRF.test identity through Bloom.
+4. Ursa records analysis state and artifacts under the resolved identity.
+5. Ursa returns result and artifact references to Atlas with an idempotency key.
+
+## Quick Start
 
 ```bash
-# Activate the development environment (creates conda env if needed)
 source ./ursa_activate
 
-# Check system status
-ursa info
+export TAPDB_STRICT_NAMESPACE=1
+export TAPDB_CLIENT_ID=local
+export TAPDB_DATABASE_NAME=ursa
+export TAPDB_ENV=dev
 
-# Run tests
-ursa test run
+export URSA_INTERNAL_API_KEY=ursa-dev-internal-key
+export BLOOM_BASE_URL=http://localhost:8001
+export ATLAS_BASE_URL=http://localhost:8000
+export ATLAS_INTERNAL_API_KEY=replace-me
 
-# Start the API server (no auth, development mode)
 ursa server start
 ```
 
-## CLI Tools
-
-### `ursa_activate` — Environment Setup
-
-Source this script to set up the development environment:
+Direct entrypoint:
 
 ```bash
-source ./ursa_activate
-```
-
-This will:
-1. Create the `URSA` conda environment from `config/ursa_env.yaml` (if not exists)
-2. Activate the conda environment
-3. Install the package in development mode
-4. Add CLI tools to PATH
-5. Enable tab completion for the `ursa` CLI
-
-### `ursa` — Management CLI
-
-The main CLI tool for managing the project. Uses Typer with subcommand groups:
-
-```bash
-ursa <group> <command> [args]
-```
-
-**Command Groups:**
-
-| Group | Description |
-|-------|-------------|
-| `ursa server` | API server management (start, stop, status, logs) |
-| `ursa monitor` | Workset monitor daemon (start, stop, status, logs) |
-| `ursa aws` | AWS resource management (setup, status, teardown) |
-| `daycog` | Cognito/SSO management via `daylily-cognito` (setup, status, users, apps) |
-| `ursa test` | Testing and code quality (run, cov, lint, format, typecheck) |
-| `ursa env` | Environment and configuration (status, generate, clean) |
-
-**Top-Level Commands:**
-- `ursa version` — Show version information
-- `ursa info` — Show system status and configuration
-- `ursa --help` — Show all available commands
-
-**Examples:**
-
-```bash
-# Server management
-ursa server start              # Start API server as daemon
-ursa server start --no-daemon  # Start in foreground
-ursa server stop               # Stop the server
-ursa server status             # Check server status
-ursa server logs               # Tail server logs
-
-# Testing
-ursa test run                  # Run test suite
-ursa test cov                  # Run with coverage
-ursa test lint                 # Run ruff linter
-ursa test format               # Format code
-
-# AWS resources
-ursa aws setup                 # Bootstrap TapDB templates and registries
-ursa aws status                # Show TapDB template readiness
-ursa aws teardown --force      # Print manual teardown instructions
-
-# Cognito authentication (Google-first default)
-./scripts/setup_cognito_google_default.sh  # Uses ~/.config/google_oauth/client_secret_2_...json
-daycog status            # Check Cognito configuration
-daycog list-users        # List users in the configured pool
-daycog set-password --email user@example.com --password 'NewPass123!'
-```
-
-## Installation (Production)
-
-```bash
-pip install daylily-ursa
-
-# With authentication support
-pip install daylily-ursa[auth]
-
-# For development
-pip install daylily-ursa[dev]
-```
-
-## Alternative Quick Start
-
-```bash
-# Start the API server directly
 daylily-workset-api --host 0.0.0.0 --port 8914
-
-# Start the workset monitor
-daylily-workset-monitor config/workset-monitor-config.yaml
 ```
 
-## Architecture
-
-```
-daylib/
-├── workset_api.py          # FastAPI application entry point
-├── workset_state_db.py     # TapDB state management
-├── workset_monitor.py      # S3 workset monitoring daemon
-├── workset_integration.py  # TapDB/S3 integration layer
-├── workset_metrics.py      # Storage and performance metrics
-├── workset_customer.py     # Customer/tenant management
-├── workset_multi_region.py # Multi-region coordination
-├── file_registry.py        # File tracking and validation
-├── biospecimen.py          # Sample/manifest management
-├── config.py               # Pydantic settings (env vars)
-├── cli/                    # Typer CLI modules
-│   ├── __init__.py         # Main CLI app
-│   ├── server.py           # Server commands
-│   ├── monitor.py          # Monitor commands
-│   ├── aws.py              # AWS resource commands
-│   ├── test.py             # Test commands
-│   └── env.py              # Environment commands
-└── routes/                 # FastAPI route modules
-    ├── portal.py           # Customer portal routes
-    ├── worksets.py         # Workset CRUD routes
-    ├── utilities.py        # Utility endpoints
-    └── dependencies.py     # Shared dependencies
-```
-
-## Configuration
-
-Configuration is managed via environment variables or a `.env` file. Generate a template:
+## Important Environment Variables
 
 ```bash
-ursa env generate
-```
+AWS_PROFILE=your-profile
+URSA_ALLOWED_REGIONS=us-west-2
 
-**Key Environment Variables:**
-
-```bash
-# AWS Configuration (required)
-AWS_PROFILE=your-profile-name
-
-# Region Configuration
-# Regions are configured in ~/.config/ursa/ursa-config.yaml
-# Use URSA_ALLOWED_REGIONS to specify regions to scan for clusters
-URSA_ALLOWED_REGIONS=us-west-2,us-east-1
-
-# S3 Configuration
-# NOTE: S3 buckets are discovered from cluster tags (aws-parallelcluster-monitor-bucket)
-# No bucket environment variables are required.
-
-# TapDB (Strict Namespace)
-# Bootstrap (preferred):
-#   tapdb config init --client-id local --database-name ursa --env dev
-#   tapdb bootstrap local
 TAPDB_STRICT_NAMESPACE=1
 TAPDB_CLIENT_ID=local
 TAPDB_DATABASE_NAME=ursa
 TAPDB_ENV=dev
 
-# Authentication (optional)
-ENABLE_AUTH=false
-COGNITO_USER_POOL_ID=us-west-2_xxxxxxxx
-COGNITO_CLIENT_ID=xxxxxxxxxxxxxxxxxxxxxxxxxx
-SESSION_SECRET_KEY=change-this-in-production
-WHITELIST_DOMAINS=all  # or comma-separated: company.com,partner.org
-
-# Server
+URSA_INTERNAL_API_KEY=ursa-dev-internal-key
+BLOOM_BASE_URL=http://localhost:8001
+BLOOM_API_TOKEN=
+ATLAS_BASE_URL=http://localhost:8000
+ATLAS_INTERNAL_API_KEY=
 URSA_HOST=0.0.0.0
 URSA_PORT=8914
-
-# Multi-Region (optional)
-DAYLILY_MULTI_REGION=false
-DAYLILY_PRIMARY_REGION=us-west-2
 ```
 
-See `docs/AUTHENTICATION_SETUP.md` and `docs/MULTI_REGION.md` for detailed configuration guides.
+## API Surface
 
-## Features
+- `POST /api/analyses/ingest`
+- `GET /api/analyses/{analysis_euid}`
+- `POST /api/analyses/{analysis_euid}/status`
+- `POST /api/analyses/{analysis_euid}/artifacts`
+- `POST /api/analyses/{analysis_euid}/review`
+- `POST /api/analyses/{analysis_euid}/return`
 
-### Customer Portal
+All write routes require:
 
-Web-based interface at `/portal/` providing:
-- Dashboard with workset overview and storage metrics
-- Workset list with status, progress, and directory sizes
-- Workset detail view with resources, samples, and logs
-- File registry for managing input files
-- Usage tracking and storage breakdown
-- Cluster management (admin only)
+- `X-API-Key`
+- `Idempotency-Key` on ingest and result return
 
-### Storage Metrics
+## Repo Notes
 
-Workset directory sizes are automatically calculated during the pre-export phase and displayed throughout the UI:
-- **Dashboard**: Total storage across all worksets
-- **Workset List**: Per-workset directory size column
-- **Workset Detail**: Storage in the Resources card
-- **Usage Page**: Storage breakdown by workset
+- execution plan: [docs/ursa_refactor_execplan.md](/Users/jmajor/projects/lims3/daylily-ursa/docs/ursa_refactor_execplan.md)
+- Atlas return contract: [docs/ursa_atlas_return_contract.md](/Users/jmajor/projects/lims3/daylily-ursa/docs/ursa_atlas_return_contract.md)
 
-### Authentication Modes
+## Validation
 
-1. **No Auth** (development): `ursa server start`
-2. **Cognito Auth** (production): Set `ENABLE_AUTH=true` with Cognito configuration
-
-See `docs/AUTHENTICATION_SETUP.md` for setup instructions.
-
-## Documentation
-
-Detailed guides are available in the `docs/` directory:
-
-| Document | Description |
-|----------|-------------|
-| `AUTHENTICATION_SETUP.md` | Cognito authentication configuration |
-| `CUSTOMER_PORTAL.md` | Portal features and multi-tenant support |
-| `MULTI_REGION.md` | Multi-region deployment guide |
-| `BILLING_INTEGRATION.md` | AWS billing and cost allocation |
-| `IAM_SETUP_GUIDE.md` | Required IAM permissions |
-| `QUICKSTART_WORKSET_MONITOR.md` | Monitor daemon setup |
-| `WORKSET_STATE_DIAGRAM.md` | Workset state machine reference |
-
-## Related Projects
-
-- [daylily-ephemeral-cluster](https://github.com/Daylily-Informatics/daylily-ephemeral-cluster) — AWS ParallelCluster infrastructure for running genomics pipelines
-
-## License
-
-MIT
+```bash
+pytest tests/test_tapdb_backend.py tests/test_file_metadata.py tests/test_analysis_ingest.py tests/test_result_return.py tests/test_bloom_resolver_client.py tests/test_console_scripts.py
+ruff check daylib tests/test_tapdb_backend.py tests/test_file_metadata.py tests/test_analysis_ingest.py tests/test_result_return.py tests/test_bloom_resolver_client.py tests/test_console_scripts.py
+```

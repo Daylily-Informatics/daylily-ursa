@@ -1,63 +1,31 @@
-"""Console-script entrypoint for the Daylily workset API.
-
-This module exists so `pyproject.toml` can expose a stable, importable
-`daylily-workset-api` console script.
-"""
+"""Console-script entrypoint for the Ursa beta analysis API."""
 
 from __future__ import annotations
 
 import argparse
 import logging
-import os
 import sys
 from typing import Optional, Sequence
 
 import uvicorn
 
+from daylib.analysis_store import AnalysisStore
+from daylib.atlas_result_client import AtlasResultClient
+from daylib.bloom_resolver_client import BloomResolverClient
+from daylib.config import get_settings
 from daylib.workset_api import create_app
-from daylib.workset_scheduler import WorksetScheduler
-from daylib.workset_state_db import WorksetStateDB
 
-LOGGER = logging.getLogger("daylily.workset_api.cli")
-
-
-def _str_to_bool(val: str) -> bool:
-    """Convert string to boolean, handling common truthy values."""
-
-    return val.lower() in ("true", "1", "yes", "on")
+LOGGER = logging.getLogger("daylily.analysis_api.cli")
 
 
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
-    """Parse command line arguments."""
-
     parser = argparse.ArgumentParser(
-        description="Launch Daylily workset monitoring web API",
+        description="Launch Daylily Ursa beta analysis API",
     )
-    parser.add_argument(
-        "--region",
-        default="us-west-2",
-        help="AWS region",
-    )
-    parser.add_argument(
-        "--profile",
-        help="AWS profile name",
-    )
-    parser.add_argument(
-        "--host",
-        default="0.0.0.0",
-        help="Host to bind to",
-    )
-    parser.add_argument(
-        "--port",
-        type=int,
-        default=8914,
-        help="Port to bind to",
-    )
-    parser.add_argument(
-        "--enable-scheduler",
-        action="store_true",
-        help="Enable scheduler endpoints",
-    )
+    parser.add_argument("--region", default="us-west-2", help="AWS region")
+    parser.add_argument("--profile", help="AWS profile name")
+    parser.add_argument("--host", default="0.0.0.0", help="Host to bind to")
+    parser.add_argument("--port", type=int, default=8914, help="Port to bind to")
     parser.add_argument(
         "--bootstrap-tapdb",
         action="store_true",
@@ -70,32 +38,14 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         dest="bootstrap_tapdb",
         help="Don't bootstrap TapDB templates automatically",
     )
-    parser.add_argument(
-        "--reload",
-        action="store_true",
-        help="Enable auto-reload for development",
-    )
-    parser.add_argument(
-        "--ssl-certfile",
-        default=None,
-        help="Path to TLS certificate file (PEM)",
-    )
-    parser.add_argument(
-        "--ssl-keyfile",
-        default=None,
-        help="Path to TLS private key file (PEM)",
-    )
-    parser.add_argument(
-        "--verbose",
-        action="store_true",
-        help="Enable debug logging",
-    )
+    parser.add_argument("--reload", action="store_true", help="Enable auto-reload for development")
+    parser.add_argument("--ssl-certfile", default=None, help="Path to TLS certificate file (PEM)")
+    parser.add_argument("--ssl-keyfile", default=None, help="Path to TLS private key file (PEM)")
+    parser.add_argument("--verbose", action="store_true", help="Enable debug logging")
     return parser.parse_args(argv)
 
 
 def configure_logging(verbose: bool) -> None:
-    """Configure logging."""
-
     level = logging.DEBUG if verbose else logging.INFO
     logging.basicConfig(
         level=level,
@@ -104,155 +54,36 @@ def configure_logging(verbose: bool) -> None:
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
-    """Main entry point."""
-
-    from daylib.ursa_config import get_ursa_config
-
     args = parse_args(argv)
     configure_logging(args.verbose)
+    settings = get_settings()
 
-    # Load UrsaConfig for centralized settings
-    ursa_config = get_ursa_config()
-
-    LOGGER.info("Initializing TapDB workset state store (namespace via TAPDB_* env vars)")
-    state_db = WorksetStateDB()
-
+    LOGGER.info("Initializing Ursa beta analysis store")
+    store = AnalysisStore()
     if args.bootstrap_tapdb:
-        LOGGER.info("Bootstrapping TapDB templates if needed...")
-        state_db.bootstrap()
+        LOGGER.info("Bootstrapping TapDB templates if needed")
+        store.bootstrap()
 
-    scheduler = None
-    if args.enable_scheduler:
-        LOGGER.info("Enabling scheduler")
-        scheduler = WorksetScheduler(state_db)
-
-    # Integration layer is created per-workset using bucket from cluster tags
-    # (aws-parallelcluster-monitor-bucket). No global integration needed at startup.
-    integration = None
-
-    # Initialize CustomerManager for user registration and management
-    customer_manager = None
-    try:
-        from daylib.workset_customer import CustomerManager
-
-        customer_manager = CustomerManager(
-            region=args.region,
-            profile=args.profile,
+    bloom_client = BloomResolverClient(
+        base_url=settings.bloom_base_url,
+        token=settings.bloom_api_token,
+    )
+    atlas_client = (
+        AtlasResultClient(
+            base_url=settings.atlas_base_url,
+            api_key=settings.atlas_internal_api_key,
         )
-        try:
-            customer_manager.bootstrap()
-            LOGGER.info("CustomerManager TapDB templates bootstrapped")
-        except Exception as exc:
-            LOGGER.warning("Could not bootstrap customer templates: %s", exc)
-            LOGGER.info("CustomerManager initialized (templates may require manual bootstrap)")
-    except Exception as exc:
-        LOGGER.warning("Failed to initialize CustomerManager: %s", exc)
-        import traceback
-
-        LOGGER.debug("CustomerManager init traceback: %s", traceback.format_exc())
-
-    # Check if authentication is enabled via environment variable
-    enable_auth = _str_to_bool(os.getenv("DAYLILY_ENABLE_AUTH", "false"))
-    cognito_auth = None
-
-    if enable_auth:
-        try:
-            from daylily_cognito.auth import CognitoAuth
-        except ImportError:
-            LOGGER.error(
-                "Authentication enabled but python-jose not installed. "
-                "Install with: pip install 'python-jose[cryptography]'"
-            )
-            return 1
-
-        # Env vars take precedence, then ursa config.
-        user_pool_id = os.getenv("COGNITO_USER_POOL_ID") or ursa_config.cognito_user_pool_id
-        app_client_id = (
-            os.getenv("COGNITO_CLIENT_ID")
-            or os.getenv("COGNITO_APP_CLIENT_ID")
-            or ursa_config.cognito_app_client_id
-        )
-        app_client_secret = (
-            os.getenv("COGNITO_APP_CLIENT_SECRET")
-            or getattr(ursa_config, "cognito_app_client_secret", None)
-        )
-        cognito_region = (
-            os.getenv("COGNITO_REGION")
-            or ursa_config.cognito_region
-            or args.region
-        )
-
-        if not user_pool_id or not app_client_id:
-            LOGGER.error(
-                "Authentication enabled but Cognito not configured. "
-                "Set COGNITO_USER_POOL_ID and COGNITO_APP_CLIENT_ID in environment "
-                "or daycog-managed env files (for example ~/.config/daycog/default.env)"
-            )
-            return 1
-
-        source_pool = ursa_config.get_value_source("cognito_user_pool_id")
-        source_client = ursa_config.get_value_source("cognito_app_client_id")
-        LOGGER.info(
-            "Initializing Cognito authentication (pool: %s [%s], client: [%s])",
-            user_pool_id,
-            source_pool,
-            source_client,
-        )
-
-        from daylib.config import get_settings
-
-        settings = get_settings()
-        cognito_auth = CognitoAuth(
-            region=cognito_region,
-            user_pool_id=user_pool_id,
-            app_client_id=app_client_id,
-            app_client_secret=app_client_secret,
-            profile=args.profile,
-            settings=settings,
-        )
-        LOGGER.info("Cognito authentication initialized successfully")
-    else:
-        LOGGER.info("Authentication disabled (set DAYLILY_ENABLE_AUTH=true to enable)")
-
-    file_registry = None
-    try:
-        from daylib.file_registry import FileRegistry
-
-        try:
-            file_registry = FileRegistry()
-            if args.bootstrap_tapdb:
-                file_registry.bootstrap()
-                LOGGER.info("FileRegistry TapDB templates bootstrapped")
-        except Exception as exc:
-            LOGGER.warning("Could not bootstrap file registry templates: %s", exc)
-    except Exception as exc:
-        LOGGER.warning("Failed to initialize FileRegistry: %s", exc)
-        import traceback
-
-        LOGGER.debug("FileRegistry init traceback: %s", traceback.format_exc())
-
-    LOGGER.info(
-        "Creating FastAPI app with customer_manager=%s, file_registry=%s",
-        "CONFIGURED" if customer_manager else "NONE",
-        "CONFIGURED" if file_registry else "NONE",
+        if settings.atlas_internal_api_key
+        else None
     )
     app = create_app(
-        state_db,
-        scheduler,
-        integration=integration,
-        cognito_auth=cognito_auth,
-        customer_manager=customer_manager,
-        enable_auth=enable_auth,
-        file_registry=file_registry,
+        store,
+        bloom_client=bloom_client,
+        atlas_client=atlas_client,
+        settings=settings,
     )
 
-    auth_status = "ENABLED" if enable_auth else "DISABLED"
-    LOGGER.info(
-        "Starting API server on %s:%d (auth: %s)",
-        args.host,
-        args.port,
-        auth_status,
-    )
+    LOGGER.info("Starting Ursa beta analysis API on %s:%d", args.host, args.port)
     uvicorn.run(
         app,
         host=args.host,
@@ -262,9 +93,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         ssl_keyfile=args.ssl_keyfile,
         log_level="debug" if args.verbose else "info",
     )
-
     return 0
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     sys.exit(main())

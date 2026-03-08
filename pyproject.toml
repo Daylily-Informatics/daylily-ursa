@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "daylily-ursa"
 dynamic = ["version"]
-description = "Daylily Workset Management API - automated analysis workset manager for genomics pipelines"
+description = "Daylily Ursa beta analysis API"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
@@ -61,13 +61,6 @@ cluster = [
 [project.scripts]
 ursa = "daylib.cli:main"
 daylily-workset-api = "daylib.workset_api_cli:main"
-daylily-workset-monitor = "daylib.workset_monitor_cli:main"
-daylily-stage-samples-from-local-to-headnode = "daylib.stage_samples:main"
-daylily-export-fsx-to-s3-from-local = "daylib.export_fsx:main"
-daylily-purge-customer-data = "daylib.purge_customer:main"
-daylily-workset-report = "daylib.workset_report:main"
-daylily-workset-worker = "daylib.workset_worker:main"
-daylily-workset-metrics = "daylib.workset_metrics:main"
 
 [tool.setuptools_scm]
 version_scheme = "guess-next-dev"

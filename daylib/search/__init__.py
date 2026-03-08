@@ -1,5 +1,3 @@
-"""Search services for portal and API interfaces."""
+"""Retired portal search package from the pre-beta Ursa surface."""
 
-from daylib.search.global_search import search_portal
-
-__all__ = ["search_portal"]
+__all__: list[str] = []

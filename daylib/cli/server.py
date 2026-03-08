@@ -1,4 +1,4 @@
-"""Server management commands for Ursa CLI."""
+"""Server management commands for the Ursa beta analysis API."""
 
 import os
 import signal
@@ -13,7 +13,6 @@ from urllib.parse import urlparse
 
 import typer
 import boto3
-from botocore.exceptions import BotoCoreError, ClientError
 from rich.console import Console
 
 server_app = typer.Typer(help="API server management commands")
@@ -338,11 +337,10 @@ def _source_env_file() -> bool:
 def start(
     port: int = typer.Option(8914, "--port", "-p", help="Port to run the server on"),
     host: str = typer.Option("0.0.0.0", "--host", "-h", help="Host to bind to"),
-    auth: bool = typer.Option(True, "--auth/--no-auth", help="Enable Cognito authentication"),
     reload: bool = typer.Option(False, "--reload", "-r", help="Enable auto-reload (foreground)"),
     background: bool = typer.Option(True, "--background/--foreground", "-b/-f", help="Run in background"),
 ):
-    """Start the Ursa API server."""
+    """Start the Ursa beta analysis API server."""
     _ensure_dir()
 
     # Source .env file
@@ -420,80 +418,6 @@ def start(
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
 
-    # Set auth env var for the API server
-    if auth:
-        _require_auth_dependencies()
-        env["DAYLILY_ENABLE_AUTH"] = "true"
-        # Pass Cognito config from ursa config to environment if not already set
-        if getattr(ursa_config, "cognito_user_pool_id", None) and not os.environ.get("COGNITO_USER_POOL_ID"):
-            env["COGNITO_USER_POOL_ID"] = str(ursa_config.cognito_user_pool_id)
-        if getattr(ursa_config, "cognito_app_client_id", None) and not os.environ.get("COGNITO_APP_CLIENT_ID"):
-            env["COGNITO_APP_CLIENT_ID"] = str(ursa_config.cognito_app_client_id)
-        if getattr(ursa_config, "cognito_app_client_secret", None) and not os.environ.get("COGNITO_APP_CLIENT_SECRET"):
-            env["COGNITO_APP_CLIENT_SECRET"] = str(ursa_config.cognito_app_client_secret)
-        if getattr(ursa_config, "cognito_domain", None) and not os.environ.get("COGNITO_DOMAIN"):
-            env["COGNITO_DOMAIN"] = str(ursa_config.cognito_domain)
-        if getattr(ursa_config, "cognito_region", None) and not os.environ.get("COGNITO_REGION"):
-            env["COGNITO_REGION"] = str(ursa_config.cognito_region)
-
-        missing: list[str] = []
-        if not env.get("COGNITO_USER_POOL_ID"):
-            missing.append("COGNITO_USER_POOL_ID")
-        if not (env.get("COGNITO_APP_CLIENT_ID") or env.get("COGNITO_CLIENT_ID")):
-            missing.append("COGNITO_APP_CLIENT_ID")
-        if not env.get("COGNITO_REGION"):
-            missing.append("COGNITO_REGION")
-        if missing:
-            console.print("[red]✗[/red]  Authentication enabled but Cognito config is missing")
-            console.print("   Missing: [cyan]" + ", ".join(missing) + "[/cyan]")
-            console.print("   Set via environment variables or in your Ursa config file")
-            raise typer.Exit(1)
-
-        oauth_host = _runtime_oauth_host(host)
-        expected_callback_url = env.get("COGNITO_CALLBACK_URL") or f"https://{oauth_host}:{port}/auth/callback"
-        expected_logout_url = env.get("COGNITO_LOGOUT_URL") or f"https://{oauth_host}:{port}/"
-
-        user_pool_id = str(env["COGNITO_USER_POOL_ID"])
-        app_client_id = str(env.get("COGNITO_APP_CLIENT_ID") or env.get("COGNITO_CLIENT_ID") or "")
-        cognito_region = str(env["COGNITO_REGION"])
-
-        try:
-            app_client = _describe_cognito_app_client(
-                profile=aws_profile,
-                region=cognito_region,
-                user_pool_id=user_pool_id,
-                app_client_id=app_client_id,
-            )
-        except (ClientError, BotoCoreError, ValueError) as exc:
-            console.print("[red]✗[/red]  Failed Cognito OAuth preflight check")
-            console.print(f"   Could not describe app client [cyan]{app_client_id}[/cyan] in pool [cyan]{user_pool_id}[/cyan]")
-            console.print(f"   Error: {exc}")
-            raise typer.Exit(1)
-
-        oauth_errors = _validate_cognito_oauth_uris(
-            app_client=app_client,
-            expected_callback_url=expected_callback_url,
-            expected_logout_url=expected_logout_url,
-            expected_port=port,
-            runtime_host=oauth_host,
-            expected_client_name=REQUIRED_COGNITO_APP_CLIENT_NAME,
-        )
-        if oauth_errors:
-            console.print("[red]✗[/red]  Cognito OAuth URI validation failed")
-            for err in oauth_errors:
-                console.print(f"   - {err}")
-            raise typer.Exit(1)
-
-        console.print(
-            "[green]✓[/green]  Cognito OAuth URIs validated "
-            f"(client [cyan]{REQUIRED_COGNITO_APP_CLIENT_NAME}[/cyan], "
-            f"callback/logouts aligned with port [cyan]{port}[/cyan])"
-        )
-        console.print("[green]✓[/green]  Authentication ENABLED")
-    else:
-        env["DAYLILY_ENABLE_AUTH"] = "false"
-        console.print("[yellow]⚠[/yellow]  Authentication DISABLED")
-
     if reload:
         cmd.append("--reload")
         background = False  # Reload requires foreground
@@ -529,7 +453,6 @@ def start(
         PID_FILE.write_text(str(proc.pid))
         console.print(f"[green]✓[/green]  Server started (PID {proc.pid})")
         console.print(f"   URL: [cyan]https://{host}:{port}[/cyan]")
-        console.print(f"   Portal: [cyan]https://{host}:{port}/portal[/cyan]")
         console.print(f"   Logs: [dim]{log_file}[/dim]")
     else:
         console.print(f"[green]✓[/green]  Starting server on [cyan]https://{host}:{port}[/cyan]")
@@ -573,7 +496,7 @@ def stop():
 
 @server_app.command("status")
 def status():
-    """Check the status of the Ursa API server."""
+    """Check the status of the Ursa beta analysis API server."""
     pid = _get_pid()
     if pid:
         port = os.environ.get("URSA_PORT", "8914")

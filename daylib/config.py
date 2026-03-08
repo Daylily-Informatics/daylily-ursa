@@ -135,6 +135,26 @@ class Settings(BaseSettings):
         default=8914,
         description="API server port",
     )
+    ursa_internal_api_key: str = Field(
+        default="ursa-dev-internal-key",
+        description="Internal API key for Ursa beta write endpoints",
+    )
+    bloom_base_url: str = Field(
+        default="http://localhost:8001",
+        description="Bloom base URL for run/index resolver requests",
+    )
+    bloom_api_token: Optional[str] = Field(
+        default=None,
+        description="Bearer token for Bloom beta API access",
+    )
+    atlas_base_url: str = Field(
+        default="http://localhost:8000",
+        description="Atlas base URL for result return requests",
+    )
+    atlas_internal_api_key: Optional[str] = Field(
+        default=None,
+        description="Atlas internal API key used by Ursa result return",
+    )
 
     # ========== Notifications ==========
     sns_topic_arn: Optional[str] = Field(

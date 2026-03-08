@@ -1,4 +1,4 @@
-"""Ursa CLI - Workset Management CLI using Typer."""
+"""Ursa CLI for beta analysis service operations."""
 
 from importlib.metadata import PackageNotFoundError, version as package_version
 import os
@@ -10,8 +10,6 @@ import typer
 from rich.console import Console
 
 from daylib.cli.server import server_app
-from daylib.cli.monitor import monitor_app
-from daylib.cli.aws import aws_app
 from daylib.cli.test import test_app
 from daylib.cli.env import env_app
 
@@ -74,7 +72,7 @@ def _aws_callback(ctx: typer.Context) -> None:
 
 app = typer.Typer(
     name="ursa",
-    help="Ursa - Workset Management CLI",
+    help="Ursa beta analysis service CLI",
     add_completion=True,
     no_args_is_help=True,
     callback=_aws_callback,
@@ -82,8 +80,6 @@ app = typer.Typer(
 
 # Register subcommand groups
 app.add_typer(server_app, name="server", help="API server management")
-app.add_typer(monitor_app, name="monitor", help="Workset monitor management")
-app.add_typer(aws_app, name="aws", help="AWS resource management")
 app.add_typer(test_app, name="test", help="Testing and code quality")
 app.add_typer(env_app, name="env", help="Environment and configuration")
 
@@ -220,7 +216,6 @@ def info():
     if ursa_config.is_configured:
         regions = ursa_config.get_allowed_regions()
         table.add_row("Scan Regions", f"[green]{len(regions)}[/green] [dim]({', '.join(regions)})[/dim]")
-        table.add_row("Bucket Source", "[dim]cluster tags (aws-parallelcluster-monitor-bucket)[/dim]")
     else:
         table.add_row("Scan Regions", "[yellow]none configured[/yellow]")
 
@@ -237,18 +232,11 @@ def info():
     else:
         table.add_row("API Server", "[dim]Stopped[/dim]")
 
-    # Check if monitor is running
-    monitor_pid_file = config_dir / "monitor.pid"
-    if monitor_pid_file.exists():
-        try:
-            pid = int(monitor_pid_file.read_text().strip())
-            import os as os_mod
-            os_mod.kill(pid, 0)
-            table.add_row("Monitor", f"[green]Running[/green] (PID {pid})")
-        except (ValueError, ProcessLookupError, PermissionError):
-            table.add_row("Monitor", "[dim]Stopped[/dim]")
-    else:
-        table.add_row("Monitor", "[dim]Stopped[/dim]")
+    from daylib.config import get_settings
+
+    settings = get_settings()
+    table.add_row("Bloom URL", settings.bloom_base_url)
+    table.add_row("Atlas URL", settings.atlas_base_url)
 
     console.print(table)
 
