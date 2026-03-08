@@ -9,7 +9,7 @@ Ursa is the analysis-only service in the beta stack. It no longer owns customer,
 Ursa now handles:
 
 - run-linked analysis ingest
-- Bloom resolver lookups for `run_euid + index_string`
+- Bloom resolver lookups for `run_euid + flowcell_id + lane + library_barcode`
 - TapDB-backed analysis execution and review state
 - analysis artifact registration
 - Atlas result and artifact return
@@ -25,10 +25,10 @@ Ursa no longer serves:
 ## Runtime Contract
 
 1. Atlas and Bloom create the order, material, queue, and run context.
-2. Ursa ingests `run_euid` and `index_string`.
-3. Ursa resolves Atlas order and TRF.test identity through Bloom.
-4. Ursa records analysis state and artifacts under the resolved identity.
-5. Ursa returns result and artifact references to Atlas with an idempotency key.
+2. Ursa ingests `run_euid`, `flowcell_id`, `lane`, and `library_barcode`.
+3. Ursa resolves Atlas TRF/Test/process-item identity through Bloom.
+4. Ursa records analysis state, review state, and artifacts under the resolved identity.
+5. Ursa requires explicit `APPROVED` review state before returning result and artifact references to Atlas.
 
 ## Quick Start
 
@@ -41,17 +41,13 @@ export TAPDB_DATABASE_NAME=ursa
 export TAPDB_ENV=dev
 
 export URSA_INTERNAL_API_KEY=ursa-dev-internal-key
-export BLOOM_BASE_URL=http://localhost:8001
-export ATLAS_BASE_URL=http://localhost:8000
+export BLOOM_BASE_URL=https://localhost:8912
+export BLOOM_VERIFY_SSL=false
+export ATLAS_BASE_URL=https://localhost:8915
+export ATLAS_VERIFY_SSL=false
 export ATLAS_INTERNAL_API_KEY=replace-me
 
 ursa server start
-```
-
-Direct entrypoint:
-
-```bash
-daylily-workset-api --host 0.0.0.0 --port 8914
 ```
 
 ## Important Environment Variables
@@ -66,10 +62,12 @@ TAPDB_DATABASE_NAME=ursa
 TAPDB_ENV=dev
 
 URSA_INTERNAL_API_KEY=ursa-dev-internal-key
-BLOOM_BASE_URL=http://localhost:8001
+BLOOM_BASE_URL=https://localhost:8912
 BLOOM_API_TOKEN=
-ATLAS_BASE_URL=http://localhost:8000
+BLOOM_VERIFY_SSL=false
+ATLAS_BASE_URL=https://localhost:8915
 ATLAS_INTERNAL_API_KEY=
+ATLAS_VERIFY_SSL=false
 URSA_HOST=0.0.0.0
 URSA_PORT=8914
 ```
@@ -87,6 +85,21 @@ All write routes require:
 
 - `X-API-Key`
 - `Idempotency-Key` on ingest and result return
+
+The ingest payload includes:
+
+- `run_euid`
+- `flowcell_id`
+- `lane`
+- `library_barcode`
+
+The stored and returned Atlas context includes:
+
+- `sequenced_library_assignment_euid`
+- `atlas_tenant_id`
+- `atlas_trf_euid`
+- `atlas_test_euid`
+- `atlas_test_process_item_euid`
 
 ## Repo Notes
 
