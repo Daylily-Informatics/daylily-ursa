@@ -20,11 +20,14 @@ class DummyStore:
         self.record = AnalysisRecord(
             analysis_euid="AN-1",
             run_euid="RUN-1",
-            index_string="IDX-01",
+            flowcell_id="FLOW-1",
+            lane="1",
+            library_barcode="LIB-1",
+            sequenced_library_assignment_euid="SQA-1",
             atlas_tenant_id="TEN-1",
-            atlas_order_euid="ORD-1",
-            atlas_test_order_euid="TST-1",
-            source_euid="LIB-1",
+            atlas_trf_euid="TRF-1",
+            atlas_test_euid="TST-1",
+            atlas_test_process_item_euid="TPC-1",
             analysis_type="beta-default",
             state=AnalysisState.INGESTED.value,
             review_state=ReviewState.PENDING.value,
@@ -100,15 +103,20 @@ class DummyBloomClient:
     def __init__(self) -> None:
         self.calls = []
 
-    def resolve_run_index(self, run_euid: str, index_string: str) -> RunResolution:
-        self.calls.append((run_euid, index_string))
+    def resolve_run_assignment(
+        self, run_euid: str, flowcell_id: str, lane: str, library_barcode: str
+    ) -> RunResolution:
+        self.calls.append((run_euid, flowcell_id, lane, library_barcode))
         return RunResolution(
             run_euid=run_euid,
-            index_string=index_string,
+            flowcell_id=flowcell_id,
+            lane=lane,
+            library_barcode=library_barcode,
+            sequenced_library_assignment_euid="SQA-1",
             atlas_tenant_id="TEN-1",
-            atlas_order_euid="ORD-1",
-            atlas_test_order_euid="TST-1",
-            source_euid="LIB-1",
+            atlas_trf_euid="TRF-1",
+            atlas_test_euid="TST-1",
+            atlas_test_process_item_euid="TPC-1",
         )
 
 
@@ -135,7 +143,9 @@ def test_ingest_analysis_resolves_bloom_and_persists():
             },
             json={
                 "run_euid": "RUN-1",
-                "index_string": "IDX-01",
+                "flowcell_id": "FLOW-1",
+                "lane": "1",
+                "library_barcode": "LIB-1",
                 "analysis_type": "germline",
                 "artifact_bucket": "analysis-bucket",
                 "input_files": ["s3://analysis-bucket/RUN-1/read1.fastq.gz"],
@@ -146,8 +156,8 @@ def test_ingest_analysis_resolves_bloom_and_persists():
     assert response.status_code == 201, response.text
     body = response.json()
     assert body["analysis_euid"] == "AN-1"
-    assert body["atlas_test_order_euid"] == "TST-1"
-    assert bloom.calls == [("RUN-1", "IDX-01")]
+    assert body["atlas_test_process_item_euid"] == "TPC-1"
+    assert bloom.calls == [("RUN-1", "FLOW-1", "1", "LIB-1")]
     assert store.last_ingest["idempotency_key"] == "idem-1"
     assert store.last_ingest["analysis_type"] == "germline"
 
@@ -163,7 +173,9 @@ def test_ingest_analysis_requires_idempotency_key():
             headers={"X-API-Key": "ursa-test-key"},
             json={
                 "run_euid": "RUN-1",
-                "index_string": "IDX-01",
+                "flowcell_id": "FLOW-1",
+                "lane": "1",
+                "library_barcode": "LIB-1",
                 "analysis_type": "germline",
                 "artifact_bucket": "analysis-bucket",
             },

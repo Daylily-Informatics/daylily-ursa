@@ -1,4 +1,4 @@
-"""Run and persist daylily-ec pricing snapshots for the portal."""
+"""Run and persist daylily-ec pricing snapshots for Ursa admin APIs."""
 
 from __future__ import annotations
 
@@ -10,11 +10,11 @@ import threading
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
-from daylib_ursa.config import Settings
-from daylib_ursa.ephemeral_cluster.runner import resolve_daylily_ec
-from daylib_ursa.portal_state import PortalState
+from daylib.config import Settings
+from daylib.ephemeral_cluster.runner import resolve_daylily_ec
+from daylib.pricing_state import PricingState
 
 LOGGER = logging.getLogger("daylily.pricing_monitor")
 
@@ -22,7 +22,7 @@ LOGGER = logging.getLogger("daylily.pricing_monitor")
 class PricingMonitor:
     """Queue and persist pricing snapshots via the installed daylily-ec CLI."""
 
-    def __init__(self, *, settings: Settings, store: PortalState):
+    def __init__(self, *, settings: Settings, store: PricingState):
         self.settings = settings
         self.store = store
         self._thread_lock = threading.Lock()
@@ -34,7 +34,11 @@ class PricingMonitor:
         with self._scheduler_lock:
             if self._scheduler_started:
                 return
-            thread = threading.Thread(target=self._scheduler_loop, daemon=True, name="ursa-pricing-scheduler")
+            thread = threading.Thread(
+                target=self._scheduler_loop,
+                daemon=True,
+                name="ursa-pricing-scheduler",
+            )
             thread.start()
             self._scheduler_started = True
 
@@ -50,11 +54,12 @@ class PricingMonitor:
         last_capture = self.store.last_successful_pricing_capture()
         if last_capture:
             last_dt = datetime.fromisoformat(last_capture.replace("Z", "+00:00"))
-            if datetime.now(timezone.utc) - last_dt < timedelta(hours=self.settings.ursa_cost_monitor_interval_hours):
+            delta = datetime.now(timezone.utc) - last_dt
+            if delta < timedelta(hours=self.settings.ursa_cost_monitor_interval_hours):
                 return
         self.queue_capture(trigger="scheduled", requested_by=None)
 
-    def queue_capture(self, *, trigger: str, requested_by: Optional[str]) -> Dict[str, Any]:
+    def queue_capture(self, *, trigger: str, requested_by: str | None) -> dict[str, Any]:
         active = self.store.get_active_pricing_run()
         if active:
             return active
@@ -78,7 +83,7 @@ class PricingMonitor:
                 LOGGER.exception("Pricing capture failed")
                 self.store.mark_pricing_run_failed(run_id, str(exc))
 
-    def _capture_snapshot(self) -> Dict[str, Any]:
+    def _capture_snapshot(self) -> dict[str, Any]:
         self._lock_path.parent.mkdir(parents=True, exist_ok=True)
         with self._lock_path.open("w", encoding="utf-8") as lock_file:
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
@@ -98,8 +103,8 @@ class PricingMonitor:
             except json.JSONDecodeError as exc:
                 raise RuntimeError("daylily-ec pricing snapshot did not return valid JSON") from exc
 
-    def _build_snapshot_command(self) -> List[str]:
-        command: List[str] = [str(resolve_daylily_ec()), "pricing", "snapshot"]
+    def _build_snapshot_command(self) -> list[str]:
+        command: list[str] = [str(resolve_daylily_ec()), "pricing", "snapshot"]
         for region in self.settings.get_cost_monitor_regions():
             command.extend(["--region", region])
         for partition in self.settings.get_cost_monitor_partitions():
@@ -113,11 +118,11 @@ class PricingMonitor:
     def get_snapshot_payload(
         self,
         *,
-        region: Optional[str],
-        partitions: Optional[List[str]],
-        from_ts: Optional[str],
-        to_ts: Optional[str],
-    ) -> Dict[str, Any]:
+        region: str | None,
+        partitions: list[str] | None,
+        from_ts: str | None,
+        to_ts: str | None,
+    ) -> dict[str, Any]:
         return self.store.get_pricing_snapshot_payload(
             region=region,
             partitions=partitions,

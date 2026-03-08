@@ -9,14 +9,16 @@ from typing import Optional
 import typer
 from rich.console import Console
 
-from daylib_ursa.cli.server import server_app
-from daylib_ursa.cli.test import test_app
-from daylib_ursa.cli.env import env_app
+from daylib.cli.env import env_app
+from daylib.cli.quality import quality_app
+from daylib.cli.server import logs as server_logs
+from daylib.cli.server import server_app
+from daylib.cli.test import test_app
 
 console = Console()
 
 # Commands that skip AWS validation
-_SKIP_AWS_VALIDATION = {"version", "test", "env", "info"}
+_SKIP_AWS_VALIDATION = {"version", "test", "env", "config", "quality", "info", "doctor", "logs"}
 
 
 def _validate_aws_env() -> None:
@@ -28,7 +30,7 @@ def _validate_aws_env() -> None:
 
     Regions are configured in ~/.config/ursa/ursa-config.yaml and explicitly passed to AWS API calls.
     """
-    from daylib_ursa.ursa_config import get_ursa_config
+    from daylib.ursa_config import get_ursa_config
 
     errors = []
     ursa_config = get_ursa_config()
@@ -44,9 +46,7 @@ def _validate_aws_env() -> None:
             "   Or in config file:   [cyan]~/.config/ursa/ursa-config.yaml[/cyan] → [dim]aws_profile: your-profile[/dim]"
         )
     elif aws_profile_env == "default":
-        errors.append(
-            "AWS_PROFILE is 'default'. Use a named profile: [cyan]export AWS_PROFILE=your-profile[/cyan]"
-        )
+        errors.append("AWS_PROFILE is 'default'. Use a named profile: [cyan]export AWS_PROFILE=your-profile[/cyan]")
 
     # If we have a profile from config but not env, set it in environment for boto3/AWS CLI
     if not aws_profile_env and aws_profile_config:
@@ -84,13 +84,13 @@ app = typer.Typer(
 app.add_typer(server_app, name="server", help="API server management")
 app.add_typer(test_app, name="test", help="Testing and code quality")
 app.add_typer(env_app, name="env", help="Environment and configuration")
+app.add_typer(env_app, name="config", help="Configuration and environment")
+app.add_typer(quality_app, name="quality", help="Linting, formatting, and checks")
 
 
 @app.command("version")
 def version(
-    ecosystem: bool = typer.Option(
-        False, "--ecosystem", help="Show cross-repo version compatibility matrix"
-    ),
+    ecosystem: bool = typer.Option(False, "--ecosystem", help="Show cross-repo version compatibility matrix"),
 ):
     """Show Ursa version and optional ecosystem compatibility matrix."""
     try:
@@ -112,9 +112,7 @@ def _show_ecosystem_versions() -> None:
     versions_path = project_root / "config" / "ecosystem-versions.json"
 
     if not versions_path.exists():
-        console.print(
-            "[red]✗[/red] Ecosystem versions file not found: config/ecosystem-versions.json"
-        )
+        console.print("[red]✗[/red] Ecosystem versions file not found: config/ecosystem-versions.json")
         return
 
     try:
@@ -165,9 +163,7 @@ def _show_ecosystem_versions() -> None:
         console.print(combo_table)
 
     console.print()
-    console.print(
-        f"[dim]Schema v{data.get('schema_version', '?')} · Last updated: {data.get('last_updated', '?')}[/dim]"
-    )
+    console.print(f"[dim]Schema v{data.get('schema_version', '?')} · Last updated: {data.get('last_updated', '?')}[/dim]")
 
 
 def _format_value_with_source(value: Optional[str], source: str) -> str:
@@ -187,7 +183,7 @@ def _format_value_with_source(value: Optional[str], source: str) -> str:
 def info():
     """Show Ursa configuration and status."""
     from rich.table import Table
-    from daylib_ursa.ursa_config import get_ursa_config, DEFAULT_CONFIG_PATH
+    from daylib.ursa_config import get_ursa_config, DEFAULT_CONFIG_PATH
 
     ursa_config = get_ursa_config()
 
@@ -197,8 +193,7 @@ def info():
 
     # Version
     try:
-        from daylib_ursa import __version__
-
+        from daylib import __version__
         table.add_row("Version", __version__)
     except ImportError:
         table.add_row("Version", "dev")
@@ -224,9 +219,7 @@ def info():
     # Regions config
     if ursa_config.is_configured:
         regions = ursa_config.get_allowed_regions()
-        table.add_row(
-            "Scan Regions", f"[green]{len(regions)}[/green] [dim]({', '.join(regions)})[/dim]"
-        )
+        table.add_row("Scan Regions", f"[green]{len(regions)}[/green] [dim]({', '.join(regions)})[/dim]")
     else:
         table.add_row("Scan Regions", "[yellow]none configured[/yellow]")
 
@@ -236,7 +229,6 @@ def info():
         try:
             pid = int(pid_file.read_text().strip())
             import os as os_mod
-
             os_mod.kill(pid, 0)
             table.add_row("API Server", f"[green]Running[/green] (PID {pid})")
         except (ValueError, ProcessLookupError, PermissionError):
@@ -244,7 +236,7 @@ def info():
     else:
         table.add_row("API Server", "[dim]Stopped[/dim]")
 
-    from daylib_ursa.config import get_settings
+    from daylib.config import get_settings
 
     settings = get_settings()
     table.add_row("Bloom URL", settings.bloom_base_url)
@@ -258,6 +250,23 @@ def info():
         console.print("[yellow]⚠[/yellow]  No regions configured")
         console.print(f"   Create config: [cyan]{DEFAULT_CONFIG_PATH}[/cyan]")
         console.print("   See example:   [cyan]config/ursa-config.example.yaml[/cyan]")
+
+
+@app.command("doctor")
+def doctor():
+    """Show a quick configuration and dependency health check."""
+    from daylib.cli.env import status as env_status
+
+    env_status()
+
+
+@app.command("logs")
+def logs(
+    lines: int = typer.Option(50, "--lines", "-n", help="Number of lines to show"),
+    all_logs: bool = typer.Option(False, "--all", "-a", help="List all log files"),
+):
+    """Show Ursa server logs."""
+    server_logs(lines=lines, all_logs=all_logs)
 
 
 def main():

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
-from daylib_ursa.tapdb_graph import TapDBBackend, from_json_addl, utc_now_iso
+from daylib.tapdb_graph import TapDBBackend, from_json_addl, utc_now_iso
 from daylily_tapdb import generic_instance
 
 
@@ -29,16 +29,20 @@ ANALYSIS_TEMPLATE = "workflow/analysis/run-linked/1.0/"
 ARTIFACT_TEMPLATE = "data/artifact/analysis-output/1.0/"
 REVIEW_EVENT_TEMPLATE = "action/analysis/review-event/1.0/"
 RETURN_EVENT_TEMPLATE = "action/analysis/atlas-return/1.0/"
+RESOLVED_CONTEXT_TEMPLATE = "integration/reference/sequenced-assignment-context/1.0/"
 
 
 @dataclass(frozen=True)
 class RunResolution:
     run_euid: str
-    index_string: str
+    flowcell_id: str
+    lane: str
+    library_barcode: str
+    sequenced_library_assignment_euid: str
     atlas_tenant_id: str
-    atlas_order_euid: str
-    atlas_test_order_euid: str
-    source_euid: str
+    atlas_trf_euid: str
+    atlas_test_euid: str
+    atlas_test_process_item_euid: str
 
 
 @dataclass(frozen=True)
@@ -58,11 +62,14 @@ class AnalysisArtifact:
 class AnalysisRecord:
     analysis_euid: str
     run_euid: str
-    index_string: str
+    flowcell_id: str
+    lane: str
+    library_barcode: str
+    sequenced_library_assignment_euid: str
     atlas_tenant_id: str
-    atlas_order_euid: str
-    atlas_test_order_euid: str
-    source_euid: str
+    atlas_trf_euid: str
+    atlas_test_euid: str
+    atlas_test_process_item_euid: str
     analysis_type: str
     state: str
     review_state: str
@@ -97,22 +104,22 @@ class AnalysisStore:
         return self.backend.find_instance_by_euid_or_external_id(
             session,
             template_code=ANALYSIS_TEMPLATE,
-            key="analysis_euid",
+            key="ingest_idempotency_key",
             value=analysis_euid,
             for_update=for_update,
         )
 
-    def _find_analysis_by_ingest_key(
-        self,
-        session,
-        idempotency_key: str,
-    ) -> generic_instance | None:
+    def _find_analysis_by_ingest_key(self, session, idempotency_key: str) -> generic_instance | None:
         return self.backend.find_instance_by_external_id(
             session,
             template_code=ANALYSIS_TEMPLATE,
             key="ingest_idempotency_key",
             value=idempotency_key,
         )
+
+    @staticmethod
+    def _payload(instance: generic_instance) -> dict[str, Any]:
+        return dict(instance.json_addl or {})
 
     def _artifact_from_instance(self, instance: generic_instance) -> AnalysisArtifact:
         payload = from_json_addl(instance)
@@ -123,25 +130,67 @@ class AnalysisStore:
             filename=str(payload.get("filename") or ""),
             mime_type=str(payload.get("mime_type") or "") or None,
             checksum_sha256=str(payload.get("checksum_sha256") or "") or None,
-            size_bytes=int(payload["size_bytes"])
-            if payload.get("size_bytes") is not None
-            else None,
+            size_bytes=int(payload["size_bytes"]) if payload.get("size_bytes") is not None else None,
             created_at=str(payload.get("created_at") or utc_now_iso()),
             metadata=dict(payload.get("metadata") or {}),
         )
 
+    def _context_payload(self, session, analysis: generic_instance) -> dict[str, Any]:
+        contexts = self.backend.list_children(
+            session,
+            parent=analysis,
+            relationship_type="resolved_context",
+        )
+        if not contexts:
+            return {}
+        contexts.sort(key=lambda item: item.created_dt or item.modified_dt, reverse=True)
+        return dict(contexts[0].json_addl or {})
+
+    def _atlas_return_payload(self, session, analysis: generic_instance) -> dict[str, Any]:
+        events = self.backend.list_children(
+            session,
+            parent=analysis,
+            relationship_type="atlas_return",
+        )
+        if not events:
+            return {}
+        events.sort(key=lambda item: item.created_dt or item.modified_dt, reverse=True)
+        return dict(events[0].json_addl or {})
+
+    def _artifacts(self, session, analysis: generic_instance) -> list[AnalysisArtifact]:
+        return [
+            self._artifact_from_instance(child)
+            for child in self.backend.list_children(
+                session,
+                parent=analysis,
+                relationship_type="analysis_artifact",
+            )
+        ]
+
     def _record_from_instance(
-        self, instance: generic_instance, artifacts: list[AnalysisArtifact]
+        self,
+        session,
+        instance: generic_instance,
+        artifacts: list[AnalysisArtifact],
     ) -> AnalysisRecord:
         payload = from_json_addl(instance)
+        context = self._context_payload(session, instance)
+        atlas_return = self._atlas_return_payload(session, instance)
         return AnalysisRecord(
             analysis_euid=str(instance.euid),
-            run_euid=str(payload.get("run_euid") or ""),
-            index_string=str(payload.get("index_string") or ""),
-            atlas_tenant_id=str(payload.get("atlas_tenant_id") or ""),
-            atlas_order_euid=str(payload.get("atlas_order_euid") or ""),
-            atlas_test_order_euid=str(payload.get("atlas_test_order_euid") or ""),
-            source_euid=str(payload.get("source_euid") or ""),
+            run_euid=str(context.get("run_euid") or ""),
+            flowcell_id=str(context.get("flowcell_id") or ""),
+            lane=str(context.get("lane") or ""),
+            library_barcode=str(context.get("library_barcode") or ""),
+            sequenced_library_assignment_euid=str(
+                context.get("sequenced_library_assignment_euid") or ""
+            ),
+            atlas_tenant_id=str(context.get("atlas_tenant_id") or ""),
+            atlas_trf_euid=str(context.get("atlas_trf_euid") or ""),
+            atlas_test_euid=str(context.get("atlas_test_euid") or ""),
+            atlas_test_process_item_euid=str(
+                context.get("atlas_test_process_item_euid") or ""
+            ),
             analysis_type=str(payload.get("analysis_type") or ""),
             state=str(payload.get("state") or instance.bstatus),
             review_state=str(payload.get("review_state") or ReviewState.PENDING.value),
@@ -152,7 +201,7 @@ class AnalysisStore:
             metadata=dict(payload.get("metadata") or {}),
             created_at=str(payload.get("created_at") or utc_now_iso()),
             updated_at=str(payload.get("updated_at") or payload.get("created_at") or utc_now_iso()),
-            atlas_return=dict(payload.get("atlas_return") or {}),
+            atlas_return=atlas_return,
             artifacts=artifacts,
         )
 
@@ -161,15 +210,7 @@ class AnalysisStore:
             analysis = self._find_analysis(session, analysis_euid)
             if analysis is None:
                 return None
-            artifacts = [
-                self._artifact_from_instance(child)
-                for child in self.backend.list_children(
-                    session,
-                    parent=analysis,
-                    relationship_type="analysis_artifact",
-                )
-            ]
-            return self._record_from_instance(analysis, artifacts)
+            return self._record_from_instance(session, analysis, self._artifacts(session, analysis))
 
     def ingest_analysis(
         self,
@@ -184,58 +225,61 @@ class AnalysisStore:
         with self.backend.session_scope(commit=True) as session:
             existing = self._find_analysis_by_ingest_key(session, idempotency_key)
             if existing is not None:
-                artifacts = [
-                    self._artifact_from_instance(child)
-                    for child in self.backend.list_children(
-                        session,
-                        parent=existing,
-                        relationship_type="analysis_artifact",
-                    )
-                ]
-                return self._record_from_instance(existing, artifacts)
+                return self._record_from_instance(session, existing, self._artifacts(session, existing))
 
             now = utc_now_iso()
-            payload: dict[str, Any] = {
-                "run_euid": resolution.run_euid,
-                "index_string": resolution.index_string,
-                "atlas_tenant_id": resolution.atlas_tenant_id,
-                "atlas_order_euid": resolution.atlas_order_euid,
-                "atlas_test_order_euid": resolution.atlas_test_order_euid,
-                "source_euid": resolution.source_euid,
-                "analysis_type": analysis_type,
-                "state": AnalysisState.INGESTED.value,
-                "review_state": ReviewState.PENDING.value,
-                "result_status": "PENDING",
-                "artifact_bucket": artifact_bucket,
-                "run_folder": f"s3://{artifact_bucket}/{resolution.run_euid}/",
-                "input_files": list(input_files or []),
-                "metadata": dict(metadata or {}),
-                "ingest_idempotency_key": idempotency_key,
-                "created_at": now,
-                "updated_at": now,
-                "result_payload": {},
-                "atlas_return": {},
-                "history": [
-                    {
-                        "timestamp": now,
-                        "state": AnalysisState.INGESTED.value,
-                        "reason": "INGESTED",
-                    }
-                ],
-            }
             analysis = self.backend.create_instance(
                 session,
                 ANALYSIS_TEMPLATE,
-                f"analysis:{resolution.run_euid}:{resolution.index_string}",
-                json_addl=payload,
+                f"analysis:{resolution.run_euid}:{resolution.lane}:{resolution.library_barcode}",
+                json_addl={
+                    "analysis_type": analysis_type,
+                    "state": AnalysisState.INGESTED.value,
+                    "review_state": ReviewState.PENDING.value,
+                    "result_status": "PENDING",
+                    "artifact_bucket": artifact_bucket,
+                    "run_folder": f"s3://{artifact_bucket}/{resolution.run_euid}/",
+                    "input_files": list(input_files or []),
+                    "metadata": dict(metadata or {}),
+                    "ingest_idempotency_key": idempotency_key,
+                    "created_at": now,
+                    "updated_at": now,
+                    "result_payload": {},
+                    "history": [
+                        {
+                            "timestamp": now,
+                            "state": AnalysisState.INGESTED.value,
+                            "reason": "INGESTED",
+                        }
+                    ],
+                },
                 bstatus=AnalysisState.INGESTED.value,
             )
-            self.backend.update_instance_json(
+            context = self.backend.create_instance(
                 session,
-                analysis,
-                {"analysis_euid": str(analysis.euid)},
+                RESOLVED_CONTEXT_TEMPLATE,
+                f"context:{analysis.euid}",
+                json_addl={
+                    "run_euid": resolution.run_euid,
+                    "flowcell_id": resolution.flowcell_id,
+                    "lane": resolution.lane,
+                    "library_barcode": resolution.library_barcode,
+                    "sequenced_library_assignment_euid": resolution.sequenced_library_assignment_euid,
+                    "atlas_tenant_id": resolution.atlas_tenant_id,
+                    "atlas_trf_euid": resolution.atlas_trf_euid,
+                    "atlas_test_euid": resolution.atlas_test_euid,
+                    "atlas_test_process_item_euid": resolution.atlas_test_process_item_euid,
+                    "created_at": now,
+                },
+                bstatus="active",
             )
-            return self._record_from_instance(analysis, [])
+            self.backend.create_lineage(
+                session,
+                parent=analysis,
+                child=context,
+                relationship_type="resolved_context",
+            )
+            return self._record_from_instance(session, analysis, [])
 
     def update_analysis_state(
         self,
@@ -251,7 +295,7 @@ class AnalysisStore:
             analysis = self._find_analysis(session, analysis_euid, for_update=True)
             if analysis is None:
                 raise KeyError(f"analysis not found: {analysis_euid}")
-            payload = dict(analysis.json_addl or {})
+            payload = self._payload(analysis)
             payload["state"] = state.value
             payload["updated_at"] = utc_now_iso()
             if result_status is not None:
@@ -274,16 +318,7 @@ class AnalysisStore:
             analysis.bstatus = state.value
             analysis.json_addl = payload
             session.flush()
-
-            artifacts = [
-                self._artifact_from_instance(child)
-                for child in self.backend.list_children(
-                    session,
-                    parent=analysis,
-                    relationship_type="analysis_artifact",
-                )
-            ]
-            return self._record_from_instance(analysis, artifacts)
+            return self._record_from_instance(session, analysis, self._artifacts(session, analysis))
 
     def add_artifact(
         self,
@@ -332,7 +367,7 @@ class AnalysisStore:
                 child=artifact,
                 relationship_type="analysis_artifact",
             )
-            payload = dict(analysis.json_addl or {})
+            payload = self._payload(analysis)
             payload["state"] = AnalysisState.REVIEW_PENDING.value
             payload["updated_at"] = utc_now_iso()
             history = list(payload.get("history") or [])
@@ -361,7 +396,7 @@ class AnalysisStore:
             analysis = self._find_analysis(session, analysis_euid, for_update=True)
             if analysis is None:
                 raise KeyError(f"analysis not found: {analysis_euid}")
-            payload = dict(analysis.json_addl or {})
+            payload = self._payload(analysis)
             payload["review_state"] = review_state.value
             payload["updated_at"] = utc_now_iso()
             if review_state == ReviewState.APPROVED:
@@ -401,15 +436,7 @@ class AnalysisStore:
                 child=event,
                 relationship_type="review_event",
             )
-            artifacts = [
-                self._artifact_from_instance(child)
-                for child in self.backend.list_children(
-                    session,
-                    parent=analysis,
-                    relationship_type="analysis_artifact",
-                )
-            ]
-            return self._record_from_instance(analysis, artifacts)
+            return self._record_from_instance(session, analysis, self._artifacts(session, analysis))
 
     def mark_returned(
         self,
@@ -422,33 +449,29 @@ class AnalysisStore:
             analysis = self._find_analysis(session, analysis_euid, for_update=True)
             if analysis is None:
                 raise KeyError(f"analysis not found: {analysis_euid}")
-            payload = dict(analysis.json_addl or {})
-            existing_return = dict(payload.get("atlas_return") or {})
-            if str(existing_return.get("idempotency_key") or "") == idempotency_key:
-                artifacts = [
-                    self._artifact_from_instance(child)
-                    for child in self.backend.list_children(
-                        session,
-                        parent=analysis,
-                        relationship_type="analysis_artifact",
-                    )
-                ]
-                return self._record_from_instance(analysis, artifacts)
+            payload = self._payload(analysis)
+            if str(payload.get("review_state") or ReviewState.PENDING.value) != ReviewState.APPROVED.value:
+                raise ValueError("Analysis cannot be returned before manual approval")
 
-            payload["atlas_return"] = {
-                **dict(atlas_return),
-                "idempotency_key": idempotency_key,
-                "returned_at": utc_now_iso(),
-            }
+            for event in self.backend.list_children(
+                session,
+                parent=analysis,
+                relationship_type="atlas_return",
+            ):
+                event_payload = dict(event.json_addl or {})
+                if str(event_payload.get("idempotency_key") or "") == idempotency_key:
+                    return self._record_from_instance(session, analysis, self._artifacts(session, analysis))
+
+            returned_at = utc_now_iso()
             payload["state"] = AnalysisState.RETURNED.value
             payload["result_status"] = str(
                 atlas_return.get("result_status") or payload.get("result_status") or "RETURNED"
             )
-            payload["updated_at"] = utc_now_iso()
+            payload["updated_at"] = returned_at
             history = list(payload.get("history") or [])
             history.append(
                 {
-                    "timestamp": payload["updated_at"],
+                    "timestamp": returned_at,
                     "state": AnalysisState.RETURNED.value,
                     "reason": "ATLAS_RETURNED",
                 }
@@ -461,8 +484,12 @@ class AnalysisStore:
             event = self.backend.create_instance(
                 session,
                 RETURN_EVENT_TEMPLATE,
-                f"atlas-return:{analysis_euid}:{payload['updated_at']}",
-                json_addl=dict(payload["atlas_return"]),
+                f"atlas-return:{analysis_euid}:{returned_at}",
+                json_addl={
+                    **dict(atlas_return),
+                    "idempotency_key": idempotency_key,
+                    "returned_at": returned_at,
+                },
                 bstatus="returned",
             )
             self.backend.create_lineage(
@@ -471,12 +498,4 @@ class AnalysisStore:
                 child=event,
                 relationship_type="atlas_return",
             )
-            artifacts = [
-                self._artifact_from_instance(child)
-                for child in self.backend.list_children(
-                    session,
-                    parent=analysis,
-                    relationship_type="analysis_artifact",
-                )
-            ]
-            return self._record_from_instance(analysis, artifacts)
+            return self._record_from_instance(session, analysis, self._artifacts(session, analysis))

@@ -84,6 +84,27 @@ class Settings(BaseSettings):
         description="Optional cluster YAML path passed to daylily-ec pricing snapshot",
     )
 
+    ursa_cost_monitor_regions: str = Field(
+        default="us-west-2",
+        description="Comma-separated regions used for pricing snapshots",
+    )
+    ursa_cost_monitor_partitions: str = Field(
+        default="i192",
+        description="Comma-separated production partitions used for pricing snapshots",
+    )
+    ursa_cost_monitor_interval_hours: int = Field(
+        default=24,
+        description="Recurring pricing snapshot interval in hours",
+    )
+    ursa_cost_monitor_enabled: bool = Field(
+        default=False,
+        description="Enable background scheduled pricing snapshot capture",
+    )
+    ursa_cost_monitor_config_path: Optional[str] = Field(
+        default=None,
+        description="Optional cluster YAML path passed to daylily-ec pricing snapshot",
+    )
+
     def get_allowed_regions(self) -> List[str]:
         """Get list of allowed regions from comma-separated string."""
         return [r.strip() for r in self.ursa_allowed_regions.split(",") if r.strip()]
@@ -175,6 +196,10 @@ class Settings(BaseSettings):
         default=None,
         description="Bearer token for Bloom beta API access",
     )
+    bloom_verify_ssl: bool = Field(
+        default=True,
+        description="Verify Bloom HTTPS certificates for resolver requests",
+    )
     atlas_base_url: str = Field(
         default="http://localhost:8000",
         description="Atlas base URL for result return requests",
@@ -182,6 +207,10 @@ class Settings(BaseSettings):
     atlas_internal_api_key: Optional[str] = Field(
         default=None,
         description="Atlas internal API key used by Ursa result return",
+    )
+    atlas_verify_ssl: bool = Field(
+        default=True,
+        description="Verify Atlas HTTPS certificates for result return requests",
     )
 
     # ========== Notifications ==========

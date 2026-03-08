@@ -71,6 +71,13 @@ TEMPLATE_DEFINITIONS: tuple[TemplateDefinition, ...] = (
         "RT",
         "Atlas Return Event",
     ),
+    TemplateDefinition(
+        "integration/reference/sequenced-assignment-context/1.0/",
+        "data_template",
+        "data_instance",
+        "ARC",
+        "Sequenced Assignment Context",
+    ),
 )
 
 
