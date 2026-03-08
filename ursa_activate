@@ -26,16 +26,26 @@ NC='\033[0m' # No Color
 # ========== Configuration ==========
 CONDA_ENV_NAME="URSA"
 
-# When this file is sourced, `$0` refers to the user's shell (e.g. zsh), not
-# this script. So we cannot reliably use `dirname "$0"` to locate the repo.
-#
-# Instead, search upwards from the current working directory for the expected
-# repository layout (config/ursa_env.yaml). This keeps the script POSIX-sh
-# compatible while working from subdirectories.
-SCRIPT_DIR="$(pwd)"
-while [ ! -f "${SCRIPT_DIR}/config/ursa_env.yaml" ] && [ "${SCRIPT_DIR}" != "/" ]; do
-    SCRIPT_DIR="$(dirname "${SCRIPT_DIR}")"
-done
+if [ -n "${BASH_VERSION:-}" ]; then
+    _URSA_SCRIPT_PATH="${BASH_SOURCE[0]}"
+elif [ -n "${ZSH_VERSION:-}" ]; then
+    _URSA_SCRIPT_PATH="${(%):-%N}"
+else
+    _URSA_SCRIPT_PATH="$0"
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "${_URSA_SCRIPT_PATH}")" 2>/dev/null && pwd)"
+
+if [ ! -f "${SCRIPT_DIR}/config/ursa_env.yaml" ]; then
+    # Fall back to searching upwards from the current working directory for
+    # the repository layout when the shell cannot provide the sourced file.
+    SCRIPT_DIR="$(pwd)"
+    while [ ! -f "${SCRIPT_DIR}/config/ursa_env.yaml" ] && [ "${SCRIPT_DIR}" != "/" ]; do
+        SCRIPT_DIR="$(dirname "${SCRIPT_DIR}")"
+    done
+fi
+
+unset _URSA_SCRIPT_PATH
 
 ENV_FILE="${SCRIPT_DIR}/config/ursa_env.yaml"
 VENV_BIN="${SCRIPT_DIR}/.venv/bin"
@@ -59,21 +69,25 @@ log_error() {
 
 # ========== Check Prerequisites ==========
 
-# Detect conda command (prefer mamba if available). If conda is unavailable or
-# activation fails, we will fall back to the local .venv if present.
+# Detect environment manager. Use mamba for env creation if present, but prefer
+# conda's shell hooks for activation because they are more reliable when sourced.
 _URSA_ACTIVATE_OK=1
-CONDA_CMD=""
+ENV_BUILD_CMD=""
+CONDA_ACTIVATE_CMD=""
+if command -v conda >/dev/null 2>&1; then
+    CONDA_ACTIVATE_CMD="conda"
+fi
 if command -v mamba >/dev/null 2>&1; then
-    CONDA_CMD="mamba"
-elif command -v conda >/dev/null 2>&1; then
-    CONDA_CMD="conda"
+    ENV_BUILD_CMD="mamba"
+elif [ -n "$CONDA_ACTIVATE_CMD" ]; then
+    ENV_BUILD_CMD="$CONDA_ACTIVATE_CMD"
 fi
 
-if [ -z "$CONDA_CMD" ]; then
+if [ -z "$ENV_BUILD_CMD" ]; then
     log_warn "Neither conda nor mamba found; falling back to local .venv if available"
 fi
 
-if [ -n "$CONDA_CMD" ] && [ ! -f "$ENV_FILE" ]; then
+if [ -n "$ENV_BUILD_CMD" ] && [ ! -f "$ENV_FILE" ]; then
     log_warn "Environment file not found: $ENV_FILE (will fall back to .venv if available)"
 fi
 
@@ -89,15 +103,15 @@ printf "${BOLD}${BLUE}╚══════════════════�
 
 
 # Attempt conda activation first (if available and config exists), otherwise fall back to .venv.
-if [ -n "$CONDA_CMD" ] && [ -f "$ENV_FILE" ]; then
+if [ -n "$ENV_BUILD_CMD" ] && [ -f "$ENV_FILE" ]; then
     # Check if environment exists
-    if $CONDA_CMD env list | grep -q "^${CONDA_ENV_NAME} "; then
+    if "${CONDA_ACTIVATE_CMD:-$ENV_BUILD_CMD}" env list | grep -q "^${CONDA_ENV_NAME} "; then
         log_success "Environment '${CONDA_ENV_NAME}' already exists"
     else
         log_info "Environment '${CONDA_ENV_NAME}' not found. Building from ${ENV_FILE}..."
         log_info "This may take a few minutes..."
 
-        if $CONDA_CMD env create -n "$CONDA_ENV_NAME" -f "$ENV_FILE"; then
+        if "$ENV_BUILD_CMD" env create -n "$CONDA_ENV_NAME" -f "$ENV_FILE"; then
             log_success "Environment '${CONDA_ENV_NAME}' created successfully"
         else
             log_warn "Failed to create conda environment (will fall back to .venv if available)"
@@ -109,10 +123,13 @@ if [ -n "$CONDA_CMD" ] && [ -f "$ENV_FILE" ]; then
     if [ "$_URSA_ACTIVATE_OK" -eq 1 ]; then
         log_info "Activating environment '${CONDA_ENV_NAME}'..."
 
-        # Source conda shell functions if needed
-        if [ -z "$CONDA_SHLVL" ]; then
-            # Conda not initialized in current shell
-            CONDA_BASE="$($CONDA_CMD info --base 2>/dev/null)"
+        _URSA_ACTIVATOR="${CONDA_ACTIVATE_CMD:-$ENV_BUILD_CMD}"
+        if [ -n "${ZSH_VERSION:-}" ]; then
+            eval "$("$_URSA_ACTIVATOR" shell.zsh hook 2>/dev/null)" 2>/dev/null || true
+        elif [ -n "${BASH_VERSION:-}" ]; then
+            eval "$("$_URSA_ACTIVATOR" shell.bash hook 2>/dev/null)" 2>/dev/null || true
+        else
+            CONDA_BASE="$("$_URSA_ACTIVATOR" info --base 2>/dev/null)"
             if [ -f "${CONDA_BASE}/etc/profile.d/conda.sh" ]; then
                 . "${CONDA_BASE}/etc/profile.d/conda.sh"
             fi
@@ -143,6 +160,17 @@ fi
 
 # ========== Setup PATH ==========
 if [ "$_URSA_ACTIVATE_OK" -eq 1 ]; then
+    if command -v python >/dev/null 2>&1; then
+        _URSA_PYTHON_BIN="$(dirname "$(command -v python)")"
+        case ":$PATH:" in
+            *":${_URSA_PYTHON_BIN}:"*)
+                ;;
+            *)
+                export PATH="${_URSA_PYTHON_BIN}:${PATH}"
+                ;;
+        esac
+    fi
+
     # Add bin directory to PATH if not already there
     BIN_DIR="${SCRIPT_DIR}/bin"
     if [ -d "$BIN_DIR" ]; then
@@ -184,10 +212,18 @@ if [ "$_URSA_ACTIVATE_OK" -eq 1 ]; then
 
     # ========== Install Package in Development Mode ==========
     log_info "Installing ursa in development mode..."
-    if pip install -e "${SCRIPT_DIR}" -q 2>/dev/null; then
+    if python -m pip install -e "${SCRIPT_DIR}" -q 2>/dev/null; then
         log_success "Package installed in development mode"
     else
         log_warn "Failed to install package - some features may not work"
+    fi
+
+    export TAPDB_ENV="${TAPDB_ENV:-dev}"
+    export TAPDB_CLIENT_ID="${TAPDB_CLIENT_ID:-local}"
+    export TAPDB_DATABASE_NAME="${TAPDB_DATABASE_NAME:-ursa}"
+    export TAPDB_STRICT_NAMESPACE="${TAPDB_STRICT_NAMESPACE:-1}"
+    if [ -z "${TAPDB_CONFIG_PATH:-}" ]; then
+        export TAPDB_CONFIG_PATH="${HOME}/.config/tapdb/${TAPDB_CLIENT_ID}/${TAPDB_DATABASE_NAME}/tapdb-config.yaml"
     fi
 
     # ========== Check Ursa Config File ==========
@@ -208,13 +244,13 @@ if [ "$_URSA_ACTIVATE_OK" -eq 1 ]; then
 fi
 
 # ========== Tab Completion ==========
-if [ "$_URSA_ACTIVATE_OK" -eq 1 ]; then
+if [ "$_URSA_ACTIVATE_OK" -eq 1 ] && [ -n "${PS1:-}" ]; then
     # Enable Typer's built-in shell completion
     _ursa_shell="$(basename "$SHELL")"
     if [ "$_ursa_shell" = "zsh" ]; then
-        eval "$(ursa --show-completion zsh 2>/dev/null)"
+        eval "$(ursa --show-completion zsh 2>/dev/null)" 2>/dev/null
     elif [ "$_ursa_shell" = "bash" ]; then
-        eval "$(ursa --show-completion bash 2>/dev/null)"
+        eval "$(ursa --show-completion bash 2>/dev/null)" 2>/dev/null
     fi
 
     log_success "Tab completion enabled for ursa CLI"
@@ -227,6 +263,8 @@ if [ "$_URSA_ACTIVATE_OK" -eq 1 ]; then
     printf "  ${CYAN}Conda Environment:${NC} ${CONDA_ENV_NAME}\n"
     printf "  ${CYAN}Python:${NC}           $(python --version 2>&1 | cut -d' ' -f2)\n"
     printf "  ${CYAN}Project Root:${NC}     ${SCRIPT_DIR}\n"
+    printf "  ${CYAN}TapDB Env:${NC}        ${TAPDB_ENV}\n"
+    printf "  ${CYAN}TapDB Namespace:${NC}  ${TAPDB_CLIENT_ID}/${TAPDB_DATABASE_NAME}\n"
     printf "\n"
     printf "  ${BOLD}Command Groups:${NC}\n"
     printf "    ${CYAN}ursa server${NC}   API server management (start, stop, status, logs)\n"
