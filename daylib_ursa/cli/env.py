@@ -21,6 +21,7 @@ def status():
 
     # Python
     import sys
+
     table.add_row("Python", f"{sys.version.split()[0]}")
 
     # Conda environment
@@ -44,7 +45,8 @@ def status():
     else:
         # Try to get from ursa config
         try:
-            from daylib.ursa_config import get_ursa_config
+            from daylib_ursa.ursa_config import get_ursa_config
+
             ursa_config = get_ursa_config()
             if ursa_config.aws_region:
                 table.add_row("AWS Region", f"[green]{ursa_config.aws_region}[/green] (config)")

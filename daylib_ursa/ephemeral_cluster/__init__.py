@@ -1,6 +1,6 @@
 """Helpers for Ursa-managed ephemeral cluster creation jobs."""
 
-from daylib.ephemeral_cluster.runner import (
+from daylib_ursa.ephemeral_cluster.runner import (
     ClusterCreateJob,
     list_cluster_create_jobs,
     read_cluster_create_job,

@@ -19,12 +19,12 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, cast
 
-from daylib.security import sanitize_for_log
+from daylib_ursa.security import sanitize_for_log
 
 LOGGER = logging.getLogger("daylily.cluster_service")
 
 # AWS ParallelCluster name pattern: alphanumeric start, up to 60 chars, alphanumeric/hyphen
-_CLUSTER_NAME_PATTERN = re.compile(r'^[a-zA-Z][a-zA-Z0-9-]{0,59}$')
+_CLUSTER_NAME_PATTERN = re.compile(r"^[a-zA-Z][a-zA-Z0-9-]{0,59}$")
 
 # Global singleton instance and lock
 _global_service: Optional["ClusterService"] = None
@@ -173,7 +173,9 @@ class ClusterInfo:
             creation_time=data.get("creationTime"),
             last_updated_time=data.get("lastUpdatedTime"),
             head_node=head_node,
-            scheduler_type=scheduler.get("type", "slurm") if isinstance(scheduler, dict) else "slurm",
+            scheduler_type=scheduler.get("type", "slurm")
+            if isinstance(scheduler, dict)
+            else "slurm",
             tags=tags_dict,
             version=data.get("version"),
         )
@@ -221,7 +223,9 @@ class ClusterInfo:
                 "public_ip": self.head_node.public_ip,
                 "private_ip": self.head_node.private_ip,
                 "state": self.head_node.state,
-            } if self.head_node else None,
+            }
+            if self.head_node
+            else None,
             "scheduler_type": self.scheduler_type,
             "tags": self.tags,
             "version": self.version,
@@ -324,7 +328,7 @@ class ClusterService:
 
         cmd = [pcluster_path] + args
         # Sanitize command for logging (args may contain user-provided values)
-        cmd_display = ' '.join(sanitize_for_log(arg, 100) for arg in cmd)
+        cmd_display = " ".join(sanitize_for_log(arg, 100) for arg in cmd)
         # Set AWS_PROFILE - use explicit value or fall back to env (no 'default' fallback)
         profile = self.aws_profile or os.environ.get("AWS_PROFILE")
         if profile:
@@ -367,7 +371,9 @@ class ClusterService:
 
             # No valid JSON output - check return code
             if result.returncode != 0:
-                LOGGER.warning(f"pcluster command failed (exit {result.returncode}): {result.stderr}")
+                LOGGER.warning(
+                    f"pcluster command failed (exit {result.returncode}): {result.stderr}"
+                )
                 return {"error": result.stderr.strip() or f"Exit code {result.returncode}"}
 
             # Return code 0 but no output
@@ -487,7 +493,9 @@ class ClusterService:
             LOGGER.debug("Returning cached cluster data (age: %.1fs)", now - self._cache_time)
             return cast(List[ClusterInfo], self._cache.get("clusters", []))
 
-        LOGGER.info(f"Fetching clusters from {len(self.regions)} regions in parallel: {self.regions}")
+        LOGGER.info(
+            f"Fetching clusters from {len(self.regions)} regions in parallel: {self.regions}"
+        )
         start_time = time.time()
         all_clusters: List[ClusterInfo] = []
 
@@ -496,8 +504,7 @@ class ClusterService:
         max_workers = min(len(self.regions), 5)  # Cap at 5 concurrent workers
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_region = {
-                executor.submit(self._scan_region, region): region
-                for region in self.regions
+                executor.submit(self._scan_region, region): region for region in self.regions
             }
             for future in as_completed(future_to_region):
                 region = future_to_region[future]
@@ -517,7 +524,9 @@ class ClusterService:
         self._cluster_region_map_time = now
 
         elapsed = time.time() - start_time
-        LOGGER.info(f"Found {len(all_clusters)} clusters across {len(self.regions)} regions in {elapsed:.2f}s")
+        LOGGER.info(
+            f"Found {len(all_clusters)} clusters across {len(self.regions)} regions in {elapsed:.2f}s"
+        )
         return all_clusters
 
     def get_clusters_by_region(self, force_refresh: bool = False) -> Dict[str, List[ClusterInfo]]:
@@ -540,7 +549,9 @@ class ClusterService:
                 by_region[cluster.region] = [cluster]
         return by_region
 
-    def get_cluster_by_name(self, cluster_name: str, force_refresh: bool = False) -> Optional[ClusterInfo]:
+    def get_cluster_by_name(
+        self, cluster_name: str, force_refresh: bool = False
+    ) -> Optional[ClusterInfo]:
         """Get a specific cluster by name.
 
         Args:
@@ -556,7 +567,9 @@ class ClusterService:
                 return cluster
         return None
 
-    def get_bucket_for_cluster(self, cluster_name: str, force_refresh: bool = False) -> Optional[str]:
+    def get_bucket_for_cluster(
+        self, cluster_name: str, force_refresh: bool = False
+    ) -> Optional[str]:
         """Get the monitor bucket name for a cluster.
 
         Args:
@@ -600,20 +613,23 @@ class ClusterService:
         remote_cmd = f"bash -lc {shlex.quote(command)}"
         ssh_cmd = [
             "ssh",
-            "-i", ssh_key,
-            "-o", "StrictHostKeyChecking=no",
-            "-o", "UserKnownHostsFile=/dev/null",
-            "-o", "ConnectTimeout=10",
-            "-o", "BatchMode=yes",
+            "-i",
+            ssh_key,
+            "-o",
+            "StrictHostKeyChecking=no",
+            "-o",
+            "UserKnownHostsFile=/dev/null",
+            "-o",
+            "ConnectTimeout=10",
+            "-o",
+            "BatchMode=yes",
             f"{user}@{host}",
             remote_cmd,
         ]
         ssh_cmd_str = " ".join(shlex.quote(part) for part in ssh_cmd)
         LOGGER.debug(f"Running SSH command: {ssh_cmd_str}")
         try:
-            result = subprocess.run(
-                ssh_cmd, capture_output=True, text=True, timeout=timeout
-            )
+            result = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=timeout)
             if result.returncode != 0:
                 error = result.stderr.strip() or f"Exit code {result.returncode}"
                 LOGGER.warning(f"SSH command failed: {error}")
@@ -653,9 +669,7 @@ class ClusterService:
             budget.region = cli_init_match.group(2)
 
         # Extract reference bucket - format: "The reference S3 bucket is set to: $reference_bucket (actual-bucket-name)"
-        ref_bucket_match = re.search(
-            r"The reference S3 bucket is set to:[^(]*\(([^)]+)\)", output
-        )
+        ref_bucket_match = re.search(r"The reference S3 bucket is set to:[^(]*\(([^)]+)\)", output)
         if ref_bucket_match:
             budget.reference_bucket = ref_bucket_match.group(1)
 
@@ -666,9 +680,7 @@ class ClusterService:
                 budget.project_name = project_match.group(1)
 
         # Extract budget details (fallback for project/region if not found above)
-        budget_header = re.search(
-            r"AWS Budget for project '([^']+)' in region '([^']+)':", output
-        )
+        budget_header = re.search(r"AWS Budget for project '([^']+)' in region '([^']+)':", output)
         if budget_header:
             budget.project_name = budget.project_name or budget_header.group(1)
             budget.region = budget.region or budget_header.group(2)
@@ -731,7 +743,7 @@ class ClusterService:
                 return summary
 
         # Parse job lines after header
-        for line in lines[header_idx + 1:]:
+        for line in lines[header_idx + 1 :]:
             line = line.strip()
             if not line:
                 continue
@@ -897,7 +909,8 @@ def get_cluster_service(
             if not regions:
                 # Try to get regions from config
                 try:
-                    from daylib.ursa_config import get_ursa_config
+                    from daylib_ursa.ursa_config import get_ursa_config
+
                     ursa_config = get_ursa_config()
                     if ursa_config.is_configured:
                         regions = ursa_config.get_allowed_regions()
@@ -908,6 +921,7 @@ def get_cluster_service(
             if not regions:
                 # Fallback to environment
                 import os
+
                 region_str = os.environ.get("URSA_ALLOWED_REGIONS", "")
                 regions = [r.strip() for r in region_str.split(",") if r.strip()]
                 if not regions:

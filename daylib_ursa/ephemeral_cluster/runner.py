@@ -215,7 +215,13 @@ def start_create_job(
     _atomic_write_json(job_path, job_doc)
 
     process = subprocess.Popen(
-        [sys.executable, "-m", "daylib.ephemeral_cluster.job_runner", "--job-file", str(job_path)],
+        [
+            sys.executable,
+            "-m",
+            "daylib_ursa.ephemeral_cluster.job_runner",
+            "--job-file",
+            str(job_path),
+        ],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         start_new_session=True,
@@ -288,7 +294,9 @@ def list_cluster_create_jobs(*, limit: int = 20) -> List[Dict[str, Any]]:
     if not jobs_dir.exists():
         return []
 
-    for path in sorted(jobs_dir.glob("*.json"), key=lambda item: item.stat().st_mtime, reverse=True):
+    for path in sorted(
+        jobs_dir.glob("*.json"), key=lambda item: item.stat().st_mtime, reverse=True
+    ):
         try:
             jobs.append(_read_json(path))
         except Exception:

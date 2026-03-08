@@ -110,5 +110,5 @@ The stored and returned Atlas context includes:
 
 ```bash
 pytest tests/test_tapdb_backend.py tests/test_file_metadata.py tests/test_analysis_ingest.py tests/test_result_return.py tests/test_bloom_resolver_client.py tests/test_console_scripts.py
-ruff check daylib tests/test_tapdb_backend.py tests/test_file_metadata.py tests/test_analysis_ingest.py tests/test_result_return.py tests/test_bloom_resolver_client.py tests/test_console_scripts.py
+ruff check daylib_ursa tests/test_tapdb_backend.py tests/test_file_metadata.py tests/test_analysis_ingest.py tests/test_result_return.py tests/test_bloom_resolver_client.py tests/test_console_scripts.py
 ```

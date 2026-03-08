@@ -36,7 +36,7 @@ def _require_auth_dependencies() -> None:
         import jose  # noqa: F401
     except ImportError:
         console.print("[red]✗[/red]  Authentication requested but python-jose is not installed")
-        console.print("   Install with: [cyan]python -m pip install -e \".[auth]\"[/cyan]")
+        console.print('   Install with: [cyan]python -m pip install -e ".[auth]"[/cyan]')
         raise typer.Exit(1)
 
 
@@ -84,7 +84,9 @@ def _resolve_https_cert_paths(host: str) -> tuple[str, str]:
         raise typer.Exit(1)
 
     # Install local root CA (idempotent), then generate a localhost cert.
-    subprocess.run([mkcert_bin, "-install"], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.run(
+        [mkcert_bin, "-install"], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+    )
 
     san_hosts = ["localhost", "127.0.0.1", "::1"]
     if host not in ("0.0.0.0", "::", "127.0.0.1", "localhost"):
@@ -240,7 +242,9 @@ def _validate_cognito_oauth_uris(
     normalized_logouts = {_normalize_uri(u) for u in logout_urls}
     normalized_expected_callback = _normalize_uri(expected_callback_url)
     normalized_expected_logout = _normalize_uri(expected_logout_url)
-    normalized_default_redirect = _normalize_uri(default_redirect_uri) if default_redirect_uri else ""
+    normalized_default_redirect = (
+        _normalize_uri(default_redirect_uri) if default_redirect_uri else ""
+    )
 
     if normalized_expected_callback not in normalized_callbacks:
         errors.append(
@@ -249,13 +253,11 @@ def _validate_cognito_oauth_uris(
         )
     if normalized_expected_logout not in normalized_logouts:
         errors.append(
-            "Expected logout URI is not configured in Cognito app client: "
-            f"{expected_logout_url}"
+            f"Expected logout URI is not configured in Cognito app client: {expected_logout_url}"
         )
     if default_redirect_uri and normalized_default_redirect not in normalized_callbacks:
         errors.append(
-            "Cognito app client DefaultRedirectURI is not in CallbackURLs: "
-            f"{default_redirect_uri}"
+            f"Cognito app client DefaultRedirectURI is not in CallbackURLs: {default_redirect_uri}"
         )
 
     errors.extend(
@@ -308,7 +310,7 @@ def _get_pid() -> Optional[int]:
                 ["ps", "-p", str(pid), "-o", "command="],
                 text=True,
             ).strip()
-            if "daylib.workset_api_cli" not in cmdline:
+            if "daylib_ursa.workset_api_cli" not in cmdline:
                 PID_FILE.unlink(missing_ok=True)
                 return None
             return pid
@@ -338,7 +340,9 @@ def start(
     port: int = typer.Option(8914, "--port", "-p", help="Port to run the server on"),
     host: str = typer.Option("0.0.0.0", "--host", "-h", help="Host to bind to"),
     reload: bool = typer.Option(False, "--reload", "-r", help="Enable auto-reload (foreground)"),
-    background: bool = typer.Option(True, "--background/--foreground", "-b/-f", help="Run in background"),
+    background: bool = typer.Option(
+        True, "--background/--foreground", "-b/-f", help="Run in background"
+    ),
 ):
     """Start the Ursa beta analysis API server."""
     _ensure_dir()
@@ -359,7 +363,8 @@ def start(
         return
 
     # Check AWS_PROFILE (from env or config file)
-    from daylib.ursa_config import get_ursa_config, DEFAULT_CONFIG_PATH
+    from daylib_ursa.ursa_config import get_ursa_config, DEFAULT_CONFIG_PATH
+
     ursa_config = get_ursa_config()
 
     aws_profile = os.environ.get("AWS_PROFILE") or ursa_config.aws_profile
@@ -398,7 +403,7 @@ def start(
     cmd = [
         sys.executable,
         "-m",
-        "daylib.workset_api_cli",
+        "daylib_ursa.workset_api_cli",
         "--host",
         host,
         "--port",

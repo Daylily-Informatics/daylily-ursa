@@ -91,9 +91,7 @@ class TapDBBackend:
         env = (os.environ.get("TAPDB_ENV") or "").strip()
         if not env:
             raise RuntimeError(
-                "TAPDB_ENV is required (dev|test|prod).\n"
-                "Example:\n"
-                "  export TAPDB_ENV=dev\n"
+                "TAPDB_ENV is required (dev|test|prod).\nExample:\n  export TAPDB_ENV=dev\n"
             )
 
         try:
@@ -164,7 +162,9 @@ class TapDBBackend:
         return sorted(prefixes)
 
     def _required_instance_sequence_names(self, session: Session) -> list[str]:
-        return [f"{prefix.lower()}_instance_seq" for prefix in self._required_instance_prefixes(session)]
+        return [
+            f"{prefix.lower()}_instance_seq" for prefix in self._required_instance_prefixes(session)
+        ]
 
     def list_required_instance_sequences(self, session: Session) -> list[str]:
         return self._required_instance_sequence_names(session)
@@ -259,7 +259,9 @@ class TapDBBackend:
         session.flush()
         return instance
 
-    def update_instance_json(self, session: Session, instance: generic_instance, updates: Dict[str, Any]) -> None:
+    def update_instance_json(
+        self, session: Session, instance: generic_instance, updates: Dict[str, Any]
+    ) -> None:
         payload = dict(instance.json_addl or {})
         payload.update(updates)
         instance.json_addl = payload
@@ -307,7 +309,9 @@ class TapDBBackend:
     ) -> Optional[generic_instance]:
         if not value:
             return None
-        query = self._template_instance_query(session, template_code=template_code, for_update=for_update)
+        query = self._template_instance_query(
+            session, template_code=template_code, for_update=for_update
+        )
         if query is None:
             return None
         row = query.filter(generic_instance.euid == value).first()
@@ -325,16 +329,19 @@ class TapDBBackend:
         template = self.templates.get_template(session, template_code)
         if template is None:
             return []
-        return cast(list[generic_instance], (
-            session.query(generic_instance)
-            .filter(
-                generic_instance.template_uid == template.uid,
-                generic_instance.is_deleted.is_(False),
-            )
-            .order_by(generic_instance.created_dt.desc())
-            .limit(limit)
-            .all()
-        ))
+        return cast(
+            list[generic_instance],
+            (
+                session.query(generic_instance)
+                .filter(
+                    generic_instance.template_uid == template.uid,
+                    generic_instance.is_deleted.is_(False),
+                )
+                .order_by(generic_instance.created_dt.desc())
+                .limit(limit)
+                .all()
+            ),
+        )
 
     def create_lineage(
         self,
@@ -436,40 +443,58 @@ class TapDBBackend:
         template = self.templates.get_template(session, template_code)
         if template is None:
             return []
-        return cast(list[generic_instance], (
-            session.query(generic_instance)
-            .join(
-                generic_instance_lineage,
-                and_(
-                    generic_instance_lineage.child_instance_uid == generic_instance.uid,
-                    generic_instance_lineage.parent_instance_uid == customer.uid,
-                    generic_instance_lineage.relationship_type == relationship_type,
-                    generic_instance_lineage.is_deleted.is_(False),
-                ),
-            )
-            .filter(
-                generic_instance.template_uid == template.uid,
-                generic_instance.is_deleted.is_(False),
-            )
-            .order_by(generic_instance.created_dt.desc())
-            .limit(limit)
-            .all()
-        ))
+        return cast(
+            list[generic_instance],
+            (
+                session.query(generic_instance)
+                .join(
+                    generic_instance_lineage,
+                    and_(
+                        generic_instance_lineage.child_instance_uid == generic_instance.uid,
+                        generic_instance_lineage.parent_instance_uid == customer.uid,
+                        generic_instance_lineage.relationship_type == relationship_type,
+                        generic_instance_lineage.is_deleted.is_(False),
+                    ),
+                )
+                .filter(
+                    generic_instance.template_uid == template.uid,
+                    generic_instance.is_deleted.is_(False),
+                )
+                .order_by(generic_instance.created_dt.desc())
+                .limit(limit)
+                .all()
+            ),
+        )
 
 
 def from_json_addl(instance: generic_instance) -> Dict[str, Any]:
     payload = dict(instance.json_addl or {})
     payload.setdefault("euid", instance.euid)
     payload.setdefault("name", instance.name)
-    payload.setdefault("created_at", instance.created_dt.isoformat().replace("+00:00", "Z") if instance.created_dt else utc_now_iso())
-    payload.setdefault("updated_at", instance.modified_dt.isoformat().replace("+00:00", "Z") if instance.modified_dt else payload["created_at"])
+    payload.setdefault(
+        "created_at",
+        instance.created_dt.isoformat().replace("+00:00", "Z")
+        if instance.created_dt
+        else utc_now_iso(),
+    )
+    payload.setdefault(
+        "updated_at",
+        instance.modified_dt.isoformat().replace("+00:00", "Z")
+        if instance.modified_dt
+        else payload["created_at"],
+    )
     payload.setdefault("state", instance.bstatus)
     return payload
 
 
 def to_action_history_entry(instance: generic_instance) -> Dict[str, Any]:
     payload = dict(instance.json_addl or {})
-    payload.setdefault("timestamp", instance.created_dt.isoformat().replace("+00:00", "Z") if instance.created_dt else utc_now_iso())
+    payload.setdefault(
+        "timestamp",
+        instance.created_dt.isoformat().replace("+00:00", "Z")
+        if instance.created_dt
+        else utc_now_iso(),
+    )
     payload.setdefault("event_euid", instance.euid)
     payload.setdefault("event_name", instance.name)
     return payload

@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict
 
-from daylib.ephemeral_cluster.runner import _atomic_write_json, _read_json
+from daylib_ursa.ephemeral_cluster.runner import _atomic_write_json, _read_json
 
 
 def _now_iso() -> str:

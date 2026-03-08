@@ -20,12 +20,14 @@ def _utc_now_iso() -> str:
     """Return current UTC time in ISO format with Z suffix."""
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
+
 LOGGER = logging.getLogger("daylily.file_upload")
 
 
 @dataclass
 class UploadSession:
     """Represents an upload session for tracking multipart uploads."""
+
     session_id: str
     customer_id: str
     bucket_name: str
@@ -33,14 +35,14 @@ class UploadSession:
     file_name: str
     file_size_bytes: int
     content_type: str = "application/octet-stream"
-    
+
     # Multipart upload tracking
     upload_id: Optional[str] = None
     parts: List[Dict[str, Any]] = field(default_factory=list)
-    
+
     # Status
     status: str = "pending"  # pending, uploading, completed, failed, cancelled
-    
+
     # Checksums
     expected_md5: Optional[str] = None
     actual_md5: Optional[str] = None
@@ -53,6 +55,7 @@ class UploadSession:
 @dataclass
 class PresignedUrlResponse:
     """Response containing presigned URL for upload."""
+
     url: str
     fields: Dict[str, str]  # For POST uploads
     expires_in: int
@@ -61,7 +64,7 @@ class PresignedUrlResponse:
 
 class FileUploadManager:
     """Manage file uploads to S3 with presigned URLs and multipart support."""
-    
+
     def __init__(
         self,
         region: str = "us-west-2",
@@ -69,7 +72,7 @@ class FileUploadManager:
         default_expiration: int = 3600,  # 1 hour
     ):
         """Initialize file upload manager.
-        
+
         Args:
             region: AWS region
             profile: AWS profile name
@@ -78,12 +81,12 @@ class FileUploadManager:
         session_kwargs = {"region_name": region}
         if profile:
             session_kwargs["profile_name"] = profile
-        
+
         session = boto3.Session(**session_kwargs)
         self.s3 = session.client("s3")
         self.region = region
         self.default_expiration = default_expiration
-    
+
     def generate_presigned_put_url(
         self,
         bucket_name: str,
@@ -93,35 +96,35 @@ class FileUploadManager:
         expected_md5: Optional[str] = None,
     ) -> PresignedUrlResponse:
         """Generate a presigned PUT URL for direct upload.
-        
+
         Args:
             bucket_name: Target S3 bucket
             object_key: Object key (path) in the bucket
             content_type: MIME type of the file
             expiration: URL expiration in seconds
             expected_md5: Expected MD5 checksum (base64 encoded)
-            
+
         Returns:
             PresignedUrlResponse with the upload URL
         """
         expiration = expiration or self.default_expiration
-        
+
         params = {
             "Bucket": bucket_name,
             "Key": object_key,
             "ContentType": content_type,
         }
-        
+
         if expected_md5:
             params["ContentMD5"] = expected_md5
-        
+
         try:
             url = self.s3.generate_presigned_url(
                 "put_object",
                 Params=params,
                 ExpiresIn=expiration,
             )
-            
+
             return PresignedUrlResponse(
                 url=url,
                 fields={},
@@ -131,7 +134,7 @@ class FileUploadManager:
         except ClientError as e:
             LOGGER.error("Failed to generate presigned PUT URL: %s", str(e))
             raise
-    
+
     def generate_presigned_post(
         self,
         bucket_name: str,
@@ -141,22 +144,26 @@ class FileUploadManager:
         expiration: Optional[int] = None,
     ) -> PresignedUrlResponse:
         """Generate a presigned POST URL for form-based upload.
-        
+
         Args:
             bucket_name: Target S3 bucket
             object_key: Object key (path) in the bucket
             content_type: MIME type of the file
             max_size_bytes: Maximum allowed file size
             expiration: URL expiration in seconds
-            
+
         Returns:
             PresignedUrlResponse with the upload URL and form fields
         """
         expiration = expiration or self.default_expiration
-        
+
         conditions = [
             {"bucket": bucket_name},
-            ["starts-with", "$key", object_key.rsplit("/", 1)[0] + "/" if "/" in object_key else ""],
+            [
+                "starts-with",
+                "$key",
+                object_key.rsplit("/", 1)[0] + "/" if "/" in object_key else "",
+            ],
             ["content-length-range", 1, max_size_bytes],
             {"Content-Type": content_type},
         ]
@@ -207,7 +214,9 @@ class FileUploadManager:
                 ContentType=content_type,
             )
             upload_id: str = str(response["UploadId"])
-            LOGGER.info("Initiated multipart upload %s for %s/%s", upload_id, bucket_name, object_key)
+            LOGGER.info(
+                "Initiated multipart upload %s for %s/%s", upload_id, bucket_name, object_key
+            )
             return upload_id
         except ClientError as e:
             LOGGER.error("Failed to initiate multipart upload: %s", str(e))
@@ -236,16 +245,18 @@ class FileUploadManager:
         expiration = expiration or self.default_expiration
 
         try:
-            url: str = str(self.s3.generate_presigned_url(
-                "upload_part",
-                Params={
-                    "Bucket": bucket_name,
-                    "Key": object_key,
-                    "UploadId": upload_id,
-                    "PartNumber": part_number,
-                },
-                ExpiresIn=expiration,
-            ))
+            url: str = str(
+                self.s3.generate_presigned_url(
+                    "upload_part",
+                    Params={
+                        "Bucket": bucket_name,
+                        "Key": object_key,
+                        "UploadId": upload_id,
+                        "PartNumber": part_number,
+                    },
+                    ExpiresIn=expiration,
+                )
+            )
             return url
         except ClientError as e:
             LOGGER.error("Failed to generate part upload URL: %s", str(e))
@@ -276,7 +287,9 @@ class FileUploadManager:
                 UploadId=upload_id,
                 MultipartUpload={"Parts": parts},
             )
-            LOGGER.info("Completed multipart upload %s for %s/%s", upload_id, bucket_name, object_key)
+            LOGGER.info(
+                "Completed multipart upload %s for %s/%s", upload_id, bucket_name, object_key
+            )
             return {
                 "location": response.get("Location"),
                 "bucket": response.get("Bucket"),
@@ -348,14 +361,20 @@ class FileUploadManager:
             if expected_size is not None and file_info["size"] != expected_size:
                 LOGGER.warning(
                     "Size mismatch for %s/%s: expected %d, got %d",
-                    bucket_name, object_key, expected_size, file_info["size"]
+                    bucket_name,
+                    object_key,
+                    expected_size,
+                    file_info["size"],
                 )
                 is_valid = False
 
             if expected_etag is not None and file_info["etag"] != expected_etag:
                 LOGGER.warning(
                     "ETag mismatch for %s/%s: expected %s, got %s",
-                    bucket_name, object_key, expected_etag, file_info["etag"]
+                    bucket_name,
+                    object_key,
+                    expected_etag,
+                    file_info["etag"],
                 )
                 is_valid = False
 
@@ -387,4 +406,3 @@ def generate_upload_path(
         timestamp = datetime.now(timezone.utc).strftime("%Y/%m/%d")
         return f"{prefix}/{customer_id}/{timestamp}/{filename}"
     return f"{prefix}/{customer_id}/{filename}"
-

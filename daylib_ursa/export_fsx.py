@@ -56,15 +56,13 @@ def _find_filesystem(client: Any, cluster_name: str) -> Dict[str, Any]:
     raise RuntimeError(f"No FSx filesystem found for cluster {cluster_name}")
 
 
-def _normalise_target(
-    filesystem: Dict[str, Any], target_uri: str
-) -> tuple[str, Optional[str]]:
+def _normalise_target(filesystem: Dict[str, Any], target_uri: str) -> tuple[str, Optional[str]]:
     target = target_uri.strip()
     if not target:
         raise RuntimeError("Target URI must be provided")
 
     lustre_config = filesystem.get("LustreConfiguration", {}) or {}
-    repo_config = (lustre_config.get("DataRepositoryConfiguration", {}) or {})
+    repo_config = lustre_config.get("DataRepositoryConfiguration", {}) or {}
     export_path = cast(Optional[str], repo_config.get("ExportPath"))
 
     if target.startswith("s3://"):
@@ -75,8 +73,7 @@ def _normalise_target(
         normalised_export = export_path.rstrip("/") + "/"
         if not target.startswith(normalised_export):
             raise RuntimeError(
-                "Target URI must reside under the FSx export path; "
-                f"expected prefix {export_path}"
+                f"Target URI must reside under the FSx export path; expected prefix {export_path}"
             )
         relative_path = target[len(normalised_export) :].lstrip("/")
         if not relative_path:
@@ -101,13 +98,11 @@ def _start_export(
     if not filesystem_id:
         raise RuntimeError("FSx filesystem is missing an identifier")
     lustre_config = filesystem.get("LustreConfiguration", {}) or {}
-    repo_config = (lustre_config.get("DataRepositoryConfiguration", {}) or {})
+    repo_config = lustre_config.get("DataRepositoryConfiguration", {}) or {}
     export_path = cast(Optional[str], repo_config.get("ExportPath"))
     report_path = None
     if export_path:
-        report_path = (
-            f"{export_path.rstrip('/')}/daylily-monitor/{int(time.time())}/export-report"
-        )
+        report_path = f"{export_path.rstrip('/')}/daylily-monitor/{int(time.time())}/export-report"
     kwargs: Dict[str, Any] = {
         "FileSystemId": filesystem_id,
         "Type": "EXPORT_TO_REPOSITORY",
@@ -213,9 +208,7 @@ def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         required=True,
         help="Directory where the export status YAML should be written",
     )
-    parser.add_argument(
-        "--verbose", action="store_true", help="Enable verbose logging"
-    )
+    parser.add_argument("--verbose", action="store_true", help="Enable verbose logging")
     return parser.parse_args(argv)
 
 
@@ -234,4 +227,3 @@ def main(argv: Optional[list[str]] = None) -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-

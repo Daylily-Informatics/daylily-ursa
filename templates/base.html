@@ -188,7 +188,8 @@
             apiBase: '{{ api_base | default("") }}',
             authEnabled: {{ 'true' if auth_enabled else 'false' }},
             customerId: '{{ customer_id | default(customer.customer_id if customer else "") }}',
-            csrfToken: '{{ csrf_token | default("") }}'
+            csrfToken: '{{ csrf_token | default("") }}',
+            isAdmin: {{ 'true' if is_admin else 'false' }}
         };
     </script>
     <script src="/static/js/api.js?v={{ cache_bust | default('1') }}"></script>

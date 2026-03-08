@@ -166,4 +166,3 @@ class InvalidStateTransitionError(ValidationError):
 
     default_code = "INVALID_STATE_TRANSITION"
     default_message = "Invalid state transition"
-

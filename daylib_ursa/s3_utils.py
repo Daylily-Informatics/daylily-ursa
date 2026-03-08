@@ -20,17 +20,17 @@ from typing import Any, Dict, Optional, cast
 import boto3
 from botocore.exceptions import ClientError
 
-from daylib.security import sanitize_for_log
+from daylib_ursa.security import sanitize_for_log
 
 LOGGER = logging.getLogger("daylily.s3_utils")
 
 
 def normalize_bucket_name(bucket: Optional[str]) -> Optional[str]:
     """Normalize bucket name by stripping s3:// prefix.
-    
+
     Args:
         bucket: Bucket name, possibly with s3:// prefix
-        
+
     Returns:
         Normalized bucket name or None if input was None/empty
     """
@@ -60,6 +60,7 @@ class _S3ExceptionsProxy:
 
     Allows code like `client.exceptions.NoSuchKey` to work with RegionAwareS3Client.
     """
+
     def __init__(self, client: Any):
         self._client = client
 
@@ -116,7 +117,7 @@ class RegionAwareS3Client:
 
         # Expose exceptions through the default client
         self.exceptions = _S3ExceptionsProxy(self._default_client)
-    
+
     def _create_client(self, region: str) -> Any:
         """Create a boto3 S3 client for a specific region."""
         session_kwargs = {"region_name": region}
@@ -124,7 +125,7 @@ class RegionAwareS3Client:
             session_kwargs["profile_name"] = self.profile
         session = boto3.Session(**session_kwargs)
         return session.client("s3")
-    
+
     def _get_client_for_region(self, region: str) -> Any:
         """Get or create a boto3 S3 client for a region."""
         with self._clients_lock:
@@ -132,26 +133,26 @@ class RegionAwareS3Client:
                 LOGGER.debug("Creating S3 client for region %s", region)
                 self._clients[region] = self._create_client(region)
             return self._clients[region]
-    
+
     def get_bucket_region(self, bucket: str) -> str:
         """Get the region of an S3 bucket.
-        
+
         Uses cache to avoid repeated GetBucketLocation calls.
-        
+
         Args:
             bucket: Bucket name (will be normalized)
-            
+
         Returns:
             AWS region string (e.g., "us-west-2", "eu-central-1")
         """
         bucket_normalized = normalize_bucket_name(bucket)
         if not bucket_normalized:
             return self.default_region
-        
+
         with self._bucket_regions_lock:
             if bucket_normalized in self._bucket_regions:
                 return self._bucket_regions[bucket_normalized]
-        
+
         # Look up bucket region
         try:
             response = self._default_client.get_bucket_location(Bucket=bucket_normalized)
@@ -159,12 +160,16 @@ class RegionAwareS3Client:
             region = response.get("LocationConstraint") or "us-east-1"
             LOGGER.debug("Bucket %s is in region %s", sanitize_for_log(bucket_normalized), region)
         except ClientError as e:
-            LOGGER.warning("Could not determine region for bucket %s: %s", sanitize_for_log(bucket_normalized), e)
+            LOGGER.warning(
+                "Could not determine region for bucket %s: %s",
+                sanitize_for_log(bucket_normalized),
+                e,
+            )
             region = self.default_region
-        
+
         with self._bucket_regions_lock:
             self._bucket_regions[bucket_normalized] = region
-        
+
         return region
 
     def get_bucket_location(self, Bucket: str, **kwargs) -> Dict[str, Any]:
@@ -190,7 +195,7 @@ class RegionAwareS3Client:
             self._bucket_regions[normalized_bucket] = str(region)
 
         return response
-    
+
     def get_client_for_bucket(self, bucket: str) -> Any:
         """Get the region-appropriate S3 client for a bucket.
 
@@ -275,7 +280,9 @@ class RegionAwareS3Client:
             client.delete_object(Bucket=normalized_bucket, Key=Key, **kwargs),
         )
 
-    def copy_object(self, CopySource: Dict[str, str], Bucket: str, Key: str, **kwargs) -> Dict[str, Any]:
+    def copy_object(
+        self, CopySource: Dict[str, str], Bucket: str, Key: str, **kwargs
+    ) -> Dict[str, Any]:
         """Copy object using the correct regional client for destination bucket."""
         normalized_bucket = _normalize_bucket_name_required(Bucket)
         client = self.get_client_for_bucket(normalized_bucket)
@@ -311,11 +318,7 @@ class RegionAwareS3Client:
         client.upload_fileobj(Fileobj, normalized_bucket, Key, **kwargs)
 
     def generate_presigned_url(
-        self,
-        ClientMethod: str,
-        Params: Dict[str, Any],
-        ExpiresIn: int = 3600,
-        **kwargs
+        self, ClientMethod: str, Params: Dict[str, Any], ExpiresIn: int = 3600, **kwargs
     ) -> str:
         """Generate a presigned URL using the correct regional client.
 
@@ -339,10 +342,7 @@ class RegionAwareS3Client:
         return cast(
             str,
             client.generate_presigned_url(
-            ClientMethod=ClientMethod,
-            Params=params,
-            ExpiresIn=ExpiresIn,
-            **kwargs
+                ClientMethod=ClientMethod, Params=params, ExpiresIn=ExpiresIn, **kwargs
             ),
         )
 

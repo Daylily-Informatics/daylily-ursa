@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 from typing import Optional, Sequence
 
-from daylib.workset_monitor import MonitorConfig, WorksetMonitor, configure_logging
+from daylib_ursa.workset_monitor import MonitorConfig, WorksetMonitor, configure_logging
 
 LOGGER = logging.getLogger("daylily.workset_report.cli")
 

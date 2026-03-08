@@ -19,10 +19,12 @@ from urllib.parse import urlparse
 import boto3
 from botocore.exceptions import ClientError
 
-LOGGER = logging.getLogger("daylib.pipeline_status")
+LOGGER = logging.getLogger("daylib_ursa.pipeline_status")
 
 # Regex patterns for parsing Snakemake logs
-PROGRESS_PATTERN = re.compile(r"(\d+)\s+of\s+(\d+)\s+steps?\s*\((\d+(?:\.\d+)?)\s*%\)\s*done", re.IGNORECASE)
+PROGRESS_PATTERN = re.compile(
+    r"(\d+)\s+of\s+(\d+)\s+steps?\s*\((\d+(?:\.\d+)?)\s*%\)\s*done", re.IGNORECASE
+)
 RULE_PATTERN = re.compile(r"^rule\s+(\w+):", re.MULTILINE)
 ERROR_PATTERNS = [
     re.compile(r"error", re.IGNORECASE),
@@ -90,9 +92,12 @@ class PipelineStatusFetcher:
     def _ssh_options(self) -> List[str]:
         """Build SSH options list."""
         options = [
-            "-o", "StrictHostKeyChecking=no",
-            "-o", "UserKnownHostsFile=/dev/null",
-            "-o", f"ConnectTimeout={self.timeout}",
+            "-o",
+            "StrictHostKeyChecking=no",
+            "-o",
+            "UserKnownHostsFile=/dev/null",
+            "-o",
+            f"ConnectTimeout={self.timeout}",
         ]
         if self.ssh_extra_args:
             options.extend(self.ssh_extra_args)
@@ -224,9 +229,7 @@ class PipelineStatusFetcher:
             return []
         return [f.strip() for f in output.strip().split("\n") if f.strip()]
 
-    def get_progress_lines(
-        self, headnode_ip: str, workset_name: str
-    ) -> Optional[str]:
+    def get_progress_lines(self, headnode_ip: str, workset_name: str) -> Optional[str]:
         """Get all progress lines from Snakemake logs using grep.
 
         Uses: grep ' steps ' <log_dir>/*.log | sort
@@ -247,7 +250,7 @@ class PipelineStatusFetcher:
         log_dir = self._get_snakemake_log_dir(workset_name)
         cmd = (
             f"LOG=$(ls -t {shlex.quote(log_dir)}/*.snakemake.log 2>/dev/null | head -1) && "
-            f"[ -f \"$LOG\" ] && tail -{tail_lines} \"$LOG\""
+            f'[ -f "$LOG" ] && tail -{tail_lines} "$LOG"'
         )
         return self._run_ssh_command(headnode_ip, cmd)
 
@@ -381,8 +384,7 @@ class PipelineStatusFetcher:
 
                 # Get recent log lines
                 status.recent_log_lines = [
-                    line for line in log_content.strip().split("\n")
-                    if line.strip()
+                    line for line in log_content.strip().split("\n") if line.strip()
                 ][-50:]
 
                 # Parse errors
@@ -480,7 +482,7 @@ class PipelineStatusFetcher:
 
         headers = lines[header_idx].split("\t")
         rows = []
-        for line in lines[header_idx + 1:]:
+        for line in lines[header_idx + 1 :]:
             if not line.strip():
                 continue
             values = line.split("\t")
@@ -512,7 +514,10 @@ class PipelineStatusFetcher:
         """
         # Try singleton file first
         result = self.fetch_tsv_file(
-            headnode_ip, workset_name, "rules_benchmark_data_singleton.tsv", self.BENCHMARK_EXPECTED_COLS
+            headnode_ip,
+            workset_name,
+            "rules_benchmark_data_singleton.tsv",
+            self.BENCHMARK_EXPECTED_COLS,
         )
         if result:
             return result
@@ -521,9 +526,7 @@ class PipelineStatusFetcher:
             headnode_ip, workset_name, "rules_benchmark_data_mqc.tsv", self.BENCHMARK_EXPECTED_COLS
         )
 
-    def fetch_performance_metrics(
-        self, headnode_ip: str, workset_name: str
-    ) -> Dict[str, Any]:
+    def fetch_performance_metrics(self, headnode_ip: str, workset_name: str) -> Dict[str, Any]:
         """Fetch all performance metrics for a workset.
 
         Returns dict with:
@@ -550,9 +553,7 @@ class PipelineStatusFetcher:
 
         return result
 
-    def _compute_cost_summary(
-        self, benchmark_data: List[Dict[str, str]]
-    ) -> Dict[str, Any]:
+    def _compute_cost_summary(self, benchmark_data: List[Dict[str, str]]) -> Dict[str, Any]:
         """Compute cost summary from benchmark data.
 
         Returns:
@@ -688,7 +689,10 @@ class PipelineStatusFetcher:
         """
         # Try singleton file first
         result = self.fetch_tsv_from_s3(
-            results_s3_uri, "rules_benchmark_data_singleton.tsv", region, self.BENCHMARK_EXPECTED_COLS
+            results_s3_uri,
+            "rules_benchmark_data_singleton.tsv",
+            region,
+            self.BENCHMARK_EXPECTED_COLS,
         )
         if result:
             return result
@@ -728,8 +732,7 @@ class PipelineStatusFetcher:
             # List log files
             resp = s3_client.list_objects_v2(Bucket=bucket, Prefix=log_prefix, MaxKeys=100)
             log_files = [
-                obj for obj in resp.get("Contents", [])
-                if obj["Key"].endswith(".snakemake.log")
+                obj for obj in resp.get("Contents", []) if obj["Key"].endswith(".snakemake.log")
             ]
 
             if not log_files:
@@ -745,7 +748,9 @@ class PipelineStatusFetcher:
             # Parse start time from filename: 2026-01-21T222820.936299.snakemake.log
             # Format: YYYY-MM-DDTHHMMSS.microseconds.snakemake.log
             start_time = None
-            match = re.match(r"(\d{4}-\d{2}-\d{2})T(\d{2})(\d{2})(\d{2})\.(\d+)\.snakemake\.log", log_filename)
+            match = re.match(
+                r"(\d{4}-\d{2}-\d{2})T(\d{2})(\d{2})(\d{2})\.(\d+)\.snakemake\.log", log_filename
+            )
             if match:
                 date_str = match.group(1)
                 hour, minute, second = match.group(2), match.group(3), match.group(4)
@@ -773,7 +778,9 @@ class PipelineStatusFetcher:
                 # Get the last timestamp
                 last_ts = timestamps[-1]
                 try:
-                    end_time = dt.datetime.strptime(last_ts, "%a %b %d %H:%M:%S %Y").replace(tzinfo=dt.timezone.utc)
+                    end_time = dt.datetime.strptime(last_ts, "%a %b %d %H:%M:%S %Y").replace(
+                        tzinfo=dt.timezone.utc
+                    )
                 except ValueError:
                     pass
 
@@ -838,4 +845,3 @@ class PipelineStatusFetcher:
             result["duration_info"] = duration_info
 
         return result
-

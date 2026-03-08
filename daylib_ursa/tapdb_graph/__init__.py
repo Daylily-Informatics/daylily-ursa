@@ -1,4 +1,4 @@
-from daylib.tapdb_graph.backend import (
+from daylib_ursa.tapdb_graph.backend import (
     TEMPLATE_DEFINITIONS,
     TapDBBackend,
     from_json_addl,

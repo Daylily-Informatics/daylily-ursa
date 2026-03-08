@@ -24,7 +24,7 @@ The `regions` list controls which AWS regions Ursa will scan for clusters, and l
 
 ## Where It’s Used
 
-- Cluster discovery and region-specific SSH configuration is loaded via `daylib.ursa_config.UrsaConfig` ([daylib/ursa_config.py](/Users/jmajor/projects/daylily/daylily-ursa/daylib/ursa_config.py)).
+- Cluster discovery and region-specific SSH configuration is loaded via `daylib_ursa.ursa_config.UrsaConfig` ([daylib_ursa/ursa_config.py](/Users/jmajor/projects/daylily/daylily-ursa/daylib_ursa/ursa_config.py)).
 - Workset monitor/worker AWS settings are primarily driven by the workset monitor YAML config (see `config/workset-monitor-config.yaml` and `config/workset-monitor-config.template.yaml`).
 
 ## TapDB Note
@@ -36,5 +36,5 @@ TapDB connectivity and namespace are configured separately via:
 - `TAPDB_DATABASE_NAME`
 - `TAPDB_ENV`
 
-See `config/ursa-config.example.yaml` for an example and `daylib.tapdb_graph.backend.TapDBBackend` for enforcement ([daylib/tapdb_graph/backend.py](/Users/jmajor/projects/daylily/daylily-ursa/daylib/tapdb_graph/backend.py)).
+See `config/ursa-config.example.yaml` for an example and `daylib_ursa.tapdb_graph.backend.TapDBBackend` for enforcement ([daylib_ursa/tapdb_graph/backend.py](/Users/jmajor/projects/daylily/daylily-ursa/daylib_ursa/tapdb_graph/backend.py)).
 

@@ -9,11 +9,11 @@ from typing import Optional, Sequence
 
 import uvicorn
 
-from daylib.analysis_store import AnalysisStore
-from daylib.atlas_result_client import AtlasResultClient
-from daylib.bloom_resolver_client import BloomResolverClient
-from daylib.config import get_settings
-from daylib.workset_api import create_app
+from daylib_ursa.analysis_store import AnalysisStore
+from daylib_ursa.atlas_result_client import AtlasResultClient
+from daylib_ursa.bloom_resolver_client import BloomResolverClient
+from daylib_ursa.config import get_settings
+from daylib_ursa.workset_api import create_app
 
 LOGGER = logging.getLogger("daylily.analysis_api.cli")
 

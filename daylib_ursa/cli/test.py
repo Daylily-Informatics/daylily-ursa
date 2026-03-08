@@ -52,7 +52,7 @@ def coverage(
     """Run tests with coverage report."""
     project_root = _get_project_root()
 
-    cmd = [sys.executable, "-m", "pytest", "--cov=daylib", "--cov-report=term-missing"]
+    cmd = [sys.executable, "-m", "pytest", "--cov=daylib_ursa", "--cov-report=term-missing"]
 
     if html:
         cmd.append("--cov-report=html")
@@ -73,7 +73,7 @@ def lint(
     """Run ruff linter."""
     project_root = _get_project_root()
 
-    cmd = [sys.executable, "-m", "ruff", "check", "daylib/", "tests/"]
+    cmd = [sys.executable, "-m", "ruff", "check", "daylib_ursa/", "tests/"]
 
     if fix:
         cmd.append("--fix")
@@ -90,7 +90,7 @@ def format_code(
     """Format code with ruff."""
     project_root = _get_project_root()
 
-    cmd = [sys.executable, "-m", "ruff", "format", "daylib/", "tests/"]
+    cmd = [sys.executable, "-m", "ruff", "format", "daylib_ursa/", "tests/"]
 
     if check:
         cmd.append("--check")
@@ -105,7 +105,7 @@ def typecheck():
     """Run mypy type checker."""
     project_root = _get_project_root()
 
-    cmd = [sys.executable, "-m", "mypy", "daylib/"]
+    cmd = [sys.executable, "-m", "mypy", "daylib_ursa/"]
 
     console.print("[cyan]Running type checker...[/cyan]")
     result = subprocess.run(cmd, cwd=project_root)
@@ -118,8 +118,8 @@ def all_checks():
     project_root = _get_project_root()
 
     checks = [
-        ("Lint", [sys.executable, "-m", "ruff", "check", "daylib/", "tests/"]),
-        ("Format", [sys.executable, "-m", "ruff", "format", "--check", "daylib/", "tests/"]),
+        ("Lint", [sys.executable, "-m", "ruff", "check", "daylib_ursa/", "tests/"]),
+        ("Format", [sys.executable, "-m", "ruff", "format", "--check", "daylib_ursa/", "tests/"]),
         ("Tests", [sys.executable, "-m", "pytest", "-q", "--tb=short"]),
     ]
 
@@ -139,4 +139,3 @@ def all_checks():
         raise typer.Exit(1)
     else:
         console.print("\n[green]✓[/green]  All checks passed")
-

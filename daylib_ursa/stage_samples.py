@@ -184,9 +184,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
 
 def ensure_profile(profile: Optional[str]) -> str:
     if not profile:
-        raise CommandError(
-            "AWS profile is required. Set AWS_PROFILE or pass --profile."
-        )
+        raise CommandError("AWS profile is required. Set AWS_PROFILE or pass --profile.")
     return profile
 
 
@@ -204,9 +202,7 @@ def parse_s3_uri(uri: str) -> Tuple[str, str]:
 def normalise_stage_target(stage_target: str) -> str:
     stage_target = stage_target.strip()
     if not stage_target.startswith("/data"):
-        raise CommandError(
-            "Stage target must be an FSx path (expected to start with /data)."
-        )
+        raise CommandError("Stage target must be an FSx path (expected to start with /data).")
     return stage_target.rstrip("/")
 
 
@@ -344,7 +340,9 @@ def validate_sources(
         check_local_path(os.path.expanduser(src))
 
 
-def ensure_remote_stage_writable(stage: StagePaths, *, aws_env: Dict[str, str], debug: bool) -> None:
+def ensure_remote_stage_writable(
+    stage: StagePaths, *, aws_env: Dict[str, str], debug: bool
+) -> None:
     with tempfile.NamedTemporaryFile("w", delete=False) as handle:
         handle.write("daylily staging write test\n")
         handle.flush()
@@ -410,9 +408,7 @@ def ensure_s3_objects(
                 resolved.append(source)
                 continue
             expanded = os.path.expanduser(source)
-            part_name = (
-                f"{sample_prefix}_part{idx}_{uuid.uuid4().hex}_{Path(expanded).name}"
-            )
+            part_name = f"{sample_prefix}_part{idx}_{uuid.uuid4().hex}_{Path(expanded).name}"
             remote = f"{dest_s3_dir}/_parts/{part_name}"
             aws_copy(expanded, remote, aws_env=aws_env, debug=debug)
             uploaded.append(remote)
@@ -423,9 +419,7 @@ def ensure_s3_objects(
     return resolved, uploaded
 
 
-def cleanup_s3_objects(
-    uris: Sequence[str], *, aws_env: Dict[str, str], debug: bool
-) -> None:
+def cleanup_s3_objects(uris: Sequence[str], *, aws_env: Dict[str, str], debug: bool) -> None:
     for uri in uris:
         try:
             aws_command(["s3", "rm", uri], aws_env=aws_env, debug=debug)
@@ -452,9 +446,7 @@ def multipart_concatenate(
     )
     upload_id = json.loads(create.stdout or "{}").get("UploadId")
     if not upload_id:
-        raise CommandError(
-            f"Failed to initiate multipart upload for destination {destination}"
-        )
+        raise CommandError(f"Failed to initiate multipart upload for destination {destination}")
 
     parts: List[Dict[str, Any]] = []
     try:
@@ -482,14 +474,10 @@ def multipart_concatenate(
             )
             payload = json.loads(result.stdout or "{}")
             etag = (
-                payload.get("CopyPartResult", {}).get("ETag")
-                if isinstance(payload, dict)
-                else None
+                payload.get("CopyPartResult", {}).get("ETag") if isinstance(payload, dict) else None
             )
             if not etag:
-                raise CommandError(
-                    f"Failed to copy part from {source} during multipart upload"
-                )
+                raise CommandError(f"Failed to copy part from {source} during multipart upload")
             parts.append({"PartNumber": idx, "ETag": etag})
 
         complete_body = json.dumps({"Parts": parts})
@@ -606,12 +594,8 @@ def stage_multi_lane(
         raise
 
     try:
-        multipart_concatenate(
-            r1_sources, remote_r1_s3, aws_env=aws_env, debug=debug
-        )
-        multipart_concatenate(
-            r2_sources, remote_r2_s3, aws_env=aws_env, debug=debug
-        )
+        multipart_concatenate(r1_sources, remote_r1_s3, aws_env=aws_env, debug=debug)
+        multipart_concatenate(r2_sources, remote_r2_s3, aws_env=aws_env, debug=debug)
     finally:
         cleanup_s3_objects(r1_uploaded, aws_env=aws_env, debug=debug)
         cleanup_s3_objects(r2_uploaded, aws_env=aws_env, debug=debug)
@@ -629,9 +613,7 @@ def write_tsv(path: Path, header: Sequence[str], rows: Sequence[Dict[str, str]])
         writer.writerows(rows)
 
 
-def deduplicate_rows(
-    rows: Sequence[Dict[str, str]], header: Sequence[str]
-) -> List[Dict[str, str]]:
+def deduplicate_rows(rows: Sequence[Dict[str, str]], header: Sequence[str]) -> List[Dict[str, str]]:
     """Return rows with duplicate data removed, preserving order."""
     seen: set[Tuple[str, ...]] = set()
     unique_rows: List[Dict[str, str]] = []
@@ -668,7 +650,11 @@ def process_samples(
         reader = csv.DictReader(ff, delimiter="\t")
         if reader.fieldnames is None:
             raise CommandError("Input TSV is missing a header row")
-        missing = [field for field in KEY_FIELDS + [LANE, SEQBC_ID, R1_FQ, R2_FQ] if field not in reader.fieldnames]
+        missing = [
+            field
+            for field in KEY_FIELDS + [LANE, SEQBC_ID, R1_FQ, R2_FQ]
+            if field not in reader.fieldnames
+        ]
         if missing:
             raise CommandError(f"Missing required columns: {', '.join(missing)}")
 
@@ -725,24 +711,31 @@ def process_samples(
 
         is_multi_lane = len(entries) > 1
         if is_multi_lane and lane == "0":
-            raise CommandError(
-                f"Invalid LANE=0 for multi-lane sample: {sample_name}"
-            )
+            raise CommandError(f"Invalid LANE=0 for multi-lane sample: {sample_name}")
 
         if is_multi_lane:
             r1_files = [get_entry_value(entry, R1_FQ) for entry in entries]
             r2_files = [get_entry_value(entry, R2_FQ) for entry in entries]
             remote_r1, remote_r2 = stage_multi_lane(
-                r1_files, r2_files, sample_prefix, dest_fsx_dir, dest_s3_dir,
-                aws_env=aws_env, debug=debug,
+                r1_files,
+                r2_files,
+                sample_prefix,
+                dest_fsx_dir,
+                dest_s3_dir,
+                aws_env=aws_env,
+                debug=debug,
             )
             lane_id = "0"
         else:
             r1 = get_entry_value(first, R1_FQ)
             r2 = get_entry_value(first, R2_FQ)
             remote_r1, remote_r2 = stage_single_lane(
-                r1, r2, dest_fsx_dir, dest_s3_dir,
-                aws_env=aws_env, debug=debug,
+                r1,
+                r2,
+                dest_fsx_dir,
+                dest_s3_dir,
+                aws_env=aws_env,
+                debug=debug,
             )
             lane_id = lane
 
@@ -752,27 +745,34 @@ def process_samples(
         concordance_fsx = dest_fsx_dir + "/concordance_data"
         concordance_s3 = dest_s3_dir + "/concordance_data"
         concordance_path = stage_concordance(
-            concordance_source, concordance_fsx, concordance_s3,
-            aws_env=aws_env, debug=debug,
+            concordance_source,
+            concordance_fsx,
+            concordance_s3,
+            aws_env=aws_env,
+            debug=debug,
         )
         if concordance_path.startswith(stage.remote_fsx_root):
             created_files.append(concordance_path)
 
         units_row = {column: "" for column in UNITS_HEADER}
-        units_row.update({
-            "RUNID": ruid,
-            "SAMPLEID": sampleid,
-            "EXPERIMENTID": experiment_id,
-            "LANEID": lane_id,
-            "BARCODEID": seqbc,
-            "LIBPREP": libprep,
-            "SEQ_VENDOR": vendor,
-            "SEQ_PLATFORM": seq_platform,
-            "SUBSAMPLE_PCT": subsample_pct,
-        })
+        units_row.update(
+            {
+                "RUNID": ruid,
+                "SAMPLEID": sampleid,
+                "EXPERIMENTID": experiment_id,
+                "LANEID": lane_id,
+                "BARCODEID": seqbc,
+                "LIBPREP": libprep,
+                "SEQ_VENDOR": vendor,
+                "SEQ_PLATFORM": seq_platform,
+                "SUBSAMPLE_PCT": subsample_pct,
+            }
+        )
 
         is_pos_ctrl = get_entry_value(first, IS_POS_CTRL).lower() == "true"
-        units_row["SAMPLEUSE"] = get_entry_value(first, "SAMPLEUSE") or ("posControl" if is_pos_ctrl else "sample")
+        units_row["SAMPLEUSE"] = get_entry_value(first, "SAMPLEUSE") or (
+            "posControl" if is_pos_ctrl else "sample"
+        )
         units_row["BWA_KMER"] = get_entry_value(first, "BWA_KMER") or "19"
 
         if vendor == "ILMN":
@@ -891,4 +891,3 @@ if __name__ == "__main__":  # pragma: no cover - manual execution
     except CommandError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         raise SystemExit(1)
-

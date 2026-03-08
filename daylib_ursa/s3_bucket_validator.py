@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional
 import boto3
 from botocore.exceptions import ClientError
 
-from daylib.tapdb_graph import TapDBBackend, from_json_addl, utc_now_iso
+from daylib_ursa.tapdb_graph import TapDBBackend, from_json_addl, utc_now_iso
 
 
 def _utc_now_iso() -> str:
@@ -94,7 +94,9 @@ class S3BucketValidator:
         except Exception:
             self.account_id = None
 
-    def validate_bucket(self, bucket_name: str, test_prefix: str = "daylily-validation-test/") -> BucketValidationResult:
+    def validate_bucket(
+        self, bucket_name: str, test_prefix: str = "daylily-validation-test/"
+    ) -> BucketValidationResult:
         if bucket_name.startswith("s3://"):
             bucket_name = bucket_name[5:]
         result = BucketValidationResult(bucket_name=bucket_name)
@@ -144,7 +146,9 @@ class S3BucketValidator:
             result.warnings.append(f"Read check uncertain: {exc}")
             return True
 
-    def _test_write(self, bucket_name: str, test_prefix: str, result: BucketValidationResult) -> bool:
+    def _test_write(
+        self, bucket_name: str, test_prefix: str, result: BucketValidationResult
+    ) -> bool:
         key = f"{test_prefix.rstrip('/')}/daylily-permission-test.txt"
         try:
             self.s3.put_object(Bucket=bucket_name, Key=key, Body=b"daylily")
@@ -160,7 +164,11 @@ class S3BucketValidator:
         daylily_account_id: str,
         daylily_role_arn: Optional[str] = None,
     ) -> Dict[str, Any]:
-        principal = {"AWS": daylily_role_arn} if daylily_role_arn else {"AWS": f"arn:aws:iam::{daylily_account_id}:root"}
+        principal = (
+            {"AWS": daylily_role_arn}
+            if daylily_role_arn
+            else {"AWS": f"arn:aws:iam::{daylily_account_id}:root"}
+        )
         return {
             "Version": "2012-10-17",
             "Statement": [
@@ -188,18 +196,22 @@ class S3BucketValidator:
             ],
         }
 
-    def generate_iam_policy_for_bucket(self, bucket_name: str, read_only: bool = False) -> Dict[str, Any]:
+    def generate_iam_policy_for_bucket(
+        self, bucket_name: str, read_only: bool = False
+    ) -> Dict[str, Any]:
         object_actions = [
             "s3:GetObject",
             "s3:GetObjectVersion",
             "s3:GetObjectTagging",
         ]
         if not read_only:
-            object_actions.extend([
-                "s3:PutObject",
-                "s3:PutObjectTagging",
-                "s3:DeleteObject",
-            ])
+            object_actions.extend(
+                [
+                    "s3:PutObject",
+                    "s3:PutObjectTagging",
+                    "s3:DeleteObject",
+                ]
+            )
         return {
             "Version": "2012-10-17",
             "Statement": [
@@ -218,7 +230,9 @@ class S3BucketValidator:
             ],
         }
 
-    def get_setup_instructions(self, bucket_name: str, validation_result: BucketValidationResult) -> List[str]:
+    def get_setup_instructions(
+        self, bucket_name: str, validation_result: BucketValidationResult
+    ) -> List[str]:
         steps: List[str] = []
         if not validation_result.exists:
             steps.append(f"Create bucket: aws s3 mb s3://{bucket_name}")
@@ -365,7 +379,9 @@ class LinkedBucketManager:
                     json_addl=payload,
                     bstatus="active",
                 )
-                self.backend.create_lineage(session, parent=customer, child=bucket_row, relationship_type="owns")
+                self.backend.create_lineage(
+                    session, parent=customer, child=bucket_row, relationship_type="owns"
+                )
                 payload["bucket_euid"] = bucket_row.euid
             else:
                 self.backend.update_instance_json(session, existing, payload)

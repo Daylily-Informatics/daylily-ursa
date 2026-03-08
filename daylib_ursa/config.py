@@ -63,6 +63,26 @@ class Settings(BaseSettings):
         default="us-west-2",
         description="Comma-separated list of AWS regions to scan for ParallelCluster instances",
     )
+    ursa_portal_default_customer_id: str = Field(
+        default="default-customer",
+        description="Fallback customer ID used by the lightweight portal surface",
+    )
+    ursa_cost_monitor_regions: str = Field(
+        default="us-west-2,us-east-1,eu-central-1",
+        description="Comma-separated regions used for pricing snapshots",
+    )
+    ursa_cost_monitor_partitions: str = Field(
+        default="i8,i128,i192,i192mem,i192bigmem",
+        description="Comma-separated production partitions used for pricing snapshots",
+    )
+    ursa_cost_monitor_interval_hours: int = Field(
+        default=6,
+        description="Recurring pricing snapshot interval in hours",
+    )
+    ursa_cost_monitor_config_path: Optional[str] = Field(
+        default=None,
+        description="Optional cluster YAML path passed to daylily-ec pricing snapshot",
+    )
 
     ursa_cost_monitor_regions: str = Field(
         default="us-west-2",
@@ -215,7 +235,9 @@ class Settings(BaseSettings):
     day_project: Optional[str] = Field(default=None, description="Daylily project name")
     day_aws_region: Optional[str] = Field(default=None, description="Daylily AWS region override")
     day_ex_cfg: Optional[str] = Field(default=None, description="Daylily execution config")
-    daylily_primary_region: Optional[str] = Field(default=None, description="Primary region for multi-region")
+    daylily_primary_region: Optional[str] = Field(
+        default=None, description="Primary region for multi-region"
+    )
     daylily_multi_region: bool = Field(default=False, description="Enable multi-region support")
     day_biome: Optional[str] = Field(default=None, description="Daylily biome setting")
     day_root: Optional[str] = Field(default=None, description="Daylily root directory")
@@ -334,11 +356,7 @@ class Settings(BaseSettings):
         Note: AWS_DEFAULT_REGION is intentionally not used. In a multi-region
         architecture, regions must be explicitly specified per API call.
         """
-        return (
-            self.day_aws_region
-            or os.environ.get("AWS_REGION")
-            or "us-west-2"
-        )
+        return self.day_aws_region or os.environ.get("AWS_REGION") or "us-west-2"
 
     @property
     def is_production(self) -> bool:
