@@ -67,11 +67,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     bloom_client = BloomResolverClient(
         base_url=settings.bloom_base_url,
         token=settings.bloom_api_token,
+        verify_ssl=settings.bloom_verify_ssl,
     )
     atlas_client = (
         AtlasResultClient(
             base_url=settings.atlas_base_url,
             api_key=settings.atlas_internal_api_key,
+            verify_ssl=settings.atlas_verify_ssl,
         )
         if settings.atlas_internal_api_key
         else None

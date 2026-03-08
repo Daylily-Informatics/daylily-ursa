@@ -19,6 +19,7 @@ class BloomResolverClient:
     base_url: str
     token: str | None = None
     timeout_seconds: float = 10.0
+    verify_ssl: bool = True
     client: httpx.Client | None = None
 
     def _headers(self) -> dict[str, str]:
@@ -38,7 +39,10 @@ class BloomResolverClient:
             f"{self.base_url.rstrip('/')}"
             f"/api/v1/external/atlas/beta/runs/{run_euid}/resolve"
         )
-        client = self.client or httpx.Client(timeout=self.timeout_seconds)
+        client = self.client or httpx.Client(
+            timeout=self.timeout_seconds,
+            verify=self.verify_ssl,
+        )
         close_client = self.client is None
         try:
             response = client.get(

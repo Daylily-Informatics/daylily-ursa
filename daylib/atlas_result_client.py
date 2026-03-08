@@ -28,6 +28,7 @@ class AtlasResultClient:
     base_url: str
     api_key: str
     timeout_seconds: float = 10.0
+    verify_ssl: bool = True
     client: httpx.Client | None = None
 
     def return_analysis_result(
@@ -89,7 +90,10 @@ class AtlasResultClient:
             "X-API-Key": self.api_key,
             "Idempotency-Key": idempotency_key,
         }
-        client = self.client or httpx.Client(timeout=self.timeout_seconds)
+        client = self.client or httpx.Client(
+            timeout=self.timeout_seconds,
+            verify=self.verify_ssl,
+        )
         close_client = self.client is None
         try:
             response = client.post(url, json=payload, headers=headers)

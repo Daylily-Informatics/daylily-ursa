@@ -6,9 +6,11 @@ import hmac
 import logging
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
+import boto3
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
@@ -26,7 +28,11 @@ from daylib.atlas_result_client import (
     AtlasResultClientError,
 )
 from daylib.bloom_resolver_client import BloomResolverClient, BloomResolverError
+from daylib.cluster_service import ClusterInfo, get_cluster_service
 from daylib.config import Settings, get_settings
+from daylib.ephemeral_cluster import list_cluster_create_jobs, start_create_job, tail_job_log
+from daylib.pricing_monitor import PricingMonitor
+from daylib.pricing_state import PricingState
 
 LOGGER = logging.getLogger("daylily.analysis_api")
 
@@ -118,6 +124,19 @@ class AnalysisResponse(BaseModel):
     artifacts: list[AnalysisArtifactResponse]
 
 
+class ClusterCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    region_az: str
+    cluster_name: str
+    ssh_key_name: str
+    s3_bucket_name: str
+    config_path: str | None = None
+    pass_on_warn: bool = False
+    debug: bool = False
+    contact_email: str | None = None
+
+
 def _artifact_response(artifact: AnalysisArtifact) -> AnalysisArtifactResponse:
     return AnalysisArtifactResponse(
         artifact_euid=artifact.artifact_euid,
@@ -159,6 +178,41 @@ def _analysis_response(record: AnalysisRecord) -> AnalysisResponse:
     )
 
 
+def _pricing_db_path() -> Path:
+    return Path.home() / ".ursa" / "pricing.sqlite3"
+
+
+def _build_boto_session(settings: Settings, region: str | None = None) -> Any:
+    kwargs: dict[str, Any] = {}
+    if settings.aws_profile:
+        kwargs["profile_name"] = settings.aws_profile
+    if region:
+        kwargs["region_name"] = region
+    return boto3.Session(**kwargs)
+
+
+def _load_create_options(settings: Settings, region: str) -> dict[str, list[str]]:
+    session = _build_boto_session(settings, region=region)
+    ec2 = session.client("ec2", region_name=region)
+    s3 = session.client("s3")
+
+    keypairs = sorted(
+        str(item.get("KeyName") or "").strip()
+        for item in ec2.describe_key_pairs().get("KeyPairs", [])
+        if str(item.get("KeyName") or "").strip()
+    )
+    buckets = sorted(
+        str(item.get("Name") or "").strip()
+        for item in s3.list_buckets().get("Buckets", [])
+        if str(item.get("Name") or "").strip()
+    )
+    return {"keypairs": keypairs, "buckets": buckets}
+
+
+def _cluster_payload(cluster: ClusterInfo) -> dict[str, Any]:
+    return cluster.to_dict(include_sensitive=True)
+
+
 def create_app(
     store: AnalysisStore,
     *,
@@ -183,6 +237,8 @@ def create_app(
     app.state.atlas_client = atlas_client
     app.state.require_api_key = require_api_key
     app.state.api_key = settings.ursa_internal_api_key
+    app.state.pricing_store = PricingState(_pricing_db_path())
+    app.state.pricing_monitor = PricingMonitor(settings=settings, store=app.state.pricing_store)
 
     logging.basicConfig(
         level=getattr(logging, settings.log_level.upper(), logging.INFO),
@@ -209,6 +265,11 @@ def create_app(
         response = await call_next(request)
         response.headers["X-Request-ID"] = request_id
         return response
+
+    @app.on_event("startup")
+    async def start_background_services() -> None:
+        if settings.ursa_cost_monitor_enabled:
+            app.state.pricing_monitor.start()
 
     @app.exception_handler(Exception)
     async def generic_exception_handler(request: Request, exc: Exception):
@@ -237,6 +298,11 @@ def create_app(
             )
         return provided
 
+    def require_admin_api_key(
+        x_api_key: Annotated[str | None, Header(alias="X-API-Key")] = None,
+    ) -> str:
+        return require_write_api_key(x_api_key)
+
     @app.get("/", tags=["health"])
     async def root() -> dict[str, str]:
         return {
@@ -244,6 +310,102 @@ def create_app(
             "service": "daylily-ursa-beta-analysis",
             "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         }
+
+    @app.get("/api/clusters")
+    async def list_clusters(
+        refresh: bool = False,
+        _api_key: str = Depends(require_admin_api_key),
+    ) -> dict[str, Any]:
+        cluster_service = get_cluster_service(
+            regions=settings.get_allowed_regions() or settings.get_cost_monitor_regions(),
+            aws_profile=settings.aws_profile,
+        )
+        clusters = cluster_service.get_all_clusters(force_refresh=refresh)
+        return {"clusters": [_cluster_payload(cluster) for cluster in clusters]}
+
+    @app.delete("/api/clusters/{cluster_name}")
+    async def delete_cluster(
+        cluster_name: str,
+        region: str,
+        _api_key: str = Depends(require_admin_api_key),
+    ) -> dict[str, Any]:
+        cluster_service = get_cluster_service(
+            regions=settings.get_allowed_regions() or settings.get_cost_monitor_regions(),
+            aws_profile=settings.aws_profile,
+        )
+        result = cluster_service.delete_cluster(cluster_name, region)
+        return {"success": True, "result": result}
+
+    @app.get("/api/clusters/create/options")
+    async def create_cluster_options(
+        region: str,
+        _api_key: str = Depends(require_admin_api_key),
+    ) -> dict[str, Any]:
+        try:
+            return _load_create_options(settings, region)
+        except Exception as exc:
+            LOGGER.exception("Failed to load cluster create options")
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    @app.post("/api/clusters/create")
+    async def create_cluster(
+        request: ClusterCreateRequest,
+        _api_key: str = Depends(require_admin_api_key),
+    ) -> dict[str, Any]:
+        job = start_create_job(
+            region_az=request.region_az,
+            cluster_name=request.cluster_name,
+            ssh_key_name=request.ssh_key_name,
+            s3_bucket_name=request.s3_bucket_name,
+            aws_profile=settings.aws_profile,
+            contact_email=request.contact_email,
+            config_path_override=request.config_path,
+            pass_on_warn=request.pass_on_warn,
+            debug=request.debug,
+        )
+        return {
+            "job_id": job.job_id,
+            "cluster_name": job.cluster_name,
+            "region_az": job.region_az,
+            "status": job.status,
+        }
+
+    @app.get("/api/clusters/create/jobs")
+    async def cluster_create_jobs(
+        limit: int = 20,
+        _api_key: str = Depends(require_admin_api_key),
+    ) -> dict[str, Any]:
+        return {"jobs": list_cluster_create_jobs(limit=limit)}
+
+    @app.get("/api/clusters/create/jobs/{job_id}/logs")
+    async def cluster_create_logs(
+        job_id: str,
+        lines: int = 200,
+        _api_key: str = Depends(require_admin_api_key),
+    ) -> dict[str, Any]:
+        return {"job_id": job_id, "log": tail_job_log(job_id, lines=lines)}
+
+    @app.get("/api/pricing-snapshots")
+    async def pricing_snapshots(
+        region: str | None = Query(default=None),
+        partitions: str | None = Query(default=None),
+        from_ts: str | None = Query(default=None, alias="from"),
+        to_ts: str | None = Query(default=None, alias="to"),
+        _api_key: str = Depends(require_admin_api_key),
+    ) -> dict[str, Any]:
+        requested_partitions = [part.strip() for part in partitions.split(",")] if partitions else None
+        return app.state.pricing_monitor.get_snapshot_payload(
+            region=region,
+            partitions=requested_partitions,
+            from_ts=from_ts,
+            to_ts=to_ts,
+        )
+
+    @app.post("/api/pricing-snapshots/run")
+    async def run_pricing_snapshot(
+        _api_key: str = Depends(require_admin_api_key),
+    ) -> dict[str, Any]:
+        return app.state.pricing_monitor.queue_capture(trigger="manual", requested_by="admin")
 
     @app.post(
         "/api/analyses/ingest",
