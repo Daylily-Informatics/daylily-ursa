@@ -15,11 +15,14 @@ class DummyStore:
         self.record = AnalysisRecord(
             analysis_euid="AN-1",
             run_euid="RUN-1",
-            index_string="IDX-01",
+            flowcell_id="FLOW-1",
+            lane="1",
+            library_barcode="LIB-1",
+            sequenced_library_assignment_euid="SQA-1",
             atlas_tenant_id="TEN-1",
-            atlas_order_euid="ORD-1",
-            atlas_test_order_euid="TST-1",
-            source_euid="LIB-1",
+            atlas_trf_euid="TRF-1",
+            atlas_test_euid="TST-1",
+            atlas_test_process_item_euid="TPC-1",
             analysis_type="somatic",
             state=AnalysisState.REVIEW_PENDING.value,
             review_state=ReviewState.PENDING.value,
@@ -63,7 +66,9 @@ class DummyStore:
 
 
 class DummyBloomClient:
-    def resolve_run_index(self, run_euid: str, index_string: str):
+    def resolve_run_assignment(
+        self, run_euid: str, flowcell_id: str, lane: str, library_barcode: str
+    ):
         raise AssertionError("Bloom resolver should not be called during result return")
 
 
@@ -103,6 +108,11 @@ def _settings() -> Settings:
 
 def test_return_analysis_result_calls_atlas_and_marks_returned():
     store = DummyStore()
+    store.record = replace(
+        store.record,
+        review_state=ReviewState.APPROVED.value,
+        state=AnalysisState.REVIEWED.value,
+    )
     atlas = DummyAtlasClient()
     app = create_app(
         store,
@@ -128,8 +138,36 @@ def test_return_analysis_result_calls_atlas_and_marks_returned():
     body = response.json()
     assert body["state"] == "RETURNED"
     assert body["atlas_return"]["assay_run_euid"] == "ASR-1"
-    assert atlas.calls[0]["atlas_test_order_euid"] == "TST-1"
+    assert atlas.calls[0]["atlas_test_process_item_euid"] == "TPC-1"
     assert store.mark_returned_calls[0]["idempotency_key"] == "return-1"
+
+
+def test_return_analysis_result_requires_manual_approval():
+    store = DummyStore()
+    atlas = DummyAtlasClient()
+    app = create_app(
+        store,
+        bloom_client=DummyBloomClient(),
+        atlas_client=atlas,
+        settings=_settings(),
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/analyses/AN-1/return",
+            headers={
+                "X-API-Key": "ursa-test-key",
+                "Idempotency-Key": "return-1",
+            },
+            json={
+                "result_payload": {"calls": []},
+                "result_status": "COMPLETED",
+            },
+        )
+
+    assert response.status_code == 409, response.text
+    assert "manual approval" in response.text
+    assert atlas.calls == []
 
 
 def test_review_analysis_updates_review_state():

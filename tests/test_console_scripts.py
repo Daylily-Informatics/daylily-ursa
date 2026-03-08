@@ -4,6 +4,8 @@ import importlib
 import sys
 from pathlib import Path
 
+from typer.testing import CliRunner
+
 def _read_project_scripts(pyproject: Path) -> dict[str, str]:
     """Parse the [project.scripts] table from pyproject.toml.
 
@@ -96,3 +98,17 @@ def test_ursa_server_start_uses_packaged_entrypoint(monkeypatch):
     kwargs = captured.get("kwargs")
     assert isinstance(kwargs, dict)
     assert isinstance(kwargs.get("env"), dict)
+
+
+def test_ursa_cli_exposes_standardized_groups():
+    from daylib.cli import app
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["--help"])
+
+    assert result.exit_code == 0
+    assert "server" in result.output
+    assert "config" in result.output
+    assert "quality" in result.output
+    assert "doctor" in result.output
+    assert "logs" in result.output

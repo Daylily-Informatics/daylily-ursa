@@ -34,11 +34,15 @@ class AtlasResultClient:
         self,
         *,
         atlas_tenant_id: str,
-        atlas_order_euid: str,
-        atlas_test_order_euid: str,
+        atlas_trf_euid: str,
+        atlas_test_euid: str,
+        atlas_test_process_item_euid: str,
         analysis_euid: str,
         run_euid: str,
-        index_string: str,
+        sequenced_library_assignment_euid: str,
+        flowcell_id: str,
+        lane: str,
+        library_barcode: str,
         analysis_type: str,
         result_status: str,
         review_state: str,
@@ -48,15 +52,19 @@ class AtlasResultClient:
     ) -> dict[str, Any]:
         url = (
             f"{self.base_url.rstrip('/')}"
-            f"/api/integrations/ursa/v1/test-orders/{atlas_test_order_euid}/analysis-results"
+            f"/api/integrations/ursa/v1/process-items/{atlas_test_process_item_euid}/analysis-results"
         )
         payload = {
             "atlas_tenant_id": atlas_tenant_id,
-            "atlas_order_euid": atlas_order_euid,
-            "atlas_test_order_euid": atlas_test_order_euid,
+            "atlas_trf_euid": atlas_trf_euid,
+            "atlas_test_euid": atlas_test_euid,
+            "atlas_test_process_item_euid": atlas_test_process_item_euid,
             "analysis_euid": analysis_euid,
             "run_euid": run_euid,
-            "index_string": index_string,
+            "sequenced_library_assignment_euid": sequenced_library_assignment_euid,
+            "flowcell_id": flowcell_id,
+            "lane": lane,
+            "library_barcode": library_barcode,
             "analysis_type": analysis_type,
             "result_status": result_status,
             "review_state": review_state,

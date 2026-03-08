@@ -35,7 +35,9 @@ class AnalysisIngestRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     run_euid: str
-    index_string: str
+    flowcell_id: str
+    lane: str
+    library_barcode: str
     analysis_type: str = "beta-default"
     artifact_bucket: str
     input_files: list[str] = Field(default_factory=list)
@@ -94,11 +96,14 @@ class AnalysisArtifactResponse(BaseModel):
 class AnalysisResponse(BaseModel):
     analysis_euid: str
     run_euid: str
-    index_string: str
+    flowcell_id: str
+    lane: str
+    library_barcode: str
+    sequenced_library_assignment_euid: str
     atlas_tenant_id: str
-    atlas_order_euid: str
-    atlas_test_order_euid: str
-    source_euid: str
+    atlas_trf_euid: str
+    atlas_test_euid: str
+    atlas_test_process_item_euid: str
     analysis_type: str
     state: str
     review_state: str
@@ -131,11 +136,14 @@ def _analysis_response(record: AnalysisRecord) -> AnalysisResponse:
     return AnalysisResponse(
         analysis_euid=record.analysis_euid,
         run_euid=record.run_euid,
-        index_string=record.index_string,
+        flowcell_id=record.flowcell_id,
+        lane=record.lane,
+        library_barcode=record.library_barcode,
+        sequenced_library_assignment_euid=record.sequenced_library_assignment_euid,
         atlas_tenant_id=record.atlas_tenant_id,
-        atlas_order_euid=record.atlas_order_euid,
-        atlas_test_order_euid=record.atlas_test_order_euid,
-        source_euid=record.source_euid,
+        atlas_trf_euid=record.atlas_trf_euid,
+        atlas_test_euid=record.atlas_test_euid,
+        atlas_test_process_item_euid=record.atlas_test_process_item_euid,
         analysis_type=record.analysis_type,
         state=record.state,
         review_state=record.review_state,
@@ -250,9 +258,11 @@ def create_app(
         if not str(idempotency_key or "").strip():
             raise HTTPException(status_code=400, detail="Idempotency-Key header is required")
         try:
-            resolution = app.state.bloom_client.resolve_run_index(
+            resolution = app.state.bloom_client.resolve_run_assignment(
                 request.run_euid,
-                request.index_string,
+                request.flowcell_id,
+                request.lane,
+                request.library_barcode,
             )
         except BloomResolverError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
@@ -348,14 +358,23 @@ def create_app(
             raise HTTPException(status_code=404, detail="Analysis not found")
         if app.state.atlas_client is None:
             raise HTTPException(status_code=503, detail="Atlas result return client is not configured")
+        if record.review_state != ReviewState.APPROVED.value:
+            raise HTTPException(
+                status_code=409,
+                detail="Analysis cannot be returned before manual approval",
+            )
         try:
             atlas_response = app.state.atlas_client.return_analysis_result(
                 atlas_tenant_id=record.atlas_tenant_id,
-                atlas_order_euid=record.atlas_order_euid,
-                atlas_test_order_euid=record.atlas_test_order_euid,
+                atlas_trf_euid=record.atlas_trf_euid,
+                atlas_test_euid=record.atlas_test_euid,
+                atlas_test_process_item_euid=record.atlas_test_process_item_euid,
                 analysis_euid=record.analysis_euid,
                 run_euid=record.run_euid,
-                index_string=record.index_string,
+                sequenced_library_assignment_euid=record.sequenced_library_assignment_euid,
+                flowcell_id=record.flowcell_id,
+                lane=record.lane,
+                library_barcode=record.library_barcode,
                 analysis_type=record.analysis_type,
                 result_status=request.result_status,
                 review_state=record.review_state,

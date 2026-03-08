@@ -1,4 +1,4 @@
-"""HTTP client for Bloom run-index resolution."""
+"""HTTP client for Bloom sequenced-assignment resolution."""
 
 from __future__ import annotations
 
@@ -27,7 +27,13 @@ class BloomResolverClient:
             headers["Authorization"] = f"Bearer {self.token}"
         return headers
 
-    def resolve_run_index(self, run_euid: str, index_string: str) -> RunResolution:
+    def resolve_run_assignment(
+        self,
+        run_euid: str,
+        flowcell_id: str,
+        lane: str,
+        library_barcode: str,
+    ) -> RunResolution:
         url = (
             f"{self.base_url.rstrip('/')}"
             f"/api/v1/external/atlas/beta/runs/{run_euid}/resolve"
@@ -37,7 +43,11 @@ class BloomResolverClient:
         try:
             response = client.get(
                 url,
-                params={"index_string": index_string},
+                params={
+                    "flowcell_id": flowcell_id,
+                    "lane": lane,
+                    "library_barcode": library_barcode,
+                },
                 headers=self._headers(),
             )
         except httpx.HTTPError as exc:
@@ -54,11 +64,14 @@ class BloomResolverClient:
         body: dict[str, Any] = response.json()
         required = (
             "run_euid",
-            "index_string",
+            "flowcell_id",
+            "lane",
+            "library_barcode",
+            "sequenced_library_assignment_euid",
             "atlas_tenant_id",
-            "atlas_order_euid",
-            "atlas_test_order_euid",
-            "source_euid",
+            "atlas_trf_euid",
+            "atlas_test_euid",
+            "atlas_test_process_item_euid",
         )
         missing = [key for key in required if not str(body.get(key) or "").strip()]
         if missing:
@@ -68,9 +81,12 @@ class BloomResolverClient:
 
         return RunResolution(
             run_euid=str(body["run_euid"]),
-            index_string=str(body["index_string"]),
+            flowcell_id=str(body["flowcell_id"]),
+            lane=str(body["lane"]),
+            library_barcode=str(body["library_barcode"]),
+            sequenced_library_assignment_euid=str(body["sequenced_library_assignment_euid"]),
             atlas_tenant_id=str(body["atlas_tenant_id"]),
-            atlas_order_euid=str(body["atlas_order_euid"]),
-            atlas_test_order_euid=str(body["atlas_test_order_euid"]),
-            source_euid=str(body["source_euid"]),
+            atlas_trf_euid=str(body["atlas_trf_euid"]),
+            atlas_test_euid=str(body["atlas_test_euid"]),
+            atlas_test_process_item_euid=str(body["atlas_test_process_item_euid"]),
         )

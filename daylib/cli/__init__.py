@@ -9,14 +9,16 @@ from typing import Optional
 import typer
 from rich.console import Console
 
+from daylib.cli.env import env_app
+from daylib.cli.quality import quality_app
+from daylib.cli.server import logs as server_logs
 from daylib.cli.server import server_app
 from daylib.cli.test import test_app
-from daylib.cli.env import env_app
 
 console = Console()
 
 # Commands that skip AWS validation
-_SKIP_AWS_VALIDATION = {"version", "test", "env", "info"}
+_SKIP_AWS_VALIDATION = {"version", "test", "env", "config", "quality", "info", "doctor", "logs"}
 
 
 def _validate_aws_env() -> None:
@@ -82,6 +84,8 @@ app = typer.Typer(
 app.add_typer(server_app, name="server", help="API server management")
 app.add_typer(test_app, name="test", help="Testing and code quality")
 app.add_typer(env_app, name="env", help="Environment and configuration")
+app.add_typer(env_app, name="config", help="Configuration and environment")
+app.add_typer(quality_app, name="quality", help="Linting, formatting, and checks")
 
 
 @app.command("version")
@@ -246,6 +250,23 @@ def info():
         console.print("[yellow]⚠[/yellow]  No regions configured")
         console.print(f"   Create config: [cyan]{DEFAULT_CONFIG_PATH}[/cyan]")
         console.print("   See example:   [cyan]config/ursa-config.example.yaml[/cyan]")
+
+
+@app.command("doctor")
+def doctor():
+    """Show a quick configuration and dependency health check."""
+    from daylib.cli.env import status as env_status
+
+    env_status()
+
+
+@app.command("logs")
+def logs(
+    lines: int = typer.Option(50, "--lines", "-n", help="Number of lines to show"),
+    all_logs: bool = typer.Option(False, "--all", "-a", help="List all log files"),
+):
+    """Show Ursa server logs."""
+    server_logs(lines=lines, all_logs=all_logs)
 
 
 def main():
