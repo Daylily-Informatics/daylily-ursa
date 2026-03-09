@@ -16,6 +16,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, ConfigDict, Field
+from pydantic import model_validator
 
 from daylib_ursa.analysis_store import (
     AnalysisArtifact,
@@ -31,6 +32,7 @@ from daylib_ursa.atlas_result_client import (
 )
 from daylib_ursa.bloom_resolver_client import BloomResolverClient, BloomResolverError
 from daylib_ursa.config import Settings, get_settings
+from daylib_ursa.dewey_client import DeweyClient, DeweyClientError
 from daylib_ursa.portal_auth import (
     PORTAL_SESSION_COOKIE_NAME,
     PORTAL_SESSION_MAX_AGE_SECONDS,
@@ -67,13 +69,20 @@ class AnalysisIngestRequest(BaseModel):
 class AnalysisArtifactRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    artifact_type: str
-    storage_uri: str
-    filename: str
+    artifact_type: str | None = None
+    artifact_euid: str | None = None
+    storage_uri: str | None = None
+    filename: str | None = None
     mime_type: str | None = None
     checksum_sha256: str | None = None
     size_bytes: int | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_reference_fields(self) -> "AnalysisArtifactRequest":
+        if not str(self.storage_uri or "").strip() and not str(self.artifact_euid or "").strip():
+            raise ValueError("Either storage_uri or artifact_euid is required")
+        return self
 
 
 class AnalysisStatusRequest(BaseModel):
@@ -205,14 +214,15 @@ def create_app(
     *,
     bloom_client: BloomResolverClient,
     atlas_client: AtlasResultClient | None = None,
+    dewey_client: DeweyClient | None = None,
     settings: Settings | None = None,
     require_api_key: bool | None = None,
 ) -> FastAPI:
     if settings is None:
         settings = get_settings()
 
-    if require_api_key is None:
-        require_api_key = True
+    if require_api_key is False:
+        raise ValueError("Ursa write API key enforcement cannot be disabled")
 
     app = FastAPI(
         title="Daylily Ursa Beta Analysis API",
@@ -222,7 +232,8 @@ def create_app(
     app.state.store = store
     app.state.bloom_client = bloom_client
     app.state.atlas_client = atlas_client
-    app.state.require_api_key = require_api_key
+    app.state.dewey_client = dewey_client
+    app.state.require_api_key = True
     app.state.api_key = settings.ursa_internal_api_key
 
     if not any(getattr(route, "path", None) == "/static" for route in app.routes):
@@ -472,16 +483,83 @@ def create_app(
         request: AnalysisArtifactRequest,
         _api_key: str = Depends(require_write_api_key),
     ) -> AnalysisArtifactResponse:
+        artifact_type = str(request.artifact_type or "").strip()
+        storage_uri = str(request.storage_uri or "").strip()
+        filename = str(request.filename or "").strip()
+        artifact_metadata = dict(request.metadata or {})
+        source_artifact_euid = str(request.artifact_euid or "").strip()
+        existing_dewey_artifact_euid = ""
+
+        if not storage_uri and source_artifact_euid:
+            if app.state.dewey_client is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="artifact_euid requires Dewey integration configuration",
+                )
+            try:
+                resolved = app.state.dewey_client.resolve_artifact(source_artifact_euid)
+            except DeweyClientError as exc:
+                raise HTTPException(status_code=502, detail=str(exc)) from exc
+            storage_uri = str(resolved.get("storage_uri") or "").strip()
+            if not artifact_type:
+                artifact_type = str(resolved.get("artifact_type") or "").strip()
+            if not filename:
+                filename = Path(storage_uri).name or f"{source_artifact_euid}.bin"
+            artifact_metadata.setdefault("dewey_artifact_euid", source_artifact_euid)
+            artifact_metadata.setdefault("dewey_resolved", True)
+
+        if not artifact_type:
+            raise HTTPException(status_code=400, detail="artifact_type is required")
+        if not storage_uri:
+            raise HTTPException(status_code=400, detail="storage_uri is required")
+        if not filename:
+            filename = Path(storage_uri).name or "artifact.bin"
+
+        existing_record = app.state.store.get_analysis(analysis_euid)
+        if existing_record is not None:
+            for existing_artifact in existing_record.artifacts:
+                if str(existing_artifact.storage_uri or "").strip() != storage_uri:
+                    continue
+                existing_dewey_artifact_euid = str(
+                    existing_artifact.metadata.get("dewey_artifact_euid") or ""
+                ).strip()
+                if existing_dewey_artifact_euid:
+                    artifact_metadata.setdefault(
+                        "dewey_artifact_euid",
+                        existing_dewey_artifact_euid,
+                    )
+                    break
+
+        if (
+            app.state.dewey_client is not None
+            and not source_artifact_euid
+            and not existing_dewey_artifact_euid
+        ):
+            try:
+                registered_euid = app.state.dewey_client.register_artifact(
+                    artifact_type=artifact_type,
+                    storage_uri=storage_uri,
+                    metadata={
+                        **artifact_metadata,
+                        "producer_system": "ursa",
+                        "producer_object_euid": analysis_euid,
+                    },
+                    idempotency_key=f"{analysis_euid}:{storage_uri}",
+                )
+            except DeweyClientError as exc:
+                raise HTTPException(status_code=502, detail=str(exc)) from exc
+            artifact_metadata["dewey_artifact_euid"] = registered_euid
+
         try:
             artifact = app.state.store.add_artifact(
                 analysis_euid,
-                artifact_type=request.artifact_type,
-                storage_uri=request.storage_uri,
-                filename=request.filename,
+                artifact_type=artifact_type,
+                storage_uri=storage_uri,
+                filename=filename,
                 mime_type=request.mime_type,
                 checksum_sha256=request.checksum_sha256,
                 size_bytes=request.size_bytes,
-                metadata=request.metadata,
+                metadata=artifact_metadata,
             )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc

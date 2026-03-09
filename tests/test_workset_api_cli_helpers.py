@@ -117,7 +117,7 @@ def test_main_bootstraps_and_runs_with_atlas_client(monkeypatch: pytest.MonkeyPa
     assert run_calls[0]["log_level"] == "debug"
 
 
-def test_main_skips_bootstrap_and_omits_atlas_client(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_main_skips_bootstrap_and_fails_without_atlas_key(monkeypatch: pytest.MonkeyPatch) -> None:
     args = argparse.Namespace(
         region="us-west-2",
         profile=None,
@@ -157,18 +157,10 @@ def test_main_skips_bootstrap_and_omits_atlas_client(monkeypatch: pytest.MonkeyP
         lambda **kwargs: SimpleNamespace(kind="bloom", kwargs=kwargs),
     )
 
-    app_inputs: dict[str, object] = {}
-
-    def _create_app(store_arg, **kwargs):
-        app_inputs["store"] = store_arg
-        app_inputs.update(kwargs)
-        return "fake-app"
-
-    monkeypatch.setattr(cli, "create_app", _create_app)
+    monkeypatch.setattr(cli, "create_app", lambda *_args, **_kwargs: "fake-app")
     monkeypatch.setattr(cli.uvicorn, "run", lambda *_args, **_kwargs: None)
 
-    rc = cli.main([])
+    with pytest.raises(ValueError, match="ATLAS_INTERNAL_API_KEY"):
+        cli.main([])
 
-    assert rc == 0
     assert store.bootstrap_called is False
-    assert app_inputs["atlas_client"] is None

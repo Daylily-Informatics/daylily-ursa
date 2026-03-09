@@ -185,7 +185,6 @@ def test_review_analysis_updates_review_state():
         bloom_client=DummyBloomClient(),
         atlas_client=atlas,
         settings=_settings(),
-        require_api_key=False,
     )
 
     def _set_review_state(analysis_euid: str, **kwargs):
@@ -203,6 +202,7 @@ def test_review_analysis_updates_review_state():
     with TestClient(app) as client:
         response = client.post(
             "/api/analyses/AN-1/review",
+            headers={"X-API-Key": "ursa-test-key"},
             json={"review_state": "APPROVED", "reviewer": "qa@example.com"},
         )
 
@@ -231,4 +231,15 @@ def test_atlas_result_client_rejects_non_https_base_url():
             result_payload={},
             artifacts=[],
             idempotency_key="idem-1",
+        )
+
+
+def test_create_app_rejects_no_auth_write_mode():
+    with pytest.raises(ValueError, match="cannot be disabled"):
+        create_app(
+            DummyStore(),
+            bloom_client=DummyBloomClient(),
+            atlas_client=DummyAtlasClient(),
+            settings=_settings(),
+            require_api_key=False,
         )

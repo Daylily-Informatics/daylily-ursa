@@ -10,7 +10,7 @@ import os
 from functools import lru_cache
 from typing import List, Optional
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -18,6 +18,15 @@ def _require_https_url(value: str, *, field_name: str) -> str:
     normalized = str(value or "").strip()
     if not normalized:
         raise ValueError(f"{field_name} must not be empty")
+    if not normalized.startswith("https://"):
+        raise ValueError(f"{field_name} must use an absolute https:// URL")
+    return normalized.rstrip("/")
+
+
+def _validate_optional_https_url(value: str, *, field_name: str) -> str:
+    normalized = str(value or "").strip()
+    if not normalized:
+        return ""
     if not normalized.startswith("https://"):
         raise ValueError(f"{field_name} must use an absolute https:// URL")
     return normalized.rstrip("/")
@@ -229,6 +238,26 @@ class Settings(BaseSettings):
         default=True,
         description="Verify Atlas HTTPS certificates for result return requests",
     )
+    dewey_enabled: bool = Field(
+        default=False,
+        description="Enable Ursa <-> Dewey artifact resolve/register integration",
+    )
+    dewey_base_url: str = Field(
+        default="",
+        description="Dewey base URL for artifact resolve/register requests",
+    )
+    dewey_api_token: Optional[str] = Field(
+        default=None,
+        description="Bearer token used for Dewey API access",
+    )
+    dewey_verify_ssl: bool = Field(
+        default=True,
+        description="Verify Dewey HTTPS certificates for artifact requests",
+    )
+    dewey_timeout_seconds: float = Field(
+        default=10.0,
+        description="Dewey API timeout in seconds",
+    )
 
     # ========== Notifications ==========
     sns_topic_arn: Optional[str] = Field(
@@ -372,6 +401,20 @@ class Settings(BaseSettings):
     @classmethod
     def validate_https_service_urls(cls, v: str, info) -> str:
         return _require_https_url(v, field_name=str(info.field_name))
+
+    @field_validator("dewey_base_url")
+    @classmethod
+    def validate_dewey_base_url(cls, v: str) -> str:
+        return _validate_optional_https_url(v, field_name="dewey_base_url")
+
+    @model_validator(mode="after")
+    def validate_dewey_integration(self) -> "Settings":
+        if self.dewey_enabled:
+            if not str(self.dewey_base_url or "").strip():
+                raise ValueError("dewey_base_url is required when dewey_enabled=true")
+            if not str(self.dewey_api_token or "").strip():
+                raise ValueError("dewey_api_token is required when dewey_enabled=true")
+        return self
 
     def get_cors_origins(self) -> List[str]:
         """Get list of CORS origins from comma-separated string.
