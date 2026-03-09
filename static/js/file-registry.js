@@ -1456,7 +1456,8 @@ async function loadLinkedBuckets() {
         const response = await fetch(`${FILE_API_BASE}/buckets/list?customer_id=${encodeURIComponent(customerId)}`);
 
         if (response.ok) {
-            const buckets = await response.json();
+            const payload = await response.json();
+            const buckets = Array.isArray(payload) ? payload : (payload.buckets || []);
             renderBucketsList(buckets);
         } else {
             const error = await response.json();
@@ -1807,4 +1808,3 @@ document.addEventListener('DOMContentLoaded', () => {
         document.head.appendChild(style);
     }
 });
-

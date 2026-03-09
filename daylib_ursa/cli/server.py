@@ -288,6 +288,28 @@ def _describe_cognito_app_client(
     return dict(response.get("UserPoolClient") or {})
 
 
+def _require_cognito_configuration(ursa_config) -> None:
+    """Require Cognito configuration and project it into env vars."""
+    field_map = {
+        "COGNITO_USER_POOL_ID": "cognito_user_pool_id",
+        "COGNITO_APP_CLIENT_ID": "cognito_app_client_id",
+        "COGNITO_REGION": "cognito_region",
+        "COGNITO_DOMAIN": "cognito_domain",
+    }
+    missing: list[str] = []
+    for env_key, attr_name in field_map.items():
+        if not os.environ.get(env_key):
+            value = getattr(ursa_config, attr_name, None)
+            if value:
+                os.environ[env_key] = str(value)
+            else:
+                missing.append(env_key)
+    if missing:
+        console.print("[red]✗[/red]  Authentication is mandatory but Cognito config is missing")
+        console.print("   Missing: [cyan]" + ", ".join(missing) + "[/cyan]")
+        raise typer.Exit(1)
+
+
 def _get_log_file() -> Path:
     """Get timestamped log file path."""
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -378,6 +400,9 @@ def start(
     if not os.environ.get("AWS_PROFILE"):
         os.environ["AWS_PROFILE"] = aws_profile
 
+    _require_auth_dependencies()
+    _require_cognito_configuration(ursa_config)
+
     aws_region = (
         os.environ.get("AWS_REGION")
         or os.environ.get("AWS_DEFAULT_REGION")
@@ -422,6 +447,7 @@ def start(
     # Set up environment
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
+    env["ENABLE_AUTH"] = "true"
 
     if reload:
         cmd.append("--reload")
@@ -548,9 +574,8 @@ def logs(
 def restart(
     port: int = typer.Option(8914, "--port", "-p", help="Port to run the server on"),
     host: str = typer.Option("0.0.0.0", "--host", "-h", help="Host to bind to"),
-    auth: bool = typer.Option(True, "--auth/--no-auth", help="Enable Cognito authentication"),
 ):
     """Restart the Ursa API server."""
     stop()
     time.sleep(1)
-    start(port=port, host=host, auth=auth, reload=False, background=True)
+    start(port=port, host=host, reload=False, background=True)

@@ -143,8 +143,8 @@ class Settings(BaseSettings):
         description="AWS Cognito Hosted UI domain (optional, used for SSO/OAuth flows)",
     )
     enable_auth: bool = Field(
-        default=False,
-        description="Enable authentication (requires Cognito configuration)",
+        default=True,
+        description="Authentication is mandatory and always enabled",
     )
     session_secret_key: str = Field(
         default="daylily-dev-secret-change-in-production",
@@ -183,6 +183,14 @@ class Settings(BaseSettings):
     api_port: int = Field(
         default=8914,
         description="API server port",
+    )
+    ursa_tapdb_mount_enabled: bool = Field(
+        default=True,
+        description="Mount TapDB admin UI/API inside Ursa under an admin-only path",
+    )
+    ursa_tapdb_mount_path: str = Field(
+        default="/admin/tapdb",
+        description="Ursa path prefix used to mount TapDB admin sub-application",
     )
     ursa_internal_api_key: str = Field(
         default="ursa-dev-internal-key",
@@ -331,6 +339,25 @@ class Settings(BaseSettings):
         if v.lower() not in allowed:
             raise ValueError(f"daylily_env must be one of: {allowed}")
         return v.lower()
+
+    @field_validator("enable_auth", mode="before")
+    @classmethod
+    def enforce_auth_always_enabled(cls, _v) -> bool:
+        """Authentication is always enabled for Ursa."""
+        return True
+
+    @field_validator("ursa_tapdb_mount_path")
+    @classmethod
+    def validate_tapdb_mount_path(cls, v: str) -> str:
+        """Validate mount path shape for mounted TapDB admin."""
+        path = str(v or "").strip()
+        if not path:
+            raise ValueError("ursa_tapdb_mount_path must not be empty")
+        if not path.startswith("/"):
+            raise ValueError("ursa_tapdb_mount_path must start with '/'")
+        if path != "/" and path.endswith("/"):
+            path = path.rstrip("/")
+        return path
 
     def get_cors_origins(self) -> List[str]:
         """Get list of CORS origins from comma-separated string.

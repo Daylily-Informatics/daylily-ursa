@@ -77,6 +77,34 @@ Or run directly:
 daylily-workset-api --host 0.0.0.0 --port 8914 --bootstrap-tapdb
 ```
 
+### Mounted TapDB Admin Surface
+
+Ursa mounts TapDB admin inside the same FastAPI process (no separate TapDB web
+server required) under:
+
+- `/admin/tapdb`
+
+Access control is enforced by Ursa before requests reach TapDB:
+
+- unauthenticated -> `307` redirect to `/portal/login`
+- authenticated non-admin -> `403` JSON
+- authenticated admin -> allowed
+
+Mounted mode explicitly bypasses TapDB-local auth by setting:
+
+- `TAPDB_ADMIN_DISABLE_AUTH=true`
+- `TAPDB_ADMIN_DISABLED_USER_ROLE=admin`
+
+This preserves Ursa as the sole auth/session gate while keeping standalone
+TapDB usage unchanged.
+
+Mount configuration:
+
+```bash
+URSA_TAPDB_MOUNT_ENABLED=true
+URSA_TAPDB_MOUNT_PATH=/admin/tapdb
+```
+
 ## Workset Monitor
 
 The workset monitor reads a YAML config file and runs continuously (or `--once` for a single iteration).
@@ -106,4 +134,3 @@ If you see errors mentioning missing templates, bootstrap:
 ```bash
 ursa aws setup
 ```
-

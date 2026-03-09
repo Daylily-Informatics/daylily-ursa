@@ -9,11 +9,11 @@ from typing import Optional
 import typer
 from rich.console import Console
 
-from daylib.cli.env import env_app
-from daylib.cli.quality import quality_app
-from daylib.cli.server import logs as server_logs
-from daylib.cli.server import server_app
-from daylib.cli.test import test_app
+from daylib_ursa.cli.env import env_app
+from daylib_ursa.cli.quality import quality_app
+from daylib_ursa.cli.server import logs as server_logs
+from daylib_ursa.cli.server import server_app
+from daylib_ursa.cli.test import test_app
 
 console = Console()
 
@@ -30,7 +30,7 @@ def _validate_aws_env() -> None:
 
     Regions are configured in ~/.config/ursa/ursa-config.yaml and explicitly passed to AWS API calls.
     """
-    from daylib.ursa_config import get_ursa_config
+    from daylib_ursa.ursa_config import get_ursa_config
 
     errors = []
     ursa_config = get_ursa_config()
@@ -183,7 +183,7 @@ def _format_value_with_source(value: Optional[str], source: str) -> str:
 def info():
     """Show Ursa configuration and status."""
     from rich.table import Table
-    from daylib.ursa_config import get_ursa_config, DEFAULT_CONFIG_PATH
+    from daylib_ursa.ursa_config import get_ursa_config, DEFAULT_CONFIG_PATH
 
     ursa_config = get_ursa_config()
 
@@ -193,7 +193,7 @@ def info():
 
     # Version
     try:
-        from daylib import __version__
+        from daylib_ursa import __version__
         table.add_row("Version", __version__)
     except ImportError:
         table.add_row("Version", "dev")
@@ -236,7 +236,7 @@ def info():
     else:
         table.add_row("API Server", "[dim]Stopped[/dim]")
 
-    from daylib.config import get_settings
+    from daylib_ursa.config import get_settings
 
     settings = get_settings()
     table.add_row("Bloom URL", settings.bloom_base_url)
@@ -255,7 +255,7 @@ def info():
 @app.command("doctor")
 def doctor():
     """Show a quick configuration and dependency health check."""
-    from daylib.cli.env import status as env_status
+    from daylib_ursa.cli.env import status as env_status
 
     env_status()
 

@@ -126,6 +126,7 @@ def _settings() -> Settings:
         ursa_internal_api_key="ursa-test-key",
         bloom_base_url="https://bloom.example",
         atlas_base_url="https://atlas.example",
+        ursa_tapdb_mount_enabled=False,
     )
 
 
@@ -192,3 +193,55 @@ def test_legacy_workset_route_is_not_registered():
         response = client.get("/worksets")
 
     assert response.status_code == 404
+
+
+def test_root_redirects_to_login_and_health_moves_to_healthz():
+    app = create_app(DummyStore(), bloom_client=DummyBloomClient(), settings=_settings())
+
+    with TestClient(app) as client:
+        root_response = client.get("/", follow_redirects=False)
+        health_response = client.get("/healthz")
+
+    assert root_response.status_code == 307
+    assert root_response.headers["location"] == "/portal/login"
+    assert health_response.status_code == 200
+    assert health_response.json()["status"] == "healthy"
+
+
+def test_settings_force_auth_enabled_even_when_disabled_in_override():
+    settings = Settings(enable_auth=False)
+    assert settings.enable_auth is True
+
+
+def test_login_uses_non_portal_callback_uri():
+    settings = Settings(
+        cors_origins="*",
+        ursa_internal_api_key="ursa-test-key",
+        bloom_base_url="https://bloom.example",
+        atlas_base_url="https://atlas.example",
+        enable_auth=True,
+        cognito_domain="daylily-ursa-5r8giqv5p.auth.us-west-2.amazoncognito.com",
+        cognito_app_client_id="34g35v8tpurbe309a8e5t5ot7i",
+        ursa_tapdb_mount_enabled=False,
+    )
+    app = create_app(DummyStore(), bloom_client=DummyBloomClient(), settings=settings)
+
+    with TestClient(app) as client:
+        response = client.get("/portal/login")
+
+    assert response.status_code == 200
+    assert "redirect_uri=" in response.text
+    assert "auth%2Fcallback" in response.text
+    assert "portal%2Fauth%2Fcallback" not in response.text
+
+
+def test_auth_callback_redirect_target_exists():
+    app = create_app(DummyStore(), bloom_client=DummyBloomClient(), settings=_settings())
+
+    with TestClient(app) as client:
+        callback = client.get("/auth/callback", follow_redirects=False)
+        portal = client.get("/portal")
+
+    assert callback.status_code == 307
+    assert callback.headers["location"].startswith("/portal/login")
+    assert portal.status_code == 200

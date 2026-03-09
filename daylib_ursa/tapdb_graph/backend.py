@@ -78,6 +78,62 @@ TEMPLATE_DEFINITIONS: tuple[TemplateDefinition, ...] = (
         "ARC",
         "Sequenced Assignment Context",
     ),
+    TemplateDefinition(
+        "actor/customer/account/1.0/",
+        "actor_template",
+        "actor_instance",
+        "CM",
+        "Portal Customer Account",
+    ),
+    TemplateDefinition(
+        "data/storage/s3-bucket-link/1.0/",
+        "data_template",
+        "data_instance",
+        "BK",
+        "Customer S3 Bucket Link",
+    ),
+    TemplateDefinition(
+        "data/file/registered/1.0/",
+        "data_template",
+        "data_instance",
+        "FM",
+        "Registered File",
+    ),
+    TemplateDefinition(
+        "data/file/fileset/1.0/",
+        "data_template",
+        "data_instance",
+        "FS",
+        "File Set",
+    ),
+    TemplateDefinition(
+        "data/manifest/stage-samples/1.0/",
+        "data_template",
+        "data_instance",
+        "MN",
+        "Stage Samples Manifest",
+    ),
+    TemplateDefinition(
+        "workflow/workset/analysis-request/1.0/",
+        "workflow_template",
+        "workflow_instance",
+        "WK",
+        "Portal Workset",
+    ),
+    TemplateDefinition(
+        "data/pricing/capture-run/1.0/",
+        "data_template",
+        "data_instance",
+        "PC",
+        "Pricing Capture Run",
+    ),
+    TemplateDefinition(
+        "data/pricing/capture-point/1.0/",
+        "data_template",
+        "data_instance",
+        "PP",
+        "Pricing Capture Point",
+    ),
 )
 
 
@@ -298,12 +354,11 @@ class TapDBBackend:
             return None
         return query.filter(generic_instance.json_addl[key].as_string() == value).first()
 
-    def find_instance_by_euid_or_external_id(
+    def find_instance_by_euid(
         self,
         session: Session,
         *,
         template_code: str,
-        key: str,
         value: str,
         for_update: bool = False,
     ) -> Optional[generic_instance]:
@@ -314,10 +369,7 @@ class TapDBBackend:
         )
         if query is None:
             return None
-        row = query.filter(generic_instance.euid == value).first()
-        if row is not None:
-            return row
-        return query.filter(generic_instance.json_addl[key].as_string() == value).first()
+        return query.filter(generic_instance.euid == value).first()
 
     def list_instances_by_template(
         self,

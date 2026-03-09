@@ -8,33 +8,46 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Any
+from urllib.parse import urlencode
 
-import boto3
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, ConfigDict, Field
 
-from daylib.analysis_store import (
+from daylib_ursa.analysis_store import (
     AnalysisArtifact,
     AnalysisRecord,
     AnalysisState,
     AnalysisStore,
     ReviewState,
 )
-from daylib.atlas_result_client import (
+from daylib_ursa.atlas_result_client import (
     AtlasResultArtifact,
     AtlasResultClient,
     AtlasResultClientError,
 )
-from daylib.bloom_resolver_client import BloomResolverClient, BloomResolverError
-from daylib.cluster_service import ClusterInfo, get_cluster_service
-from daylib.config import Settings, get_settings
-from daylib.ephemeral_cluster import list_cluster_create_jobs, start_create_job, tail_job_log
-from daylib.pricing_monitor import PricingMonitor
-from daylib.pricing_state import PricingState
+from daylib_ursa.bloom_resolver_client import BloomResolverClient, BloomResolverError
+from daylib_ursa.config import Settings, get_settings
+from daylib_ursa.portal_auth import (
+    PORTAL_SESSION_COOKIE_NAME,
+    PORTAL_SESSION_MAX_AGE_SECONDS,
+    decode_id_token_claims,
+    decode_portal_session,
+    derive_identity,
+    encode_portal_session,
+    exchange_code_for_tokens,
+    fetch_userinfo,
+)
+from daylib_ursa.portal_onboarding import OnboardingError, ensure_customer_onboarding
+from daylib_ursa.portal import mount_portal
+from daylib_ursa.tapdb_mount import mount_tapdb_admin
 
 LOGGER = logging.getLogger("daylily.analysis_api")
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_TEMPLATES = Jinja2Templates(directory=str(_REPO_ROOT / "templates"))
 
 
 class AnalysisIngestRequest(BaseModel):
@@ -124,19 +137,6 @@ class AnalysisResponse(BaseModel):
     artifacts: list[AnalysisArtifactResponse]
 
 
-class ClusterCreateRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    region_az: str
-    cluster_name: str
-    ssh_key_name: str
-    s3_bucket_name: str
-    config_path: str | None = None
-    pass_on_warn: bool = False
-    debug: bool = False
-    contact_email: str | None = None
-
-
 def _artifact_response(artifact: AnalysisArtifact) -> AnalysisArtifactResponse:
     return AnalysisArtifactResponse(
         artifact_euid=artifact.artifact_euid,
@@ -178,39 +178,25 @@ def _analysis_response(record: AnalysisRecord) -> AnalysisResponse:
     )
 
 
-def _pricing_db_path() -> Path:
-    return Path.home() / ".ursa" / "pricing.sqlite3"
-
-
-def _build_boto_session(settings: Settings, region: str | None = None) -> Any:
-    kwargs: dict[str, Any] = {}
-    if settings.aws_profile:
-        kwargs["profile_name"] = settings.aws_profile
-    if region:
-        kwargs["region_name"] = region
-    return boto3.Session(**kwargs)
-
-
-def _load_create_options(settings: Settings, region: str) -> dict[str, list[str]]:
-    session = _build_boto_session(settings, region=region)
-    ec2 = session.client("ec2", region_name=region)
-    s3 = session.client("s3")
-
-    keypairs = sorted(
-        str(item.get("KeyName") or "").strip()
-        for item in ec2.describe_key_pairs().get("KeyPairs", [])
-        if str(item.get("KeyName") or "").strip()
+def _build_hosted_ui_url(
+    *,
+    domain: str,
+    endpoint: str,
+    client_id: str,
+    redirect_uri: str,
+) -> str:
+    normalized_domain = domain.strip()
+    if not normalized_domain.startswith(("http://", "https://")):
+        normalized_domain = f"https://{normalized_domain}"
+    query = urlencode(
+        {
+            "client_id": client_id,
+            "response_type": "code",
+            "scope": "openid email profile",
+            "redirect_uri": redirect_uri,
+        }
     )
-    buckets = sorted(
-        str(item.get("Name") or "").strip()
-        for item in s3.list_buckets().get("Buckets", [])
-        if str(item.get("Name") or "").strip()
-    )
-    return {"keypairs": keypairs, "buckets": buckets}
-
-
-def _cluster_payload(cluster: ClusterInfo) -> dict[str, Any]:
-    return cluster.to_dict(include_sensitive=True)
+    return f"{normalized_domain.rstrip('/')}/{endpoint}?{query}"
 
 
 def create_app(
@@ -237,8 +223,9 @@ def create_app(
     app.state.atlas_client = atlas_client
     app.state.require_api_key = require_api_key
     app.state.api_key = settings.ursa_internal_api_key
-    app.state.pricing_store = PricingState(_pricing_db_path())
-    app.state.pricing_monitor = PricingMonitor(settings=settings, store=app.state.pricing_store)
+
+    if not any(getattr(route, "path", None) == "/static" for route in app.routes):
+        app.mount("/static", StaticFiles(directory=str(_REPO_ROOT / "static")), name="static")
 
     logging.basicConfig(
         level=getattr(logging, settings.log_level.upper(), logging.INFO),
@@ -298,114 +285,123 @@ def create_app(
             )
         return provided
 
-    def require_admin_api_key(
-        x_api_key: Annotated[str | None, Header(alias="X-API-Key")] = None,
-    ) -> str:
-        return require_write_api_key(x_api_key)
+    @app.get("/", include_in_schema=False)
+    async def root() -> RedirectResponse:
+        return RedirectResponse(url="/portal/login", status_code=status.HTTP_307_TEMPORARY_REDIRECT)
 
-    @app.get("/", tags=["health"])
-    async def root() -> dict[str, str]:
+    @app.get("/portal/login", response_class=HTMLResponse, include_in_schema=False)
+    async def portal_login(request: Request, error: str | None = None):
+        session_cookie = request.cookies.get(PORTAL_SESSION_COOKIE_NAME)
+        if session_cookie:
+            session_identity = decode_portal_session(settings.session_secret_key, session_cookie) or {}
+            if session_identity.get("logged_in"):
+                return RedirectResponse(url="/portal", status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+
+        hosted_ui_enabled = bool(
+            settings.enable_auth and settings.cognito_domain and settings.cognito_app_client_id
+        )
+        sso_login_url = ""
+        sso_signup_url = ""
+        reset_login_url = "/portal/login"
+        if hosted_ui_enabled:
+            callback_uri = f"{request.url.scheme}://{request.url.netloc}/auth/callback"
+            sso_login_url = _build_hosted_ui_url(
+                domain=str(settings.cognito_domain),
+                endpoint="login",
+                client_id=str(settings.cognito_app_client_id),
+                redirect_uri=callback_uri,
+            )
+            sso_signup_url = _build_hosted_ui_url(
+                domain=str(settings.cognito_domain),
+                endpoint="signup",
+                client_id=str(settings.cognito_app_client_id),
+                redirect_uri=callback_uri,
+            )
+            reset_login_url = sso_login_url
+        return _TEMPLATES.TemplateResponse(
+            "auth/login.html",
+            {
+                "request": request,
+                "auth_enabled": settings.enable_auth,
+                "hosted_ui_enabled": hosted_ui_enabled,
+                "sso_login_url": sso_login_url,
+                "sso_signup_url": sso_signup_url,
+                "reset_login_url": reset_login_url,
+                "error": error,
+                "cache_bust": "1",
+            },
+        )
+
+    @app.get("/auth/callback", include_in_schema=False)
+    async def auth_callback(
+        request: Request,
+        code: str | None = None,
+        error: str | None = None,
+        error_description: str | None = None,
+    ) -> RedirectResponse:
+        if error:
+            LOGGER.warning("Cognito callback error: %s (%s)", error, error_description or "")
+            return RedirectResponse(url="/portal/login?error=login_failed", status_code=307)
+        if not code:
+            LOGGER.warning("Cognito callback missing authorization code")
+            return RedirectResponse(url="/portal/login?error=missing_code", status_code=307)
+        if not settings.cognito_domain or not settings.cognito_app_client_id:
+            LOGGER.error("Cognito callback received without Cognito domain/client configuration")
+            return RedirectResponse(url="/portal/login?error=cognito_unconfigured", status_code=307)
+
+        redirect_uri = f"{request.url.scheme}://{request.url.netloc}/auth/callback"
+        try:
+            token_payload = await exchange_code_for_tokens(
+                domain=str(settings.cognito_domain),
+                code=code,
+                client_id=str(settings.cognito_app_client_id),
+                client_secret=settings.cognito_app_client_secret,
+                redirect_uri=redirect_uri,
+            )
+        except Exception:
+            LOGGER.exception("Failed to exchange Cognito authorization code")
+            return RedirectResponse(url="/portal/login?error=token_exchange_failed", status_code=307)
+
+        id_claims = decode_id_token_claims(str(token_payload.get("id_token") or ""))
+        userinfo: dict[str, Any] = {}
+        try:
+            userinfo = await fetch_userinfo(
+                domain=str(settings.cognito_domain),
+                access_token=str(token_payload.get("access_token") or ""),
+            )
+        except Exception:
+            LOGGER.exception("Failed to fetch Cognito userinfo; using ID token claims only")
+
+        identity = derive_identity(
+            claims=id_claims,
+            userinfo=userinfo,
+            default_customer_id=settings.ursa_portal_default_customer_id,
+        )
+        try:
+            identity = ensure_customer_onboarding(identity=identity, settings=settings)
+        except OnboardingError:
+            LOGGER.exception("Failed to complete customer onboarding during auth callback")
+            return RedirectResponse(url="/portal/login?error=onboarding_failed", status_code=307)
+
+        response = RedirectResponse(url="/portal", status_code=307)
+        response.set_cookie(
+            key=PORTAL_SESSION_COOKIE_NAME,
+            value=encode_portal_session(settings.session_secret_key, identity),
+            httponly=True,
+            secure=request.url.scheme == "https",
+            samesite="lax",
+            max_age=PORTAL_SESSION_MAX_AGE_SECONDS,
+            path="/",
+        )
+        return response
+
+    @app.get("/healthz", tags=["health"])
+    async def healthz() -> dict[str, str]:
         return {
             "status": "healthy",
             "service": "daylily-ursa-beta-analysis",
             "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         }
-
-    @app.get("/api/clusters")
-    async def list_clusters(
-        refresh: bool = False,
-        _api_key: str = Depends(require_admin_api_key),
-    ) -> dict[str, Any]:
-        cluster_service = get_cluster_service(
-            regions=settings.get_allowed_regions() or settings.get_cost_monitor_regions(),
-            aws_profile=settings.aws_profile,
-        )
-        clusters = cluster_service.get_all_clusters(force_refresh=refresh)
-        return {"clusters": [_cluster_payload(cluster) for cluster in clusters]}
-
-    @app.delete("/api/clusters/{cluster_name}")
-    async def delete_cluster(
-        cluster_name: str,
-        region: str,
-        _api_key: str = Depends(require_admin_api_key),
-    ) -> dict[str, Any]:
-        cluster_service = get_cluster_service(
-            regions=settings.get_allowed_regions() or settings.get_cost_monitor_regions(),
-            aws_profile=settings.aws_profile,
-        )
-        result = cluster_service.delete_cluster(cluster_name, region)
-        return {"success": True, "result": result}
-
-    @app.get("/api/clusters/create/options")
-    async def create_cluster_options(
-        region: str,
-        _api_key: str = Depends(require_admin_api_key),
-    ) -> dict[str, Any]:
-        try:
-            return _load_create_options(settings, region)
-        except Exception as exc:
-            LOGGER.exception("Failed to load cluster create options")
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
-
-    @app.post("/api/clusters/create")
-    async def create_cluster(
-        request: ClusterCreateRequest,
-        _api_key: str = Depends(require_admin_api_key),
-    ) -> dict[str, Any]:
-        job = start_create_job(
-            region_az=request.region_az,
-            cluster_name=request.cluster_name,
-            ssh_key_name=request.ssh_key_name,
-            s3_bucket_name=request.s3_bucket_name,
-            aws_profile=settings.aws_profile,
-            contact_email=request.contact_email,
-            config_path_override=request.config_path,
-            pass_on_warn=request.pass_on_warn,
-            debug=request.debug,
-        )
-        return {
-            "job_id": job.job_id,
-            "cluster_name": job.cluster_name,
-            "region_az": job.region_az,
-            "status": job.status,
-        }
-
-    @app.get("/api/clusters/create/jobs")
-    async def cluster_create_jobs(
-        limit: int = 20,
-        _api_key: str = Depends(require_admin_api_key),
-    ) -> dict[str, Any]:
-        return {"jobs": list_cluster_create_jobs(limit=limit)}
-
-    @app.get("/api/clusters/create/jobs/{job_id}/logs")
-    async def cluster_create_logs(
-        job_id: str,
-        lines: int = 200,
-        _api_key: str = Depends(require_admin_api_key),
-    ) -> dict[str, Any]:
-        return {"job_id": job_id, "log": tail_job_log(job_id, lines=lines)}
-
-    @app.get("/api/pricing-snapshots")
-    async def pricing_snapshots(
-        region: str | None = Query(default=None),
-        partitions: str | None = Query(default=None),
-        from_ts: str | None = Query(default=None, alias="from"),
-        to_ts: str | None = Query(default=None, alias="to"),
-        _api_key: str = Depends(require_admin_api_key),
-    ) -> dict[str, Any]:
-        requested_partitions = [part.strip() for part in partitions.split(",")] if partitions else None
-        return app.state.pricing_monitor.get_snapshot_payload(
-            region=region,
-            partitions=requested_partitions,
-            from_ts=from_ts,
-            to_ts=to_ts,
-        )
-
-    @app.post("/api/pricing-snapshots/run")
-    async def run_pricing_snapshot(
-        _api_key: str = Depends(require_admin_api_key),
-    ) -> dict[str, Any]:
-        return app.state.pricing_monitor.queue_capture(trigger="manual", requested_by="admin")
 
     @app.post(
         "/api/analyses/ingest",
@@ -566,5 +562,8 @@ def create_app(
             idempotency_key=str(idempotency_key),
         )
         return _analysis_response(updated)
+
+    mount_portal(app, settings)
+    mount_tapdb_admin(app, settings)
 
     return app

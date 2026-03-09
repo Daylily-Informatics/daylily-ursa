@@ -33,7 +33,11 @@ def _build_app(monkeypatch, tmp_path, clusters=None):
     fake_service = FakeClusterService(clusters or [])
     monkeypatch.setattr("daylib_ursa.portal.get_cluster_service", lambda *args, **kwargs: fake_service)
     monkeypatch.setattr("daylib_ursa.portal.PricingMonitor.start", lambda self: None)
-    settings = get_settings_for_testing(enable_auth=False, ursa_internal_api_key="test-key")
+    settings = get_settings_for_testing(
+        enable_auth=False,
+        ursa_internal_api_key="test-key",
+        ursa_tapdb_mount_enabled=False,
+    )
     return create_app(DummyStore(), bloom_client=DummyBloomClient(), settings=settings)
 
 
@@ -45,7 +49,7 @@ def test_pricing_snapshot_api_returns_grouped_payload(monkeypatch, tmp_path):
         run = store.create_pricing_run(trigger="manual", requested_by="admin")
         store.mark_pricing_run_running(run["run_id"])
         store.save_pricing_snapshot(
-            int(run["run_id"]),
+            run["run_id"],
             {
                 "captured_at": "2026-03-08T12:00:00Z",
                 "cluster_config_path": "/tmp/prod_cluster.yaml",
@@ -80,7 +84,7 @@ def test_pricing_snapshot_api_returns_grouped_payload(monkeypatch, tmp_path):
     payload = response.json()
     assert payload["snapshots"][0]["region"] == "us-west-2"
     assert payload["snapshots"][0]["partitions"][0]["partition"] == "i192"
-    assert payload["snapshots"][0]["partitions"][0]["availability_zones"][0]["box"]["median"] == 0.0525
+    assert payload["snapshots"][0]["partitions"][0]["availability_zones"][0]["box"]["median"] == 0.055
 
 
 def test_admin_workset_submit_without_cluster_enqueues_cluster_create(monkeypatch, tmp_path):

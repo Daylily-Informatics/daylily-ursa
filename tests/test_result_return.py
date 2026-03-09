@@ -103,6 +103,7 @@ def _settings() -> Settings:
         ursa_internal_api_key="ursa-test-key",
         bloom_base_url="https://bloom.example",
         atlas_base_url="https://atlas.example",
+        ursa_tapdb_mount_enabled=False,
     )
 
 

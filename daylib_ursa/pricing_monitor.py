@@ -12,9 +12,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from daylib.config import Settings
-from daylib.ephemeral_cluster.runner import resolve_daylily_ec
-from daylib.pricing_state import PricingState
+from daylib_ursa.config import Settings
+from daylib_ursa.ephemeral_cluster.runner import resolve_daylily_ec
+from daylib_ursa.pricing_state import PricingState
 
 LOGGER = logging.getLogger("daylily.pricing_monitor")
 
@@ -66,14 +66,14 @@ class PricingMonitor:
         run = self.store.create_pricing_run(trigger=trigger, requested_by=requested_by)
         thread = threading.Thread(
             target=self._run_capture_worker,
-            args=(int(run["run_id"]),),
+            args=(str(run["run_id"]),),
             daemon=True,
             name=f"ursa-pricing-run-{run['run_id']}",
         )
         thread.start()
         return run
 
-    def _run_capture_worker(self, run_id: int) -> None:
+    def _run_capture_worker(self, run_id: str) -> None:
         with self._thread_lock:
             self.store.mark_pricing_run_running(run_id)
             try:

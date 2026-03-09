@@ -120,7 +120,7 @@ TAPDB_ENV=dev
 
 # ========== Authentication ==========
 # Set to 'true' to enable Cognito authentication
-ENABLE_AUTH=false
+ENABLE_AUTH=true
 
 # Cognito settings (required if ENABLE_AUTH=true)
 # Run 'daycog setup --client-name ursa' from daylily-cognito to create, or set manually

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
-from daylib.tapdb_graph import TapDBBackend, from_json_addl, utc_now_iso
+from daylib_ursa.tapdb_graph import TapDBBackend, from_json_addl, utc_now_iso
 from daylily_tapdb import generic_instance
 
 
@@ -101,10 +101,9 @@ class AnalysisStore:
         *,
         for_update: bool = False,
     ) -> generic_instance | None:
-        return self.backend.find_instance_by_euid_or_external_id(
+        return self.backend.find_instance_by_euid(
             session,
             template_code=ANALYSIS_TEMPLATE,
-            key="ingest_idempotency_key",
             value=analysis_euid,
             for_update=for_update,
         )

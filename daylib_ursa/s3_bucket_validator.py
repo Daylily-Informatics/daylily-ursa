@@ -76,6 +76,7 @@ class LinkedBucket:
     linked_at: str = field(default_factory=_utc_now_iso)
     updated_at: str = field(default_factory=_utc_now_iso)
     bucket_euid: Optional[str] = None
+    external_bucket_key: Optional[str] = None
 
 
 class S3BucketValidator:
@@ -271,8 +272,9 @@ class LinkedBucketManager:
 
     @staticmethod
     def _to_bucket(payload: Dict[str, Any]) -> LinkedBucket:
+        bucket_euid = str(payload.get("euid") or payload.get("bucket_euid") or "").strip() or None
         return LinkedBucket(
-            bucket_id=payload["bucket_id"],
+            bucket_id=bucket_euid or payload["bucket_id"],
             customer_id=payload["customer_id"],
             bucket_name=payload["bucket_name"],
             bucket_type=payload.get("bucket_type", "primary"),
@@ -288,7 +290,8 @@ class LinkedBucketManager:
             read_only=bool(payload.get("read_only", False)),
             linked_at=payload.get("linked_at", _utc_now_iso()),
             updated_at=payload.get("updated_at", _utc_now_iso()),
-            bucket_euid=payload.get("euid"),
+            bucket_euid=bucket_euid,
+            external_bucket_key=payload.get("bucket_id"),
         )
 
     def _ensure_customer(self, session, customer_id: str):
@@ -383,18 +386,19 @@ class LinkedBucketManager:
                     session, parent=customer, child=bucket_row, relationship_type="owns"
                 )
                 payload["bucket_euid"] = bucket_row.euid
+                payload["euid"] = bucket_row.euid
             else:
                 self.backend.update_instance_json(session, existing, payload)
                 payload["bucket_euid"] = existing.euid
+                payload["euid"] = existing.euid
 
         return self._to_bucket(payload), validation_result
 
     def get_linked_bucket(self, bucket_id: str) -> Optional[LinkedBucket]:
         with self.backend.session_scope(commit=False) as session:
-            row = self.backend.find_instance_by_external_id(
+            row = self.backend.find_instance_by_euid(
                 session,
                 template_code=self.BUCKET_TEMPLATE,
-                key="bucket_id",
                 value=bucket_id,
             )
             if row is None:
@@ -425,10 +429,9 @@ class LinkedBucketManager:
 
     def unlink_bucket(self, bucket_id: str) -> bool:
         with self.backend.session_scope(commit=True) as session:
-            row = self.backend.find_instance_by_external_id(
+            row = self.backend.find_instance_by_euid(
                 session,
                 template_code=self.BUCKET_TEMPLATE,
-                key="bucket_id",
                 value=bucket_id,
             )
             if row is None:
@@ -440,10 +443,9 @@ class LinkedBucketManager:
 
     def update_bucket(self, bucket_id: str, **updates: Any) -> Optional[LinkedBucket]:
         with self.backend.session_scope(commit=True) as session:
-            row = self.backend.find_instance_by_external_id(
+            row = self.backend.find_instance_by_euid(
                 session,
                 template_code=self.BUCKET_TEMPLATE,
-                key="bucket_id",
                 value=bucket_id,
             )
             if row is None:

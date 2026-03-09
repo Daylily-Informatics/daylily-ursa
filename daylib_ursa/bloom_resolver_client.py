@@ -7,7 +7,7 @@ from typing import Any
 
 import httpx
 
-from daylib.analysis_store import RunResolution
+from daylib_ursa.analysis_store import RunResolution
 
 
 class BloomResolverError(RuntimeError):
