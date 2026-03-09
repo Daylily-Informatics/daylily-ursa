@@ -20,8 +20,13 @@ function formatFileSize(bytes) {
 
 function formatDate(dateStr) {
     if (!dateStr) return 'N/A';
-    const date = new Date(dateStr);
-    return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+    if (window.UrsaTime) {
+        return window.UrsaTime.formatDateTime(dateStr, {
+            hour: '2-digit',
+            minute: '2-digit',
+        });
+    }
+    return new Date(dateStr).toISOString();
 }
 
 function copyToClipboard(text) {

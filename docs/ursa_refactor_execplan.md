@@ -1,5 +1,8 @@
 # Ursa Beta Refactor Execution Summary
 
+> Historical note: this document captures the analysis-only refactor phase.  
+> Current runtime also includes restored TapDB-backed portal/file/manifest/workset surfaces.
+
 ## Scope
 
 Ursa is reduced to the beta analysis path only:

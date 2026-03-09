@@ -54,6 +54,10 @@
                     <dd>{{ session_info.session_logged_in | default('None') }}</dd>
                 </div>
                 <div class="d-flex justify-between mb-sm">
+                    <dt>Session Timezone:</dt>
+                    <dd>{{ session_info.session_display_timezone | default('UTC') }}</dd>
+                </div>
+                <div class="d-flex justify-between mb-sm">
                     <dt>DB Customer ID:</dt>
                     <dd>{{ db_customer_id | default('None') }}</dd>
                 </div>
@@ -112,6 +116,26 @@
             <a href="/portal/usage" class="btn btn-outline mt-md">
                 <i class="fas fa-chart-line"></i> View Usage & Billing
             </a>
+        </div>
+
+        <div class="card">
+            <h3 class="card-title"><i class="fas fa-clock"></i> Display Preferences</h3>
+            <div class="form-group">
+                <label class="form-label" for="display-timezone">Timezone</label>
+                <select id="display-timezone" class="form-control">
+                    {% set current_tz = display_timezone | default('UTC') %}
+                    {% for tz in display_timezone_options %}
+                    <option value="{{ tz }}" {% if current_tz == tz %}selected{% endif %}>{{ tz }}</option>
+                    {% endfor %}
+                </select>
+                <small class="form-help">Stored in UTC; displayed in your selected IANA timezone.</small>
+            </div>
+            <div class="d-flex align-center gap-sm">
+                <button class="btn btn-primary" onclick="saveDisplayTimezone()">
+                    <i class="fas fa-save"></i> Save Preferences
+                </button>
+                <span id="display-timezone-status" class="text-muted text-sm"></span>
+            </div>
         </div>
         
         <!-- Security Settings -->
@@ -780,8 +804,8 @@ async function loadApiTokens() {
                     <div class="d-flex justify-between align-center p-md mb-sm" style="background: #0d1a22; border-radius: var(--radius-md);">
                         <div>
                             <strong>${token.name}</strong>
-                            <span class="text-muted text-sm ml-sm">Created: ${new Date(token.created_at).toLocaleDateString()}</span>
-                            ${token.expires_at ? `<span class="text-muted text-sm ml-sm">Expires: ${new Date(token.expires_at).toLocaleDateString()}</span>` : ''}
+                            <span class="text-muted text-sm ml-sm">Created: ${window.UrsaTime ? window.UrsaTime.formatDate(token.created_at) : token.created_at}</span>
+                            ${token.expires_at ? `<span class="text-muted text-sm ml-sm">Expires: ${window.UrsaTime ? window.UrsaTime.formatDate(token.expires_at) : token.expires_at}</span>` : ''}
                         </div>
                         <button class="btn btn-sm btn-danger" onclick="revokeToken('${token.id}')">
                             <i class="fas fa-trash"></i>
@@ -856,6 +880,35 @@ async function revokeToken(tokenId) {
 function confirmDeleteAccount() {
     if (confirm('Are you sure you want to delete your account? This action cannot be undone.')) {
         alert('Account deletion requires contacting support. Please email admin@lsmc.com');
+    }
+}
+
+async function saveDisplayTimezone() {
+    const tzEl = document.getElementById('display-timezone');
+    const statusEl = document.getElementById('display-timezone-status');
+    if (!tzEl) return;
+
+    const selectedTimezone = tzEl.value;
+    if (statusEl) statusEl.textContent = 'Saving...';
+
+    try {
+        const response = await fetch('/api/account/preferences', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ display_timezone: selectedTimezone }),
+        });
+        const payload = await response.json();
+        if (!response.ok || payload.status !== 'success') {
+            throw new Error(payload.detail || 'Failed to update preferences');
+        }
+        if (window.UrsaConfig) {
+            window.UrsaConfig.displayTimezone = payload.preferences?.display_timezone || selectedTimezone;
+        }
+        if (statusEl) statusEl.textContent = `Saved (${payload.preferences?.display_timezone || selectedTimezone})`;
+        showToast('success', 'Updated', 'Display timezone updated');
+    } catch (error) {
+        if (statusEl) statusEl.textContent = 'Save failed';
+        showToast('error', 'Error', error.message || 'Failed to update display timezone');
     }
 }
 </script>

@@ -157,6 +157,7 @@ def derive_identity(
         "billing_account_id": billing_account_id,
         "cost_center": cost_center,
         "max_concurrent_worksets": max_concurrent_worksets,
+        "display_timezone": "UTC",
     }
 
 

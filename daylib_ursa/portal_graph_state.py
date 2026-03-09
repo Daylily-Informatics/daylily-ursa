@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import hashlib
 import io
-import os
 import re
 import secrets
 from datetime import datetime, timedelta, timezone
@@ -15,7 +14,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 from daylib_ursa.s3_bucket_validator import LinkedBucketManager
-from daylib_ursa.s3_utils import RegionAwareS3Client, normalize_bucket_name
+from daylib_ursa.s3_utils import RegionAwareS3Client
 from daylib_ursa.tapdb_graph import TapDBBackend, from_json_addl, utc_now_iso
 
 
@@ -95,12 +94,18 @@ class GraphPortalState:
 
     def _customer(self, session: Any, customer_id: str, *, create: bool = True) -> Any:
         key = str(customer_id or "").strip() or "default-customer"
-        row = self.backend.find_instance_by_external_id(
+        row = self.backend.find_instance_by_euid(
             session,
             template_code=self.CUSTOMER_TEMPLATE,
-            key="customer_id",
             value=key,
         )
+        if row is None:
+            row = self.backend.find_instance_by_external_id(
+                session,
+                template_code=self.CUSTOMER_TEMPLATE,
+                key="customer_id",
+                value=key,
+            )
         if row is not None or not create:
             return row
 
@@ -117,6 +122,14 @@ class GraphPortalState:
             },
             bstatus="active",
         )
+
+    @staticmethod
+    def _customer_external_id(customer_row: Any) -> str:
+        payload = from_json_addl(customer_row)
+        external_id = str(payload.get("customer_id") or "").strip()
+        if external_id:
+            return external_id
+        return str(customer_row.euid)
 
     def _ensure_owned(self, session: Any, customer_row: Any, child_row: Any) -> bool:
         parents = self.backend.list_parents(session, child=child_row, relationship_type="owns")
@@ -166,6 +179,38 @@ class GraphPortalState:
             "EXTERNAL_SAMPLE_ID",
         ]
 
+    @classmethod
+    def _manifest_row_from_file_payload(
+        cls,
+        file_payload: dict[str, Any],
+        *,
+        sample_index: int,
+    ) -> dict[str, Any]:
+        sequencing = dict(file_payload.get("sequencing_metadata") or {})
+        biosample = dict(file_payload.get("biosample_metadata") or {})
+        return {
+            "RUN_ID": sequencing.get("run_id") or "R0",
+            "SAMPLE_ID": biosample.get("biosample_id") or f"sample_{sample_index}",
+            "EXPERIMENTID": sequencing.get("flowcell_id") or "",
+            "SAMPLE_TYPE": biosample.get("sample_type") or "blood",
+            "LIB_PREP": "noampwgs",
+            "SEQ_VENDOR": sequencing.get("vendor") or "ILMN",
+            "SEQ_PLATFORM": sequencing.get("platform") or "NOVASEQX",
+            "LANE": sequencing.get("lane") or 0,
+            "SEQBC_ID": sequencing.get("barcode_id") or "S1",
+            "PATH_TO_CONCORDANCE_DATA_DIR": "",
+            "R1_FQ": file_payload.get("s3_uri") or "",
+            "R2_FQ": "",
+            "STAGE_DIRECTIVE": "stage_data",
+            "STAGE_TARGET": "/fsx/staged_sample_data/",
+            "SUBSAMPLE_PCT": "na",
+            "IS_POS_CTRL": "false",
+            "IS_NEG_CTRL": "false",
+            "N_X": "1",
+            "N_Y": "1",
+            "EXTERNAL_SAMPLE_ID": biosample.get("subject_id") or "",
+        }
+
     # ---------------------------------------------------------------------
     # Files
     # ---------------------------------------------------------------------
@@ -188,9 +233,9 @@ class GraphPortalState:
             "registered_at": str(payload.get("created_at") or utc_now_iso()),
             "updated_at": str(payload.get("updated_at") or utc_now_iso()),
             "sample_type": biosample.get("sample_type"),
-            "subject_id": biosample.get("subject_id"),
-            "biosample_id": biosample.get("biosample_id"),
-            "platform": sequencing.get("platform"),
+            "subject_id": str(biosample.get("subject_id") or ""),
+            "biosample_id": str(biosample.get("biosample_id") or ""),
+            "platform": str(sequencing.get("platform") or ""),
             "quality_score": payload.get("quality_score"),
             "percent_q30": payload.get("percent_q30"),
             "read_number": payload.get("read_number"),
@@ -285,10 +330,10 @@ class GraphPortalState:
 
         file_name = _file_name_from_s3_uri(s3_uri)
         file_format = str(file_meta.get("file_format") or Path(file_name).suffix.lstrip(".") or "").lower()
-        external_key = _stable_key(customer_id, s3_uri)
-
         with self.backend.session_scope(commit=True) as session:
             customer = self._customer(session, customer_id, create=True)
+            customer_external_id = self._customer_external_id(customer)
+            external_key = _stable_key(customer_external_id, s3_uri)
             existing = self.backend.find_instance_by_external_id(
                 session,
                 template_code=self.FILE_TEMPLATE,
@@ -778,37 +823,85 @@ class GraphPortalState:
         out.write("\t".join(columns) + "\n")
 
         for idx, file_payload in enumerate(fileset.get("files") or [], start=1):
-            sequencing = dict(file_payload.get("sequencing_metadata") or {})
-            biosample = dict(file_payload.get("biosample_metadata") or {})
-            row = {
-                "RUN_ID": sequencing.get("run_id") or "R0",
-                "SAMPLE_ID": biosample.get("biosample_id") or f"sample_{idx}",
-                "EXPERIMENTID": sequencing.get("flowcell_id") or "",
-                "SAMPLE_TYPE": biosample.get("sample_type") or "blood",
-                "LIB_PREP": "noampwgs",
-                "SEQ_VENDOR": sequencing.get("vendor") or "ILMN",
-                "SEQ_PLATFORM": sequencing.get("platform") or "NOVASEQX",
-                "LANE": sequencing.get("lane") or 0,
-                "SEQBC_ID": sequencing.get("barcode_id") or "S1",
-                "PATH_TO_CONCORDANCE_DATA_DIR": "",
-                "R1_FQ": file_payload.get("s3_uri") or "",
-                "R2_FQ": "",
-                "STAGE_DIRECTIVE": "stage_data",
-                "STAGE_TARGET": "/fsx/staged_sample_data/",
-                "SUBSAMPLE_PCT": "na",
-                "IS_POS_CTRL": "false",
-                "IS_NEG_CTRL": "false",
-                "N_X": "1",
-                "N_Y": "1",
-                "EXTERNAL_SAMPLE_ID": biosample.get("subject_id") or "",
-            }
+            row = self._manifest_row_from_file_payload(file_payload, sample_index=idx)
             out.write("\t".join(str(row[column]) for column in columns) + "\n")
 
+        return out.getvalue()
+
+    def render_file_manifest_tsv(self, *, customer_id: str, file_id: str) -> str:
+        file_payload = self.get_file(customer_id=customer_id, file_id=file_id)
+        if file_payload is None:
+            raise KeyError("file not found")
+
+        row = self._manifest_row_from_file_payload(file_payload, sample_index=1)
+        read_number = file_payload.get("read_number")
+        paired_with = str(file_payload.get("paired_with") or "")
+        if read_number == 2:
+            row["R2_FQ"] = row["R1_FQ"]
+            row["R1_FQ"] = ""
+        if paired_with:
+            paired = self.get_file(customer_id=customer_id, file_id=paired_with)
+            if paired is not None:
+                if read_number == 2:
+                    row["R1_FQ"] = str(paired.get("s3_uri") or "")
+                else:
+                    row["R2_FQ"] = str(paired.get("s3_uri") or "")
+
+        columns = self._manifest_columns()
+        out = io.StringIO()
+        out.write("\t".join(columns) + "\n")
+        out.write("\t".join(str(row[column]) for column in columns) + "\n")
         return out.getvalue()
 
     # ---------------------------------------------------------------------
     # Buckets + S3 operations
     # ---------------------------------------------------------------------
+
+    @staticmethod
+    def _normalize_s3_prefix(value: str | None) -> str:
+        prefix = str(value or "").strip().lstrip("/")
+        if prefix and not prefix.endswith("/"):
+            prefix += "/"
+        return prefix
+
+    def _require_bucket_write_access(self, bucket: dict[str, Any]) -> None:
+        if bool(bucket.get("read_only")):
+            raise PermissionError("Bucket is marked as read-only")
+        if not bool(bucket.get("can_write")):
+            raise PermissionError("No write permission to this bucket")
+
+    def _resolve_mutation_prefix(self, *, bucket: dict[str, Any], prefix: str | None) -> str:
+        restriction = self._normalize_s3_prefix(str(bucket.get("prefix_restriction") or ""))
+        resolved = self._normalize_s3_prefix(prefix)
+        if restriction:
+            if not resolved:
+                resolved = restriction
+            elif not resolved.startswith(restriction):
+                raise PermissionError("Prefix is outside allowed prefix restriction")
+        return resolved
+
+    def _normalize_object_key_for_delete(self, *, bucket: dict[str, Any], file_key: str) -> str:
+        key = str(file_key or "").strip().lstrip("/")
+        if not key:
+            raise ValueError("file_key is required")
+        restriction = self._normalize_s3_prefix(str(bucket.get("prefix_restriction") or ""))
+        if restriction and not key.startswith(restriction):
+            raise PermissionError("File is outside allowed prefix restriction")
+        return key
+
+    def _is_registered_s3_uri(self, *, customer_id: str, s3_uri: str) -> bool:
+        with self.backend.session_scope(commit=False) as session:
+            customer = self._customer(session, customer_id, create=True)
+            customer_external_id = self._customer_external_id(customer)
+            row = self.backend.find_instance_by_external_id(
+                session,
+                template_code=self.FILE_TEMPLATE,
+                key="external_key",
+                value=_stable_key(customer_external_id, s3_uri),
+            )
+            if row is None:
+                return False
+            return self._ensure_owned(session, customer, row)
 
     def _to_bucket_payload(self, row: Any) -> dict[str, Any]:
         payload = from_json_addl(row)
@@ -1119,11 +1212,12 @@ class GraphPortalState:
         bucket = self.get_bucket(customer_id=customer_id, bucket_id=bucket_id)
         if bucket is None:
             raise KeyError("bucket not found")
+        self._require_bucket_write_access(bucket)
         bucket_name = str(bucket.get("bucket_name") or "")
         clean_name = str(folder_name or "").strip().strip("/")
         if not clean_name:
             raise ValueError("folder_name is required")
-        key = f"{str(prefix or '')}{clean_name}/"
+        key = f"{self._resolve_mutation_prefix(bucket=bucket, prefix=prefix)}{clean_name}/"
         self.s3.put_object(Bucket=bucket_name, Key=key, Body=b"")
 
     def delete_bucket_file(
@@ -1136,8 +1230,13 @@ class GraphPortalState:
         bucket = self.get_bucket(customer_id=customer_id, bucket_id=bucket_id)
         if bucket is None:
             raise KeyError("bucket not found")
+        self._require_bucket_write_access(bucket)
         bucket_name = str(bucket.get("bucket_name") or "")
-        self.s3.delete_object(Bucket=bucket_name, Key=str(file_key or ""))
+        key = self._normalize_object_key_for_delete(bucket=bucket, file_key=file_key)
+        s3_uri = f"s3://{bucket_name}/{key}"
+        if self._is_registered_s3_uri(customer_id=customer_id, s3_uri=s3_uri):
+            raise ValueError("Cannot delete a registered file. Unregister the file first.")
+        self.s3.delete_object(Bucket=bucket_name, Key=key)
 
     def upload_file_bytes(
         self,
@@ -1152,11 +1251,13 @@ class GraphPortalState:
         bucket = self.get_bucket(customer_id=customer_id, bucket_id=bucket_id)
         if bucket is None:
             raise KeyError("bucket not found")
+        self._require_bucket_write_access(bucket)
         bucket_name = str(bucket.get("bucket_name") or "")
-        cleaned_prefix = str(prefix or "").strip()
-        if cleaned_prefix and not cleaned_prefix.endswith("/"):
-            cleaned_prefix += "/"
-        key = f"{cleaned_prefix}{Path(filename).name}"
+        cleaned_prefix = self._resolve_mutation_prefix(bucket=bucket, prefix=prefix)
+        file_name = Path(filename).name
+        if not file_name:
+            raise ValueError("filename is required")
+        key = f"{cleaned_prefix}{file_name}"
         self.s3.put_object(Bucket=bucket_name, Key=key, Body=content)
         uri = f"s3://{bucket_name}/{key}"
 
@@ -1306,6 +1407,8 @@ class GraphPortalState:
                     template_code=self.MANIFEST_TEMPLATE,
                     object_id=manifest_id,
                 )
+                if manifest_row is None:
+                    raise ValueError(f"Manifest not found for customer: {manifest_id}")
             elif manifest_tsv:
                 created_manifest = self.create_manifest(
                     customer_id=customer_id,

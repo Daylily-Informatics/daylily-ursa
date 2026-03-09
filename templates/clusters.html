@@ -74,131 +74,29 @@
         Scanning regions: <strong>{{ regions | join(', ') }}</strong>
     </div>
 
-    {% if is_admin %}
-    <div class="mb-lg d-flex justify-end">
-        <button class="btn btn-primary" data-testid="create-cluster-toggle" onclick="toggleCreateClusterPanel()">
-            <i class="fas fa-plus-circle"></i> Create Cluster
-        </button>
-    </div>
+    {% set lifecycle = namespace(creating=0, running=0, deleting=0) %}
+    {% for cluster in clusters %}
+        {% set status = (cluster.cluster_status or '') %}
+        {% if 'CREATE_IN_PROGRESS' in status %}
+            {% set lifecycle.creating = lifecycle.creating + 1 %}
+        {% elif 'DELETE_IN_PROGRESS' in status %}
+            {% set lifecycle.deleting = lifecycle.deleting + 1 %}
+        {% elif status == 'CREATE_COMPLETE' %}
+            {% set lifecycle.running = lifecycle.running + 1 %}
+        {% endif %}
+    {% endfor %}
 
-    <!-- Create Cluster (admin-only) -->
-    <details class="card mb-xl" id="create-cluster-panel" data-testid="create-cluster-panel" {% if create_mode %}open{% endif %}>
-        <summary class="card-header cursor-pointer d-flex justify-between align-center">
-            <div>
-                <h3 class="card-title" style="margin-bottom: 0.25rem;">
-                    <i class="fas fa-plus-circle"></i> Create Cluster
-                </h3>
-                <div class="text-sm text-muted">Runs <code>daylily-ec create</code> as a background job and streams logs</div>
-            </div>
-            <span class="badge badge-sm" style="background: var(--color-bg-secondary);">Admin only</span>
-        </summary>
-        <div class="card-body">
-            <div class="grid grid-2 gap-lg">
-                <div>
-                    <label class="form-label">Region</label>
-                    <select class="form-select" id="cc-region">
-                        <option value="">Select region</option>
-                        {% for r in regions %}
-                        <option value="{{ r }}" {% if prefill_region == r %}selected{% endif %}>{{ r }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-                <div>
-                    <label class="form-label">Availability Zone Suffix</label>
-                    <select class="form-select" id="cc-az-suffix">
-                        <option value="a">a</option>
-                        <option value="b">b</option>
-                        <option value="c">c</option>
-                        <option value="d">d</option>
-                    </select>
-                    <div class="text-xs text-muted mt-xs">Example: <code>us-west-2</code> + <code>a</code> => <code>us-west-2a</code></div>
-                </div>
-                <div>
-                    <label class="form-label">Cluster Name</label>
-                    <input class="form-input" id="cc-cluster-name" type="text" placeholder="daylily-1700000000" />
-                    <div class="text-xs text-muted mt-xs">Must start with a letter; letters/numbers/hyphen only; max 60 chars.</div>
-                </div>
-                <div>
-                    <label class="form-label">Config Path (Optional)</label>
-                    <input class="form-input" id="cc-config-path" type="text" placeholder="~/.config/daylily-ec/config.yaml" />
-                    <div class="text-xs text-muted mt-xs">If set, Ursa will use this config as-is (no generation).</div>
-                </div>
-                <div>
-                    <label class="form-label">SSH Keypair</label>
-                    <select class="form-select" id="cc-ssh-key-select" onchange="syncManualField('cc-ssh-key-select', 'cc-ssh-key')">
-                        <option value="">Select keypair (or type below)</option>
-                    </select>
-                    <input class="form-input mt-xs" id="cc-ssh-key" type="text" placeholder="lsmc-omics-us-west-2" />
-                </div>
-                <div>
-                    <label class="form-label">S3 Bucket Name</label>
-                    <select class="form-select" id="cc-s3-bucket-select" onchange="syncManualField('cc-s3-bucket-select', 'cc-s3-bucket')">
-                        <option value="">Select bucket (or type below)</option>
-                    </select>
-                    <input class="form-input mt-xs" id="cc-s3-bucket" type="text" placeholder="omics-analysis-..." />
-                </div>
-            </div>
-            <div class="d-flex gap-lg align-center mt-md flex-wrap">
-                <label class="d-flex align-center gap-sm text-sm">
-                    <input type="checkbox" id="cc-pass-on-warn" />
-                    <span>Pass on warning</span>
-                </label>
-                <label class="d-flex align-center gap-sm text-sm">
-                    <input type="checkbox" id="cc-debug" />
-                    <span>Debug</span>
-                </label>
-            </div>
-            <div class="d-flex gap-md mt-md flex-wrap">
-                <button class="btn btn-outline" onclick="loadCreateOptions()" id="cc-load-options-btn" title="Fetch keypairs and buckets for the selected region">
-                    <i class="fas fa-cloud-download-alt"></i> Load Keypairs & Buckets
-                </button>
-                <button class="btn btn-primary" onclick="createCluster()" id="cc-submit-btn">
-                    <i class="fas fa-play"></i> Start Create Job
-                </button>
-            </div>
-            <div class="text-xs text-muted mt-sm">
-                Jobs are stored under <code>~/.ursa/cluster-create/</code> on the Ursa server host.
-            </div>
-        </div>
-    </details>
-
-    <div class="card mb-xl" id="cluster-create-jobs-card">
-        <div class="card-header d-flex justify-between align-center flex-wrap gap-md">
-            <div>
-                <h3 class="card-title" style="margin-bottom: 0.25rem;">
-                    <i class="fas fa-list"></i> Recent Cluster Create Jobs
-                </h3>
-                <div class="text-sm text-muted">View background job status and logs</div>
-            </div>
-            <button class="btn btn-outline btn-sm" onclick="refreshCreateJobs()">
-                <i class="fas fa-sync-alt"></i> Refresh Jobs
-            </button>
-        </div>
-        <div class="card-body">
-            <div id="cluster-create-jobs-empty" class="text-muted text-sm">Loading…</div>
-            <div class="table-wrapper" style="overflow-x: auto;">
-                <table class="table" id="cluster-create-jobs-table" style="display: none;">
-                    <thead>
-                        <tr>
-                            <th>Job ID</th>
-                            <th>Cluster</th>
-                            <th>Region/AZ</th>
-                            <th>Status</th>
-                            <th>Return</th>
-                            <th>Created</th>
-                            <th></th>
-                        </tr>
-                    </thead>
-                    <tbody id="cluster-create-jobs-tbody"></tbody>
-                </table>
-            </div>
-            <details class="mt-md" id="cluster-create-log-viewer" style="display: none;">
-                <summary class="cursor-pointer text-sm text-muted">Job Logs</summary>
-                <pre class="mt-sm" id="cluster-create-log-text" style="max-height: 300px; overflow: auto; background: var(--color-bg-secondary); padding: 0.75rem; border-radius: 0.5rem;"></pre>
-            </details>
-        </div>
+    <div class="cluster-lifecycle-chips mb-xl">
+        <span class="badge badge-sm cluster-lifecycle-chip creating">
+            <i class="fas fa-circle-notch"></i> Creating {{ lifecycle.creating }}
+        </span>
+        <span class="badge badge-sm cluster-lifecycle-chip running">
+            <i class="fas fa-play-circle"></i> Running {{ lifecycle.running }}
+        </span>
+        <span class="badge badge-sm cluster-lifecycle-chip deleting">
+            <i class="fas fa-trash"></i> Deleting {{ lifecycle.deleting }}
+        </span>
     </div>
-    {% endif %}
 
     <!-- Clusters Grid -->
     {% if clusters %}
@@ -465,6 +363,132 @@
         </div>
     </div>
     {% endif %}
+
+    {% if is_admin %}
+    <div class="mt-xl mb-lg d-flex justify-end">
+        <button class="btn btn-primary" data-testid="create-cluster-toggle" onclick="toggleCreateClusterPanel()">
+            <i class="fas fa-plus-circle"></i> Create Cluster
+        </button>
+    </div>
+
+    <!-- Create Cluster (admin-only) -->
+    <details class="card mb-xl" id="create-cluster-panel" data-testid="create-cluster-panel" {% if create_mode %}open{% endif %}>
+        <summary class="card-header cursor-pointer d-flex justify-between align-center">
+            <div>
+                <h3 class="card-title" style="margin-bottom: 0.25rem;">
+                    <i class="fas fa-plus-circle"></i> Create Cluster
+                </h3>
+                <div class="text-sm text-muted">Runs <code>daylily-ec create</code> as a background job and streams logs</div>
+            </div>
+            <span class="badge badge-sm" style="background: var(--color-bg-secondary);">Admin only</span>
+        </summary>
+        <div class="card-body">
+            <div class="grid grid-2 gap-lg">
+                <div>
+                    <label class="form-label">Region</label>
+                    <select class="form-select" id="cc-region">
+                        <option value="">Select region</option>
+                        {% for r in regions %}
+                        <option value="{{ r }}" {% if prefill_region == r %}selected{% endif %}>{{ r }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div>
+                    <label class="form-label">Availability Zone Suffix</label>
+                    <select class="form-select" id="cc-az-suffix">
+                        <option value="a">a</option>
+                        <option value="b">b</option>
+                        <option value="c">c</option>
+                        <option value="d">d</option>
+                    </select>
+                    <div class="text-xs text-muted mt-xs">Example: <code>us-west-2</code> + <code>a</code> => <code>us-west-2a</code></div>
+                </div>
+                <div>
+                    <label class="form-label">Cluster Name</label>
+                    <input class="form-input" id="cc-cluster-name" type="text" placeholder="daylily-1700000000" />
+                    <div class="text-xs text-muted mt-xs">Must start with a letter; letters/numbers/hyphen only; max 60 chars.</div>
+                </div>
+                <div>
+                    <label class="form-label">Config Path (Optional)</label>
+                    <input class="form-input" id="cc-config-path" type="text" placeholder="~/.config/daylily-ec/config.yaml" />
+                    <div class="text-xs text-muted mt-xs">If set, Ursa will use this config as-is (no generation).</div>
+                </div>
+                <div>
+                    <label class="form-label">SSH Keypair</label>
+                    <select class="form-select" id="cc-ssh-key-select" onchange="syncManualField('cc-ssh-key-select', 'cc-ssh-key')">
+                        <option value="">Select keypair (or type below)</option>
+                    </select>
+                    <input class="form-input mt-xs" id="cc-ssh-key" type="text" placeholder="lsmc-omics-us-west-2" />
+                </div>
+                <div>
+                    <label class="form-label">S3 Bucket Name</label>
+                    <select class="form-select" id="cc-s3-bucket-select" onchange="syncManualField('cc-s3-bucket-select', 'cc-s3-bucket')">
+                        <option value="">Select bucket (or type below)</option>
+                    </select>
+                    <input class="form-input mt-xs" id="cc-s3-bucket" type="text" placeholder="omics-analysis-..." />
+                </div>
+            </div>
+            <div class="d-flex gap-lg align-center mt-md flex-wrap">
+                <label class="d-flex align-center gap-sm text-sm">
+                    <input type="checkbox" id="cc-pass-on-warn" />
+                    <span>Pass on warning</span>
+                </label>
+                <label class="d-flex align-center gap-sm text-sm">
+                    <input type="checkbox" id="cc-debug" />
+                    <span>Debug</span>
+                </label>
+            </div>
+            <div class="d-flex gap-md mt-md flex-wrap">
+                <button class="btn btn-outline" onclick="loadCreateOptions()" id="cc-load-options-btn" title="Fetch keypairs and buckets for the selected region">
+                    <i class="fas fa-cloud-download-alt"></i> Load Keypairs & Buckets
+                </button>
+                <button class="btn btn-primary" onclick="createCluster()" id="cc-submit-btn">
+                    <i class="fas fa-play"></i> Start Create Job
+                </button>
+            </div>
+            <div class="text-xs text-muted mt-sm">
+                Jobs are stored under <code>~/.ursa/cluster-create/</code> on the Ursa server host.
+            </div>
+        </div>
+    </details>
+
+    <div class="card mb-xl" id="cluster-create-jobs-card">
+        <div class="card-header d-flex justify-between align-center flex-wrap gap-md">
+            <div>
+                <h3 class="card-title" style="margin-bottom: 0.25rem;">
+                    <i class="fas fa-list"></i> Recent Cluster Create Jobs
+                </h3>
+                <div class="text-sm text-muted">View background job status and logs</div>
+            </div>
+            <button class="btn btn-outline btn-sm" onclick="refreshCreateJobs()">
+                <i class="fas fa-sync-alt"></i> Refresh Jobs
+            </button>
+        </div>
+        <div class="card-body">
+            <div id="cluster-create-jobs-empty" class="text-muted text-sm">Loading…</div>
+            <div class="table-wrapper" style="overflow-x: auto;">
+                <table class="table" id="cluster-create-jobs-table" style="display: none;">
+                    <thead>
+                        <tr>
+                            <th>Job ID</th>
+                            <th>Cluster</th>
+                            <th>Region/AZ</th>
+                            <th>Status</th>
+                            <th>Return</th>
+                            <th>Created</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody id="cluster-create-jobs-tbody"></tbody>
+                </table>
+            </div>
+            <details class="mt-md" id="cluster-create-log-viewer" style="display: none;">
+                <summary class="cursor-pointer text-sm text-muted">Job Logs</summary>
+                <pre class="mt-sm" id="cluster-create-log-text" style="max-height: 300px; overflow: auto; background: var(--color-bg-secondary); padding: 0.75rem; border-radius: 0.5rem;"></pre>
+            </details>
+        </div>
+    </div>
+    {% endif %}
 </div>
 
 <style>
@@ -617,6 +641,28 @@
 .queue-error {
     color: var(--color-warning);
 }
+.cluster-lifecycle-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+.cluster-lifecycle-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+}
+.cluster-lifecycle-chip.creating {
+    background: rgba(23, 162, 184, 0.15);
+    color: var(--color-info);
+}
+.cluster-lifecycle-chip.running {
+    background: rgba(0, 217, 166, 0.16);
+    color: var(--color-success);
+}
+.cluster-lifecycle-chip.deleting {
+    background: rgba(220, 53, 69, 0.14);
+    color: var(--color-error);
+}
 @media (max-width: 768px) {
     .budget-grid {
         grid-template-columns: repeat(2, 1fr);
@@ -637,14 +683,14 @@ async function refreshClusters() {
         const data = await response.json();
 
         if (data.error) {
-            showToast('Error refreshing clusters: ' + data.error, 'error');
+            clusterToast('Error refreshing clusters: ' + data.error, 'error');
         } else {
-            showToast('Clusters refreshed successfully', 'success');
+            clusterToast('Clusters refreshed successfully', 'success');
             // Reload page to show updated data
             setTimeout(() => window.location.reload(), 500);
         }
     } catch (error) {
-        showToast('Failed to refresh clusters: ' + error.message, 'error');
+        clusterToast('Failed to refresh clusters: ' + error.message, 'error');
     } finally {
         btn.disabled = false;
         icon.classList.remove('fa-spin');
@@ -677,7 +723,7 @@ async function loadCreateOptions() {
     if (!regionEl || !keySelect || !bucketSelect) return;
     const region = (regionEl.value || '').trim();
     if (!region) {
-        showToast('Select a region first', 'error');
+        clusterToast('Select a region first', 'error');
         return;
     }
 
@@ -693,7 +739,7 @@ async function loadCreateOptions() {
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok) {
             const detail = data.detail || data.error || 'Failed to load options';
-            showToast(detail, 'error');
+            clusterToast(detail, 'error');
             return;
         }
 
@@ -716,9 +762,9 @@ async function loadCreateOptions() {
             bucketSelect.appendChild(opt);
         });
 
-        showToast('Options loaded', 'success');
+        clusterToast('Options loaded', 'success');
     } catch (e) {
-        showToast(`Failed to load options: ${e.message || e}`, 'error');
+        clusterToast(`Failed to load options: ${e.message || e}`, 'error');
     } finally {
         if (btn) {
             btn.disabled = false;
@@ -748,19 +794,19 @@ async function createCluster() {
     const configPath = cfgEl ? (cfgEl.value || '').trim() : '';
 
     if (!regionAz) {
-        showToast('Select a region and AZ suffix', 'error');
+        clusterToast('Select a region and AZ suffix', 'error');
         return;
     }
     if (!clusterName) {
-        showToast('Cluster name is required', 'error');
+        clusterToast('Cluster name is required', 'error');
         return;
     }
     if (!sshKeyName) {
-        showToast('SSH keypair is required', 'error');
+        clusterToast('SSH keypair is required', 'error');
         return;
     }
     if (!s3BucketName) {
-        showToast('S3 bucket name is required', 'error');
+        clusterToast('S3 bucket name is required', 'error');
         return;
     }
 
@@ -790,15 +836,22 @@ async function createCluster() {
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok) {
             const detail = data.detail || data.error || 'Failed to start cluster create job';
-            showToast(detail, 'error');
+            clusterToast(detail, 'error');
             return;
         }
 
-        showToast(`Cluster create job started: ${data.job_id}`, 'success');
+        const jobId = String(data.job_id || data.job?.job_id || '').trim();
+        if (jobId) {
+            clusterToast(`Cluster create job started: ${jobId}`, 'success');
+        } else {
+            clusterToast('Cluster create job submitted. Check Recent Cluster Create Jobs for status.', 'success');
+        }
         await refreshCreateJobs();
-        await viewCreateJobLogs(data.job_id);
+        if (jobId) {
+            await viewCreateJobLogs(jobId);
+        }
     } catch (e) {
-        showToast(`Failed to start cluster create job: ${e.message || e}`, 'error');
+        clusterToast(`Failed to start cluster create job: ${e.message || e}`, 'error');
     } finally {
         if (btn) {
             btn.disabled = false;
@@ -916,7 +969,7 @@ async function deleteCluster(buttonEl) {
     const region = buttonEl.dataset.region;
 
     if (!clusterName || !region) {
-        showToast('Missing cluster name/region for deletion', 'error');
+        clusterToast('Missing cluster name/region for deletion', 'error');
         return;
     }
 
@@ -929,7 +982,7 @@ async function deleteCluster(buttonEl) {
 
     const typed = prompt(`Type the cluster name to confirm deletion:\n\n${clusterName}`);
     if (typed !== clusterName) {
-        showToast('Deletion cancelled (name did not match)', 'error');
+        clusterToast('Deletion cancelled (name did not match)', 'error');
         return;
     }
 
@@ -945,21 +998,37 @@ async function deleteCluster(buttonEl) {
         const data = await response.json().catch(() => ({}));
 
         if (response.ok && data.success) {
-            showToast(`Cluster "${clusterName}" deletion initiated`, 'success');
+            clusterToast(`Cluster "${clusterName}" deletion initiated`, 'success');
             setTimeout(() => window.location.reload(), 1500);
         } else {
             const detail = data.detail || data.message || 'Unknown error';
-            showToast(`Failed to delete cluster: ${detail}`, 'error');
+            clusterToast(`Failed to delete cluster: ${detail}`, 'error');
         }
     } catch (error) {
-        showToast(`Failed to delete cluster: ${error.message}`, 'error');
+        clusterToast(`Failed to delete cluster: ${error.message}`, 'error');
     } finally {
         buttonEl.disabled = false;
         buttonEl.innerHTML = originalHtml;
     }
 }
 
-function showToast(message, type) {
+function clusterToast(message, type = 'info') {
+    if (typeof window.showToast === 'function') {
+        const title = type === 'success'
+            ? 'Success'
+            : type === 'error'
+                ? 'Error'
+                : type === 'warning'
+                    ? 'Warning'
+                    : 'Info';
+        if (window.showToast.length >= 3) {
+            window.showToast(type, title, message);
+        } else {
+            window.showToast(message, type);
+        }
+        return;
+    }
+
     const container = document.getElementById('toast-container');
     if (!container) return;
 
@@ -983,7 +1052,7 @@ function copySSHCommand(elementId) {
 
     const text = codeEl.textContent;
     navigator.clipboard.writeText(text).then(() => {
-        showToast('SSH command copied to clipboard', 'success');
+        clusterToast('SSH command copied to clipboard', 'success');
     }).catch(err => {
         // Fallback for older browsers
         const textarea = document.createElement('textarea');
@@ -992,7 +1061,7 @@ function copySSHCommand(elementId) {
         textarea.select();
         document.execCommand('copy');
         document.body.removeChild(textarea);
-        showToast('SSH command copied to clipboard', 'success');
+        clusterToast('SSH command copied to clipboard', 'success');
     });
 }
 
@@ -1032,4 +1101,3 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 </script>
 {% endblock %}
-

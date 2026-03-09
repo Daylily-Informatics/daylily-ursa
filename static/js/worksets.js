@@ -367,7 +367,11 @@ async function submitWorkset(event) {
 
     try {
         // Include manifest - either saved manifest ID or uploaded TSV content
-        if (window.selectedManifestId) {
+        const explicitManifestId = (document.getElementById('saved-manifest-id')?.value || '').trim();
+        if (explicitManifestId) {
+            data.manifest_id = explicitManifestId;
+            window.selectedManifestId = explicitManifestId;
+        } else if (window.selectedManifestId) {
             data.manifest_id = window.selectedManifestId;
         } else if (window.manifestTsvContent) {
             data.manifest_tsv_content = window.manifestTsvContent;
@@ -542,7 +546,9 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Initialize saved manifests dropdown if on new workset page
     if (document.getElementById('saved-manifest-select')) {
-        refreshSavedManifestsList();
+        refreshSavedManifestsList().then(() => {
+            applyManifestIdFromQueryParam();
+        });
     }
 
     // Add cost calculation listeners
@@ -592,6 +598,10 @@ function previewManifest(input) {
         window.selectedManifestId = null;
         const savedSelect = document.getElementById('saved-manifest-select');
         if (savedSelect) savedSelect.value = '';
+        const savedManifestIdInput = document.getElementById('saved-manifest-id');
+        if (savedManifestIdInput) savedManifestIdInput.value = '';
+        const savedManifestIdPreview = document.getElementById('saved-manifest-id-preview');
+        if (savedManifestIdPreview) savedManifestIdPreview.textContent = '';
         const savedPreview = document.getElementById('saved-manifest-preview');
         if (savedPreview) savedPreview.classList.add('d-none');
 
@@ -624,14 +634,18 @@ async function refreshSavedManifestsList() {
         }
 
         manifests.forEach(m => {
+            const manifestId = String(m.manifest_id || '').trim();
             const option = document.createElement('option');
-            option.value = m.manifest_id;
-            const name = m.name || m.manifest_id;
+            option.value = manifestId;
+            const name = m.name || manifestId;
             // Ensure sample_count is a number (API returns int, but be defensive)
             const sampleCount = typeof m.sample_count === 'number' ? m.sample_count : parseInt(m.sample_count, 10) || 0;
-            const created = m.created_at ? new Date(m.created_at).toLocaleDateString() : '';
-            option.textContent = `${name} (${sampleCount} samples${created ? ', ' + created : ''})`;
+            const created = m.created_at
+                ? (window.UrsaTime ? window.UrsaTime.formatDate(m.created_at) : new Date(m.created_at).toISOString().slice(0, 10))
+                : '';
+            option.textContent = `${name} [${manifestId}] (${sampleCount} samples${created ? ', ' + created : ''})`;
             option.dataset.name = name;
+            option.dataset.manifestId = manifestId;
             option.dataset.sampleCount = String(sampleCount);  // Store as string for dataset
             option.dataset.createdAt = m.created_at || '';
             select.appendChild(option);
@@ -653,6 +667,10 @@ function onSavedManifestSelected() {
         if (preview) preview.classList.add('d-none');
         window.selectedManifestId = null;
         window.manifestSampleCount = 0;
+        const idInput = document.getElementById('saved-manifest-id');
+        if (idInput) idInput.value = '';
+        const idPreview = document.getElementById('saved-manifest-id-preview');
+        if (idPreview) idPreview.textContent = '';
         calculateCostEstimate();
         return;
     }
@@ -661,6 +679,7 @@ function onSavedManifestSelected() {
         // Get manifest metadata from the selected option's dataset
         const option = select.options[select.selectedIndex];
         const name = option.dataset.name || manifestId;
+        const selectedId = option.dataset.manifestId || manifestId;
         // Parse sample count - dataset attributes are always strings
         const sampleCountStr = option.dataset.sampleCount;
         const sampleCount = sampleCountStr ? parseInt(sampleCountStr, 10) : 0;
@@ -672,18 +691,25 @@ function onSavedManifestSelected() {
         const nameEl = document.getElementById('saved-manifest-name');
         const countEl = document.getElementById('saved-manifest-sample-count');
         const createdEl = document.getElementById('saved-manifest-created');
+        const idEl = document.getElementById('saved-manifest-id-preview');
 
         if (nameEl) nameEl.textContent = name;
         if (countEl) countEl.textContent = `${sampleCount} samples`;
+        if (idEl) idEl.textContent = selectedId;
         if (createdEl && createdAt) {
-            createdEl.textContent = `Created: ${new Date(createdAt).toLocaleString()}`;
+            const formatted = window.UrsaTime ? window.UrsaTime.formatDateTime(createdAt) : new Date(createdAt).toISOString();
+            createdEl.textContent = `Created: ${formatted}`;
+        } else if (createdEl) {
+            createdEl.textContent = '';
         }
 
         if (preview) preview.classList.remove('d-none');
 
         // Store selected manifest ID for submission
-        window.selectedManifestId = manifestId;
+        window.selectedManifestId = selectedId;
         window.manifestSampleCount = sampleCount;
+        const idInput = document.getElementById('saved-manifest-id');
+        if (idInput) idInput.value = selectedId;
         // Clear uploaded manifest since user selected a saved one
         window.manifestTsvContent = null;
         const uploadPreview = document.getElementById('manifest-preview');
@@ -697,6 +723,69 @@ function onSavedManifestSelected() {
         console.error('Failed to load manifest details:', error);
         showToast('error', 'Error', 'Failed to load manifest details');
     }
+}
+
+function onManifestIdInputChanged() {
+    const idInput = document.getElementById('saved-manifest-id');
+    if (!idInput) return;
+
+    const manifestId = (idInput.value || '').trim();
+    const select = document.getElementById('saved-manifest-select');
+
+    if (!manifestId) {
+        window.selectedManifestId = null;
+        window.manifestSampleCount = 0;
+        const preview = document.getElementById('saved-manifest-preview');
+        if (preview) preview.classList.add('d-none');
+        const idPreview = document.getElementById('saved-manifest-id-preview');
+        if (idPreview) idPreview.textContent = '';
+        calculateCostEstimate();
+        return;
+    }
+
+    if (select) {
+        const matchingOption = Array.from(select.options).find(option => option.value === manifestId);
+        if (matchingOption) {
+            select.value = manifestId;
+            onSavedManifestSelected();
+            return;
+        }
+        select.value = '';
+    }
+
+    // Manual EUID entry path (manifest may not be in currently loaded dropdown page).
+    window.selectedManifestId = manifestId;
+    window.manifestSampleCount = 0;
+    window.manifestTsvContent = null;
+
+    const uploadPreview = document.getElementById('manifest-preview');
+    if (uploadPreview) uploadPreview.classList.add('d-none');
+    const manifestInput = document.getElementById('manifest-input');
+    if (manifestInput) manifestInput.value = '';
+
+    const preview = document.getElementById('saved-manifest-preview');
+    const nameEl = document.getElementById('saved-manifest-name');
+    const countEl = document.getElementById('saved-manifest-sample-count');
+    const createdEl = document.getElementById('saved-manifest-created');
+    const idPreview = document.getElementById('saved-manifest-id-preview');
+
+    if (nameEl) nameEl.textContent = 'Saved Manifest';
+    if (countEl) countEl.textContent = 'Saved manifest';
+    if (createdEl) createdEl.textContent = '';
+    if (idPreview) idPreview.textContent = manifestId;
+    if (preview) preview.classList.remove('d-none');
+
+    calculateCostEstimate();
+}
+
+function applyManifestIdFromQueryParam() {
+    const params = new URLSearchParams(window.location.search);
+    const manifestId = (params.get('manifest_id') || '').trim();
+    if (!manifestId) return;
+    const idInput = document.getElementById('saved-manifest-id');
+    if (!idInput) return;
+    idInput.value = manifestId;
+    onManifestIdInputChanged();
 }
 
 // Calculate cost estimate
@@ -950,8 +1039,8 @@ function showCreateClusterModal() {
     }
     const modal = document.getElementById('create-cluster-modal');
     if (modal) {
-        modal.style.display = 'flex';
-        document.body.style.overflow = 'hidden';
+        modal.classList.remove('d-none');
+        modal.setAttribute('aria-hidden', 'false');
     }
 }
 
@@ -961,8 +1050,8 @@ function showCreateClusterModal() {
 function closeCreateClusterModal() {
     const modal = document.getElementById('create-cluster-modal');
     if (modal) {
-        modal.style.display = 'none';
-        document.body.style.overflow = '';
+        modal.classList.add('d-none');
+        modal.setAttribute('aria-hidden', 'true');
     }
 }
 
@@ -1083,4 +1172,9 @@ document.addEventListener('DOMContentLoaded', () => {
     if (document.getElementById('preferred_cluster')) {
         refreshClusterList();
     }
+    document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') {
+            closeCreateClusterModal();
+        }
+    });
 });

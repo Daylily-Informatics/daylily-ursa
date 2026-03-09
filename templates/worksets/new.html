@@ -132,12 +132,19 @@
                     <p class="form-text">Select a previously saved manifest from your account.</p>
                 </div>
 
+                <div class="form-group">
+                    <label for="saved-manifest-id" class="form-label">Manifest EUID</label>
+                    <input type="text" id="saved-manifest-id" class="form-control" placeholder="e.g. euid:..." oninput="onManifestIdInputChanged()">
+                    <p class="form-text">TapDB-assigned manifest EUID. You can paste an EUID directly or pick from the saved list above.</p>
+                </div>
+
                 <div id="saved-manifest-preview" class="d-none mb-lg">
                     <div class="card" style="background: #1a2a33; margin-top: var(--spacing-md);">
                         <div class="d-flex justify-between align-center mb-md">
                             <h4 style="margin: 0; color: #fff;"><i class="fas fa-file-alt text-accent"></i> <span id="saved-manifest-name">Manifest</span></h4>
                             <span class="badge badge-info" id="saved-manifest-sample-count">0 samples</span>
                         </div>
+                        <p class="mb-sm"><strong>Manifest EUID:</strong> <code id="saved-manifest-id-preview"></code></p>
                         <p id="saved-manifest-created" class="text-muted mb-md"></p>
                     </div>
                 </div>
@@ -224,9 +231,9 @@
             </div>
 
             <!-- Region selection modal for "Create Cluster" option -->
-            <div id="create-cluster-modal" class="modal" style="display: none;">
-                <div class="modal-backdrop" onclick="closeCreateClusterModal()"></div>
-                <div class="modal-content" style="max-width: 450px;">
+            <div id="create-cluster-modal" class="workset-modal-overlay d-none" aria-hidden="true">
+                <div class="workset-modal-backdrop" onclick="closeCreateClusterModal()"></div>
+                <div class="workset-modal-content" style="max-width: 450px;">
                     <div class="modal-header">
                         <h5 class="modal-title"><i class="fas fa-plus-circle"></i> Create New Cluster</h5>
                         <button type="button" class="close" onclick="closeCreateClusterModal()">&times;</button>
@@ -414,6 +421,37 @@
         </div>
     </form>
 </div>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+.workset-modal-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 3000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+    background: rgba(0, 0, 0, 0.55);
+}
+
+.workset-modal-backdrop {
+    position: absolute;
+    inset: 0;
+}
+
+.workset-modal-content {
+    position: relative;
+    z-index: 1;
+    background: var(--color-white);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-xl);
+    width: min(560px, 100%);
+    max-height: calc(100vh - 2rem);
+    overflow-y: auto;
+}
+</style>
 {% endblock %}
 
 {% block extra_js %}

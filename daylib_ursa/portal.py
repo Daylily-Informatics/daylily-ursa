@@ -7,14 +7,14 @@ import io
 import logging
 import os
 import secrets
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlencode
 
 import boto3
 from fastapi import APIRouter, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
-from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -27,11 +27,19 @@ from daylib_ursa.ephemeral_cluster import (
 )
 from daylib_ursa.portal_auth import (
     PORTAL_SESSION_COOKIE_NAME,
+    PORTAL_SESSION_MAX_AGE_SECONDS,
     decode_portal_session,
+    encode_portal_session,
 )
 from daylib_ursa.portal_graph_state import GraphPortalState
 from daylib_ursa.pricing_monitor import PricingMonitor
 from daylib_ursa.s3_utils import RegionAwareS3Client, normalize_bucket_name
+from daylib_ursa.user_preferences import (
+    DEFAULT_DISPLAY_TIMEZONE,
+    list_display_timezone_options,
+    normalize_display_timezone,
+    set_display_timezone_for_email,
+)
 
 LOGGER = logging.getLogger("daylily.portal")
 
@@ -126,6 +134,10 @@ def _template_context(
     auth_enabled = bool(settings.enable_auth)
     user_authenticated = (not auth_enabled) or bool(identity.get("logged_in"))
     user_email = str(identity.get("user_email") or "")
+    display_timezone = normalize_display_timezone(
+        identity.get("display_timezone"),
+        default=DEFAULT_DISPLAY_TIMEZONE,
+    )
     customer = _portal_customer(
         resolved_customer_id,
         settings=settings,
@@ -140,10 +152,12 @@ def _template_context(
         "is_admin": resolved_is_admin,
         "customer_id": resolved_customer_id,
         "customer": customer,
-        "current_year": datetime.now().year,
+        "current_year": datetime.now(timezone.utc).year,
+        "display_timezone": display_timezone,
         "cache_bust": os.environ.get("SOURCE_DATE_EPOCH", "1"),
         "api_base": "",
         "csrf_token": "",
+        "fileset_ui_enabled": False,
         **extra,
     }
 
@@ -170,7 +184,7 @@ def _find_inflight_create_job(region: str) -> Optional[Dict[str, Any]]:
 
 
 def _generate_cluster_name(region: str) -> str:
-    stamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
     compact_region = region.replace("-", "")
     return f"daylily-{compact_region}-{stamp}-{secrets.token_hex(2)}"
 
@@ -187,6 +201,31 @@ def _build_boto_session(settings: Settings, region: Optional[str] = None) -> Any
     if region:
         kwargs["region_name"] = region
     return boto3.Session(**kwargs)
+
+
+def _region_from_region_az(region_az: str) -> str:
+    value = str(region_az or "").strip()
+    if len(value) >= 2 and value[-1].isalpha() and value[-2].isdigit():
+        return value[:-1]
+    return value
+
+
+def _validate_cluster_create_identity(settings: Settings, *, region_az: str) -> Dict[str, str]:
+    region = _region_from_region_az(region_az)
+    session = _build_boto_session(settings, region=region or None)
+    sts = session.client("sts", region_name=region or None)
+    identity = sts.get_caller_identity()
+    arn = str(identity.get("Arn") or "").strip()
+    if not arn:
+        profile_label = settings.aws_profile or "default"
+        raise RuntimeError(
+            f"AWS STS caller identity is missing Arn for profile '{profile_label}'. "
+            "Check profile credentials before creating a cluster."
+        )
+    return {
+        "account_id": str(identity.get("Account") or "").strip(),
+        "arn": arn,
+    }
 
 
 def _hosted_ui_logout_url(
@@ -239,6 +278,98 @@ def _reconcile_pending_worksets(state: GraphPortalState, clusters: List[ClusterI
 def _manifest_template_tsv() -> str:
     columns = GraphPortalState._manifest_columns()
     return "\t".join(columns) + "\n"
+
+
+def _raise_bucket_mutation_error(exc: Exception) -> None:
+    if isinstance(exc, KeyError):
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if isinstance(exc, PermissionError):
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    if isinstance(exc, ValueError):
+        detail = str(exc)
+        if "registered file" in detail.lower():
+            raise HTTPException(status_code=409, detail=detail) from exc
+        raise HTTPException(status_code=400, detail=detail) from exc
+    raise exc
+
+
+def _monitor_state_dirs() -> list[Path]:
+    return [Path.home() / ".ursa", Path.home() / ".config" / "ursa"]
+
+
+def _read_monitor_process() -> tuple[Optional[int], Optional[Path]]:
+    for state_dir in _monitor_state_dirs():
+        pid_file = state_dir / "monitor.pid"
+        if not pid_file.exists():
+            continue
+        try:
+            pid = int(pid_file.read_text().strip())
+        except ValueError:
+            continue
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            continue
+        except PermissionError:
+            return pid, pid_file
+        except OSError:
+            continue
+        return pid, pid_file
+    return None, None
+
+
+def _list_monitor_logs(*, limit: int = 20) -> list[Path]:
+    discovered: dict[str, Path] = {}
+    for state_dir in _monitor_state_dirs():
+        log_dir = state_dir / "logs"
+        if not log_dir.exists():
+            continue
+        for path in log_dir.glob("monitor_*.log"):
+            discovered[str(path)] = path
+
+    ordered = sorted(
+        discovered.values(),
+        key=lambda path: path.stat().st_mtime if path.exists() else 0.0,
+        reverse=True,
+    )
+    return ordered[: max(limit, 1)]
+
+
+def _tail_monitor_log_lines(path: Path, *, lines: int = 100) -> list[str]:
+    try:
+        all_lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except Exception:
+        return []
+    return all_lines[-max(lines, 1) :]
+
+
+def _format_uptime(seconds: int) -> str:
+    remaining = max(int(seconds), 0)
+    minutes_total, _ = divmod(remaining, 60)
+    hours_total, minutes = divmod(minutes_total, 60)
+    days, hours = divmod(hours_total, 24)
+    if days:
+        return f"{days}d {hours}h {minutes}m"
+    if hours:
+        return f"{hours}h {minutes}m"
+    return f"{minutes}m"
+
+
+def _monitor_stats_for_customer(*, portal_state: GraphPortalState, customer_id: str) -> Dict[str, int]:
+    worksets = portal_state.list_worksets(customer_id, limit=10_000)
+    stats = {"ready": 0, "in_progress": 0, "complete": 0, "error": 0, "total_processed": 0}
+    for workset in worksets:
+        state = str(workset.get("state") or "").strip().lower()
+        if state in {"running", "submitted", "in_progress", "processing"}:
+            stats["in_progress"] += 1
+        elif state in {"ready", "queued", "pending", "pending_cluster_creation"}:
+            stats["ready"] += 1
+        elif state in {"complete", "completed", "returned"}:
+            stats["complete"] += 1
+        elif state in {"error", "failed"}:
+            stats["error"] += 1
+    stats["total_processed"] = stats["complete"] + stats["error"]
+    return stats
 
 
 def mount_portal(app: FastAPI, settings: Settings) -> None:
@@ -428,14 +559,17 @@ def mount_portal(app: FastAPI, settings: Settings) -> None:
     ) -> Dict[str, Any]:
         customer_id = _customer_id(request, settings)
         data = await file.read()
-        result = portal_state.upload_file_bytes(
-            customer_id=customer_id,
-            bucket_id=bucket_id,
-            filename=file.filename or "upload.bin",
-            content=data,
-            prefix=prefix,
-            auto_register=str(auto_register).strip().lower() in {"1", "true", "yes", "on"},
-        )
+        try:
+            result = portal_state.upload_file_bytes(
+                customer_id=customer_id,
+                bucket_id=bucket_id,
+                filename=file.filename or "upload.bin",
+                content=data,
+                prefix=prefix,
+                auto_register=str(auto_register).strip().lower() in {"1", "true", "yes", "on"},
+            )
+        except Exception as exc:
+            _raise_bucket_mutation_error(exc)
         return result
 
     @router.get("/portal/files/buckets", response_class=HTMLResponse)
@@ -492,36 +626,11 @@ def mount_portal(app: FastAPI, settings: Settings) -> None:
 
     @router.get("/portal/files/filesets", response_class=HTMLResponse)
     async def filesets_page(request: Request) -> HTMLResponse:
-        customer_id = _customer_id(request, settings)
-        filesets = portal_state.list_filesets(customer_id=customer_id)
-        return _TEMPLATES.TemplateResponse(
-            "files/filesets.html",
-            _template_context(
-                request,
-                settings,
-                portal_state,
-                customer_id=customer_id,
-                filesets=filesets,
-            ),
-        )
+        raise HTTPException(status_code=404, detail="File set UI is temporarily unavailable")
 
     @router.get("/portal/files/filesets/{fileset_id}", response_class=HTMLResponse)
     async def fileset_detail_page(request: Request, fileset_id: str) -> HTMLResponse:
-        customer_id = _customer_id(request, settings)
-        fileset = portal_state.get_fileset(customer_id=customer_id, fileset_id=fileset_id)
-        if fileset is None:
-            raise HTTPException(status_code=404, detail="File set not found")
-        return _TEMPLATES.TemplateResponse(
-            "files/fileset_detail.html",
-            _template_context(
-                request,
-                settings,
-                portal_state,
-                customer_id=customer_id,
-                fileset=fileset,
-                files=fileset.get("files") or [],
-            ),
-        )
+        raise HTTPException(status_code=404, detail="File set UI is temporarily unavailable")
 
     @router.get("/portal/files/{file_id}", response_class=HTMLResponse)
     async def file_detail_page(request: Request, file_id: str) -> HTMLResponse:
@@ -722,6 +831,10 @@ def mount_portal(app: FastAPI, settings: Settings) -> None:
             "session_user_email": identity.get("user_email"),
             "session_customer_id": identity.get("customer_id"),
             "session_logged_in": bool(identity.get("logged_in")),
+            "session_display_timezone": normalize_display_timezone(
+                identity.get("display_timezone"),
+                default=DEFAULT_DISPLAY_TIMEZONE,
+            ),
         }
         return _TEMPLATES.TemplateResponse(
             "account.html",
@@ -734,6 +847,146 @@ def mount_portal(app: FastAPI, settings: Settings) -> None:
                 env_vars=env_vars,
                 session_info=session_info,
                 db_customer_id=customer_id,
+                display_timezone_options=list_display_timezone_options(),
+            ),
+        )
+
+    @router.post("/api/account/preferences")
+    async def account_preferences_update(request: Request) -> JSONResponse:
+        identity = _session_identity(request, settings)
+        if settings.enable_auth and not bool(identity.get("logged_in")):
+            raise HTTPException(status_code=401, detail="Authentication required")
+
+        payload = await request.json()
+        requested_timezone = payload.get("display_timezone")
+        display_timezone = normalize_display_timezone(
+            requested_timezone,
+            default=DEFAULT_DISPLAY_TIMEZONE,
+        )
+        user_email = str(identity.get("user_email") or "").strip()
+        if user_email:
+            display_timezone = set_display_timezone_for_email(user_email, display_timezone)
+
+        identity["display_timezone"] = display_timezone
+        response = JSONResponse(
+            {
+                "status": "success",
+                "preferences": {"display_timezone": display_timezone},
+            }
+        )
+        response.set_cookie(
+            key=PORTAL_SESSION_COOKIE_NAME,
+            value=encode_portal_session(settings.session_secret_key, identity),
+            httponly=True,
+            secure=request.url.scheme == "https",
+            samesite="lax",
+            max_age=PORTAL_SESSION_MAX_AGE_SECONDS,
+            path="/",
+        )
+        return response
+
+    @router.get("/portal/admin/users", response_class=HTMLResponse)
+    async def admin_users_page(
+        request: Request,
+        q: Optional[str] = Query(default=None),
+        error: Optional[str] = Query(default=None),
+        success: Optional[str] = Query(default=None),
+    ) -> HTMLResponse:
+        _validate_admin(request, settings)
+        customer_id = _customer_id(request, settings)
+        identity = _session_identity(request, settings)
+        customer = _portal_customer(
+            customer_id,
+            settings=settings,
+            identity=identity,
+            portal_state=portal_state,
+        )
+        users = [
+            {
+                "email": str(customer.get("email") or identity.get("user_email") or ""),
+                "customer_name": str(customer.get("customer_name") or customer_id),
+                "customer_id": customer_id,
+                "is_admin": _request_is_admin(request, settings),
+            }
+        ]
+        query = str(q or "").strip().lower()
+        if query:
+            users = [
+                item
+                for item in users
+                if query in str(item.get("email") or "").lower()
+                or query in str(item.get("customer_name") or "").lower()
+                or query in str(item.get("customer_id") or "").lower()
+            ]
+        return _TEMPLATES.TemplateResponse(
+            "admin/users.html",
+            _template_context(
+                request,
+                settings,
+                portal_state,
+                customer_id=customer_id,
+                customers=users,
+                user_query=q or "",
+                error=error or "",
+                success=success or "",
+            ),
+        )
+
+    @router.get("/portal/monitor", response_class=HTMLResponse)
+    async def monitor_dashboard(request: Request) -> HTMLResponse:
+        _validate_admin(request, settings)
+        customer_id = _customer_id(request, settings)
+        monitor_pid, pid_path = _read_monitor_process()
+        monitor_running = monitor_pid is not None
+        start_time_str = ""
+        uptime_str = "--"
+        if pid_path is not None and pid_path.exists():
+            start_dt = datetime.fromtimestamp(pid_path.stat().st_mtime, tz=timezone.utc)
+            start_time_str = start_dt.strftime("%Y-%m-%d %H:%M:%S")
+            uptime_str = _format_uptime(
+                int((datetime.now(timezone.utc) - start_dt).total_seconds())
+            )
+
+        log_paths = _list_monitor_logs(limit=20)
+        latest_log = log_paths[0] if log_paths else None
+        log_lines = _tail_monitor_log_lines(latest_log, lines=100) if latest_log else []
+        stats = _monitor_stats_for_customer(portal_state=portal_state, customer_id=customer_id)
+
+        monitor_config = _REPO_ROOT / "config" / "workset-monitor-config.yaml"
+        config_display = {
+            "config_path": str(monitor_config),
+            "prefix": settings.s3_prefix,
+            "poll_interval_seconds": 60,
+            "max_concurrent_worksets": int(
+                _portal_customer(
+                    customer_id,
+                    settings=settings,
+                    identity=_session_identity(request, settings),
+                    portal_state=portal_state,
+                ).get("max_concurrent_worksets")
+                or 10
+            ),
+            "reuse_cluster_name": "",
+            "archive_prefix": "archive/",
+        }
+
+        return _TEMPLATES.TemplateResponse(
+            "monitor/dashboard.html",
+            _template_context(
+                request,
+                settings,
+                portal_state,
+                customer_id=customer_id,
+                monitor_running=monitor_running,
+                monitor_pid=monitor_pid,
+                uptime_str=uptime_str,
+                start_time_str=start_time_str,
+                stats=stats,
+                config_display=config_display,
+                log_files=[path.name for path in log_paths],
+                latest_log_path=str(latest_log) if latest_log is not None else "",
+                log_lines=log_lines,
+                log_error="",
             ),
         )
 
@@ -750,6 +1003,26 @@ def mount_portal(app: FastAPI, settings: Settings) -> None:
             "clusters": [
                 _cluster_payload(cluster, include_sensitive=include_sensitive) for cluster in clusters
             ]
+        }
+
+    @router.get("/api/monitor/status")
+    async def monitor_status(request: Request) -> Dict[str, Any]:
+        _validate_admin(request, settings)
+        customer_id = _customer_id(request, settings)
+        monitor_pid, _ = _read_monitor_process()
+        return {
+            "monitor_running": monitor_pid is not None,
+            "monitor_pid": monitor_pid,
+            "stats": _monitor_stats_for_customer(portal_state=portal_state, customer_id=customer_id),
+        }
+
+    @router.get("/api/monitor/logs")
+    async def monitor_logs(request: Request, lines: int = 100) -> Dict[str, Any]:
+        _validate_admin(request, settings)
+        latest = next(iter(_list_monitor_logs(limit=1)), None)
+        return {
+            "path": str(latest) if latest is not None else "",
+            "lines": _tail_monitor_log_lines(latest, lines=max(lines, 1)) if latest is not None else [],
         }
 
     @router.delete("/api/clusters/{cluster_name}")
@@ -785,17 +1058,25 @@ def mount_portal(app: FastAPI, settings: Settings) -> None:
                 detail="region_az, cluster_name, ssh_key_name, and s3_bucket_name are required",
             )
 
-        job = start_create_job(
-            region_az=region_az,
-            cluster_name=cluster_name,
-            ssh_key_name=ssh_key_name,
-            s3_bucket_name=s3_bucket_name,
-            aws_profile=settings.aws_profile,
-            contact_email=None,
-            config_path_override=payload.get("config_path"),
-            pass_on_warn=bool(payload.get("pass_on_warn")),
-            debug=bool(payload.get("debug")),
-        )
+        try:
+            _validate_cluster_create_identity(settings, region_az=region_az)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"AWS identity preflight failed: {exc}") from exc
+
+        try:
+            job = start_create_job(
+                region_az=region_az,
+                cluster_name=cluster_name,
+                ssh_key_name=ssh_key_name,
+                s3_bucket_name=s3_bucket_name,
+                aws_profile=settings.aws_profile,
+                contact_email=None,
+                config_path_override=payload.get("config_path"),
+                pass_on_warn=bool(payload.get("pass_on_warn")),
+                debug=bool(payload.get("debug")),
+            )
+        except (RuntimeError, FileNotFoundError) as exc:
+            raise HTTPException(status_code=502, detail=f"Cluster create preflight failed: {exc}") from exc
         return {
             "job_id": job.job_id,
             "cluster_name": job.cluster_name,
@@ -860,7 +1141,7 @@ def mount_portal(app: FastAPI, settings: Settings) -> None:
     async def list_manifests(customer_id: str, limit: int = 200) -> Dict[str, Any]:
         return {"manifests": portal_state.list_manifests(customer_id=customer_id, limit=limit)}
 
-    @router.post("/api/customers/{customer_id}/manifests")
+    @router.post("/api/customers/{customer_id}/manifests", status_code=201)
     async def create_manifest(customer_id: str, request: Request) -> Dict[str, Any]:
         payload = await request.json()
         tsv_content = str(payload.get("tsv_content") or "")
@@ -872,7 +1153,11 @@ def mount_portal(app: FastAPI, settings: Settings) -> None:
             name=str(payload.get("name") or ""),
             description=payload.get("description"),
         )
-        return {"manifest": manifest}
+        manifest_id = str(manifest.get("manifest_id") or "")
+        return {
+            "manifest": manifest,
+            "download_url": f"/api/customers/{customer_id}/manifests/{manifest_id}/download",
+        }
 
     @router.get("/api/customers/{customer_id}/manifests/{manifest_id}")
     async def get_manifest(customer_id: str, manifest_id: str) -> Dict[str, Any]:
@@ -981,34 +1266,51 @@ def mount_portal(app: FastAPI, settings: Settings) -> None:
                             status_code=400,
                             detail="ssh_key_name and s3_bucket_name are required to bootstrap a cluster",
                         )
-                    job = start_create_job(
-                        region_az=f"{target_region}{az_suffix}",
-                        cluster_name=str(
-                            bootstrap.get("cluster_name") or _generate_cluster_name(target_region)
-                        ),
-                        ssh_key_name=ssh_key_name,
-                        s3_bucket_name=s3_bucket_name,
-                        aws_profile=settings.aws_profile,
-                        contact_email=None,
-                        config_path_override=bootstrap.get("config_path"),
-                        pass_on_warn=bool(bootstrap.get("pass_on_warn")),
-                        debug=bool(bootstrap.get("debug")),
-                    )
+                    region_az = f"{target_region}{az_suffix}"
+                    try:
+                        _validate_cluster_create_identity(settings, region_az=region_az)
+                    except Exception as exc:
+                        raise HTTPException(
+                            status_code=502,
+                            detail=f"AWS identity preflight failed: {exc}",
+                        ) from exc
+                    try:
+                        job = start_create_job(
+                            region_az=region_az,
+                            cluster_name=str(
+                                bootstrap.get("cluster_name") or _generate_cluster_name(target_region)
+                            ),
+                            ssh_key_name=ssh_key_name,
+                            s3_bucket_name=s3_bucket_name,
+                            aws_profile=settings.aws_profile,
+                            contact_email=None,
+                            config_path_override=bootstrap.get("config_path"),
+                            pass_on_warn=bool(bootstrap.get("pass_on_warn")),
+                            debug=bool(bootstrap.get("debug")),
+                        )
+                    except (RuntimeError, FileNotFoundError) as exc:
+                        raise HTTPException(
+                            status_code=502,
+                            detail=f"Cluster create preflight failed: {exc}",
+                        ) from exc
                     cluster_create_job_id = job.job_id
                 state = "pending_cluster_creation"
                 cluster_region = target_region
                 message = f"Waiting for a cluster in {target_region}"
 
-        workset = portal_state.create_workset(
-            customer_id=customer_id,
-            payload=payload,
-            state=state,
-            cluster_name=cluster_name,
-            cluster_region=cluster_region,
-            target_region=target_region or cluster_region,
-            cluster_create_job_id=cluster_create_job_id,
-            message=message,
-        )
+        try:
+            workset = portal_state.create_workset(
+                customer_id=customer_id,
+                payload=payload,
+                state=state,
+                cluster_name=cluster_name,
+                cluster_region=cluster_region,
+                target_region=target_region or cluster_region,
+                cluster_create_job_id=cluster_create_job_id,
+                message=message,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {
             "workset_id": workset["workset_id"],
             "state": workset["state"],
@@ -1038,6 +1340,33 @@ def mount_portal(app: FastAPI, settings: Settings) -> None:
                 "biosample_id": biosample_id or "",
             },
         )
+
+    @router.get("/api/files/list")
+    async def api_list_files_compat(
+        request: Request,
+        customer_id: Optional[str] = Query(default=None),
+        limit: int = 200,
+        search: Optional[str] = Query(default=None),
+        file_format: Optional[str] = Query(default=None),
+        subject_id: Optional[str] = Query(default=None),
+        biosample_id: Optional[str] = Query(default=None),
+    ) -> Dict[str, Any]:
+        resolved_customer = customer_id or _customer_id(request, settings)
+        files = portal_state.list_files(
+            customer_id=resolved_customer,
+            limit=limit,
+            search=search,
+            filters={
+                "file_format": file_format or "",
+                "subject_id": subject_id or "",
+                "biosample_id": biosample_id or "",
+            },
+        )
+        return {
+            "customer_id": resolved_customer,
+            "file_count": len(files),
+            "files": files,
+        }
 
     @router.post("/api/files/search")
     async def api_search_files(
@@ -1208,12 +1537,15 @@ def mount_portal(app: FastAPI, settings: Settings) -> None:
     ) -> Dict[str, Any]:
         payload = await request.json()
         folder_name = str(payload.get("folder_name") or "").strip()
-        portal_state.create_bucket_folder(
-            customer_id=customer_id,
-            bucket_id=bucket_id,
-            prefix=prefix,
-            folder_name=folder_name,
-        )
+        try:
+            portal_state.create_bucket_folder(
+                customer_id=customer_id,
+                bucket_id=bucket_id,
+                prefix=prefix,
+                folder_name=folder_name,
+            )
+        except Exception as exc:
+            _raise_bucket_mutation_error(exc)
         return {"success": True}
 
     @router.delete("/api/files/buckets/{bucket_id}/files")
@@ -1223,7 +1555,10 @@ def mount_portal(app: FastAPI, settings: Settings) -> None:
         customer_id: str = Query(...),
         file_key: str = Query(...),
     ) -> Dict[str, Any]:
-        portal_state.delete_bucket_file(customer_id=customer_id, bucket_id=bucket_id, file_key=file_key)
+        try:
+            portal_state.delete_bucket_file(customer_id=customer_id, bucket_id=bucket_id, file_key=file_key)
+        except Exception as exc:
+            _raise_bucket_mutation_error(exc)
         return {"success": True}
 
     @router.get("/api/files/filesets")
@@ -1322,6 +1657,19 @@ def mount_portal(app: FastAPI, settings: Settings) -> None:
             headers={"Content-Disposition": "attachment; filename=stage_samples.tsv"},
         )
 
+    @router.post("/api/files/{file_id}/manifest")
+    async def api_file_manifest(request: Request, file_id: str) -> PlainTextResponse:
+        customer_id = _customer_id(request, settings)
+        try:
+            tsv = portal_state.render_file_manifest_tsv(customer_id=customer_id, file_id=file_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return PlainTextResponse(
+            tsv,
+            media_type="text/tab-separated-values",
+            headers={"Content-Disposition": "attachment; filename=stage_samples.tsv"},
+        )
+
     @router.get("/api/files/{file_id}/download")
     async def api_file_download_url(
         request: Request,
@@ -1376,6 +1724,52 @@ def mount_portal(app: FastAPI, settings: Settings) -> None:
         if file_payload is None:
             raise HTTPException(status_code=404, detail="File not found")
         return file_payload
+
+    @router.patch("/api/files/{file_id}")
+    async def api_patch_file_compat(
+        request: Request,
+        file_id: str,
+        customer_id: Optional[str] = Query(default=None),
+    ) -> Dict[str, Any]:
+        resolved_customer = customer_id or _customer_id(request, settings)
+        payload = await request.json()
+        file_payload = portal_state.update_file(
+            customer_id=resolved_customer,
+            file_id=file_id,
+            payload=payload,
+        )
+        if file_payload is None:
+            raise HTTPException(status_code=404, detail="File not found")
+        return file_payload
+
+    @router.put("/api/files/{file_id}/tags")
+    async def api_replace_tags(
+        request: Request,
+        file_id: str,
+        customer_id: Optional[str] = Query(default=None),
+    ) -> Dict[str, Any]:
+        payload = await request.json()
+        if isinstance(payload, list):
+            candidate_tags = payload
+        else:
+            candidate_tags = payload.get("tags")
+        if not isinstance(candidate_tags, list):
+            raise HTTPException(status_code=400, detail="tags must be an array")
+        tags = [str(tag).strip() for tag in candidate_tags if str(tag).strip()]
+        resolved_customer = customer_id or _customer_id(request, settings)
+        file_payload = portal_state.update_file(
+            customer_id=resolved_customer,
+            file_id=file_id,
+            payload={"tags": tags},
+        )
+        if file_payload is None:
+            raise HTTPException(status_code=404, detail="File not found")
+        return {
+            "file_id": file_id,
+            "tags": tags,
+            "status": "updated",
+            "file": file_payload,
+        }
 
     @router.get("/api/s3/discover-samples")
     async def api_discover_samples(request: Request, customer_id: Optional[str] = Query(default=None)) -> Dict[str, Any]:

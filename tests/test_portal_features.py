@@ -33,6 +33,10 @@ def _build_app(monkeypatch, tmp_path, clusters=None):
     fake_service = FakeClusterService(clusters or [])
     monkeypatch.setattr("daylib_ursa.portal.get_cluster_service", lambda *args, **kwargs: fake_service)
     monkeypatch.setattr("daylib_ursa.portal.PricingMonitor.start", lambda self: None)
+    monkeypatch.setattr(
+        "daylib_ursa.portal._validate_cluster_create_identity",
+        lambda settings, *, region_az: {"account_id": "000000000000", "arn": "arn:aws:iam::000000000000:user/test"},
+    )
     settings = get_settings_for_testing(
         enable_auth=False,
         ursa_internal_api_key="test-key",
@@ -212,3 +216,51 @@ def test_manual_pricing_run_endpoint_uses_monitor_queue(monkeypatch, tmp_path):
 
     assert response.status_code == 200
     assert response.json() == {"run_id": 7, "status": "queued"}
+
+
+def test_cluster_create_preflight_failure_returns_502(monkeypatch, tmp_path):
+    app = _build_app(monkeypatch, tmp_path, clusters=[])
+
+    def _raise_preflight(settings, *, region_az):
+        raise RuntimeError("missing Arn")
+
+    monkeypatch.setattr("daylib_ursa.portal._validate_cluster_create_identity", _raise_preflight)
+    monkeypatch.setattr("daylib_ursa.portal.start_create_job", lambda **kwargs: (_ for _ in ()).throw(AssertionError))
+
+    payload = {
+        "region_az": "us-west-2d",
+        "cluster_name": "daylily-1773055196",
+        "ssh_key_name": "lsmc-omics-us-west-2",
+        "s3_bucket_name": "lsmc-dayoa-omics-analysis-us-west-2",
+    }
+
+    with TestClient(app) as client:
+        response = client.post("/api/clusters/create", headers={"X-Ursa-Admin": "true"}, json=payload)
+
+    assert response.status_code == 502
+    detail = response.json()["detail"]
+    assert "AWS identity preflight failed" in detail
+    assert "missing Arn" in detail
+
+
+def test_cluster_create_daylily_preflight_failure_returns_502(monkeypatch, tmp_path):
+    app = _build_app(monkeypatch, tmp_path, clusters=[])
+    monkeypatch.setattr(
+        "daylib_ursa.portal.start_create_job",
+        lambda **kwargs: (_ for _ in ()).throw(RuntimeError("daylily-ec preflight failed: missing Arn")),
+    )
+
+    payload = {
+        "region_az": "us-west-2d",
+        "cluster_name": "daylily-1773057991",
+        "ssh_key_name": "lsmc-omics-us-west-2",
+        "s3_bucket_name": "lsmc-dayoa-omics-analysis-us-west-2",
+    }
+
+    with TestClient(app) as client:
+        response = client.post("/api/clusters/create", headers={"X-Ursa-Admin": "true"}, json=payload)
+
+    assert response.status_code == 502
+    detail = response.json()["detail"]
+    assert "Cluster create preflight failed" in detail
+    assert "daylily-ec preflight failed: missing Arn" in detail

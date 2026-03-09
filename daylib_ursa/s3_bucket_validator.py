@@ -271,6 +271,11 @@ class LinkedBucketManager:
         return hashlib.sha256(f"{customer_id}:{bucket_name}".encode("utf-8")).hexdigest()[:16]
 
     @staticmethod
+    def _customer_external_id(customer_row: Any, fallback: str) -> str:
+        payload = from_json_addl(customer_row)
+        return str(payload.get("customer_id") or fallback).strip() or str(fallback).strip()
+
+    @staticmethod
     def _to_bucket(payload: Dict[str, Any]) -> LinkedBucket:
         bucket_euid = str(payload.get("euid") or payload.get("bucket_euid") or "").strip() or None
         return LinkedBucket(
@@ -295,12 +300,18 @@ class LinkedBucketManager:
         )
 
     def _ensure_customer(self, session, customer_id: str):
-        customer = self.backend.find_instance_by_external_id(
+        customer = self.backend.find_instance_by_euid(
             session,
             template_code=self.CUSTOMER_TEMPLATE,
-            key="customer_id",
             value=customer_id,
         )
+        if customer is None:
+            customer = self.backend.find_instance_by_external_id(
+                session,
+                template_code=self.CUSTOMER_TEMPLATE,
+                key="customer_id",
+                value=customer_id,
+            )
         if customer is None:
             customer = self.backend.create_instance(
                 session,
@@ -317,6 +328,14 @@ class LinkedBucketManager:
             )
         return customer
 
+    def resolve_customer_euid(self, customer_id: str) -> str:
+        key = str(customer_id or "").strip()
+        if not key:
+            raise ValueError("customer_id is required")
+        with self.backend.session_scope(commit=True) as session:
+            customer = self._ensure_customer(session, key)
+            return str(customer.euid)
+
     def link_bucket(
         self,
         customer_id: str,
@@ -332,11 +351,8 @@ class LinkedBucketManager:
     ) -> tuple[LinkedBucket, Optional[BucketValidationResult]]:
         if validation_result is None and validate:
             validation_result = self.validator.validate_bucket(bucket_name)
-
-        bucket_id = self._bucket_id(customer_id, bucket_name)
         now = utc_now_iso()
         payload: Dict[str, Any] = {
-            "bucket_id": bucket_id,
             "customer_id": customer_id,
             "bucket_name": bucket_name,
             "bucket_type": bucket_type,
@@ -368,11 +384,14 @@ class LinkedBucketManager:
 
         with self.backend.session_scope(commit=True) as session:
             customer = self._ensure_customer(session, customer_id)
+            customer_external_id = self._customer_external_id(customer, customer_id)
+            payload["customer_id"] = customer_external_id
+            payload["bucket_id"] = self._bucket_id(customer_external_id, bucket_name)
             existing = self.backend.find_instance_by_external_id(
                 session,
                 template_code=self.BUCKET_TEMPLATE,
                 key="bucket_id",
-                value=bucket_id,
+                value=str(payload["bucket_id"]),
             )
             if existing is None:
                 bucket_row = self.backend.create_instance(
@@ -410,12 +429,18 @@ class LinkedBucketManager:
 
     def list_customer_buckets(self, customer_id: str) -> List[LinkedBucket]:
         with self.backend.session_scope(commit=False) as session:
-            customer = self.backend.find_instance_by_external_id(
+            customer = self.backend.find_instance_by_euid(
                 session,
                 template_code=self.CUSTOMER_TEMPLATE,
-                key="customer_id",
                 value=customer_id,
             )
+            if customer is None:
+                customer = self.backend.find_instance_by_external_id(
+                    session,
+                    template_code=self.CUSTOMER_TEMPLATE,
+                    key="customer_id",
+                    value=customer_id,
+                )
             if customer is None:
                 return []
             rows = self.backend.get_customer_owned(

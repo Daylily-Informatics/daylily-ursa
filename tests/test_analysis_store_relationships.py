@@ -3,7 +3,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from types import SimpleNamespace
 
-from daylib.analysis_store import AnalysisStore, RunResolution
+from daylib_ursa.analysis_store import AnalysisStore, RunResolution
 
 
 class _FakeBackend:

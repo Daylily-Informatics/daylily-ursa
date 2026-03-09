@@ -44,6 +44,7 @@ from daylib_ursa.portal_auth import (
 from daylib_ursa.portal_onboarding import OnboardingError, ensure_customer_onboarding
 from daylib_ursa.portal import mount_portal
 from daylib_ursa.tapdb_mount import mount_tapdb_admin
+from daylib_ursa.user_preferences import get_display_timezone_for_email
 
 LOGGER = logging.getLogger("daylily.analysis_api")
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -382,6 +383,7 @@ def create_app(
         except OnboardingError:
             LOGGER.exception("Failed to complete customer onboarding during auth callback")
             return RedirectResponse(url="/portal/login?error=onboarding_failed", status_code=307)
+        identity["display_timezone"] = get_display_timezone_for_email(identity.get("user_email"))
 
         response = RedirectResponse(url="/portal", status_code=307)
         response.set_cookie(

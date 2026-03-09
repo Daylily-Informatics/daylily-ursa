@@ -6,6 +6,7 @@ import secrets
 import shutil
 import subprocess
 import sys
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -139,6 +140,133 @@ def _build_create_command(
     return command
 
 
+def _build_preflight_command(
+    *,
+    daylily_ec_path: Path,
+    region_az: str,
+    aws_profile: Optional[str],
+    config_path: Path,
+    pass_on_warn: bool,
+    debug: bool,
+) -> List[str]:
+    command: List[str] = [
+        str(daylily_ec_path),
+        "preflight",
+        "--region-az",
+        region_az,
+        "--config",
+        str(config_path),
+        "--non-interactive",
+    ]
+    if aws_profile:
+        command.extend(["--profile", aws_profile])
+    if pass_on_warn:
+        command.append("--pass-on-warn")
+    if debug:
+        command.append("--debug")
+    return command
+
+
+def _infer_python_bin_dir_from_wrapper(daylily_ec_path: Path) -> Optional[Path]:
+    """Infer wrapped python bin dir from a shell launcher with a `PY=.../python` assignment."""
+    try:
+        content = daylily_ec_path.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return None
+    match = re.search(r'^\s*PY=["\']([^"\']+)["\']', content, flags=re.MULTILINE)
+    if not match:
+        return None
+    python_path = Path(match.group(1)).expanduser()
+    if not python_path.is_absolute():
+        python_path = (daylily_ec_path.parent / python_path).resolve()
+    if python_path.name.startswith("python"):
+        return python_path.parent
+    return None
+
+
+def _build_command_env(
+    *,
+    aws_profile: Optional[str],
+    contact_email: Optional[str],
+    daylily_ec_path: Optional[Path] = None,
+) -> Dict[str, str]:
+    env = os.environ.copy()
+    env["PYTHONUNBUFFERED"] = "1"
+    if aws_profile:
+        env["AWS_PROFILE"] = aws_profile
+    if contact_email:
+        env["DAY_CONTACT_EMAIL"] = contact_email
+    if daylily_ec_path is not None:
+        path_parts: List[str] = []
+        wrapper_bin = str(daylily_ec_path.parent)
+        path_parts.append(wrapper_bin)
+        inferred_python_bin = _infer_python_bin_dir_from_wrapper(daylily_ec_path)
+        if inferred_python_bin is not None:
+            inferred = str(inferred_python_bin)
+            if inferred not in path_parts:
+                path_parts.append(inferred)
+        current_path = env.get("PATH", "")
+        env["PATH"] = os.pathsep.join(path_parts + ([current_path] if current_path else []))
+    return env
+
+
+def _summarize_process_output(result: subprocess.CompletedProcess[str], *, max_chars: int = 4000) -> str:
+    output = (result.stderr or "").strip() or (result.stdout or "").strip()
+    if not output:
+        return f"exit code {result.returncode}"
+    lines = [line.strip() for line in output.splitlines() if line.strip()]
+    error_line = next(
+        (
+            line
+            for line in reversed(lines)
+            if re.search(r"(?:^|\\s)(?:[A-Za-z]*Error|Exception):", line)
+            or line.startswith("KeyError")
+        ),
+        "",
+    )
+    if error_line:
+        return error_line
+
+    tail = "\n".join(lines[-25:]) if lines else output
+    if len(tail) > max_chars:
+        return tail[-max_chars:]
+    return tail
+
+
+def run_preflight_sync(
+    *,
+    region_az: str,
+    aws_profile: Optional[str],
+    config_path: Path,
+    pass_on_warn: bool,
+    debug: bool,
+    contact_email: Optional[str],
+    cwd: Optional[Path] = None,
+) -> subprocess.CompletedProcess[str]:
+    """Run daylily-ec preflight synchronously in the same runtime used for create."""
+    daylily_ec_path = resolve_daylily_ec()
+    command = _build_preflight_command(
+        daylily_ec_path=daylily_ec_path,
+        region_az=region_az,
+        aws_profile=aws_profile,
+        config_path=config_path,
+        pass_on_warn=pass_on_warn,
+        debug=debug,
+    )
+    return subprocess.run(
+        command,
+        text=True,
+        capture_output=True,
+        cwd=str(cwd) if cwd else None,
+        env=_build_command_env(
+            aws_profile=aws_profile,
+            contact_email=contact_email,
+            daylily_ec_path=daylily_ec_path,
+        ),
+        check=False,
+    )
+
+
 def start_create_job(
     *,
     region_az: str,
@@ -189,11 +317,28 @@ def start_create_job(
         debug=debug,
     )
 
-    env_overrides: Dict[str, str] = {"PYTHONUNBUFFERED": "1"}
-    if aws_profile:
-        env_overrides["AWS_PROFILE"] = aws_profile
-    if contact_email:
-        env_overrides["DAY_CONTACT_EMAIL"] = contact_email
+    preflight_result = run_preflight_sync(
+        region_az=region_az,
+        aws_profile=aws_profile,
+        config_path=config_path,
+        pass_on_warn=pass_on_warn,
+        debug=debug,
+        contact_email=contact_email,
+        cwd=Path.cwd(),
+    )
+    if preflight_result.returncode != 0:
+        detail = _summarize_process_output(preflight_result)
+        raise RuntimeError(f"daylily-ec preflight failed: {detail}")
+
+    env_overrides = {
+        key: value
+        for key, value in _build_command_env(
+            aws_profile=aws_profile,
+            contact_email=contact_email,
+            daylily_ec_path=daylily_ec_path,
+        ).items()
+        if key in {"PYTHONUNBUFFERED", "AWS_PROFILE", "DAY_CONTACT_EMAIL", "PATH"}
+    }
 
     job_doc: Dict[str, Any] = {
         "job_id": job_id,
@@ -270,12 +415,11 @@ def run_create_sync(
         debug=debug,
     )
 
-    env = os.environ.copy()
-    env["PYTHONUNBUFFERED"] = "1"
-    if aws_profile:
-        env["AWS_PROFILE"] = aws_profile
-    if contact_email:
-        env["DAY_CONTACT_EMAIL"] = contact_email
+    env = _build_command_env(
+        aws_profile=aws_profile,
+        contact_email=contact_email,
+        daylily_ec_path=daylily_ec_path,
+    )
 
     return subprocess.run(
         command,

@@ -78,38 +78,61 @@ def _create_bucket(*, bucket_name: str, profile: str | None, region: str) -> Non
 def ensure_customer_onboarding(*, identity: dict[str, Any], settings: Settings) -> dict[str, Any]:
     """Ensure authenticated user has required customer/bucket onboarding."""
     updated = dict(identity)
-    customer_id = str(updated.get("customer_id") or settings.ursa_portal_default_customer_id).strip()
-    if not customer_id:
+    external_customer_id = str(updated.get("customer_id") or settings.ursa_portal_default_customer_id).strip()
+    if not external_customer_id:
         raise OnboardingError("Missing customer_id for portal onboarding")
-    updated["customer_id"] = customer_id
-    updated.setdefault("customer_name", customer_id)
+    updated["customer_id"] = external_customer_id
+    updated.setdefault("customer_name", external_customer_id)
 
     region = settings.get_effective_region()
     manager = LinkedBucketManager(region=region, profile=settings.aws_profile)
     manager.bootstrap()
 
-    existing_buckets = manager.list_customer_buckets(customer_id)
+    existing_buckets = manager.list_customer_buckets(external_customer_id)
     if existing_buckets:
         primary = next((bucket for bucket in existing_buckets if bucket.bucket_type == "primary"), None)
         chosen = primary or existing_buckets[0]
-        if not updated.get("s3_bucket"):
-            updated["s3_bucket"] = chosen.bucket_name
+        updated["s3_bucket"] = chosen.bucket_name
+        canonical_customer_id = (
+            manager.resolve_customer_euid(external_customer_id)
+            if hasattr(manager, "resolve_customer_euid")
+            else external_customer_id
+        )
+        if canonical_customer_id != external_customer_id:
+            updated["legacy_customer_id"] = external_customer_id
+        updated["customer_id"] = canonical_customer_id
         return updated
 
     requested_bucket = _normalize_bucket_name(str(updated.get("s3_bucket") or ""))
     if requested_bucket:
-        manager.link_bucket(customer_id, requested_bucket, bucket_type="primary", validate=False)
+        manager.link_bucket(external_customer_id, requested_bucket, bucket_type="primary", validate=False)
         updated["s3_bucket"] = requested_bucket
+        canonical_customer_id = (
+            manager.resolve_customer_euid(external_customer_id)
+            if hasattr(manager, "resolve_customer_euid")
+            else external_customer_id
+        )
+        if canonical_customer_id != external_customer_id:
+            updated["legacy_customer_id"] = external_customer_id
+        updated["customer_id"] = canonical_customer_id
         return updated
 
     account_id = _resolve_account_id(profile=settings.aws_profile, region=region)
     last_error: Exception | None = None
     for _ in range(5):
-        candidate = _generate_bucket_name(customer_id, account_id=account_id, region=region)
+        candidate = _generate_bucket_name(external_customer_id, account_id=account_id, region=region)
         try:
             _create_bucket(bucket_name=candidate, profile=settings.aws_profile, region=region)
-            manager.link_bucket(customer_id, candidate, bucket_type="primary", validate=False)
+            manager.link_bucket(external_customer_id, candidate, bucket_type="primary", validate=False)
             updated["s3_bucket"] = candidate
+            canonical_customer_id = (
+                manager.resolve_customer_euid(external_customer_id)
+                if hasattr(manager, "resolve_customer_euid")
+                else external_customer_id
+            )
+            if canonical_customer_id != external_customer_id:
+                updated["legacy_customer_id"] = external_customer_id
+            updated["customer_id"] = canonical_customer_id
             return updated
         except Exception as exc:
             last_error = exc
@@ -117,4 +140,6 @@ def ensure_customer_onboarding(*, identity: dict[str, Any], settings: Settings) 
                 continue
             break
 
-    raise OnboardingError(f"Failed to provision onboarding bucket for customer '{customer_id}': {last_error}")
+    raise OnboardingError(
+        f"Failed to provision onboarding bucket for customer '{external_customer_id}': {last_error}"
+    )

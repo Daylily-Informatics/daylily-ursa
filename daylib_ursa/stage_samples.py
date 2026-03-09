@@ -208,7 +208,7 @@ def normalise_stage_target(stage_target: str) -> str:
 
 def build_stage_paths(stage_target: str, bucket_uri: str) -> StagePaths:
     stage_target = normalise_stage_target(stage_target)
-    timestamp = dt.datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+    timestamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     remote_stage_name = f"remote_stage_{timestamp}"
     remote_fsx_stage = f"{stage_target}/{remote_stage_name}"
 

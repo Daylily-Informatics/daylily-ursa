@@ -1,26 +1,21 @@
 # daylily-ursa
 
-**Daylily Ursa beta analysis API**.
+**Daylily Ursa beta analysis + customer portal API**.
 
-Ursa is the analysis-only service in the beta stack. It no longer owns customer, biospecimen, manifest, portal, or workset truth.
+Ursa serves analysis workflows and TapDB-backed portal/file/manifest/workset surfaces in one FastAPI app.
+Persistent objects and canonical IDs are TapDB-managed EUIDs.
 
 ## Scope
 
-Ursa now handles:
+Ursa handles:
 
 - run-linked analysis ingest
 - Bloom resolver lookups for `run_euid + flowcell_id + lane + library_barcode`
 - TapDB-backed analysis execution and review state
 - analysis artifact registration
 - Atlas result and artifact return
-
-Ursa no longer serves:
-
-- workset lifecycle APIs
-- customer portal routes
-- biospecimen or manifest ownership APIs
-- file-registry-as-primary ownership
-- monitor or workflow-runtime beta entrypoints
+- TapDB-backed portal customer/bucket/file/fileset/manifest/workset surfaces
+- customer portal pages (`/portal/...`) and namespaced API routes (`/api/files/...`, `/api/customers/{customer_id}/...`)
 
 ## Runtime Contract
 
@@ -29,6 +24,16 @@ Ursa no longer serves:
 3. Ursa resolves Atlas TRF/Test/process-item identity through Bloom.
 4. Ursa records analysis state, review state, and artifacts under the resolved identity.
 5. Ursa requires explicit `APPROVED` review state before returning result and artifact references to Atlas.
+6. Portal/customer/file/manifest/workset objects are persisted through TapDB graph templates and lineage.
+
+## Timezone Policy
+
+- Ursa stores runtime/persisted timestamps in UTC (`GMT+00:00`).
+- Portal display timezone is user-configurable and shared across apps through TapDB `system_user` preferences:
+  - key: `display_timezone`
+  - format: IANA timezone name
+  - default: `UTC`
+- Portal JS formatters use the configured timezone explicitly (`window.UrsaConfig.displayTimezone`).
 
 ## Quick Start
 
@@ -74,6 +79,8 @@ URSA_PORT=8914
 
 ## API Surface
 
+Analysis:
+
 - `POST /api/analyses/ingest`
 - `GET /api/analyses/{analysis_euid}`
 - `POST /api/analyses/{analysis_euid}/status`
@@ -81,7 +88,14 @@ URSA_PORT=8914
 - `POST /api/analyses/{analysis_euid}/review`
 - `POST /api/analyses/{analysis_euid}/return`
 
-All write routes require:
+Portal/file/manifest/workset highlights:
+
+- `GET /portal/*`
+- `GET|POST|PATCH|DELETE /api/files/*`
+- `GET|POST /api/customers/{customer_id}/manifests*`
+- `GET|POST /api/customers/{customer_id}/worksets*`
+
+Analysis write routes require:
 
 - `X-API-Key`
 - `Idempotency-Key` on ingest and result return
@@ -103,12 +117,13 @@ The stored and returned Atlas context includes:
 
 ## Repo Notes
 
+- customer portal runtime behavior: [docs/CUSTOMER_PORTAL.md](/Users/jmajor/projects/lims3/daylily-ursa/docs/CUSTOMER_PORTAL.md)
 - execution plan: [docs/ursa_refactor_execplan.md](/Users/jmajor/projects/lims3/daylily-ursa/docs/ursa_refactor_execplan.md)
 - Atlas return contract: [docs/ursa_atlas_return_contract.md](/Users/jmajor/projects/lims3/daylily-ursa/docs/ursa_atlas_return_contract.md)
 
 ## Validation
 
 ```bash
-pytest tests/test_tapdb_backend.py tests/test_file_metadata.py tests/test_analysis_ingest.py tests/test_result_return.py tests/test_bloom_resolver_client.py tests/test_console_scripts.py
-ruff check daylib_ursa tests/test_tapdb_backend.py tests/test_file_metadata.py tests/test_analysis_ingest.py tests/test_result_return.py tests/test_bloom_resolver_client.py tests/test_console_scripts.py
+pytest tests/test_route_coverage.py tests/test_portal_onboarding.py tests/test_portal_features.py tests/test_portal_restore_scope.py tests/test_restore_guardrails.py tests/test_analysis_ingest.py tests/test_result_return.py tests/test_bloom_resolver_client.py tests/test_analysis_store_relationships.py
+ruff check daylib_ursa tests
 ```

@@ -6,7 +6,7 @@ import subprocess
 import sys
 import time
 import shutil
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
@@ -312,7 +312,7 @@ def _require_cognito_configuration(ursa_config) -> None:
 
 def _get_log_file() -> Path:
     """Get timestamped log file path."""
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    ts = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
     return LOG_DIR / f"server_{ts}.log"
 
 

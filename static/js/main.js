@@ -183,14 +183,17 @@ function formatBytes(bytes, decimals = 2) {
 
 // Format Date
 function formatDate(dateString) {
+    if (window.UrsaTime) {
+        return window.UrsaTime.formatDateTime(dateString, {
+            year: 'numeric',
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+        });
+    }
     const date = new Date(dateString);
-    return date.toLocaleDateString('en-US', {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
-    });
+    return date.toISOString();
 }
 
 // Debounce
@@ -215,4 +218,3 @@ function switchTab(tabId) {
         content.classList.toggle('active', content.id === `tab-${tabId}`);
     });
 }
-

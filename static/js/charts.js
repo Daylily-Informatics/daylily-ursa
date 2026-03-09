@@ -65,7 +65,7 @@ async function initActivityChart(canvasId, customerId) {
         for (let i = 29; i >= 0; i--) {
             const date = new Date();
             date.setDate(date.getDate() - i);
-            labels.push(date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }));
+            labels.push(window.UrsaTime ? window.UrsaTime.formatMonthDay(date) : date.toISOString().slice(0, 10));
             submittedData.push(0);
             completedData.push(0);
             failedData.push(0);
@@ -163,7 +163,7 @@ async function initCostChart(canvasId, customerId) {
         for (let i = 29; i >= 0; i--) {
             const date = new Date();
             date.setDate(date.getDate() - i);
-            labels.push(date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }));
+            labels.push(window.UrsaTime ? window.UrsaTime.formatMonthDay(date) : date.toISOString().slice(0, 10));
             costData.push(0);
         }
     }
@@ -284,12 +284,15 @@ async function updateChartData(chart, customerId, endpoint) {
 
 function formatSnapshotTimestamp(timestamp) {
     if (!timestamp) return '';
-    return new Date(timestamp).toLocaleString('en-US', {
-        month: 'short',
-        day: 'numeric',
-        hour: 'numeric',
-        minute: '2-digit',
-    });
+    if (window.UrsaTime) {
+        return window.UrsaTime.formatDateTime(timestamp, {
+            month: 'short',
+            day: 'numeric',
+            hour: 'numeric',
+            minute: '2-digit',
+        });
+    }
+    return new Date(timestamp).toISOString();
 }
 
 function buildPricingDatasets(snapshotPayload, selectedRegion, selectedPartitions) {

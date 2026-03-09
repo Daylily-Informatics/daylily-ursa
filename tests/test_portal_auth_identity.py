@@ -115,8 +115,14 @@ def test_cognito_callback_sets_session_and_populates_dashboard(monkeypatch):
         "daylib_ursa.workset_api.ensure_customer_onboarding",
         lambda identity, settings: {
             **identity,
+            "legacy_customer_id": identity.get("customer_id"),
+            "customer_id": "actor-customer-euid-1234",
             "s3_bucket": identity.get("s3_bucket") or "lsmc-assigned-bucket",
         },
+    )
+    monkeypatch.setattr(
+        "daylib_ursa.workset_api.get_display_timezone_for_email",
+        lambda _email: "America/New_York",
     )
     monkeypatch.setattr("daylib_ursa.portal.PricingMonitor.start", lambda self: None)
 
@@ -136,4 +142,61 @@ def test_cognito_callback_sets_session_and_populates_dashboard(monkeypatch):
     assert "lsmc-assigned-bucket" in dashboard.text
     assert account.status_code == 200
     assert "jmajor@lsmc.bio" in account.text
+    assert "actor-customer-euid-1234" in account.text
     assert "s3://lsmc-assigned-bucket" in account.text
+    assert 'option value="America/New_York" selected' in account.text
+
+
+def test_account_preferences_update_persists_display_timezone(monkeypatch):
+    async def _fake_exchange_code_for_tokens(**kwargs):
+        return {
+            "id_token": _fake_id_token(
+                {
+                    "sub": "sub-123",
+                    "email": "jmajor@lsmc.bio",
+                    "name": "Jordan Major",
+                    "custom:customer_id": "lsmc-main",
+                    "custom:customer_name": "LSMC Main",
+                }
+            ),
+            "access_token": "access-token",
+        }
+
+    async def _fake_fetch_userinfo(**kwargs):
+        return {"email": "jmajor@lsmc.bio", "sub": "sub-123", "name": "Jordan Major"}
+
+    monkeypatch.setattr("daylib_ursa.workset_api.exchange_code_for_tokens", _fake_exchange_code_for_tokens)
+    monkeypatch.setattr("daylib_ursa.workset_api.fetch_userinfo", _fake_fetch_userinfo)
+    monkeypatch.setattr(
+        "daylib_ursa.workset_api.ensure_customer_onboarding",
+        lambda identity, settings: {
+            **identity,
+            "customer_id": "actor-customer-euid-1234",
+            "s3_bucket": identity.get("s3_bucket") or "lsmc-assigned-bucket",
+        },
+    )
+    monkeypatch.setattr(
+        "daylib_ursa.workset_api.get_display_timezone_for_email",
+        lambda _email: "UTC",
+    )
+    monkeypatch.setattr(
+        "daylib_ursa.portal.set_display_timezone_for_email",
+        lambda _email, tz: tz,
+    )
+    monkeypatch.setattr("daylib_ursa.portal.PricingMonitor.start", lambda self: None)
+
+    app = create_app(DummyStore(), bloom_client=DummyBloomClient(), settings=_settings())
+    with TestClient(app) as client:
+        callback = client.get("/auth/callback?code=abc123", follow_redirects=False)
+        assert callback.status_code == 307
+
+        update = client.post(
+            "/api/account/preferences",
+            json={"display_timezone": "America/Chicago"},
+        )
+        account = client.get("/portal/account")
+
+    assert update.status_code == 200
+    assert update.json()["preferences"]["display_timezone"] == "America/Chicago"
+    assert account.status_code == 200
+    assert 'option value="America/Chicago" selected' in account.text

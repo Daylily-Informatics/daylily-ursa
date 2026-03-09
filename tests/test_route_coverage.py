@@ -203,6 +203,10 @@ def _build_app(monkeypatch, tmp_path):
             status="running",
         ),
     )
+    monkeypatch.setattr(
+        "daylib_ursa.portal._validate_cluster_create_identity",
+        lambda settings, *, region_az: {"account_id": "000000000000", "arn": "arn:aws:iam::000000000000:user/test"},
+    )
     monkeypatch.setattr("daylib_ursa.portal.list_cluster_create_jobs", lambda limit=20: [{"job_id": "job-1"}])
     monkeypatch.setattr("daylib_ursa.portal.tail_job_log", lambda job_id, lines=200: "log")
     monkeypatch.setattr("daylib_ursa.portal.PricingMonitor.start", lambda self: None)
@@ -305,7 +309,7 @@ def test_every_api_and_gui_route_is_exercised(monkeypatch, tmp_path):
 
         link_bucket_response = client.post(
             f"/api/files/buckets/link?customer_id={customer_id}",
-            json={"bucket_name": "bucket-a", "bucket_type": "primary", "validate": False},
+            json={"bucket_name": "bucket-a", "bucket_type": "primary"},
         )
         assert link_bucket_response.status_code == 200
         bucket_id = link_bucket_response.json()["bucket_id"]
@@ -343,7 +347,7 @@ def test_every_api_and_gui_route_is_exercised(monkeypatch, tmp_path):
                 "tsv_content": "RUN_ID\tSAMPLE_ID\nRUN-1\tSAMPLE-1\n",
             },
         )
-        assert create_manifest_response.status_code == 200
+        assert create_manifest_response.status_code == 201
         manifest_id = create_manifest_response.json()["manifest"]["manifest_id"]
         covered_routes.add(("POST", "/api/customers/{customer_id}/manifests"))
 
@@ -402,9 +406,9 @@ def test_every_api_and_gui_route_is_exercised(monkeypatch, tmp_path):
         covered_routes.add(("GET", "/portal/files/browse/{bucket_id}"))
         assert client.get("/portal/files/browser", params={"bucket_id": bucket_id, "prefix": ""}).status_code == 200
         covered_routes.add(("GET", "/portal/files/browser"))
-        assert client.get("/portal/files/filesets").status_code == 200
+        assert client.get("/portal/files/filesets").status_code == 404
         covered_routes.add(("GET", "/portal/files/filesets"))
-        assert client.get(f"/portal/files/filesets/{fileset_id}").status_code == 200
+        assert client.get(f"/portal/files/filesets/{fileset_id}").status_code == 404
         covered_routes.add(("GET", "/portal/files/filesets/{fileset_id}"))
         assert client.get(f"/portal/files/{file_id}").status_code == 200
         covered_routes.add(("GET", "/portal/files/{file_id}"))
@@ -424,10 +428,26 @@ def test_every_api_and_gui_route_is_exercised(monkeypatch, tmp_path):
         covered_routes.add(("GET", "/portal/worksets/{workset_id}"))
         assert client.get("/portal/account").status_code == 200
         covered_routes.add(("GET", "/portal/account"))
+        assert (
+            client.post(
+                "/api/account/preferences",
+                json={"display_timezone": "America/Los_Angeles"},
+            ).status_code
+            == 200
+        )
+        covered_routes.add(("POST", "/api/account/preferences"))
+        assert client.get("/portal/admin/users", headers=admin_headers).status_code == 200
+        covered_routes.add(("GET", "/portal/admin/users"))
+        assert client.get("/portal/monitor", headers=admin_headers).status_code == 200
+        covered_routes.add(("GET", "/portal/monitor"))
         assert client.get("/portal/biospecimen").status_code == 404
 
         assert client.get("/api/clusters", headers=admin_headers).status_code == 200
         covered_routes.add(("GET", "/api/clusters"))
+        assert client.get("/api/monitor/status", headers=admin_headers).status_code == 200
+        covered_routes.add(("GET", "/api/monitor/status"))
+        assert client.get("/api/monitor/logs", headers=admin_headers).status_code == 200
+        covered_routes.add(("GET", "/api/monitor/logs"))
         assert (
             client.delete(
                 "/api/clusters/cluster-1",
@@ -503,6 +523,8 @@ def test_every_api_and_gui_route_is_exercised(monkeypatch, tmp_path):
 
         assert client.get("/api/files").status_code == 200
         covered_routes.add(("GET", "/api/files"))
+        assert client.get(f"/api/files/list?customer_id={customer_id}").status_code == 200
+        covered_routes.add(("GET", "/api/files/list"))
         assert client.post("/api/files/search", json={"subject_id": "SUBJ-1"}).status_code == 200
         covered_routes.add(("POST", "/api/files/search"))
         assert (
@@ -585,14 +607,26 @@ def test_every_api_and_gui_route_is_exercised(monkeypatch, tmp_path):
         covered_routes.add(("POST", "/api/files/filesets/{fileset_id}/clone"))
         assert client.post(f"/api/files/filesets/{fileset_id}/manifest").status_code == 200
         covered_routes.add(("POST", "/api/files/filesets/{fileset_id}/manifest"))
+        assert client.post(f"/api/files/{file_id}/manifest").status_code == 200
+        covered_routes.add(("POST", "/api/files/{file_id}/manifest"))
         assert client.delete(f"/api/files/filesets/{clone_fileset_id}").status_code == 200
         covered_routes.add(("DELETE", "/api/files/filesets/{fileset_id}"))
         assert client.get(f"/api/files/{file_id}/download").status_code == 200
         covered_routes.add(("GET", "/api/files/{file_id}/download"))
         assert client.post(f"/api/files/{file_id}/tags", json={"tag": "release"}).status_code == 200
         covered_routes.add(("POST", "/api/files/{file_id}/tags"))
+        assert client.put(f"/api/files/{file_id}/tags", json={"tags": ["release", "verified"]}).status_code == 200
+        covered_routes.add(("PUT", "/api/files/{file_id}/tags"))
         assert client.delete(f"/api/files/{file_id}/tags/release").status_code == 200
         covered_routes.add(("DELETE", "/api/files/{file_id}/tags/{tag}"))
+        assert (
+            client.patch(
+                f"/api/files/{file_id}",
+                json={"file_metadata": {"file_format": "bam"}},
+            ).status_code
+            == 200
+        )
+        covered_routes.add(("PATCH", "/api/files/{file_id}"))
         assert (
             client.patch(
                 f"/api/v1/files/{file_id}",

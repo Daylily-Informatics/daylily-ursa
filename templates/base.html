@@ -188,10 +188,12 @@
             authEnabled: {{ 'true' if auth_enabled else 'false' }},
             customerId: '{{ customer_id | default(customer.customer_id if customer else "") }}',
             csrfToken: '{{ csrf_token | default("") }}',
-            isAdmin: {{ 'true' if is_admin else 'false' }}
+            isAdmin: {{ 'true' if is_admin else 'false' }},
+            displayTimezone: '{{ display_timezone | default("UTC") }}'
         };
     </script>
     <script src="/static/js/api.js?v={{ cache_bust | default('1') }}"></script>
+    <script src="/static/js/timezone.js?v={{ cache_bust | default('1') }}"></script>
     <script src="/static/js/main.js?v={{ cache_bust | default('1') }}"></script>
     <script src="/static/js/global-search.js?v={{ cache_bust | default('1') }}"></script>
     <script src="/static/js/table-utils.js?v={{ cache_bust | default('1') }}"></script>
