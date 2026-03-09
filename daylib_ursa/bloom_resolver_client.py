@@ -14,6 +14,15 @@ class BloomResolverError(RuntimeError):
     """Raised when Bloom resolution fails."""
 
 
+def _require_https_url(value: str, *, field_name: str) -> str:
+    normalized = str(value or "").strip().rstrip("/")
+    if not normalized:
+        raise BloomResolverError(f"{field_name} is required")
+    if not normalized.startswith("https://"):
+        raise BloomResolverError(f"{field_name} must use an absolute https:// URL")
+    return normalized
+
+
 @dataclass
 class BloomResolverClient:
     base_url: str
@@ -36,7 +45,7 @@ class BloomResolverClient:
         library_barcode: str,
     ) -> RunResolution:
         url = (
-            f"{self.base_url.rstrip('/')}"
+            f"{_require_https_url(self.base_url, field_name='Bloom base URL')}"
             f"/api/v1/external/atlas/beta/runs/{run_euid}/resolve"
         )
         client = self.client or httpx.Client(

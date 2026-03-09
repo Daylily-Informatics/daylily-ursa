@@ -2,12 +2,18 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+import pytest
 from fastapi.testclient import TestClient
 
 from daylib_ursa.analysis_store import AnalysisArtifact, AnalysisRecord, AnalysisState, ReviewState
-from daylib_ursa.atlas_result_client import AtlasResultArtifact
+from daylib_ursa.atlas_result_client import AtlasResultArtifact, AtlasResultClient, AtlasResultClientError
 from daylib_ursa.config import Settings
 from daylib_ursa.workset_api import create_app
+
+
+@pytest.fixture(autouse=True)
+def _disable_portal_mount(monkeypatch):
+    monkeypatch.setattr("daylib_ursa.workset_api.mount_portal", lambda app, settings: None)
 
 
 class DummyStore:
@@ -202,3 +208,27 @@ def test_review_analysis_updates_review_state():
 
     assert response.status_code == 200, response.text
     assert response.json()["review_state"] == "APPROVED"
+
+
+def test_atlas_result_client_rejects_non_https_base_url():
+    client = AtlasResultClient(base_url="http://atlas.example", api_key="atlas-test-key")
+
+    with pytest.raises(AtlasResultClientError, match="absolute https:// URL"):
+        client.return_analysis_result(
+            atlas_tenant_id="TEN-1",
+            atlas_trf_euid="TRF-1",
+            atlas_test_euid="TST-1",
+            atlas_test_fulfillment_item_euid="TPC-1",
+            analysis_euid="AN-1",
+            run_euid="RUN-1",
+            sequenced_library_assignment_euid="SQA-1",
+            flowcell_id="FLOW-1",
+            lane="1",
+            library_barcode="LIB-1",
+            analysis_type="somatic",
+            result_status="COMPLETED",
+            review_state="APPROVED",
+            result_payload={},
+            artifacts=[],
+            idempotency_key="idem-1",
+        )

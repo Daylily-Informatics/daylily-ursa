@@ -68,3 +68,10 @@ def test_resolve_run_assignment_raises_for_missing_fields():
 
     with pytest.raises(BloomResolverError, match="missing required fields"):
         resolver.resolve_run_assignment("RUN-1", "FLOW-1", "1", "LIB-1")
+
+
+def test_resolve_run_assignment_rejects_non_https_base_url():
+    resolver = BloomResolverClient(base_url="http://bloom.example")
+
+    with pytest.raises(BloomResolverError, match="absolute https:// URL"):
+        resolver.resolve_run_assignment("RUN-1", "FLOW-1", "1", "LIB-1")

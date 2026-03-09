@@ -12,6 +12,15 @@ class AtlasResultClientError(RuntimeError):
     """Raised when Atlas result return fails."""
 
 
+def _require_https_url(value: str, *, field_name: str) -> str:
+    normalized = str(value or "").strip().rstrip("/")
+    if not normalized:
+        raise AtlasResultClientError(f"{field_name} is required")
+    if not normalized.startswith("https://"):
+        raise AtlasResultClientError(f"{field_name} must use an absolute https:// URL")
+    return normalized
+
+
 @dataclass(frozen=True)
 class AtlasResultArtifact:
     artifact_type: str
@@ -52,7 +61,7 @@ class AtlasResultClient:
         idempotency_key: str,
     ) -> dict[str, Any]:
         url = (
-            f"{self.base_url.rstrip('/')}"
+            f"{_require_https_url(self.base_url, field_name='Atlas base URL')}"
             f"/api/integrations/ursa/v1/fulfillment-items/{atlas_test_fulfillment_item_euid}/analysis-results"
         )
         payload = {

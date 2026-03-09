@@ -14,6 +14,15 @@ from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+def _require_https_url(value: str, *, field_name: str) -> str:
+    normalized = str(value or "").strip()
+    if not normalized:
+        raise ValueError(f"{field_name} must not be empty")
+    if not normalized.startswith("https://"):
+        raise ValueError(f"{field_name} must use an absolute https:// URL")
+    return normalized.rstrip("/")
+
+
 def normalize_bucket_name(bucket: Optional[str]) -> Optional[str]:
     """Strip s3:// prefix and trailing slashes from bucket name.
 
@@ -197,7 +206,7 @@ class Settings(BaseSettings):
         description="Internal API key for Ursa beta write endpoints",
     )
     bloom_base_url: str = Field(
-        default="http://localhost:8001",
+        default="https://localhost:8001",
         description="Bloom base URL for run/index resolver requests",
     )
     bloom_api_token: Optional[str] = Field(
@@ -209,7 +218,7 @@ class Settings(BaseSettings):
         description="Verify Bloom HTTPS certificates for resolver requests",
     )
     atlas_base_url: str = Field(
-        default="http://localhost:8000",
+        default="https://localhost:8000",
         description="Atlas base URL for result return requests",
     )
     atlas_internal_api_key: Optional[str] = Field(
@@ -358,6 +367,11 @@ class Settings(BaseSettings):
         if path != "/" and path.endswith("/"):
             path = path.rstrip("/")
         return path
+
+    @field_validator("bloom_base_url", "atlas_base_url")
+    @classmethod
+    def validate_https_service_urls(cls, v: str, info) -> str:
+        return _require_https_url(v, field_name=str(info.field_name))
 
     def get_cors_origins(self) -> List[str]:
         """Get list of CORS origins from comma-separated string.

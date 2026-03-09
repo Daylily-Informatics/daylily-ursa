@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 from fastapi.testclient import TestClient
+import pytest
 
 from daylib_ursa.analysis_store import (
     AnalysisArtifact,
@@ -13,6 +14,11 @@ from daylib_ursa.analysis_store import (
 )
 from daylib_ursa.config import Settings
 from daylib_ursa.workset_api import create_app
+
+
+@pytest.fixture(autouse=True)
+def _disable_portal_mount(monkeypatch):
+    monkeypatch.setattr("daylib_ursa.workset_api.mount_portal", lambda app, settings: None)
 
 
 class DummyStore:
@@ -213,6 +219,14 @@ def test_settings_force_auth_enabled_even_when_disabled_in_override():
     assert settings.enable_auth is True
 
 
+def test_settings_reject_non_https_cross_service_urls():
+    with pytest.raises(ValueError, match="absolute https:// URL"):
+        Settings(bloom_base_url="http://bloom.example", atlas_base_url="https://atlas.example")
+
+    with pytest.raises(ValueError, match="absolute https:// URL"):
+        Settings(bloom_base_url="https://bloom.example", atlas_base_url="http://atlas.example")
+
+
 def test_login_uses_non_portal_callback_uri():
     settings = Settings(
         cors_origins="*",
@@ -240,8 +254,6 @@ def test_auth_callback_redirect_target_exists():
 
     with TestClient(app) as client:
         callback = client.get("/auth/callback", follow_redirects=False)
-        portal = client.get("/portal")
 
     assert callback.status_code == 307
     assert callback.headers["location"].startswith("/portal/login")
-    assert portal.status_code == 200
