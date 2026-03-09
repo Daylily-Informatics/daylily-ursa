@@ -35,7 +35,7 @@ Incoming request:
 Resolution step:
 
 - Ursa calls Bloom `GET /api/v1/external/atlas/beta/runs/{run_euid}/resolve?flowcell_id=...&lane=...&library_barcode=...`
-- Bloom returns `sequenced_library_assignment_euid`, `atlas_tenant_id`, `atlas_trf_euid`, `atlas_test_euid`, and `atlas_test_process_item_euid`
+- Bloom returns `sequenced_library_assignment_euid`, `atlas_tenant_id`, `atlas_trf_euid`, `atlas_test_euid`, and `atlas_test_fulfillment_item_euid`
 
 Persistence:
 
@@ -45,7 +45,7 @@ Persistence:
 
 Return step:
 
-- Ursa sends Atlas the resolved TRF/Test/process-item EUIDs, Ursa analysis EUID, review state, result status, and artifact references
+- Ursa sends Atlas the resolved TRF/Test/fulfillment-item EUIDs, Ursa analysis EUID, review state, result status, and artifact references
 - return is blocked unless review state is `APPROVED`
 - return is idempotent by request key
 

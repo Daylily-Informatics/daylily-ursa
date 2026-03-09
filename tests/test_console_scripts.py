@@ -49,15 +49,16 @@ def test_console_script_entrypoints_are_importable_and_callable():
 
 
 def test_ursa_server_start_uses_packaged_entrypoint(monkeypatch):
-    from daylib.cli import server as server_mod
-    import daylib.ursa_config as ursa_config_mod
+    from daylib_ursa.cli import server as server_mod
+    import daylib_ursa.ursa_config as ursa_config_mod
 
     class DummyUrsaConfig:
         aws_profile = "test-profile"
         is_configured = True
-        cognito_user_pool_id = None
-        cognito_app_client_id = None
-        cognito_region = None
+        cognito_user_pool_id = "us-west-2_testpool"
+        cognito_app_client_id = "test-app-client"
+        cognito_region = "us-west-2"
+        cognito_domain = "ursa-auth"
 
         def get_allowed_regions(self):
             return ["us-west-2"]
@@ -92,7 +93,7 @@ def test_ursa_server_start_uses_packaged_entrypoint(monkeypatch):
 
     cmd = captured.get("cmd")
     assert isinstance(cmd, list)
-    assert cmd[:3] == [sys.executable, "-m", "daylib.workset_api_cli"]
+    assert cmd[:3] == [sys.executable, "-m", "daylib_ursa.workset_api_cli"]
     assert not any("bin/daylily-workset-api" in str(part) for part in cmd)
 
     kwargs = captured.get("kwargs")
@@ -101,7 +102,7 @@ def test_ursa_server_start_uses_packaged_entrypoint(monkeypatch):
 
 
 def test_ursa_cli_exposes_standardized_groups():
-    from daylib.cli import app
+    from daylib_ursa.cli import app
 
     runner = CliRunner()
     result = runner.invoke(app, ["--help"])

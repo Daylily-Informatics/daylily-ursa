@@ -22,7 +22,7 @@ class DummyStore:
             atlas_tenant_id="TEN-1",
             atlas_trf_euid="TRF-1",
             atlas_test_euid="TST-1",
-            atlas_test_process_item_euid="TPC-1",
+            atlas_test_fulfillment_item_euid="TPC-1",
             analysis_type="somatic",
             state=AnalysisState.REVIEW_PENDING.value,
             review_state=ReviewState.PENDING.value,
@@ -91,8 +91,8 @@ class DummyAtlasClient:
             )
         ]
         return {
-            "assay_run_euid": "ASR-1",
-            "assay_result_euid": "RES-1",
+            "fulfillment_run_euid": "ASR-1",
+            "fulfillment_output_euid": "RES-1",
             "artifact_euids": ["AT-1"],
         }
 
@@ -138,8 +138,8 @@ def test_return_analysis_result_calls_atlas_and_marks_returned():
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["state"] == "RETURNED"
-    assert body["atlas_return"]["assay_run_euid"] == "ASR-1"
-    assert atlas.calls[0]["atlas_test_process_item_euid"] == "TPC-1"
+    assert body["atlas_return"]["fulfillment_run_euid"] == "ASR-1"
+    assert atlas.calls[0]["atlas_test_fulfillment_item_euid"] == "TPC-1"
     assert store.mark_returned_calls[0]["idempotency_key"] == "return-1"
 
 

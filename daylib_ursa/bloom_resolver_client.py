@@ -75,7 +75,7 @@ class BloomResolverClient:
             "atlas_tenant_id",
             "atlas_trf_euid",
             "atlas_test_euid",
-            "atlas_test_process_item_euid",
+            "atlas_test_fulfillment_item_euid",
         )
         missing = [key for key in required if not str(body.get(key) or "").strip()]
         if missing:
@@ -92,5 +92,5 @@ class BloomResolverClient:
             atlas_tenant_id=str(body["atlas_tenant_id"]),
             atlas_trf_euid=str(body["atlas_trf_euid"]),
             atlas_test_euid=str(body["atlas_test_euid"]),
-            atlas_test_process_item_euid=str(body["atlas_test_process_item_euid"]),
+            atlas_test_fulfillment_item_euid=str(body["atlas_test_fulfillment_item_euid"]),
         )

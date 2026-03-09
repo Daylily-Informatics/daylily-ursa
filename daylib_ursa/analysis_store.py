@@ -42,7 +42,7 @@ class RunResolution:
     atlas_tenant_id: str
     atlas_trf_euid: str
     atlas_test_euid: str
-    atlas_test_process_item_euid: str
+    atlas_test_fulfillment_item_euid: str
 
 
 @dataclass(frozen=True)
@@ -69,7 +69,7 @@ class AnalysisRecord:
     atlas_tenant_id: str
     atlas_trf_euid: str
     atlas_test_euid: str
-    atlas_test_process_item_euid: str
+    atlas_test_fulfillment_item_euid: str
     analysis_type: str
     state: str
     review_state: str
@@ -187,8 +187,8 @@ class AnalysisStore:
             atlas_tenant_id=str(context.get("atlas_tenant_id") or ""),
             atlas_trf_euid=str(context.get("atlas_trf_euid") or ""),
             atlas_test_euid=str(context.get("atlas_test_euid") or ""),
-            atlas_test_process_item_euid=str(
-                context.get("atlas_test_process_item_euid") or ""
+            atlas_test_fulfillment_item_euid=str(
+                context.get("atlas_test_fulfillment_item_euid") or ""
             ),
             analysis_type=str(payload.get("analysis_type") or ""),
             state=str(payload.get("state") or instance.bstatus),
@@ -267,7 +267,7 @@ class AnalysisStore:
                     "atlas_tenant_id": resolution.atlas_tenant_id,
                     "atlas_trf_euid": resolution.atlas_trf_euid,
                     "atlas_test_euid": resolution.atlas_test_euid,
-                    "atlas_test_process_item_euid": resolution.atlas_test_process_item_euid,
+                    "atlas_test_fulfillment_item_euid": resolution.atlas_test_fulfillment_item_euid,
                     "created_at": now,
                 },
                 bstatus="active",

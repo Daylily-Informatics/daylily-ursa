@@ -59,7 +59,7 @@ def test_ingest_analysis_keeps_relationship_truth_on_context_reference():
             atlas_tenant_id="TEN-1",
             atlas_trf_euid="TRF-1",
             atlas_test_euid="TST-1",
-            atlas_test_process_item_euid="TPC-1",
+            atlas_test_fulfillment_item_euid="TPC-1",
         ),
         analysis_type="germline",
         artifact_bucket="analysis-bucket",
@@ -79,15 +79,15 @@ def test_ingest_analysis_keeps_relationship_truth_on_context_reference():
     assert "sequenced_library_assignment_euid" not in analysis_payload
     assert "atlas_trf_euid" not in analysis_payload
     assert "atlas_test_euid" not in analysis_payload
-    assert "atlas_test_process_item_euid" not in analysis_payload
+    assert "atlas_test_fulfillment_item_euid" not in analysis_payload
 
     context_payload = dict(context.json_addl)
     assert context_payload["run_euid"] == "RUN-1"
     assert context_payload["sequenced_library_assignment_euid"] == "SQA-1"
     assert context_payload["atlas_trf_euid"] == "TRF-1"
     assert context_payload["atlas_test_euid"] == "TST-1"
-    assert context_payload["atlas_test_process_item_euid"] == "TPC-1"
+    assert context_payload["atlas_test_fulfillment_item_euid"] == "TPC-1"
 
     assert store.backend.lineages[0][2] == "resolved_context"
     assert record.run_euid == "RUN-1"
-    assert record.atlas_test_process_item_euid == "TPC-1"
+    assert record.atlas_test_fulfillment_item_euid == "TPC-1"

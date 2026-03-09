@@ -2,11 +2,11 @@
 
 ## Purpose
 
-Atlas remains the customer-facing results authority. Ursa returns analysis completion, review state, and artifact references after resolving the canonical test process item identity through Bloom.
+Atlas remains the customer-facing results authority. Ursa returns analysis completion, review state, and artifact references after resolving the canonical test fulfillment item identity through Bloom.
 
 ## Endpoint
 
-- `POST /api/integrations/ursa/v1/process-items/{process_item_euid}/analysis-results`
+- `POST /api/integrations/ursa/v1/fulfillment-items/{fulfillment_item_euid}/analysis-results`
 
 ## Request Rules
 
@@ -16,7 +16,7 @@ Atlas remains the customer-facing results authority. Ursa returns analysis compl
   - `atlas_tenant_id`
   - `atlas_trf_euid`
   - `atlas_test_euid`
-  - `atlas_test_process_item_euid`
+  - `atlas_test_fulfillment_item_euid`
   - `analysis_euid`
   - `run_euid`
   - `sequenced_library_assignment_euid`
@@ -33,10 +33,10 @@ Atlas remains the customer-facing results authority. Ursa returns analysis compl
 
 ## Atlas Behavior
 
-- find or create the assay run projection for the resolved TRF/Test/process-item context
+- find or create the fulfillment run projection for the resolved TRF/Test/fulfillment-item context
 - register artifact metadata through Atlas release services
 - attach artifact EUIDs through graph-linked artifact reference objects
-- return assay run EUID, assay result EUID, and artifact EUIDs
+- return fulfillment run EUID, fulfillment output EUID, and artifact EUIDs
 
 ## Ursa Behavior
 

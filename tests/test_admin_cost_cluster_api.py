@@ -4,8 +4,8 @@ from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
-from daylib.config import Settings
-from daylib.workset_api import create_app
+from daylib_ursa.config import Settings
+from daylib_ursa.workset_api import create_app
 
 
 class DummyStore:
@@ -41,8 +41,12 @@ def _settings() -> Settings:
 
 def _build_app(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setattr("daylib.workset_api.get_cluster_service", lambda *args, **kwargs: FakeClusterService([]))
-    monkeypatch.setattr("daylib.pricing_monitor.PricingMonitor.start", lambda self: None)
+    monkeypatch.setattr("daylib_ursa.portal.get_cluster_service", lambda *args, **kwargs: FakeClusterService([]))
+    monkeypatch.setattr(
+        "daylib_ursa.portal._validate_cluster_create_identity",
+        lambda *args, **kwargs: {"account_id": "123456789012", "arn": "arn:aws:iam::123456789012:user/test"},
+    )
+    monkeypatch.setattr("daylib_ursa.pricing_monitor.PricingMonitor.start", lambda self: None)
     return create_app(DummyStore(), bloom_client=DummyBloomClient(), settings=_settings())
 
 
@@ -50,11 +54,11 @@ def test_pricing_snapshot_api_returns_grouped_payload(monkeypatch, tmp_path):
     app = _build_app(monkeypatch, tmp_path)
 
     with TestClient(app) as client:
-        store = app.state.pricing_store
+        store = app.state.portal_state
         run = store.create_pricing_run(trigger="manual", requested_by="admin")
         store.mark_pricing_run_running(run["run_id"])
         store.save_pricing_snapshot(
-            int(run["run_id"]),
+            run["run_id"],
             {
                 "captured_at": "2026-03-08T12:00:00Z",
                 "cluster_config_path": "/tmp/prod_cluster.yaml",
@@ -85,14 +89,13 @@ def test_pricing_snapshot_api_returns_grouped_payload(monkeypatch, tmp_path):
 
         response = client.get(
             "/api/pricing-snapshots?region=us-west-2&partitions=i192",
-            headers={"X-API-Key": "ursa-test-key"},
         )
 
     assert response.status_code == 200
     payload = response.json()
     assert payload["snapshots"][0]["region"] == "us-west-2"
     assert payload["snapshots"][0]["partitions"][0]["partition"] == "i192"
-    assert payload["snapshots"][0]["partitions"][0]["availability_zones"][0]["box"]["median"] == 0.0525
+    assert payload["snapshots"][0]["partitions"][0]["availability_zones"][0]["box"]["median"] == 0.055
 
 
 def test_manual_pricing_run_endpoint_uses_monitor_queue(monkeypatch, tmp_path):
@@ -102,7 +105,7 @@ def test_manual_pricing_run_endpoint_uses_monitor_queue(monkeypatch, tmp_path):
         app.state.pricing_monitor.queue_capture = lambda **kwargs: {"run_id": 7, "status": "queued"}
         response = client.post(
             "/api/pricing-snapshots/run",
-            headers={"X-API-Key": "ursa-test-key"},
+            headers={"X-Ursa-Admin": "true"},
         )
 
     assert response.status_code == 200
@@ -112,7 +115,7 @@ def test_manual_pricing_run_endpoint_uses_monitor_queue(monkeypatch, tmp_path):
 def test_cluster_create_enqueues_background_job(monkeypatch, tmp_path):
     app = _build_app(monkeypatch, tmp_path)
     monkeypatch.setattr(
-        "daylib.workset_api.start_create_job",
+        "daylib_ursa.portal.start_create_job",
         lambda **kwargs: SimpleNamespace(
             job_id="job-123",
             cluster_name=kwargs["cluster_name"],
@@ -124,7 +127,7 @@ def test_cluster_create_enqueues_background_job(monkeypatch, tmp_path):
     with TestClient(app) as client:
         response = client.post(
             "/api/clusters/create",
-            headers={"X-API-Key": "ursa-test-key"},
+            headers={"X-Ursa-Admin": "true"},
             json={
                 "region_az": "us-east-1a",
                 "cluster_name": "daylily-use1-smoke",
@@ -143,7 +146,7 @@ def test_cluster_create_enqueues_background_job(monkeypatch, tmp_path):
     }
 
 
-def test_cluster_create_requires_api_key(monkeypatch, tmp_path):
+def test_cluster_create_requires_admin_privilege(monkeypatch, tmp_path):
     app = _build_app(monkeypatch, tmp_path)
 
     with TestClient(app) as client:
@@ -157,4 +160,4 @@ def test_cluster_create_requires_api_key(monkeypatch, tmp_path):
             },
         )
 
-    assert response.status_code == 401
+    assert response.status_code == 403

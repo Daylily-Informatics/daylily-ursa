@@ -21,7 +21,7 @@ Ursa handles:
 
 1. Atlas and Bloom create the order, material, queue, and run context.
 2. Ursa ingests `run_euid`, `flowcell_id`, `lane`, and `library_barcode`.
-3. Ursa resolves Atlas TRF/Test/process-item identity through Bloom.
+3. Ursa resolves Atlas TRF/Test/fulfillment-item identity through Bloom.
 4. Ursa records analysis state, review state, and artifacts under the resolved identity.
 5. Ursa requires explicit `APPROVED` review state before returning result and artifact references to Atlas.
 6. Portal/customer/file/manifest/workset objects are persisted through TapDB graph templates and lineage.
@@ -113,7 +113,7 @@ The stored and returned Atlas context includes:
 - `atlas_tenant_id`
 - `atlas_trf_euid`
 - `atlas_test_euid`
-- `atlas_test_process_item_euid`
+- `atlas_test_fulfillment_item_euid`
 
 ## Repo Notes
 

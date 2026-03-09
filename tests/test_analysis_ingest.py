@@ -27,7 +27,7 @@ class DummyStore:
             atlas_tenant_id="TEN-1",
             atlas_trf_euid="TRF-1",
             atlas_test_euid="TST-1",
-            atlas_test_process_item_euid="TPC-1",
+            atlas_test_fulfillment_item_euid="TPC-1",
             analysis_type="beta-default",
             state=AnalysisState.INGESTED.value,
             review_state=ReviewState.PENDING.value,
@@ -116,7 +116,7 @@ class DummyBloomClient:
             atlas_tenant_id="TEN-1",
             atlas_trf_euid="TRF-1",
             atlas_test_euid="TST-1",
-            atlas_test_process_item_euid="TPC-1",
+            atlas_test_fulfillment_item_euid="TPC-1",
         )
 
 
@@ -157,7 +157,7 @@ def test_ingest_analysis_resolves_bloom_and_persists():
     assert response.status_code == 201, response.text
     body = response.json()
     assert body["analysis_euid"] == "AN-1"
-    assert body["atlas_test_process_item_euid"] == "TPC-1"
+    assert body["atlas_test_fulfillment_item_euid"] == "TPC-1"
     assert bloom.calls == [("RUN-1", "FLOW-1", "1", "LIB-1")]
     assert store.last_ingest["idempotency_key"] == "idem-1"
     assert store.last_ingest["analysis_type"] == "germline"

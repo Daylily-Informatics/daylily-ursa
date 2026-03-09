@@ -32,7 +32,7 @@ class DummyStore:
             atlas_tenant_id="TEN-1",
             atlas_trf_euid="TRF-1",
             atlas_test_euid="TST-1",
-            atlas_test_process_item_euid="TPC-1",
+            atlas_test_fulfillment_item_euid="TPC-1",
             analysis_type="beta-default",
             state=AnalysisState.INGESTED.value,
             review_state=ReviewState.PENDING.value,
@@ -120,7 +120,7 @@ class DummyBloomClient:
             atlas_tenant_id="TEN-1",
             atlas_trf_euid="TRF-1",
             atlas_test_euid="TST-1",
-            atlas_test_process_item_euid="TPC-1",
+            atlas_test_fulfillment_item_euid="TPC-1",
         )
 
 

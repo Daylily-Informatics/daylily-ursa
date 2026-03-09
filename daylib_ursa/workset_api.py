@@ -123,7 +123,7 @@ class AnalysisResponse(BaseModel):
     atlas_tenant_id: str
     atlas_trf_euid: str
     atlas_test_euid: str
-    atlas_test_process_item_euid: str
+    atlas_test_fulfillment_item_euid: str
     analysis_type: str
     state: str
     review_state: str
@@ -163,7 +163,7 @@ def _analysis_response(record: AnalysisRecord) -> AnalysisResponse:
         atlas_tenant_id=record.atlas_tenant_id,
         atlas_trf_euid=record.atlas_trf_euid,
         atlas_test_euid=record.atlas_test_euid,
-        atlas_test_process_item_euid=record.atlas_test_process_item_euid,
+        atlas_test_fulfillment_item_euid=record.atlas_test_fulfillment_item_euid,
         analysis_type=record.analysis_type,
         state=record.state,
         review_state=record.review_state,
@@ -528,7 +528,7 @@ def create_app(
                 atlas_tenant_id=record.atlas_tenant_id,
                 atlas_trf_euid=record.atlas_trf_euid,
                 atlas_test_euid=record.atlas_test_euid,
-                atlas_test_process_item_euid=record.atlas_test_process_item_euid,
+                atlas_test_fulfillment_item_euid=record.atlas_test_fulfillment_item_euid,
                 analysis_euid=record.analysis_euid,
                 run_euid=record.run_euid,
                 sequenced_library_assignment_euid=record.sequenced_library_assignment_euid,

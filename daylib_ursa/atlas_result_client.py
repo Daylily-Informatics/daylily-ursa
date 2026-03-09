@@ -37,7 +37,7 @@ class AtlasResultClient:
         atlas_tenant_id: str,
         atlas_trf_euid: str,
         atlas_test_euid: str,
-        atlas_test_process_item_euid: str,
+        atlas_test_fulfillment_item_euid: str,
         analysis_euid: str,
         run_euid: str,
         sequenced_library_assignment_euid: str,
@@ -53,13 +53,13 @@ class AtlasResultClient:
     ) -> dict[str, Any]:
         url = (
             f"{self.base_url.rstrip('/')}"
-            f"/api/integrations/ursa/v1/process-items/{atlas_test_process_item_euid}/analysis-results"
+            f"/api/integrations/ursa/v1/fulfillment-items/{atlas_test_fulfillment_item_euid}/analysis-results"
         )
         payload = {
             "atlas_tenant_id": atlas_tenant_id,
             "atlas_trf_euid": atlas_trf_euid,
             "atlas_test_euid": atlas_test_euid,
-            "atlas_test_process_item_euid": atlas_test_process_item_euid,
+            "atlas_test_fulfillment_item_euid": atlas_test_fulfillment_item_euid,
             "analysis_euid": analysis_euid,
             "run_euid": run_euid,
             "sequenced_library_assignment_euid": sequenced_library_assignment_euid,

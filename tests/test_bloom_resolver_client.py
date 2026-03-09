@@ -24,7 +24,7 @@ def test_resolve_run_assignment_returns_resolution():
                 "atlas_tenant_id": "TEN-1",
                 "atlas_trf_euid": "TRF-1",
                 "atlas_test_euid": "TST-1",
-                "atlas_test_process_item_euid": "TPC-1",
+                "atlas_test_fulfillment_item_euid": "TPC-1",
             },
         )
 
@@ -37,7 +37,7 @@ def test_resolve_run_assignment_returns_resolution():
 
     resolved = resolver.resolve_run_assignment("RUN-1", "FLOW-1", "1", "LIB-1")
 
-    assert resolved.atlas_test_process_item_euid == "TPC-1"
+    assert resolved.atlas_test_fulfillment_item_euid == "TPC-1"
     assert resolved.sequenced_library_assignment_euid == "SQA-1"
 
 
