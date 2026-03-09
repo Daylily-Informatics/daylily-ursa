@@ -2,7 +2,7 @@
 
 **Daylily Ursa beta analysis + customer portal API**.
 
-Ursa serves analysis workflows and TapDB-backed portal/file/manifest/workset surfaces in one FastAPI app.
+Ursa serves analysis workflows and TapDB-backed portal/manifest/workset surfaces in one FastAPI app.
 Persistent objects and canonical IDs are TapDB-managed EUIDs.
 
 ## Scope
@@ -14,8 +14,8 @@ Ursa handles:
 - TapDB-backed analysis execution and review state
 - analysis artifact registration
 - Atlas result and artifact return
-- TapDB-backed portal customer/bucket/file/fileset/manifest/workset surfaces
-- customer portal pages (`/portal/...`) and namespaced API routes (`/api/files/...`, `/api/customers/{customer_id}/...`)
+- TapDB-backed portal customer/manifest/workset surfaces
+- customer portal pages (`/portal/...`) and namespaced customer APIs (`/api/customers/{customer_id}/...`)
 
 ## Runtime Contract
 
@@ -24,7 +24,7 @@ Ursa handles:
 3. Ursa resolves Atlas TRF/Test/fulfillment-item identity through Bloom.
 4. Ursa records analysis state, review state, and artifacts under the resolved identity.
 5. Ursa requires explicit `APPROVED` review state before returning result and artifact references to Atlas.
-6. Portal/customer/file/manifest/workset objects are persisted through TapDB graph templates and lineage.
+6. Portal/customer/manifest/workset objects are persisted through TapDB graph templates and lineage.
 
 ## Timezone Policy
 
@@ -47,10 +47,15 @@ export TAPDB_ENV=dev
 
 export URSA_INTERNAL_API_KEY=ursa-dev-internal-key
 export BLOOM_BASE_URL=https://localhost:8912
-export BLOOM_VERIFY_SSL=false
+export BLOOM_API_TOKEN=replace-with-bloom-bearer-token
+export BLOOM_VERIFY_SSL=true
 export ATLAS_BASE_URL=https://localhost:8915
-export ATLAS_VERIFY_SSL=false
 export ATLAS_INTERNAL_API_KEY=replace-me
+export ATLAS_VERIFY_SSL=true
+export DEWEY_ENABLED=true
+export DEWEY_BASE_URL=https://localhost:8920
+export DEWEY_API_TOKEN=replace-with-dewey-bearer-token
+export DEWEY_VERIFY_SSL=true
 
 ursa server start
 ```
@@ -68,11 +73,15 @@ TAPDB_ENV=dev
 
 URSA_INTERNAL_API_KEY=ursa-dev-internal-key
 BLOOM_BASE_URL=https://localhost:8912
-BLOOM_API_TOKEN=
-BLOOM_VERIFY_SSL=false
+BLOOM_API_TOKEN=replace-with-bloom-bearer-token
+BLOOM_VERIFY_SSL=true
 ATLAS_BASE_URL=https://localhost:8915
-ATLAS_INTERNAL_API_KEY=
-ATLAS_VERIFY_SSL=false
+ATLAS_INTERNAL_API_KEY=replace-with-atlas-internal-api-key
+ATLAS_VERIFY_SSL=true
+DEWEY_ENABLED=true
+DEWEY_BASE_URL=https://localhost:8920
+DEWEY_API_TOKEN=replace-with-dewey-bearer-token
+DEWEY_VERIFY_SSL=true
 URSA_HOST=0.0.0.0
 URSA_PORT=8914
 ```
@@ -88,10 +97,9 @@ Analysis:
 - `POST /api/analyses/{analysis_euid}/review`
 - `POST /api/analyses/{analysis_euid}/return`
 
-Portal/file/manifest/workset highlights:
+Portal/customer/manifest/workset highlights:
 
 - `GET /portal/*`
-- `GET|POST|PATCH|DELETE /api/files/*`
 - `GET|POST /api/customers/{customer_id}/manifests*`
 - `GET|POST /api/customers/{customer_id}/worksets*`
 
@@ -99,6 +107,17 @@ Analysis write routes require:
 
 - `X-API-Key`
 - `Idempotency-Key` on ingest and result return
+
+Cross-system integration calls are `https://` only and always authenticated:
+
+- Ursa -> Bloom resolver: `Authorization: Bearer <BLOOM_API_TOKEN>`
+- Ursa -> Atlas result return: `X-API-Key: <ATLAS_INTERNAL_API_KEY>`
+- Ursa -> Dewey artifact resolve/register: `Authorization: Bearer <DEWEY_API_TOKEN>`
+
+`POST /api/analyses/{analysis_euid}/artifacts` accepts either:
+
+- raw `storage_uri` (+ `artifact_type`)
+- `artifact_euid` (resolved via Dewey when Dewey integration is configured)
 
 The ingest payload includes:
 

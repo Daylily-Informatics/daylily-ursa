@@ -33,15 +33,11 @@ All object ownership/scoping is represented through TapDB lineage (`owns`, `cont
 ## API Surfaces
 
 - Portal UI: `/portal/...`
-- Files: `/api/files/...`
 - Manifests: `/api/customers/{customer_id}/manifests...`
 - Worksets: `/api/customers/{customer_id}/worksets...`
 
-Compatibility aliases are provided for high-use legacy file routes (for example `/api/files/list`, `/api/files/{file_id}`, `/api/files/{file_id}/tags`, `/api/files/{file_id}/manifest`) and are thin wrappers over TapDB-backed services.
-
 ## Manifest + Workset Behavior
 
-- Manifest template download: `GET /api/files/manifest/template`
 - Save/list/get/download customer manifests via `/api/customers/{customer_id}/manifests...`
 - Workset creation supports:
   - `manifest_id` (link existing manifest)

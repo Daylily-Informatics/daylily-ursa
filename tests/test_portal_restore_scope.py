@@ -126,23 +126,6 @@ def _build_app(monkeypatch, tmp_path, *, customer_id: str):
     return app
 
 
-def _register_file(client: TestClient, *, customer_id: str, s3_uri: str, subject_id: str = "SUBJ-1") -> str:
-    response = client.post(
-        f"/api/files/register?customer_id={customer_id}",
-        json={
-            "file_metadata": {
-                "s3_uri": s3_uri,
-                "file_size_bytes": 123,
-                "file_format": "fastq.gz",
-            },
-            "biosample_metadata": {"biosample_id": "BS-1", "subject_id": subject_id},
-            "sequencing_metadata": {"platform": "NOVASEQX"},
-        },
-    )
-    assert response.status_code == 200, response.text
-    return str(response.json()["file_id"])
-
-
 def test_bucket_management_endpoints_round_trip(monkeypatch, tmp_path):
     customer_id = f"cust-{uuid4().hex[:8]}"
     bucket_name = f"bucket-{uuid4().hex[:10]}"
@@ -153,109 +136,38 @@ def test_bucket_management_endpoints_round_trip(monkeypatch, tmp_path):
             f"/api/files/buckets/link?customer_id={customer_id}",
             json={"bucket_name": bucket_name, "bucket_type": "primary"},
         )
-        assert link.status_code == 200, link.text
-        bucket_id = str(link.json()["bucket_id"])
+        assert link.status_code == 404, link.text
 
         listed = client.get(f"/api/files/buckets/list?customer_id={customer_id}")
-        assert listed.status_code == 200
-        assert any(item["bucket_id"] == bucket_id for item in listed.json()["buckets"])
+        assert listed.status_code == 404
 
-        detail = client.get(f"/api/files/buckets/{bucket_id}")
-        assert detail.status_code == 200
-        assert detail.json()["bucket_name"] == bucket_name
-
-        patched = client.patch(f"/api/files/buckets/{bucket_id}", json={"description": "updated"})
-        assert patched.status_code == 200
-        assert patched.json()["description"] == "updated"
-
-        revalidated = client.post(f"/api/files/buckets/{bucket_id}/revalidate")
-        assert revalidated.status_code == 200
-        assert revalidated.json()["is_valid"] is True
-
-        unlinked = client.post(f"/api/files/buckets/{bucket_id}/unlink")
-        assert unlinked.status_code == 200
-        assert unlinked.json()["success"] is True
+        validate = client.post(f"/api/files/buckets/validate?bucket_name={bucket_name}")
+        assert validate.status_code == 404
 
 
-def test_file_compat_aliases_bulk_import_search_and_manifest_surfaces(monkeypatch, tmp_path):
+def test_legacy_file_surfaces_are_removed(monkeypatch, tmp_path):
     customer_id = f"cust-{uuid4().hex[:8]}"
     bucket_name = f"bucket-{uuid4().hex[:10]}"
     app = _build_app(monkeypatch, tmp_path, customer_id=customer_id)
 
     with TestClient(app) as client:
-        link = client.post(
-            f"/api/files/buckets/link?customer_id={customer_id}",
-            json={"bucket_name": bucket_name, "bucket_type": "primary"},
-        )
-        assert link.status_code == 200
-
-        file_id = _register_file(
-            client,
-            customer_id=customer_id,
-            s3_uri=f"s3://{bucket_name}/reads_R1.fastq.gz",
-            subject_id="SUBJ-A",
-        )
-
         list_compat = client.get(f"/api/files/list?customer_id={customer_id}")
-        assert list_compat.status_code == 200
-        assert list_compat.json()["file_count"] >= 1
+        assert list_compat.status_code == 404
 
-        patch_compat = client.patch(
-            f"/api/files/{file_id}?customer_id={customer_id}",
-            json={"file_metadata": {"file_format": "bam"}},
-        )
-        assert patch_compat.status_code == 200
-        assert patch_compat.json()["file_format"] == "bam"
-
-        replace_tags = client.put(
-            f"/api/files/{file_id}/tags?customer_id={customer_id}",
-            json={"tags": ["release", "verified"]},
-        )
-        assert replace_tags.status_code == 200
-        assert replace_tags.json()["tags"] == ["release", "verified"]
-
-        file_manifest = client.post(f"/api/files/{file_id}/manifest")
-        assert file_manifest.status_code == 200
-        assert file_manifest.text.startswith("RUN_ID\tSAMPLE_ID")
-
-        create_fileset = client.post(
-            f"/api/files/filesets?customer_id={customer_id}",
-            json={"name": "set-1", "file_ids": [file_id], "tags": []},
-        )
-        assert create_fileset.status_code == 200
-        fileset_id = create_fileset.json()["fileset_id"]
-
-        fileset_manifest = client.post(f"/api/files/filesets/{fileset_id}/manifest")
-        assert fileset_manifest.status_code == 200
-        assert fileset_manifest.text.startswith("RUN_ID\tSAMPLE_ID")
-
-        bulk = client.post(
-            f"/api/files/bulk-import?customer_id={customer_id}",
+        register = client.post(
+            f"/api/files/register?customer_id={customer_id}",
             json={
-                "files": [
-                    {
-                        "file_metadata": {
-                            "s3_uri": f"s3://{bucket_name}/reads_R2.fastq.gz",
-                            "file_size_bytes": 124,
-                            "file_format": "fastq.gz",
-                        },
-                        "biosample_metadata": {"biosample_id": "BS-2", "subject_id": "SUBJ-B"},
-                        "sequencing_metadata": {"platform": "NOVASEQX"},
-                    }
-                ],
-                "fileset_name": "imported",
+                "file_metadata": {"s3_uri": f"s3://{bucket_name}/reads_R1.fastq.gz"},
+                "biosample_metadata": {"biosample_id": "BS-1", "subject_id": "SUBJ-A"},
             },
         )
-        assert bulk.status_code == 200
-        assert bulk.json()["imported_count"] == 1
+        assert register.status_code == 404
 
         search = client.post(f"/api/files/search?customer_id={customer_id}", json={"subject_id": "SUBJ-B"})
-        assert search.status_code == 200
-        assert search.json()["file_count"] >= 1
+        assert search.status_code == 404
 
         template = client.get("/api/files/manifest/template")
-        assert template.status_code == 200
-        assert template.text.startswith("RUN_ID\tSAMPLE_ID")
+        assert template.status_code == 404
 
         create_manifest = client.post(
             f"/api/customers/{customer_id}/manifests",
@@ -367,53 +279,16 @@ def test_bucket_mutation_guardrails_for_upload_folder_and_delete(monkeypatch, tm
                 "prefix_restriction": "allowed/",
             },
         )
-        assert link.status_code == 200
-        bucket_id = str(link.json()["bucket_id"])
+        assert link.status_code == 404
 
-        make_read_only = client.patch(f"/api/files/buckets/{bucket_id}", json={"read_only": True})
-        assert make_read_only.status_code == 200
-        read_only_folder = client.post(
-            f"/api/files/buckets/{bucket_id}/folders?customer_id={customer_id}&prefix=allowed/",
-            json={"folder_name": "x"},
+        discover = client.post(
+            "/api/files/buckets/does-not-exist/discover",
+            params={"customer_id": customer_id, "prefix": "", "max_files": 10},
         )
-        assert read_only_folder.status_code == 403
+        assert discover.status_code == 404
 
-        writable = client.patch(f"/api/files/buckets/{bucket_id}", json={"read_only": False, "can_write": True})
-        assert writable.status_code == 200
-
-        blocked_prefix_upload = client.post(
-            "/portal/files/upload",
-            data={"bucket_id": bucket_id, "prefix": "blocked/", "auto_register": "false"},
-            files={"file": ("reads.fastq.gz", b"data", "application/gzip")},
+        delete_file = client.delete(
+            "/api/files/buckets/does-not-exist/files",
+            params={"customer_id": customer_id, "file_key": "allowed/registered.fastq.gz"},
         )
-        assert blocked_prefix_upload.status_code == 403
-
-        allowed_upload = client.post(
-            "/portal/files/upload",
-            data={"bucket_id": bucket_id, "prefix": "allowed/", "auto_register": "false"},
-            files={"file": ("reads.fastq.gz", b"data", "application/gzip")},
-        )
-        assert allowed_upload.status_code == 200
-
-        _register_file(
-            client,
-            customer_id=customer_id,
-            s3_uri=f"s3://{bucket_name}/allowed/registered.fastq.gz",
-            subject_id="SUBJ-X",
-        )
-
-        delete_registered = client.delete(
-            f"/api/files/buckets/{bucket_id}/files?customer_id={customer_id}&file_key=allowed/registered.fastq.gz"
-        )
-        assert delete_registered.status_code == 409
-
-        delete_outside_restriction = client.delete(
-            f"/api/files/buckets/{bucket_id}/files?customer_id={customer_id}&file_key=blocked/file.fastq.gz"
-        )
-        assert delete_outside_restriction.status_code == 403
-
-        blocked_folder = client.post(
-            f"/api/files/buckets/{bucket_id}/folders?customer_id={customer_id}&prefix=blocked/",
-            json={"folder_name": "new"},
-        )
-        assert blocked_folder.status_code == 403
+        assert delete_file.status_code == 404

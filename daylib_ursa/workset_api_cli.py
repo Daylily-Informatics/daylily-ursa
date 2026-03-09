@@ -13,6 +13,7 @@ from daylib_ursa.analysis_store import AnalysisStore
 from daylib_ursa.atlas_result_client import AtlasResultClient
 from daylib_ursa.bloom_resolver_client import BloomResolverClient
 from daylib_ursa.config import get_settings
+from daylib_ursa.dewey_client import DeweyClient
 from daylib_ursa.workset_api import create_app
 
 LOGGER = logging.getLogger("daylily.analysis_api.cli")
@@ -57,6 +58,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     args = parse_args(argv)
     configure_logging(args.verbose)
     settings = get_settings()
+    bloom_token = str(settings.bloom_api_token or "").strip()
+    if not bloom_token:
+        raise ValueError("BLOOM_API_TOKEN is required for authenticated Ursa->Bloom integration")
+    atlas_api_key = str(settings.atlas_internal_api_key or "").strip()
+    if not atlas_api_key:
+        raise ValueError("ATLAS_INTERNAL_API_KEY is required for authenticated Ursa->Atlas integration")
 
     LOGGER.info("Initializing Ursa beta analysis store")
     store = AnalysisStore()
@@ -66,22 +73,27 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     bloom_client = BloomResolverClient(
         base_url=settings.bloom_base_url,
-        token=settings.bloom_api_token,
+        token=bloom_token,
         verify_ssl=settings.bloom_verify_ssl,
     )
-    atlas_client = (
-        AtlasResultClient(
-            base_url=settings.atlas_base_url,
-            api_key=settings.atlas_internal_api_key,
-            verify_ssl=settings.atlas_verify_ssl,
-        )
-        if settings.atlas_internal_api_key
-        else None
+    atlas_client = AtlasResultClient(
+        base_url=settings.atlas_base_url,
+        api_key=atlas_api_key,
+        verify_ssl=settings.atlas_verify_ssl,
     )
+    dewey_client = None
+    if bool(getattr(settings, "dewey_enabled", False)):
+        dewey_client = DeweyClient(
+            base_url=str(getattr(settings, "dewey_base_url", "")),
+            token=str(getattr(settings, "dewey_api_token", "") or "").strip(),
+            verify_ssl=bool(getattr(settings, "dewey_verify_ssl", True)),
+            timeout_seconds=float(getattr(settings, "dewey_timeout_seconds", 10.0)),
+        )
     app = create_app(
         store,
         bloom_client=bloom_client,
         atlas_client=atlas_client,
+        dewey_client=dewey_client,
         settings=settings,
     )
 

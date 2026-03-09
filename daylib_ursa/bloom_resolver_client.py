@@ -26,16 +26,19 @@ def _require_https_url(value: str, *, field_name: str) -> str:
 @dataclass
 class BloomResolverClient:
     base_url: str
-    token: str | None = None
+    token: str
     timeout_seconds: float = 10.0
     verify_ssl: bool = True
     client: httpx.Client | None = None
 
     def _headers(self) -> dict[str, str]:
-        headers = {"Accept": "application/json"}
-        if self.token:
-            headers["Authorization"] = f"Bearer {self.token}"
-        return headers
+        token = str(self.token or "").strip()
+        if not token:
+            raise BloomResolverError("Bloom API bearer token is required")
+        return {
+            "Accept": "application/json",
+            "Authorization": f"Bearer {token}",
+        }
 
     def resolve_run_assignment(
         self,
