@@ -1,4 +1,4 @@
-"""Portal routes for clusters, worksets, files, manifests, and usage."""
+"""Portal routes for clusters, worksets, manifests, and usage."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional
 from urllib.parse import urlencode
 
 import boto3
-from fastapi import APIRouter, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -157,7 +157,6 @@ def _template_context(
         "cache_bust": os.environ.get("SOURCE_DATE_EPOCH", "1"),
         "api_base": "",
         "csrf_token": "",
-        "fileset_ui_enabled": False,
         **extra,
     }
 
@@ -278,19 +277,6 @@ def _reconcile_pending_worksets(state: GraphPortalState, clusters: List[ClusterI
 def _manifest_template_tsv() -> str:
     columns = GraphPortalState._manifest_columns()
     return "\t".join(columns) + "\n"
-
-
-def _raise_bucket_mutation_error(exc: Exception) -> None:
-    if isinstance(exc, KeyError):
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    if isinstance(exc, PermissionError):
-        raise HTTPException(status_code=403, detail=str(exc)) from exc
-    if isinstance(exc, ValueError):
-        detail = str(exc)
-        if "registered file" in detail.lower():
-            raise HTTPException(status_code=409, detail=detail) from exc
-        raise HTTPException(status_code=400, detail=detail) from exc
-    raise exc
 
 
 def _monitor_state_dirs() -> list[Path]:
@@ -414,270 +400,6 @@ def mount_portal(app: FastAPI, settings: Settings) -> None:
         return _TEMPLATES.TemplateResponse(
             "manifest_generator.html",
             _template_context(request, settings, portal_state, customer_id=_customer_id(request, settings)),
-        )
-
-    @router.get("/portal/files", response_class=HTMLResponse)
-    async def files_page(
-        request: Request,
-        search: Optional[str] = Query(default=None),
-        subject_id: Optional[str] = Query(default=None),
-        biosample_id: Optional[str] = Query(default=None),
-        file_format: Optional[str] = Query(default=None),
-    ) -> HTMLResponse:
-        customer_id = _customer_id(request, settings)
-        files = portal_state.list_files(
-            customer_id=customer_id,
-            limit=500,
-            search=search,
-            filters={
-                "subject_id": subject_id or "",
-                "biosample_id": biosample_id or "",
-                "file_format": file_format or "",
-            },
-        )
-        filesets = portal_state.list_filesets(customer_id=customer_id)
-        buckets = portal_state.list_buckets(customer_id=customer_id)
-        stats = {
-            "total_files": len(files),
-            "total_filesets": len(filesets),
-            "linked_buckets": len(buckets),
-            "unique_subjects": len({str(item.get("subject_id") or "") for item in files if item.get("subject_id")}),
-        }
-        return _TEMPLATES.TemplateResponse(
-            "files/index.html",
-            _template_context(
-                request,
-                settings,
-                portal_state,
-                customer_id=customer_id,
-                files=files,
-                stats=stats,
-            ),
-        )
-
-    @router.get("/portal/files/register", response_class=HTMLResponse)
-    async def file_register_page(request: Request) -> HTMLResponse:
-        customer_id = _customer_id(request, settings)
-        buckets = portal_state.list_buckets(customer_id=customer_id)
-        return _TEMPLATES.TemplateResponse(
-            "files/register.html",
-            _template_context(
-                request,
-                settings,
-                portal_state,
-                customer_id=customer_id,
-                buckets=buckets,
-            ),
-        )
-
-    @router.post("/portal/files/register")
-    async def portal_register_discovered(request: Request) -> Dict[str, Any]:
-        payload = await request.json()
-        customer_id = _customer_id(request, settings)
-        bucket_id = str(payload.get("bucket_id") or "").strip()
-        prefix = str(payload.get("prefix") or "")
-        selected_keys = [str(item).strip() for item in (payload.get("selected_keys") or []) if str(item).strip()]
-        if not bucket_id or not selected_keys:
-            raise HTTPException(status_code=400, detail="bucket_id and selected_keys are required")
-
-        discovered = portal_state.discover_bucket_files(
-            customer_id=customer_id,
-            bucket_id=bucket_id,
-            prefix=prefix,
-            max_files=int(payload.get("max_files") or 10000),
-            file_formats=None,
-        )
-        discovered_by_key = {str(item.get("key") or ""): item for item in discovered.get("files") or []}
-
-        biosample_id = str(payload.get("biosample_id") or "").strip()
-        subject_id = str(payload.get("subject_id") or "").strip()
-        platform = str(payload.get("sequencing_platform") or "NOVASEQX")
-
-        registered_count = 0
-        errors: list[str] = []
-        bucket = portal_state.get_bucket(customer_id=customer_id, bucket_id=bucket_id)
-        bucket_name = str((bucket or {}).get("bucket_name") or "")
-        for key in selected_keys:
-            item = discovered_by_key.get(key)
-            if item is None:
-                errors.append(f"Not found during discovery: {key}")
-                continue
-            s3_uri = f"s3://{bucket_name}/{key}"
-            try:
-                portal_state.register_file(
-                    customer_id=customer_id,
-                    bucket_id=bucket_id,
-                    payload={
-                        "file_metadata": {
-                            "s3_uri": s3_uri,
-                            "file_size_bytes": int(item.get("file_size_bytes") or 0),
-                            "file_format": item.get("detected_format") or "",
-                        },
-                        "biosample_metadata": {
-                            "biosample_id": biosample_id,
-                            "subject_id": subject_id,
-                            "sample_type": None,
-                        },
-                        "sequencing_metadata": {
-                            "platform": platform,
-                            "vendor": "ILMN",
-                        },
-                    },
-                )
-                registered_count += 1
-            except Exception as exc:
-                errors.append(f"{key}: {exc}")
-
-        return {
-            "registered_count": registered_count,
-            "selected_count": len(selected_keys),
-            "errors": errors,
-        }
-
-    @router.get("/portal/files/upload", response_class=HTMLResponse)
-    async def file_upload_page(request: Request) -> HTMLResponse:
-        customer_id = _customer_id(request, settings)
-        buckets = portal_state.list_buckets(customer_id=customer_id)
-        return _TEMPLATES.TemplateResponse(
-            "files/upload.html",
-            _template_context(
-                request,
-                settings,
-                portal_state,
-                customer_id=customer_id,
-                buckets=buckets,
-            ),
-        )
-
-    @router.post("/portal/files/upload")
-    async def upload_file_portal(
-        request: Request,
-        bucket_id: str = Form(...),
-        prefix: str = Form(default=""),
-        auto_register: str = Form(default="false"),
-        file: UploadFile = File(...),
-    ) -> Dict[str, Any]:
-        customer_id = _customer_id(request, settings)
-        data = await file.read()
-        try:
-            result = portal_state.upload_file_bytes(
-                customer_id=customer_id,
-                bucket_id=bucket_id,
-                filename=file.filename or "upload.bin",
-                content=data,
-                prefix=prefix,
-                auto_register=str(auto_register).strip().lower() in {"1", "true", "yes", "on"},
-            )
-        except Exception as exc:
-            _raise_bucket_mutation_error(exc)
-        return result
-
-    @router.get("/portal/files/buckets", response_class=HTMLResponse)
-    async def buckets_page(request: Request) -> HTMLResponse:
-        customer_id = _customer_id(request, settings)
-        buckets = portal_state.list_buckets(customer_id=customer_id)
-        return _TEMPLATES.TemplateResponse(
-            "files/buckets.html",
-            _template_context(
-                request,
-                settings,
-                portal_state,
-                customer_id=customer_id,
-                buckets=buckets,
-            ),
-        )
-
-    @router.get("/portal/files/browse/{bucket_id}", response_class=HTMLResponse)
-    async def bucket_browse_page(
-        request: Request,
-        bucket_id: str,
-        prefix: Optional[str] = Query(default=""),
-    ) -> HTMLResponse:
-        customer_id = _customer_id(request, settings)
-        bucket = portal_state.get_bucket(customer_id=customer_id, bucket_id=bucket_id)
-        if bucket is None:
-            raise HTTPException(status_code=404, detail="Bucket not found")
-        listing = portal_state.browse_bucket(
-            customer_id=customer_id,
-            bucket_id=bucket_id,
-            prefix=prefix or "",
-        )
-        return _TEMPLATES.TemplateResponse(
-            "files/browse.html",
-            _template_context(
-                request,
-                settings,
-                portal_state,
-                customer_id=customer_id,
-                bucket=bucket,
-                current_prefix=listing.get("current_prefix") or "",
-                items=listing.get("items") or [],
-                breadcrumbs=listing.get("breadcrumbs") or [],
-            ),
-        )
-
-    @router.get("/portal/files/browser", response_class=HTMLResponse)
-    async def bucket_browser_alias(
-        request: Request,
-        bucket_id: str = Query(...),
-        prefix: Optional[str] = Query(default=""),
-    ) -> HTMLResponse:
-        return await bucket_browse_page(request, bucket_id=bucket_id, prefix=prefix)
-
-    @router.get("/portal/files/filesets", response_class=HTMLResponse)
-    async def filesets_page(request: Request) -> HTMLResponse:
-        raise HTTPException(status_code=404, detail="File set UI is temporarily unavailable")
-
-    @router.get("/portal/files/filesets/{fileset_id}", response_class=HTMLResponse)
-    async def fileset_detail_page(request: Request, fileset_id: str) -> HTMLResponse:
-        raise HTTPException(status_code=404, detail="File set UI is temporarily unavailable")
-
-    @router.get("/portal/files/{file_id}", response_class=HTMLResponse)
-    async def file_detail_page(request: Request, file_id: str) -> HTMLResponse:
-        customer_id = _customer_id(request, settings)
-        file_payload = portal_state.get_file(customer_id=customer_id, file_id=file_id)
-        if file_payload is None:
-            raise HTTPException(status_code=404, detail="File not found")
-
-        filesets = portal_state.list_filesets(customer_id=customer_id)
-        membership = [
-            {
-                "fileset_id": item.get("fileset_id"),
-                "name": item.get("name"),
-                "file_count": item.get("file_count"),
-            }
-            for item in filesets
-            if any(str(child.get("file_id")) == str(file_id) for child in (item.get("files") or []))
-        ]
-
-        return _TEMPLATES.TemplateResponse(
-            "files/detail.html",
-            _template_context(
-                request,
-                settings,
-                portal_state,
-                customer_id=customer_id,
-                file=file_payload,
-                workset_history=[],
-                file_sets=membership,
-            ),
-        )
-
-    @router.get("/portal/files/{file_id}/edit", response_class=HTMLResponse)
-    async def file_edit_page(request: Request, file_id: str) -> HTMLResponse:
-        customer_id = _customer_id(request, settings)
-        file_payload = portal_state.get_file(customer_id=customer_id, file_id=file_id)
-        if file_payload is None:
-            raise HTTPException(status_code=404, detail="File not found")
-        return _TEMPLATES.TemplateResponse(
-            "files/edit_file.html",
-            _template_context(
-                request,
-                settings,
-                portal_state,
-                customer_id=customer_id,
-                file=file_payload,
-            ),
         )
 
     @router.get("/portal/usage", response_class=HTMLResponse)

@@ -141,7 +141,11 @@ class DummyDeweyClient:
         return "AT-1"
 
     def resolve_artifact(self, artifact_euid: str) -> dict:
-        return {"artifact_euid": artifact_euid}
+        return {
+            "artifact_euid": artifact_euid,
+            "artifact_type": "report",
+            "storage_uri": "s3://analysis-bucket/RUN-1/report.json",
+        }
 
 
 class FakeClusterService:
@@ -396,9 +400,9 @@ def test_every_api_and_gui_route_is_exercised(monkeypatch, tmp_path):
         covered_routes.add(("GET", "/portal"))
         assert client.get("/portal/manifest-generator").status_code == 200
         covered_routes.add(("GET", "/portal/manifest-generator"))
-        assert client.get("/portal/files").status_code == 200
+        assert client.get("/portal/files").status_code == 404
         covered_routes.add(("GET", "/portal/files"))
-        assert client.get("/portal/files/register").status_code == 200
+        assert client.get("/portal/files/register").status_code == 404
         covered_routes.add(("GET", "/portal/files/register"))
         assert (
             client.post(
@@ -412,10 +416,10 @@ def test_every_api_and_gui_route_is_exercised(monkeypatch, tmp_path):
                     "sequencing_platform": "NOVASEQX",
                 },
             ).status_code
-            in {200, 400, 404}
+            == 404
         )
         covered_routes.add(("POST", "/portal/files/register"))
-        assert client.get("/portal/files/upload").status_code == 200
+        assert client.get("/portal/files/upload").status_code == 404
         covered_routes.add(("GET", "/portal/files/upload"))
         assert (
             client.post(
@@ -423,18 +427,14 @@ def test_every_api_and_gui_route_is_exercised(monkeypatch, tmp_path):
                 data={"bucket_id": bucket_id, "prefix": "uploads/", "auto_register": "false"},
                 files={"file": ("coverage.txt", b"coverage", "text/plain")},
             ).status_code
-            in {200, 400, 403, 404}
+            == 404
         )
         covered_routes.add(("POST", "/portal/files/upload"))
-        assert client.get("/portal/files/buckets").status_code == 200
+        assert client.get("/portal/files/buckets").status_code == 404
         covered_routes.add(("GET", "/portal/files/buckets"))
-        assert client.get(f"/portal/files/browse/{bucket_id}", params={"prefix": ""}).status_code in {200, 404, 500}
+        assert client.get(f"/portal/files/browse/{bucket_id}", params={"prefix": ""}).status_code == 404
         covered_routes.add(("GET", "/portal/files/browse/{bucket_id}"))
-        assert client.get("/portal/files/browser", params={"bucket_id": bucket_id, "prefix": ""}).status_code in {
-            200,
-            404,
-            500,
-        }
+        assert client.get("/portal/files/browser", params={"bucket_id": bucket_id, "prefix": ""}).status_code == 404
         covered_routes.add(("GET", "/portal/files/browser"))
         assert client.get("/portal/files/filesets").status_code == 404
         covered_routes.add(("GET", "/portal/files/filesets"))
@@ -709,7 +709,7 @@ def test_every_api_and_gui_route_is_exercised(monkeypatch, tmp_path):
                 headers={"X-API-Key": "test-key"},
                 json={
                     "artifact_type": "REPORT",
-                    "storage_uri": "s3://analysis-bucket/RUN-1/report.json",
+                    "artifact_euid": "AT-REPORT-1",
                     "filename": "report.json",
                     "metadata": {},
                 },

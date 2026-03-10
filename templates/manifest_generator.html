@@ -245,8 +245,8 @@
                             <option value="">Loading linked buckets...</option>
                         </select>
                     </div>
-                    <a href="/portal/files/buckets" target="_blank" class="btn btn-outline btn-sm" title="Manage linked buckets">
-                        <i class="fas fa-external-link-alt"></i> Manage Buckets
+                    <a href="/portal/account" class="btn btn-outline btn-sm" title="View portal account settings">
+                        <i class="fas fa-external-link-alt"></i> Account Settings
                     </a>
                 </div>
                 <div class="mb-md">
@@ -340,4 +340,3 @@ window.UrsaConfig.customerId = '{{ customer.customer_id | default("") }}';
 </script>
 <script src="/static/js/manifest-generator.js?v={{ cache_bust | default('1') }}"></script>
 {% endblock %}
-

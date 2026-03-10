@@ -1469,31 +1469,6 @@ p { margin-bottom: var(--spacing-md); }
     line-height: 1.5;
 }
 
-/* Fileset Preview Styles */
-.fileset-files-preview {
-    max-height: 200px;
-    overflow-y: auto;
-    background: #0d1a22;
-    border-radius: var(--radius-sm);
-    padding: var(--spacing-sm);
-}
-
-.fileset-selector-item {
-    display: flex;
-    align-items: center;
-    gap: var(--spacing-md);
-    padding: var(--spacing-md);
-    border-radius: var(--radius-md);
-    cursor: pointer;
-    transition: background 0.2s;
-    border: 1px solid transparent;
-}
-
-.fileset-selector-item:hover {
-    background: rgba(0, 217, 166, 0.1);
-    border-color: var(--color-success);
-}
-
 /* Manifest Table Styles */
 #manifest-table {
     font-size: 0.875rem;

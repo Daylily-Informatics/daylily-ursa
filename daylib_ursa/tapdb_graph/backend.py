@@ -93,20 +93,6 @@ TEMPLATE_DEFINITIONS: tuple[TemplateDefinition, ...] = (
         "Customer S3 Bucket Link",
     ),
     TemplateDefinition(
-        "data/file/registered/1.0/",
-        "data_template",
-        "data_instance",
-        "FM",
-        "Registered File",
-    ),
-    TemplateDefinition(
-        "data/file/fileset/1.0/",
-        "data_template",
-        "data_instance",
-        "FS",
-        "File Set",
-    ),
-    TemplateDefinition(
         "data/manifest/stage-samples/1.0/",
         "data_template",
         "data_instance",

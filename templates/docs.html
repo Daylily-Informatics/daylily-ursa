@@ -26,16 +26,14 @@
                     <li><a href="#monitoring">Monitoring Progress</a></li>
                     <li><a href="#results">Accessing Results</a></li>
                 </ul>
-                <h4>File Management</h4>
+                <h4>Artifacts</h4>
                 <ul>
-                    <li><a href="#file-registry">File Registry</a></li>
-                    <li><a href="#filesets">File Sets</a></li>
-                    <li><a href="#manifests">Manifests</a></li>
+                    <li><a href="#artifacts-manifests">Artifacts & Manifests</a></li>
                 </ul>
                 <h4>UI Guide</h4>
                 <ul>
                     <li><a href="#dashboard">Dashboard</a></li>
-                    <li><a href="#file-registry-ui">File Registry UI</a></li>
+                    <li><a href="#artifacts-manifests">Artifacts & Manifests</a></li>
                     <li><a href="#worksets-ui">Worksets UI</a></li>
                     <li><a href="#usage-tracking">Usage & Costs</a></li>
                 </ul>
@@ -54,7 +52,7 @@
                 <p>Ursa is a cloud-based genomics processing platform that enables you to run bioinformatics pipelines at scale. The platform handles:</p>
                 <ul>
                     <li><strong>Workset Management</strong> - Submit, monitor, and manage analysis jobs</li>
-                    <li><strong>File Registry</strong> - Track and organize your sequencing data files</li>
+                    <li><strong>Dewey Artifact References</strong> - Submit analysis inputs using canonical Dewey artifact EUIDs</li>
                     <li><strong>Pipeline Execution</strong> - Run germline, somatic, RNA-seq, and other analyses</li>
                     <li><strong>Cost Tracking</strong> - Monitor compute and storage costs in real-time</li>
                 </ul>
@@ -63,14 +61,14 @@
             <section id="quick-start" class="docs-section">
                 <h2>Quick Start Guide</h2>
                 <div class="card" style="background: linear-gradient(135deg, #1a3a4a, #0d2633);">
-                    <h4 style="color: #fff; margin-top: 0;">1. Register Your Files</h4>
-                    <p>Navigate to <a href="/portal/files" class="text-accent">Files</a> and link your S3 bucket or upload files directly.</p>
+                    <h4 style="color: #fff; margin-top: 0;">1. Prepare Artifact Inputs</h4>
+                    <p>Collect Dewey artifact EUIDs for the data you want to process, or link a bucket and build a manifest from S3 paths.</p>
                     
-                    <h4 style="color: #fff;">2. Create a File Set</h4>
-                    <p>Group related files (e.g., paired-end reads for a sample) into a <a href="/portal/files/filesets" class="text-accent">File Set</a>.</p>
+                    <h4 style="color: #fff;">2. Build a Manifest</h4>
+                    <p>Use the manifest generator to create a stage TSV aligned to your selected pipeline.</p>
                     
                     <h4 style="color: #fff;">3. Submit a Workset</h4>
-                    <p>Go to <a href="/portal/worksets/new" class="text-accent">Submit New Workset</a>, select your file set, choose a pipeline, and submit.</p>
+                    <p>Go to <a href="/portal/worksets/new" class="text-accent">Submit New Workset</a>, choose a pipeline, and submit.</p>
                     
                     <h4 style="color: #fff;">4. Monitor Progress</h4>
                     <p>Track your workset status on the <a href="/portal" class="text-accent">Dashboard</a> or <a href="/portal/worksets" class="text-accent">Worksets</a> page.</p>
@@ -85,8 +83,8 @@
                         <p>A batch of analysis inputs processed together through a pipeline. Contains one or more samples.</p>
                     </div>
                     <div class="card">
-                        <h4><i class="fas fa-layer-group text-accent"></i> File Set</h4>
-                        <p>A logical grouping of files with shared metadata (e.g., all files for a biosample).</p>
+                        <h4><i class="fas fa-fingerprint text-accent"></i> Artifact EUID</h4>
+                        <p>A Dewey-issued identifier for immutable analysis input/output artifacts.</p>
                     </div>
                     <div class="card">
                         <h4><i class="fas fa-file-alt text-accent"></i> Manifest</h4>
@@ -103,10 +101,9 @@
                 <h2>Creating Worksets</h2>
                 <p>There are several ways to create a workset:</p>
                 <ol>
-                    <li><strong>From File Set</strong> (Recommended) - Select a pre-configured file set</li>
-                    <li><strong>Upload Files</strong> - Upload FASTQ files directly</li>
-                    <li><strong>S3 Path</strong> - Point to existing data in S3</li>
-                    <li><strong>Manifest Upload</strong> - Upload a stage_samples.tsv file</li>
+                    <li><strong>From Manifest</strong> (Recommended) - Upload a stage_samples.tsv file</li>
+                    <li><strong>S3 Discovery</strong> - Scan linked buckets to prefill sample data</li>
+                    <li><strong>Artifact-Referenced Inputs</strong> - Use Dewey artifact EUID-backed data sources</li>
                 </ol>
             </section>
 
@@ -119,8 +116,8 @@
                         <p>View counts of worksets in different states: In Progress, Ready/Queued, Completed, and Errors. Click any tile to filter worksets by status.</p>
                     </div>
                     <div class="card">
-                        <h4><i class="fas fa-file-alt text-accent"></i> File Statistics</h4>
-                        <p>See your registered file count and total storage used. Click to navigate to the File Registry.</p>
+                        <h4><i class="fas fa-database text-accent"></i> Artifact Statistics</h4>
+                        <p>See Dewey artifact-aligned storage and usage metrics tied to submitted worksets.</p>
                     </div>
                     <div class="card">
                         <h4><i class="fas fa-chart-line text-accent"></i> Cost Tracking</h4>
@@ -133,42 +130,15 @@
                 </div>
             </section>
 
-            <section id="file-registry-ui" class="docs-section">
-                <h2>File Registry UI</h2>
-                <p>The File Registry helps you manage and organize your genomics data files.</p>
-                <h4>Search & Filtering</h4>
-                <p>Use the search bar to find files by filename, sample ID, or subject ID. Click the "Advanced" button to access additional filters:</p>
-                <ul>
-                    <li><strong>Format</strong> - Filter by file type (FASTQ, BAM, CRAM, VCF)</li>
-                    <li><strong>Sample Type</strong> - Filter by sample type (Blood, Saliva, Tissue, etc.)</li>
-                    <li><strong>Subject ID</strong> - Find all files for a specific subject</li>
-                    <li><strong>Biosample ID</strong> - Find files for a specific biosample</li>
-                    <li><strong>Tags</strong> - Filter by custom tags</li>
-                    <li><strong>Sequencing Platform</strong> - Filter by sequencing platform</li>
-                    <li><strong>Date Range</strong> - Filter by registration date</li>
-                </ul>
-                <h4>File Registration Methods</h4>
-                <p>Register files using one of three methods:</p>
-                <ol>
-                    <li><strong>Single File</strong> - Register one file with full metadata</li>
-                    <li><strong>Bulk Import</strong> - Upload a CSV/TSV file with multiple files and metadata</li>
-                    <li><strong>Auto-Discover</strong> - Scan a linked S3 bucket to automatically discover and register files</li>
-                </ol>
-                <h4>File Detail Page</h4>
-                <p>Click on any file to view detailed information including:</p>
-                <ul>
-                    <li>File metadata (size, format, checksum)</li>
-                    <li>Subject and biosample information</li>
-                    <li>Sequencing details (platform, instrument, run date)</li>
-                    <li>Tags and file sets</li>
-                    <li>Workset history</li>
-                </ul>
-                <p>From the detail page, you can:</p>
-                <ul>
-                    <li><strong>Add Tags</strong> - Click "Add Tag" to add custom tags for organization</li>
-                    <li><strong>Find Similar Files</strong> - Discover other files from the same subject</li>
-                    <li><strong>View Subject's Files</strong> - See all files registered for a subject</li>
-                </ul>
+            <section id="artifacts-manifests" class="docs-section">
+                <h2>Artifacts & Manifests</h2>
+                <p>Ursa no longer provides a local file registry or file-set management surface.</p>
+                <h4>Dewey Artifact References</h4>
+                <p>Use Dewey artifact EUIDs as canonical identifiers for upstream and downstream data assets.</p>
+                <h4>Manifest-Centric Submission</h4>
+                <p>Build and upload manifest TSV payloads to define sample mappings and staging behavior per workset.</p>
+                <h4>Linked Bucket Discovery</h4>
+                <p>Use bucket discovery to gather candidate inputs without persisting local file/file-set records in Ursa.</p>
             </section>
 
             <section id="worksets-ui" class="docs-section">
@@ -177,9 +147,8 @@
                 <h4>Creating a Workset</h4>
                 <p>Click "Submit New Workset" to create a new analysis job. You can:</p>
                 <ul>
-                    <li>Select files from your File Registry</li>
-                    <li>Upload FASTQ files directly</li>
-                    <li>Provide an S3 path to existing data</li>
+                    <li>Provide Dewey artifact references</li>
+                    <li>Provide an S3 path to existing data for manifest generation</li>
                     <li>Upload a manifest file (stage_samples.tsv)</li>
                 </ul>
                 <h4>Monitoring Worksets</h4>
@@ -242,4 +211,3 @@
     </div>
 </div>
 {% endblock %}
-

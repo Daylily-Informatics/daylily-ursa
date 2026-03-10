@@ -69,14 +69,14 @@
 
     <!-- Additional Tiles Grid -->
     <div class="grid grid-3 mb-xl">
-        <a href="/portal/files" class="stat-card stat-card-clickable">
+        <a href="/portal/manifest-generator" class="stat-card stat-card-clickable">
             <div class="card-icon accent">
-                <i class="fas fa-file-alt"></i>
+                <i class="fas fa-link"></i>
             </div>
             <div>
-                <div class="stat-value" id="stat-files">{{ stats.registered_files | default(0) }}</div>
-                <div class="stat-label">Registered Files</div>
-                <div class="stat-subtext">{{ "%.2f"|format(stats.total_file_size_gb | default(0)) }} GB</div>
+                <div class="stat-value" id="stat-files">{{ stats.dewey_artifacts | default(0) }}</div>
+                <div class="stat-label">Dewey Artifacts</div>
+                <div class="stat-subtext">{{ "%.2f"|format(stats.dewey_artifact_size_gb | default(0)) }} GB</div>
             </div>
         </a>
 
@@ -85,9 +85,9 @@
                 <i class="fas fa-database"></i>
             </div>
             <div>
-                <div class="stat-value">${{ "%.4f"|format(stats.storage_cost_usd | default(0)) }}</div>
+                <div class="stat-value">${{ "%.4f"|format(stats.dewey_storage_cost_usd | default(0)) }}</div>
                 <div class="stat-label">Storage Cost</div>
-                <div class="stat-subtext">{{ stats.workset_storage_human | default('0 B') }}</div>
+                <div class="stat-subtext">{{ stats.dewey_storage_human | default('0 B') }}</div>
             </div>
         </a>
 
@@ -108,20 +108,20 @@
         <!-- File Storage Bar -->
         <div class="card" style="padding: var(--spacing-md);">
             <div class="d-flex justify-between align-center mb-sm">
-                <span class="text-muted"><i class="fas fa-file-alt"></i> Registered Files</span>
-                <span><strong>{{ "%.2f"|format(stats.total_file_size_gb | default(0)) }} GB</strong></span>
+                <span class="text-muted"><i class="fas fa-link"></i> Dewey Artifacts</span>
+                <span><strong>{{ "%.2f"|format(stats.dewey_artifact_size_gb | default(0)) }} GB</strong></span>
             </div>
             <div class="progress" style="height: 8px;">
                 <div class="progress-bar success" style="width: 100%;"></div>
             </div>
-            <div class="text-xs text-muted mt-sm">{{ stats.registered_files | default(0) }} files</div>
+            <div class="text-xs text-muted mt-sm">{{ stats.dewey_artifacts | default(0) }} artifacts</div>
         </div>
 
         <!-- Workset Storage Card -->
         <div class="card" style="padding: var(--spacing-md);">
             <div class="d-flex justify-between align-center mb-sm">
                 <span class="text-muted"><i class="fas fa-folder"></i> Workset Storage</span>
-                <span><strong>{{ stats.workset_storage_human | default('0 B') }}</strong></span>
+                <span><strong>{{ stats.dewey_storage_human | default('0 B') }}</strong></span>
             </div>
             <div class="progress" style="height: 8px;">
                 <div class="progress-bar primary" style="width: 100%;"></div>
@@ -191,8 +191,8 @@
                     <a href="/portal/manifest-generator" class="btn btn-accent btn-block">
                         <i class="fas fa-list-alt"></i> Generate Manifest
                     </a>
-                    <a href="/portal/files" class="btn btn-outline btn-block">
-                        <i class="fas fa-upload"></i> Upload Files
+                    <a href="/portal/manifest-generator" class="btn btn-outline btn-block">
+                        <i class="fas fa-link"></i> Use Dewey Artifacts
                     </a>
                     <a href="/docs" target="_blank" class="btn btn-outline btn-block">
                         <i class="fas fa-book"></i> API Documentation

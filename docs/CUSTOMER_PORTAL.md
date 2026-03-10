@@ -5,20 +5,19 @@ This document describes the current Ursa customer portal behavior after the TapD
 ## Core Principles
 
 - TapDB is the persistent authority for portal objects and canonical EUIDs.
-- S3 buckets/files remain external resources; their links and metadata are tracked in TapDB.
+- S3 buckets remain external resources; bucket links are tracked in TapDB.
+- Dewey is the system of record for artifact and artifact_set identities.
 - Legacy IDs may appear only as external keys in `json_addl`.
-- No DynamoDB or non-TapDB SQL persistence is used for portal/file/manifest/workset restore scope.
+- No DynamoDB or non-TapDB SQL persistence is used for portal/manifest/workset scope.
 
 ## Object Model
 
 - Customer/account: `actor/customer/account/1.0/`
 - Linked bucket: `data/storage/s3-bucket-link/1.0/`
-- Registered file: `data/file/registered/1.0/`
-- File set: `data/file/fileset/1.0/`
 - Manifest: `data/manifest/stage-samples/1.0/`
 - Workset: `workflow/workset/analysis-request/1.0/`
 
-All object ownership/scoping is represented through TapDB lineage (`owns`, `contains`, `uses_manifest`, etc.).
+All object ownership/scoping is represented through TapDB lineage (`owns`, `uses_manifest`, etc.).
 
 ## Onboarding Flow
 
@@ -43,11 +42,10 @@ All object ownership/scoping is represented through TapDB lineage (`owns`, `cont
   - `manifest_id` (link existing manifest)
   - `manifest_tsv_content` (create manifest, then link)
 
-## Bucket Mutation Guardrails
+## Bucket Guardrails
 
-Mutating operations enforce:
+Portal bucket operations enforce:
 
 - bucket exists and belongs to customer
 - `read_only` and `can_write` constraints
 - `prefix_restriction` constraints
-- delete-file rejection for already registered files

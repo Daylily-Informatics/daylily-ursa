@@ -44,8 +44,8 @@ prefer clusters in us-west-2
 - [ ] Ensure **cluster page cost details** are hidden for non-admin users (only show budgets they have visibility to).
   - Acceptance: verified via role-based UI + backend enforcement (not just hidden buttons). tests written and pass
 
-### 0.4 File upload regression
-- [ ] Fix `/portal/files/upload` returning **403 Forbidden** when uploading to a provisioned/linked bucket.
+### 0.4 Bucket discovery regression
+- [ ] Fix linked-bucket discovery failures when using provisioned/linked buckets with prefix restrictions.
   - Add tests covering expected behavior and common IAM/policy failure modes.
 
 ### 0.5 Account / security UX
@@ -103,8 +103,8 @@ prefer clusters in us-west-2
 - [ ] Fix "Samples" column in Recent Worksets always showing 0.
 - [ ] Fix account details "Rename" button: rename to "Edit" and allow editing fields.
 
-### 2.8 File registration
-- [ ] Fix bulk import in `/portal/files/register` and add tests.
+### 2.8 Artifact/manifest intake
+- [ ] Fix bulk manifest intake validation and add tests.
 
 ---
 

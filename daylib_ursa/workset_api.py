@@ -70,8 +70,7 @@ class AnalysisArtifactRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     artifact_type: str | None = None
-    artifact_euid: str | None = None
-    storage_uri: str | None = None
+    artifact_euid: str
     filename: str | None = None
     mime_type: str | None = None
     checksum_sha256: str | None = None
@@ -80,8 +79,8 @@ class AnalysisArtifactRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_reference_fields(self) -> "AnalysisArtifactRequest":
-        if not str(self.storage_uri or "").strip() and not str(self.artifact_euid or "").strip():
-            raise ValueError("Either storage_uri or artifact_euid is required")
+        if not str(self.artifact_euid or "").strip():
+            raise ValueError("artifact_euid is required")
         return self
 
 
@@ -483,72 +482,34 @@ def create_app(
         request: AnalysisArtifactRequest,
         _api_key: str = Depends(require_write_api_key),
     ) -> AnalysisArtifactResponse:
-        artifact_type = str(request.artifact_type or "").strip()
-        storage_uri = str(request.storage_uri or "").strip()
-        filename = str(request.filename or "").strip()
-        artifact_metadata = dict(request.metadata or {})
         source_artifact_euid = str(request.artifact_euid or "").strip()
-        existing_dewey_artifact_euid = ""
+        if app.state.dewey_client is None:
+            raise HTTPException(
+                status_code=400,
+                detail="artifact_euid requires Dewey integration configuration",
+            )
+        try:
+            resolved = app.state.dewey_client.resolve_artifact(source_artifact_euid)
+        except DeweyClientError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-        if not storage_uri and source_artifact_euid:
-            if app.state.dewey_client is None:
-                raise HTTPException(
-                    status_code=400,
-                    detail="artifact_euid requires Dewey integration configuration",
-                )
-            try:
-                resolved = app.state.dewey_client.resolve_artifact(source_artifact_euid)
-            except DeweyClientError as exc:
-                raise HTTPException(status_code=502, detail=str(exc)) from exc
-            storage_uri = str(resolved.get("storage_uri") or "").strip()
-            if not artifact_type:
-                artifact_type = str(resolved.get("artifact_type") or "").strip()
-            if not filename:
-                filename = Path(storage_uri).name or f"{source_artifact_euid}.bin"
-            artifact_metadata.setdefault("dewey_artifact_euid", source_artifact_euid)
-            artifact_metadata.setdefault("dewey_resolved", True)
-
+        artifact_type = str(request.artifact_type or resolved.get("artifact_type") or "").strip()
+        storage_uri = str(resolved.get("storage_uri") or "").strip()
+        filename = str(request.filename or resolved.get("filename") or "").strip()
+        if not filename:
+            filename = Path(storage_uri).name or f"{source_artifact_euid}.bin"
         if not artifact_type:
             raise HTTPException(status_code=400, detail="artifact_type is required")
         if not storage_uri:
-            raise HTTPException(status_code=400, detail="storage_uri is required")
-        if not filename:
-            filename = Path(storage_uri).name or "artifact.bin"
+            raise HTTPException(status_code=502, detail="Dewey artifact resolve returned no storage_uri")
 
-        existing_record = app.state.store.get_analysis(analysis_euid)
-        if existing_record is not None:
-            for existing_artifact in existing_record.artifacts:
-                if str(existing_artifact.storage_uri or "").strip() != storage_uri:
-                    continue
-                existing_dewey_artifact_euid = str(
-                    existing_artifact.metadata.get("dewey_artifact_euid") or ""
-                ).strip()
-                if existing_dewey_artifact_euid:
-                    artifact_metadata.setdefault(
-                        "dewey_artifact_euid",
-                        existing_dewey_artifact_euid,
-                    )
-                    break
-
-        if (
-            app.state.dewey_client is not None
-            and not source_artifact_euid
-            and not existing_dewey_artifact_euid
-        ):
-            try:
-                registered_euid = app.state.dewey_client.register_artifact(
-                    artifact_type=artifact_type,
-                    storage_uri=storage_uri,
-                    metadata={
-                        **artifact_metadata,
-                        "producer_system": "ursa",
-                        "producer_object_euid": analysis_euid,
-                    },
-                    idempotency_key=f"{analysis_euid}:{storage_uri}",
-                )
-            except DeweyClientError as exc:
-                raise HTTPException(status_code=502, detail=str(exc)) from exc
-            artifact_metadata["dewey_artifact_euid"] = registered_euid
+        resolved_metadata = resolved.get("metadata")
+        artifact_metadata = (
+            dict(resolved_metadata) if isinstance(resolved_metadata, dict) else {}
+        )
+        artifact_metadata.update(dict(request.metadata or {}))
+        artifact_metadata["dewey_artifact_euid"] = source_artifact_euid
+        artifact_metadata["dewey_resolved"] = True
 
         try:
             artifact = app.state.store.add_artifact(

@@ -1,4 +1,4 @@
-"""TapDB graph-backed portal state and file/manifest/workset services.
+"""TapDB graph-backed portal state for bucket, manifest, and workset services.
 
 This module enforces EUID-only object identifiers and lineage-based relationships.
 """
@@ -6,7 +6,6 @@ This module enforces EUID-only object identifiers and lineage-based relationship
 from __future__ import annotations
 
 import hashlib
-import io
 import re
 import secrets
 from datetime import datetime, timedelta, timezone
@@ -32,22 +31,6 @@ def _stable_key(*parts: str) -> str:
     return hashlib.sha256(data.encode("utf-8")).hexdigest()[:32]
 
 
-def _parse_s3_uri(uri: str) -> tuple[str, str]:
-    value = str(uri or "").strip()
-    if not value.startswith("s3://"):
-        raise ValueError("s3_uri must start with s3://")
-    body = value[5:]
-    if "/" not in body:
-        return body, ""
-    bucket, key = body.split("/", 1)
-    return bucket, key
-
-
-def _file_name_from_s3_uri(uri: str) -> str:
-    _, key = _parse_s3_uri(uri)
-    return Path(key).name if key else ""
-
-
 def _format_bytes_human(size_bytes: int) -> str:
     value = float(max(0, int(size_bytes)))
     units = ["B", "KB", "MB", "GB", "TB"]
@@ -65,8 +48,6 @@ class GraphPortalState:
 
     CUSTOMER_TEMPLATE = "actor/customer/account/1.0/"
     BUCKET_TEMPLATE = "data/storage/s3-bucket-link/1.0/"
-    FILE_TEMPLATE = "data/file/registered/1.0/"
-    FILESET_TEMPLATE = "data/file/fileset/1.0/"
     MANIFEST_TEMPLATE = "data/manifest/stage-samples/1.0/"
     WORKSET_TEMPLATE = "workflow/workset/analysis-request/1.0/"
     PRICING_RUN_TEMPLATE = "data/pricing/capture-run/1.0/"
@@ -154,595 +135,6 @@ class GraphPortalState:
             return None
         return row
 
-    @staticmethod
-    def _manifest_columns() -> list[str]:
-        return [
-            "RUN_ID",
-            "SAMPLE_ID",
-            "EXPERIMENTID",
-            "SAMPLE_TYPE",
-            "LIB_PREP",
-            "SEQ_VENDOR",
-            "SEQ_PLATFORM",
-            "LANE",
-            "SEQBC_ID",
-            "PATH_TO_CONCORDANCE_DATA_DIR",
-            "R1_FQ",
-            "R2_FQ",
-            "STAGE_DIRECTIVE",
-            "STAGE_TARGET",
-            "SUBSAMPLE_PCT",
-            "IS_POS_CTRL",
-            "IS_NEG_CTRL",
-            "N_X",
-            "N_Y",
-            "EXTERNAL_SAMPLE_ID",
-        ]
-
-    @classmethod
-    def _manifest_row_from_file_payload(
-        cls,
-        file_payload: dict[str, Any],
-        *,
-        sample_index: int,
-    ) -> dict[str, Any]:
-        sequencing = dict(file_payload.get("sequencing_metadata") or {})
-        biosample = dict(file_payload.get("biosample_metadata") or {})
-        return {
-            "RUN_ID": sequencing.get("run_id") or "R0",
-            "SAMPLE_ID": biosample.get("biosample_id") or f"sample_{sample_index}",
-            "EXPERIMENTID": sequencing.get("flowcell_id") or "",
-            "SAMPLE_TYPE": biosample.get("sample_type") or "blood",
-            "LIB_PREP": "noampwgs",
-            "SEQ_VENDOR": sequencing.get("vendor") or "ILMN",
-            "SEQ_PLATFORM": sequencing.get("platform") or "NOVASEQX",
-            "LANE": sequencing.get("lane") or 0,
-            "SEQBC_ID": sequencing.get("barcode_id") or "S1",
-            "PATH_TO_CONCORDANCE_DATA_DIR": "",
-            "R1_FQ": file_payload.get("s3_uri") or "",
-            "R2_FQ": "",
-            "STAGE_DIRECTIVE": "stage_data",
-            "STAGE_TARGET": "/fsx/staged_sample_data/",
-            "SUBSAMPLE_PCT": "na",
-            "IS_POS_CTRL": "false",
-            "IS_NEG_CTRL": "false",
-            "N_X": "1",
-            "N_Y": "1",
-            "EXTERNAL_SAMPLE_ID": biosample.get("subject_id") or "",
-        }
-
-    # ---------------------------------------------------------------------
-    # Files
-    # ---------------------------------------------------------------------
-
-    def _to_file_payload(self, row: Any) -> dict[str, Any]:
-        payload = from_json_addl(row)
-        file_id = str(row.euid)
-        file_name = str(payload.get("file_name") or payload.get("filename") or "")
-        s3_uri = str(payload.get("s3_uri") or "")
-        biosample = dict(payload.get("biosample_metadata") or {})
-        sequencing = dict(payload.get("sequencing_metadata") or {})
-        return {
-            "file_id": file_id,
-            "filename": file_name,
-            "s3_uri": s3_uri,
-            "file_format": str(payload.get("file_format") or "").lower(),
-            "file_size_bytes": int(payload.get("file_size_bytes") or 0),
-            "md5_checksum": payload.get("md5_checksum"),
-            "tags": list(payload.get("tags") or []),
-            "registered_at": str(payload.get("created_at") or utc_now_iso()),
-            "updated_at": str(payload.get("updated_at") or utc_now_iso()),
-            "sample_type": biosample.get("sample_type"),
-            "subject_id": str(biosample.get("subject_id") or ""),
-            "biosample_id": str(biosample.get("biosample_id") or ""),
-            "platform": str(sequencing.get("platform") or ""),
-            "quality_score": payload.get("quality_score"),
-            "percent_q30": payload.get("percent_q30"),
-            "read_number": payload.get("read_number"),
-            "paired_with": payload.get("paired_with"),
-            "is_positive_control": bool(payload.get("is_positive_control", False)),
-            "is_negative_control": bool(payload.get("is_negative_control", False)),
-            "file_metadata": {
-                "file_name": file_name,
-                "s3_uri": s3_uri,
-                "file_size_bytes": int(payload.get("file_size_bytes") or 0),
-                "file_format": str(payload.get("file_format") or "").lower(),
-                "md5_checksum": payload.get("md5_checksum"),
-            },
-            "biosample_metadata": biosample,
-            "sequencing_metadata": sequencing,
-        }
-
-    def list_files(
-        self,
-        *,
-        customer_id: str,
-        limit: int = 200,
-        search: str | None = None,
-        filters: dict[str, str] | None = None,
-    ) -> list[dict[str, Any]]:
-        filters = filters or {}
-        with self.backend.session_scope(commit=False) as session:
-            customer = self._customer(session, customer_id, create=True)
-            rows = self.backend.get_customer_owned(
-                session,
-                customer=customer,
-                template_code=self.FILE_TEMPLATE,
-                relationship_type="owns",
-                limit=max(limit, 1),
-            )
-            payloads = [self._to_file_payload(row) for row in rows]
-
-        search_text = str(search or "").strip().lower()
-
-        def _matches(item: dict[str, Any]) -> bool:
-            if search_text:
-                text = " ".join(
-                    [
-                        str(item.get("filename") or ""),
-                        str(item.get("s3_uri") or ""),
-                        str(item.get("subject_id") or ""),
-                        str(item.get("biosample_id") or ""),
-                        ",".join(item.get("tags") or []),
-                    ]
-                ).lower()
-                if search_text not in text:
-                    return False
-
-            for key, value in filters.items():
-                expected = str(value or "").strip().lower()
-                if not expected:
-                    continue
-                actual = str(item.get(key) or "").strip().lower()
-                if actual != expected:
-                    return False
-            return True
-
-        return [item for item in payloads if _matches(item)]
-
-    def get_file(self, *, customer_id: str, file_id: str) -> dict[str, Any] | None:
-        with self.backend.session_scope(commit=False) as session:
-            customer = self._customer(session, customer_id, create=True)
-            row = self._resolve_owned(
-                session,
-                customer_row=customer,
-                template_code=self.FILE_TEMPLATE,
-                object_id=file_id,
-            )
-            if row is None:
-                return None
-            return self._to_file_payload(row)
-
-    def register_file(
-        self,
-        *,
-        customer_id: str,
-        payload: dict[str, Any],
-        bucket_id: str | None = None,
-    ) -> dict[str, Any]:
-        file_meta = dict(payload.get("file_metadata") or {})
-        biosample = dict(payload.get("biosample_metadata") or {})
-        sequencing = dict(payload.get("sequencing_metadata") or {})
-
-        s3_uri = str(file_meta.get("s3_uri") or payload.get("s3_uri") or "").strip()
-        if not s3_uri:
-            raise ValueError("file_metadata.s3_uri is required")
-
-        file_name = _file_name_from_s3_uri(s3_uri)
-        file_format = str(file_meta.get("file_format") or Path(file_name).suffix.lstrip(".") or "").lower()
-        with self.backend.session_scope(commit=True) as session:
-            customer = self._customer(session, customer_id, create=True)
-            customer_external_id = self._customer_external_id(customer)
-            external_key = _stable_key(customer_external_id, s3_uri)
-            existing = self.backend.find_instance_by_external_id(
-                session,
-                template_code=self.FILE_TEMPLATE,
-                key="external_key",
-                value=external_key,
-            )
-
-            json_addl = {
-                "external_key": external_key,
-                "s3_uri": s3_uri,
-                "file_name": file_name,
-                "file_format": file_format,
-                "file_size_bytes": int(file_meta.get("file_size_bytes") or 0),
-                "md5_checksum": file_meta.get("md5_checksum"),
-                "biosample_metadata": biosample,
-                "sequencing_metadata": sequencing,
-                "tags": list(payload.get("tags") or []),
-                "read_number": payload.get("read_number"),
-                "paired_with": payload.get("paired_with"),
-                "quality_score": payload.get("quality_score"),
-                "percent_q30": payload.get("percent_q30"),
-                "is_positive_control": bool(payload.get("is_positive_control", False)),
-                "is_negative_control": bool(payload.get("is_negative_control", False)),
-                "updated_at": utc_now_iso(),
-            }
-
-            if existing is None:
-                row = self.backend.create_instance(
-                    session,
-                    template_code=self.FILE_TEMPLATE,
-                    name=file_name or external_key,
-                    json_addl={
-                        **json_addl,
-                        "created_at": utc_now_iso(),
-                    },
-                )
-                self.backend.create_lineage(
-                    session,
-                    parent=customer,
-                    child=row,
-                    relationship_type="owns",
-                )
-            else:
-                row = existing
-                self.backend.update_instance_json(session, row, json_addl)
-                self.backend.create_lineage(
-                    session,
-                    parent=customer,
-                    child=row,
-                    relationship_type="owns",
-                )
-
-            if bucket_id:
-                bucket_row = self.backend.find_instance_by_euid(
-                    session,
-                    template_code=self.BUCKET_TEMPLATE,
-                    value=bucket_id,
-                )
-                if bucket_row is not None:
-                    self.backend.create_lineage(
-                        session,
-                        parent=bucket_row,
-                        child=row,
-                        relationship_type="stored_in",
-                    )
-
-            return self._to_file_payload(row)
-
-    def update_file(
-        self,
-        *,
-        customer_id: str,
-        file_id: str,
-        payload: dict[str, Any],
-    ) -> dict[str, Any] | None:
-        with self.backend.session_scope(commit=True) as session:
-            customer = self._customer(session, customer_id, create=True)
-            row = self._resolve_owned(
-                session,
-                customer_row=customer,
-                template_code=self.FILE_TEMPLATE,
-                object_id=file_id,
-            )
-            if row is None:
-                return None
-            existing = from_json_addl(row)
-            merged = {
-                **existing,
-                "biosample_metadata": {
-                    **dict(existing.get("biosample_metadata") or {}),
-                    **dict(payload.get("biosample_metadata") or {}),
-                },
-                "sequencing_metadata": {
-                    **dict(existing.get("sequencing_metadata") or {}),
-                    **dict(payload.get("sequencing_metadata") or {}),
-                },
-                "tags": list(payload.get("tags") or existing.get("tags") or []),
-                "read_number": payload.get("read_number", existing.get("read_number")),
-                "paired_with": payload.get("paired_with", existing.get("paired_with")),
-                "quality_score": payload.get("quality_score", existing.get("quality_score")),
-                "percent_q30": payload.get("percent_q30", existing.get("percent_q30")),
-                "is_positive_control": payload.get(
-                    "is_positive_control", existing.get("is_positive_control", False)
-                ),
-                "is_negative_control": payload.get(
-                    "is_negative_control", existing.get("is_negative_control", False)
-                ),
-                "updated_at": utc_now_iso(),
-            }
-            file_meta = dict(payload.get("file_metadata") or {})
-            if file_meta:
-                if "file_format" in file_meta:
-                    merged["file_format"] = str(file_meta.get("file_format") or "").lower()
-                if "md5_checksum" in file_meta:
-                    merged["md5_checksum"] = file_meta.get("md5_checksum")
-
-            self.backend.update_instance_json(session, row, merged)
-            return self._to_file_payload(row)
-
-    def add_tag(self, *, customer_id: str, file_id: str, tag: str) -> dict[str, Any] | None:
-        clean = str(tag or "").strip()
-        if not clean:
-            return None
-        with self.backend.session_scope(commit=True) as session:
-            customer = self._customer(session, customer_id, create=True)
-            row = self._resolve_owned(
-                session,
-                customer_row=customer,
-                template_code=self.FILE_TEMPLATE,
-                object_id=file_id,
-            )
-            if row is None:
-                return None
-            payload = from_json_addl(row)
-            tags = [str(value) for value in (payload.get("tags") or []) if str(value).strip()]
-            if clean not in tags:
-                tags.append(clean)
-            payload["tags"] = tags
-            payload["updated_at"] = utc_now_iso()
-            self.backend.update_instance_json(session, row, payload)
-            return self._to_file_payload(row)
-
-    def remove_tag(self, *, customer_id: str, file_id: str, tag: str) -> dict[str, Any] | None:
-        clean = str(tag or "").strip()
-        if not clean:
-            return None
-        with self.backend.session_scope(commit=True) as session:
-            customer = self._customer(session, customer_id, create=True)
-            row = self._resolve_owned(
-                session,
-                customer_row=customer,
-                template_code=self.FILE_TEMPLATE,
-                object_id=file_id,
-            )
-            if row is None:
-                return None
-            payload = from_json_addl(row)
-            tags = [str(value) for value in (payload.get("tags") or []) if str(value).strip()]
-            payload["tags"] = [value for value in tags if value != clean]
-            payload["updated_at"] = utc_now_iso()
-            self.backend.update_instance_json(session, row, payload)
-            return self._to_file_payload(row)
-
-    def generate_file_download_url(
-        self,
-        *,
-        customer_id: str,
-        file_id: str,
-        expires_in: int = 3600,
-    ) -> str | None:
-        payload = self.get_file(customer_id=customer_id, file_id=file_id)
-        if payload is None:
-            return None
-        bucket, key = _parse_s3_uri(str(payload.get("s3_uri") or ""))
-        client = self.s3.get_client_for_bucket(bucket)
-        return str(
-            client.generate_presigned_url(
-                "get_object",
-                Params={"Bucket": bucket, "Key": key},
-                ExpiresIn=max(60, min(int(expires_in), 86400)),
-            )
-        )
-
-    # ---------------------------------------------------------------------
-    # File sets
-    # ---------------------------------------------------------------------
-
-    def _to_fileset_payload(self, session: Any, row: Any) -> dict[str, Any]:
-        payload = from_json_addl(row)
-        files = [self._to_file_payload(child) for child in self.backend.list_children(session, parent=row, relationship_type="contains")]
-        total_size = sum(int(item.get("file_size_bytes") or 0) for item in files)
-        return {
-            "fileset_id": str(row.euid),
-            "name": str(payload.get("name") or row.name or row.euid),
-            "description": payload.get("description"),
-            "tags": list(payload.get("tags") or []),
-            "created_at": payload.get("created_at"),
-            "updated_at": payload.get("updated_at"),
-            "file_count": len(files),
-            "total_size": total_size,
-            "files": files,
-        }
-
-    def list_filesets(self, *, customer_id: str) -> list[dict[str, Any]]:
-        with self.backend.session_scope(commit=False) as session:
-            customer = self._customer(session, customer_id, create=True)
-            rows = self.backend.get_customer_owned(
-                session,
-                customer=customer,
-                template_code=self.FILESET_TEMPLATE,
-                relationship_type="owns",
-                limit=2000,
-            )
-            return [self._to_fileset_payload(session, row) for row in rows]
-
-    def get_fileset(self, *, customer_id: str, fileset_id: str) -> dict[str, Any] | None:
-        with self.backend.session_scope(commit=False) as session:
-            customer = self._customer(session, customer_id, create=True)
-            row = self._resolve_owned(
-                session,
-                customer_row=customer,
-                template_code=self.FILESET_TEMPLATE,
-                object_id=fileset_id,
-            )
-            if row is None:
-                return None
-            return self._to_fileset_payload(session, row)
-
-    def create_fileset(
-        self,
-        *,
-        customer_id: str,
-        name: str,
-        description: str | None,
-        tags: list[str] | None,
-        file_ids: list[str] | None,
-    ) -> dict[str, Any]:
-        file_ids = list(file_ids or [])
-        with self.backend.session_scope(commit=True) as session:
-            customer = self._customer(session, customer_id, create=True)
-            row = self.backend.create_instance(
-                session,
-                template_code=self.FILESET_TEMPLATE,
-                name=str(name or "").strip() or "File Set",
-                json_addl={
-                    "external_key": _stable_key(customer_id, name, secrets.token_hex(4)),
-                    "name": str(name or "").strip() or "File Set",
-                    "description": str(description or "").strip() or None,
-                    "tags": [str(tag).strip() for tag in (tags or []) if str(tag).strip()],
-                    "created_at": utc_now_iso(),
-                    "updated_at": utc_now_iso(),
-                },
-            )
-            self.backend.create_lineage(session, parent=customer, child=row, relationship_type="owns")
-            for file_id in file_ids:
-                file_row = self._resolve_owned(
-                    session,
-                    customer_row=customer,
-                    template_code=self.FILE_TEMPLATE,
-                    object_id=file_id,
-                )
-                if file_row is None:
-                    continue
-                self.backend.create_lineage(session, parent=row, child=file_row, relationship_type="contains")
-            return self._to_fileset_payload(session, row)
-
-    def update_fileset(
-        self,
-        *,
-        customer_id: str,
-        fileset_id: str,
-        name: str | None = None,
-        description: str | None = None,
-        tags: list[str] | None = None,
-    ) -> dict[str, Any] | None:
-        with self.backend.session_scope(commit=True) as session:
-            customer = self._customer(session, customer_id, create=True)
-            row = self._resolve_owned(
-                session,
-                customer_row=customer,
-                template_code=self.FILESET_TEMPLATE,
-                object_id=fileset_id,
-            )
-            if row is None:
-                return None
-            payload = from_json_addl(row)
-            if name is not None:
-                payload["name"] = str(name).strip() or payload.get("name")
-                row.name = str(payload["name"])
-            if description is not None:
-                payload["description"] = str(description).strip() or None
-            if tags is not None:
-                payload["tags"] = [str(tag).strip() for tag in tags if str(tag).strip()]
-            payload["updated_at"] = utc_now_iso()
-            self.backend.update_instance_json(session, row, payload)
-            return self._to_fileset_payload(session, row)
-
-    def delete_fileset(self, *, customer_id: str, fileset_id: str) -> bool:
-        with self.backend.session_scope(commit=True) as session:
-            customer = self._customer(session, customer_id, create=True)
-            row = self._resolve_owned(
-                session,
-                customer_row=customer,
-                template_code=self.FILESET_TEMPLATE,
-                object_id=fileset_id,
-            )
-            if row is None:
-                return False
-            row.is_deleted = True
-            row.bstatus = "deleted"
-            session.flush()
-            return True
-
-    def add_files_to_fileset(
-        self,
-        *,
-        customer_id: str,
-        fileset_id: str,
-        file_ids: list[str],
-    ) -> dict[str, Any] | None:
-        with self.backend.session_scope(commit=True) as session:
-            customer = self._customer(session, customer_id, create=True)
-            fileset_row = self._resolve_owned(
-                session,
-                customer_row=customer,
-                template_code=self.FILESET_TEMPLATE,
-                object_id=fileset_id,
-            )
-            if fileset_row is None:
-                return None
-            for file_id in file_ids:
-                file_row = self._resolve_owned(
-                    session,
-                    customer_row=customer,
-                    template_code=self.FILE_TEMPLATE,
-                    object_id=file_id,
-                )
-                if file_row is None:
-                    continue
-                self.backend.create_lineage(
-                    session,
-                    parent=fileset_row,
-                    child=file_row,
-                    relationship_type="contains",
-                )
-            payload = from_json_addl(fileset_row)
-            payload["updated_at"] = utc_now_iso()
-            self.backend.update_instance_json(session, fileset_row, payload)
-            return self._to_fileset_payload(session, fileset_row)
-
-    def remove_files_from_fileset(
-        self,
-        *,
-        customer_id: str,
-        fileset_id: str,
-        file_ids: list[str],
-    ) -> dict[str, Any] | None:
-        with self.backend.session_scope(commit=True) as session:
-            customer = self._customer(session, customer_id, create=True)
-            fileset_row = self._resolve_owned(
-                session,
-                customer_row=customer,
-                template_code=self.FILESET_TEMPLATE,
-                object_id=fileset_id,
-            )
-            if fileset_row is None:
-                return None
-
-            if file_ids:
-                children = self.backend.list_children(session, parent=fileset_row, relationship_type="contains")
-                by_euid = {str(child.euid): child for child in children}
-                for file_id in file_ids:
-                    child = by_euid.get(str(file_id))
-                    if child is None:
-                        continue
-                    lineages = [
-                        lin
-                        for lin in child.parent_of_lineages
-                        if lin.parent_instance_uid == fileset_row.uid
-                        and lin.relationship_type == "contains"
-                        and not lin.is_deleted
-                    ]
-                    for lineage in lineages:
-                        lineage.is_deleted = True
-                        lineage.bstatus = "deleted"
-
-            payload = from_json_addl(fileset_row)
-            payload["updated_at"] = utc_now_iso()
-            self.backend.update_instance_json(session, fileset_row, payload)
-            return self._to_fileset_payload(session, fileset_row)
-
-    def clone_fileset(
-        self,
-        *,
-        customer_id: str,
-        fileset_id: str,
-        new_name: str,
-    ) -> dict[str, Any] | None:
-        original = self.get_fileset(customer_id=customer_id, fileset_id=fileset_id)
-        if original is None:
-            return None
-        return self.create_fileset(
-            customer_id=customer_id,
-            name=new_name,
-            description=original.get("description"),
-            tags=list(original.get("tags") or []),
-            file_ids=[str(item.get("file_id")) for item in original.get("files") or [] if item.get("file_id")],
-        )
-
     # ---------------------------------------------------------------------
     # Manifests
     # ---------------------------------------------------------------------
@@ -813,46 +205,6 @@ class GraphPortalState:
                 return None
             return self._to_manifest_payload(row)
 
-    def render_fileset_manifest_tsv(self, *, customer_id: str, fileset_id: str) -> str:
-        fileset = self.get_fileset(customer_id=customer_id, fileset_id=fileset_id)
-        if fileset is None:
-            raise KeyError("fileset not found")
-
-        columns = self._manifest_columns()
-        out = io.StringIO()
-        out.write("\t".join(columns) + "\n")
-
-        for idx, file_payload in enumerate(fileset.get("files") or [], start=1):
-            row = self._manifest_row_from_file_payload(file_payload, sample_index=idx)
-            out.write("\t".join(str(row[column]) for column in columns) + "\n")
-
-        return out.getvalue()
-
-    def render_file_manifest_tsv(self, *, customer_id: str, file_id: str) -> str:
-        file_payload = self.get_file(customer_id=customer_id, file_id=file_id)
-        if file_payload is None:
-            raise KeyError("file not found")
-
-        row = self._manifest_row_from_file_payload(file_payload, sample_index=1)
-        read_number = file_payload.get("read_number")
-        paired_with = str(file_payload.get("paired_with") or "")
-        if read_number == 2:
-            row["R2_FQ"] = row["R1_FQ"]
-            row["R1_FQ"] = ""
-        if paired_with:
-            paired = self.get_file(customer_id=customer_id, file_id=paired_with)
-            if paired is not None:
-                if read_number == 2:
-                    row["R1_FQ"] = str(paired.get("s3_uri") or "")
-                else:
-                    row["R2_FQ"] = str(paired.get("s3_uri") or "")
-
-        columns = self._manifest_columns()
-        out = io.StringIO()
-        out.write("\t".join(columns) + "\n")
-        out.write("\t".join(str(row[column]) for column in columns) + "\n")
-        return out.getvalue()
-
     # ---------------------------------------------------------------------
     # Buckets + S3 operations
     # ---------------------------------------------------------------------
@@ -863,45 +215,6 @@ class GraphPortalState:
         if prefix and not prefix.endswith("/"):
             prefix += "/"
         return prefix
-
-    def _require_bucket_write_access(self, bucket: dict[str, Any]) -> None:
-        if bool(bucket.get("read_only")):
-            raise PermissionError("Bucket is marked as read-only")
-        if not bool(bucket.get("can_write")):
-            raise PermissionError("No write permission to this bucket")
-
-    def _resolve_mutation_prefix(self, *, bucket: dict[str, Any], prefix: str | None) -> str:
-        restriction = self._normalize_s3_prefix(str(bucket.get("prefix_restriction") or ""))
-        resolved = self._normalize_s3_prefix(prefix)
-        if restriction:
-            if not resolved:
-                resolved = restriction
-            elif not resolved.startswith(restriction):
-                raise PermissionError("Prefix is outside allowed prefix restriction")
-        return resolved
-
-    def _normalize_object_key_for_delete(self, *, bucket: dict[str, Any], file_key: str) -> str:
-        key = str(file_key or "").strip().lstrip("/")
-        if not key:
-            raise ValueError("file_key is required")
-        restriction = self._normalize_s3_prefix(str(bucket.get("prefix_restriction") or ""))
-        if restriction and not key.startswith(restriction):
-            raise PermissionError("File is outside allowed prefix restriction")
-        return key
-
-    def _is_registered_s3_uri(self, *, customer_id: str, s3_uri: str) -> bool:
-        with self.backend.session_scope(commit=False) as session:
-            customer = self._customer(session, customer_id, create=True)
-            customer_external_id = self._customer_external_id(customer)
-            row = self.backend.find_instance_by_external_id(
-                session,
-                template_code=self.FILE_TEMPLATE,
-                key="external_key",
-                value=_stable_key(customer_external_id, s3_uri),
-            )
-            if row is None:
-                return False
-            return self._ensure_owned(session, customer, row)
 
     def _to_bucket_payload(self, row: Any) -> dict[str, Any]:
         payload = from_json_addl(row)
@@ -1150,11 +463,6 @@ class GraphPortalState:
         continuation_token: str | None = None
         remaining = max(1, min(int(max_files or 1000), 5000))
 
-        existing = {
-            str(item.get("s3_uri") or "")
-            for item in self.list_files(customer_id=customer_id, limit=10000)
-        }
-
         while remaining > 0:
             kwargs: dict[str, Any] = {
                 "Bucket": bucket_name,
@@ -1179,7 +487,7 @@ class GraphPortalState:
                         "file_size_bytes": int(obj.get("Size") or 0),
                         "last_modified": str(obj.get("LastModified") or ""),
                         "detected_format": suffix,
-                        "is_registered": uri in existing,
+                        "s3_uri": uri,
                     }
                 )
                 remaining -= 1
@@ -1193,95 +501,9 @@ class GraphPortalState:
             if not continuation_token:
                 break
 
-        registered_count = sum(1 for item in discovered if item.get("is_registered"))
         return {
             "files": discovered,
             "total_files": len(discovered),
-            "registered_count": registered_count,
-            "unregistered_count": len(discovered) - registered_count,
-        }
-
-    def create_bucket_folder(
-        self,
-        *,
-        customer_id: str,
-        bucket_id: str,
-        prefix: str,
-        folder_name: str,
-    ) -> None:
-        bucket = self.get_bucket(customer_id=customer_id, bucket_id=bucket_id)
-        if bucket is None:
-            raise KeyError("bucket not found")
-        self._require_bucket_write_access(bucket)
-        bucket_name = str(bucket.get("bucket_name") or "")
-        clean_name = str(folder_name or "").strip().strip("/")
-        if not clean_name:
-            raise ValueError("folder_name is required")
-        key = f"{self._resolve_mutation_prefix(bucket=bucket, prefix=prefix)}{clean_name}/"
-        self.s3.put_object(Bucket=bucket_name, Key=key, Body=b"")
-
-    def delete_bucket_file(
-        self,
-        *,
-        customer_id: str,
-        bucket_id: str,
-        file_key: str,
-    ) -> None:
-        bucket = self.get_bucket(customer_id=customer_id, bucket_id=bucket_id)
-        if bucket is None:
-            raise KeyError("bucket not found")
-        self._require_bucket_write_access(bucket)
-        bucket_name = str(bucket.get("bucket_name") or "")
-        key = self._normalize_object_key_for_delete(bucket=bucket, file_key=file_key)
-        s3_uri = f"s3://{bucket_name}/{key}"
-        if self._is_registered_s3_uri(customer_id=customer_id, s3_uri=s3_uri):
-            raise ValueError("Cannot delete a registered file. Unregister the file first.")
-        self.s3.delete_object(Bucket=bucket_name, Key=key)
-
-    def upload_file_bytes(
-        self,
-        *,
-        customer_id: str,
-        bucket_id: str,
-        filename: str,
-        content: bytes,
-        prefix: str | None,
-        auto_register: bool,
-    ) -> dict[str, Any]:
-        bucket = self.get_bucket(customer_id=customer_id, bucket_id=bucket_id)
-        if bucket is None:
-            raise KeyError("bucket not found")
-        self._require_bucket_write_access(bucket)
-        bucket_name = str(bucket.get("bucket_name") or "")
-        cleaned_prefix = self._resolve_mutation_prefix(bucket=bucket, prefix=prefix)
-        file_name = Path(filename).name
-        if not file_name:
-            raise ValueError("filename is required")
-        key = f"{cleaned_prefix}{file_name}"
-        self.s3.put_object(Bucket=bucket_name, Key=key, Body=content)
-        uri = f"s3://{bucket_name}/{key}"
-
-        registered: dict[str, Any] | None = None
-        if auto_register:
-            registered = self.register_file(
-                customer_id=customer_id,
-                payload={
-                    "file_metadata": {
-                        "s3_uri": uri,
-                        "file_size_bytes": len(content),
-                        "file_format": Path(filename).suffix.lstrip(".").lower(),
-                    },
-                    "biosample_metadata": {},
-                    "sequencing_metadata": {},
-                },
-                bucket_id=bucket_id,
-            )
-
-        return {
-            "bucket": bucket_name,
-            "key": key,
-            "s3_uri": uri,
-            "registered": registered,
         }
 
     def discover_samples(self, *, customer_id: str, max_files: int = 2000) -> dict[str, Any]:
@@ -1510,15 +732,16 @@ class GraphPortalState:
 
     def get_dashboard_stats(self, customer_id: str) -> Dict[str, Any]:
         worksets = self.list_worksets(customer_id, limit=10000)
-        files = self.list_files(customer_id=customer_id, limit=10000)
         counts: dict[str, int] = {}
+        dewey_artifacts = 0
         for item in worksets:
             state = str(item.get("state") or "")
             counts[state] = counts.get(state, 0) + 1
+            dewey_artifacts += max(int(item.get("sample_count") or 0), 0)
 
-        total_size = sum(int(item.get("file_size_bytes") or 0) for item in files)
-        total_gb = total_size / (1024**3)
-        storage_cost = total_gb * 0.023
+        dewey_size_bytes = 0
+        dewey_size_gb = dewey_size_bytes / (1024**3)
+        dewey_storage_cost = dewey_size_gb * 0.023
         compute_cost = float(counts.get("complete", 0)) * 5.0
 
         return {
@@ -1526,12 +749,12 @@ class GraphPortalState:
             "ready_worksets": counts.get("ready", 0) + counts.get("pending_cluster_creation", 0),
             "completed_worksets": counts.get("complete", 0),
             "error_worksets": counts.get("error", 0),
-            "cost_this_month": round(compute_cost + storage_cost, 4),
+            "cost_this_month": round(compute_cost + dewey_storage_cost, 4),
             "compute_cost_usd": round(compute_cost, 4),
-            "registered_files": len(files),
-            "total_file_size_gb": round(total_gb, 4),
-            "storage_cost_usd": round(storage_cost, 4),
-            "workset_storage_human": _format_bytes_human(total_size),
+            "dewey_artifacts": dewey_artifacts,
+            "dewey_artifact_size_gb": round(dewey_size_gb, 4),
+            "dewey_storage_cost_usd": round(dewey_storage_cost, 4),
+            "dewey_storage_human": _format_bytes_human(dewey_size_bytes),
         }
 
     def get_activity_series(self, customer_id: str, *, days: int = 30) -> Dict[str, Any]:
@@ -1851,8 +1074,8 @@ class GraphPortalState:
 
     def get_usage_summary(self, customer_id: str) -> dict[str, Any]:
         stats = self.get_dashboard_stats(customer_id)
-        storage_gb = float(stats.get("total_file_size_gb") or 0.0)
-        storage_cost = float(stats.get("storage_cost_usd") or 0.0)
+        storage_gb = float(stats.get("dewey_artifact_size_gb") or 0.0)
+        storage_cost = float(stats.get("dewey_storage_cost_usd") or 0.0)
         compute_cost = float(stats.get("compute_cost_usd") or 0.0)
         total = round(storage_cost + compute_cost, 4)
         worksets = self.list_worksets(customer_id, limit=2000)
@@ -1872,7 +1095,7 @@ class GraphPortalState:
             "transfer_intra_region_rate_per_gb": 0.0,
             "transfer_cross_region_rate_per_gb": 0.02,
             "transfer_internet_rate_per_gb": 0.09,
-            "workset_storage_human": str(stats.get("workset_storage_human") or "0 B"),
+            "workset_storage_human": str(stats.get("dewey_storage_human") or "0 B"),
             "storage_gb": round(storage_gb, 4),
             "active_worksets": active,
         }
@@ -1899,8 +1122,7 @@ class GraphPortalState:
                 }
             )
 
-        files = self.list_files(customer_id=customer_id, limit=5000)
-        total_bytes = sum(int(item.get("file_size_bytes") or 0) for item in files)
+        total_bytes = 0
         if total_bytes > 0:
             storage_gb = total_bytes / (1024**3)
             details.append(
@@ -1908,7 +1130,7 @@ class GraphPortalState:
                     "date": utc_now_iso()[:10],
                     "type": "Storage",
                     "workset_id": None,
-                    "workset_label": "Registered files",
+                    "workset_label": "Dewey artifacts",
                     "quantity": round(storage_gb, 4),
                     "unit": "GB",
                     "cost": round(storage_gb * 0.023, 4),

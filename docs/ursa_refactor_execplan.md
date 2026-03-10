@@ -1,7 +1,7 @@
 # Ursa Beta Refactor Execution Summary
 
 > Historical note: this document captures the analysis-only refactor phase.  
-> Current runtime also includes restored TapDB-backed portal/file/manifest/workset surfaces.
+> Current runtime also includes restored TapDB-backed portal/manifest/workset surfaces.
 
 ## Scope
 
@@ -18,7 +18,7 @@ Retired from the main runtime path:
 - workset lifecycle APIs
 - customer portal and customer ownership APIs
 - biospecimen and manifest ownership APIs
-- file-registry-as-primary truth
+- legacy local data-registry ownership in Ursa
 - workset scheduler, monitor, and cluster orchestration as beta entrypoints
 
 ## Runtime Contract
