@@ -115,3 +115,4 @@ pytest -q
 Legacy workset-monitor notes remain in `docs/`, but they are no longer the primary repo contract.
 
 <!-- release-sweep: 2026-03-10 -->
+ 
