@@ -13,9 +13,10 @@ from urllib.parse import urlparse
 from botocore.exceptions import ClientError
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from daylib_ursa.analysis_store import (
     AnalysisArtifact,
@@ -32,6 +33,11 @@ from daylib_ursa.atlas_result_client import (
 from daylib_ursa.bloom_resolver_client import BloomResolverClient, BloomResolverError
 from daylib_ursa.config import Settings, get_settings
 from daylib_ursa.dewey_client import DeweyClient, DeweyClientError
+from daylib_ursa.domain_access import (
+    build_allowed_origin_regex,
+    build_trusted_hosts,
+    is_allowed_origin,
+)
 from daylib_ursa.s3_utils import RegionAwareS3Client
 from daylib_ursa.tapdb_mount import mount_tapdb_admin
 
@@ -236,6 +242,7 @@ def create_app(
     internal_bucket = str(getattr(settings, "ursa_internal_output_bucket", "") or "").strip()
     if not internal_bucket:
         raise ValueError("ursa_internal_output_bucket is required")
+    allow_local_domain_access = not settings.is_production
 
     app = FastAPI(
         title="Daylily Ursa Analysis API",
@@ -262,18 +269,27 @@ def create_app(
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
 
-    try:
-        cors_origins = settings.get_cors_origins()
-    except ValueError as exc:
-        LOGGER.error("CORS configuration error: %s", exc)
-        raise
+    app.add_middleware(
+        TrustedHostMiddleware,
+        allowed_hosts=build_trusted_hosts(allow_local=allow_local_domain_access),
+    )
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=cors_origins,
+        allow_origins=[],
+        allow_origin_regex=build_allowed_origin_regex(
+            allow_local=allow_local_domain_access
+        ),
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.middleware("http")
+    async def enforce_origin_allowlist(request: Request, call_next):
+        origin = request.headers.get("origin")
+        if origin and not is_allowed_origin(origin, allow_local=allow_local_domain_access):
+            return PlainTextResponse("Origin not allowed", status_code=403)
+        return await call_next(request)
 
     @app.middleware("http")
     async def add_request_id(request: Request, call_next):

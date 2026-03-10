@@ -13,6 +13,11 @@ from typing import List, Optional
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from daylib_ursa.domain_access import (
+    APPROVED_WEB_DOMAIN_SUFFIXES,
+    is_allowed_origin,
+)
+
 
 def _require_https_url(value: str, *, field_name: str) -> str:
     normalized = str(value or "").strip()
@@ -183,7 +188,7 @@ class Settings(BaseSettings):
 
     # ========== CORS Configuration ==========
     cors_origins: str = Field(
-        default="*",
+        default=",".join(f"https://{item}" for item in APPROVED_WEB_DOMAIN_SUFFIXES),
         description="Comma-separated list of allowed CORS origins (* for all)",
     )
     daylily_env: str = Field(
@@ -425,14 +430,17 @@ class Settings(BaseSettings):
     def get_cors_origins(self) -> List[str]:
         """Get list of CORS origins from comma-separated string.
 
-        Raises ValueError if wildcard is used in production.
+        Raises ValueError if an origin falls outside the approved allowlist.
         """
         origins = [o.strip() for o in self.cors_origins.split(",") if o.strip()]
-        if self.daylily_env == "production" and "*" in origins:
-            raise ValueError(
-                "Wildcard CORS origin (*) is not allowed in production. "
-                "Set CORS_ORIGINS to a comma-separated list of allowed origins."
-            )
+        if not origins:
+            origins = [f"https://{item}" for item in APPROVED_WEB_DOMAIN_SUFFIXES]
+        for origin in origins:
+            if not is_allowed_origin(origin, allow_local=not self.is_production):
+                raise ValueError(
+                    "CORS_ORIGINS entries must stay within the approved domain allowlist. "
+                    f"Invalid origin: {origin}"
+                )
         return origins
 
     def get_effective_region(self) -> str:
