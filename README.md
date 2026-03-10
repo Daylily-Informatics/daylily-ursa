@@ -1,58 +1,76 @@
 # daylily-ursa
 
-Daylily Ursa is the analysis execution/review/result-return API.
+Daylily Ursa is the analysis execution, review, artifact-linking, and Atlas result-return service.
 
-## Scope
+## Authority Boundary
 
-Ursa is analysis-only. It is not a customer portal and does not own customer bucket/file identity.
+Ursa is analysis-only.
 
-Ursa responsibilities:
+It owns:
 
-- run-linked analysis ingest
-- Bloom resolver lookup for run context
-- TapDB-backed analysis execution/review state
-- Dewey artifact resolve/register for analysis inputs/outputs
-- Atlas result return after manual approval
+- analysis ingest records linked to sequencing context
+- TapDB-backed analysis state and review state
+- Bloom resolver calls for canonical run context
+- Dewey resolve/register flows for analysis inputs and outputs
+- Atlas result return after approval
 
-Ursa does **not** provide:
+It does not own:
 
-- `/portal/*` routes
-- customer onboarding APIs
-- customer bucket ownership flows
-- customer file/fileset ownership APIs
+- customer portal routes
+- onboarding or bucket-ownership flows
+- file/file-set authority
+- release visibility policy
+
+## Runtime Shape
+
+Primary package: `daylib_ursa`
+
+Primary entrypoints:
+
+- app factory: `daylib_ursa.workset_api:create_app`
+- CLI command: `daylily-workset-api`
+- package exports: analysis store, Bloom client, Dewey client, app factory
 
 ## API Surface
 
+Current service routes:
+
+- `GET /healthz`
 - `POST /api/analyses/ingest`
 - `GET /api/analyses/{analysis_euid}`
 - `POST /api/analyses/{analysis_euid}/status`
 - `POST /api/analyses/{analysis_euid}/artifacts`
 - `POST /api/analyses/{analysis_euid}/review`
 - `POST /api/analyses/{analysis_euid}/return`
-- `GET /healthz`
 
-Analysis write routes require `X-API-Key`.
-Ingest and return also require `Idempotency-Key`.
+Auth rules:
 
-## Contracts
+- analysis write routes require `X-API-Key`
+- ingest and return also require `Idempotency-Key`
 
-Ingest input references (`input_references`) support exactly:
+## Integration Contracts
 
-- raw S3 object URI: `{"reference_type":"s3_uri","value":"s3://..."}`
-- Dewey artifact reference: `{"reference_type":"artifact_euid","value":"AT-..."}`
-- Dewey artifact set reference: `{"reference_type":"artifact_set_euid","value":"AS-..."}`
+Ursa expects three external service seams:
 
-Ursa validates fetchability for raw `s3://` inputs (`head_object` visibility check).
+- Bloom for run resolution
+- Dewey for artifact resolution and registration
+- Atlas for result return and target resolution
 
-Artifact add (`POST /api/analyses/{analysis_euid}/artifacts`) supports exactly one of:
+Supported ingest input references:
 
-- `artifact_euid` (resolved via Dewey)
-- `storage_uri` + `artifact_type` (must be in `URSA_INTERNAL_OUTPUT_BUCKET`, then registered in Dewey)
+- `{"reference_type":"s3_uri","value":"s3://..."}`
+- `{"reference_type":"artifact_euid","value":"AT-..."}`
+- `{"reference_type":"artifact_set_euid","value":"AS-..."}`
 
-Atlas return enforces:
+Artifact add requires exactly one of:
 
-- review state must be `APPROVED`
-- all artifacts must carry a Dewey link (`dewey_artifact_euid`)
+- `artifact_euid`
+- `storage_uri` plus `artifact_type`
+
+Result return requires:
+
+- review state `APPROVED`
+- Dewey-linked artifacts for all returned outputs
 
 ## Required Environment
 
@@ -74,10 +92,26 @@ DEWEY_API_TOKEN=...
 DEWEY_VERIFY_SSL=true
 ```
 
-Cross-system integrations are HTTPS-only and authenticated.
+Cross-system integrations are authenticated and should run over HTTPS.
 
-## Validation
+## Local Development
+
+```bash
+pip install -e .[dev]
+daylily-workset-api --port 8914 --reload
+```
+
+Validation:
 
 ```bash
 pytest -q
 ```
+
+## Current Docs
+
+- [Docs index](docs/README.md)
+- [Ursa-Atlas return contract](docs/ursa_atlas_return_contract.md)
+
+Legacy workset-monitor notes remain in `docs/`, but they are no longer the primary repo contract.
+
+<!-- release-sweep: 2026-03-10 -->
