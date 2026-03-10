@@ -1,5 +1,8 @@
 # Workset State Transition Diagram
 
+This is a legacy workset-monitor note retained for background. The current repo
+surface is the analysis API described in [../README.md](../README.md).
+
 This document visualizes the state transitions in the enhanced workset monitoring system.
 
 ## State Transition Flow
@@ -261,7 +264,6 @@ graph TB
 
 ## Related Documentation
 
-- [Quick Start Guide](./QUICKSTART_WORKSET_MONITOR.md)
-- [Full Documentation](./WORKSET_MONITOR_ENHANCEMENTS.md)
-- [Implementation Summary](../IMPLEMENTATION_SUMMARY.md)
-
+- [Current docs index](./README.md)
+- [Current repo overview](../README.md)
+- [Current Ursa-Atlas contract](./ursa_atlas_return_contract.md)

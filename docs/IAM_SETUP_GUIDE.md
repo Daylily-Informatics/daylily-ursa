@@ -1,5 +1,8 @@
 # IAM Setup Guide for Ursa Monitor
 
+This is a legacy workset-monitor note retained for background. The current repo
+surface is the analysis API described in [../README.md](../README.md).
+
 This guide describes the AWS IAM permissions needed for the **workset monitor/worker** to interact with AWS services (S3, SNS, CloudWatch, EC2).
 
 TapDB persistence is **Postgres-backed**. It is not an AWS “NoSQL table” service, so you should not grant IAM permissions for a fictional `tapdb:*` API.
@@ -13,7 +16,7 @@ The monitor typically needs AWS permissions for:
 - **SNS**: publish notifications (optional)
 - **EC2**: describe instances/tags for cluster discovery/status
 
-The repository includes an example policy in [iam-policy.json](/Users/jmajor/projects/daylily/daylily-ursa/iam-policy.json).
+The repository includes an example policy in [../iam-policy.json](../iam-policy.json).
 
 ## Quick Setup (AWS CLI)
 
@@ -54,4 +57,3 @@ Depending on your TapDB deployment, the process may additionally need:
 - RDS IAM auth permissions (for example `rds-db:connect`) if enabled by your TapDB config.
 
 Those permissions are deployment-specific and intentionally not baked into the example policy.
-
