@@ -11,11 +11,6 @@ from daylib_ursa.config import Settings
 from daylib_ursa.workset_api import create_app
 
 
-@pytest.fixture(autouse=True)
-def _disable_portal_mount(monkeypatch):
-    monkeypatch.setattr("daylib_ursa.workset_api.mount_portal", lambda app, settings: None)
-
-
 class DummyStore:
     def __init__(self) -> None:
         self.record = AnalysisRecord(
@@ -34,7 +29,8 @@ class DummyStore:
             review_state=ReviewState.PENDING.value,
             result_status="PENDING",
             run_folder="s3://analysis-bucket/RUN-1/",
-            artifact_bucket="analysis-bucket",
+            internal_bucket="analysis-bucket",
+            input_references=[],
             result_payload={},
             metadata={},
             created_at="2026-03-07T00:00:00Z",
@@ -110,6 +106,7 @@ def _settings() -> Settings:
         ursa_internal_api_key="ursa-test-key",
         bloom_base_url="https://bloom.example",
         atlas_base_url="https://atlas.example",
+        ursa_internal_output_bucket="analysis-bucket",
         ursa_tapdb_mount_enabled=False,
     )
 

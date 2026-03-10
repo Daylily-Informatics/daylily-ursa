@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+from botocore.exceptions import ClientError
 from fastapi.testclient import TestClient
 import pytest
 
@@ -14,11 +15,6 @@ from daylib_ursa.analysis_store import (
 )
 from daylib_ursa.config import Settings
 from daylib_ursa.workset_api import create_app
-
-
-@pytest.fixture(autouse=True)
-def _disable_portal_mount(monkeypatch):
-    monkeypatch.setattr("daylib_ursa.workset_api.mount_portal", lambda app, settings: None)
 
 
 class DummyStore:
@@ -38,8 +34,9 @@ class DummyStore:
             state=AnalysisState.INGESTED.value,
             review_state=ReviewState.PENDING.value,
             result_status="PENDING",
-            run_folder="s3://analysis-bucket/RUN-1/",
-            artifact_bucket="analysis-bucket",
+            run_folder="s3://ursa-internal/RUN-1/",
+            internal_bucket="ursa-internal",
+            input_references=[],
             result_payload={},
             metadata={},
             created_at="2026-03-07T00:00:00Z",
@@ -51,6 +48,12 @@ class DummyStore:
 
     def ingest_analysis(self, **kwargs):
         self.last_ingest = kwargs
+        self.record = replace(
+            self.record,
+            analysis_type=kwargs["analysis_type"],
+            internal_bucket=kwargs["internal_bucket"],
+            input_references=kwargs["input_references"],
+        )
         return self.record
 
     def get_analysis(self, analysis_euid: str):
@@ -126,20 +129,68 @@ class DummyBloomClient:
         )
 
 
+class FakeRegionAwareS3Client:
+    def __init__(self, default_region: str, profile: str | None = None) -> None:
+        self.default_region = default_region
+        self.profile = profile
+        self.checked: list[tuple[str, str]] = []
+
+    def head_object(self, Bucket: str, Key: str, **kwargs):  # noqa: N803
+        self.checked.append((Bucket, Key))
+        return {"ContentLength": 1}
+
+
+class FailingRegionAwareS3Client(FakeRegionAwareS3Client):
+    def head_object(self, Bucket: str, Key: str, **kwargs):  # noqa: N803
+        raise ClientError({"Error": {"Code": "404", "Message": "Not Found"}}, "HeadObject")
+
+
 def _settings() -> Settings:
     return Settings(
         cors_origins="*",
         ursa_internal_api_key="ursa-test-key",
         bloom_base_url="https://bloom.example",
         atlas_base_url="https://atlas.example",
+        ursa_internal_output_bucket="ursa-internal",
         ursa_tapdb_mount_enabled=False,
     )
 
 
-def test_ingest_analysis_resolves_bloom_and_persists():
+def test_ingest_analysis_resolves_mixed_input_references(monkeypatch):
+    monkeypatch.setattr("daylib_ursa.workset_api.RegionAwareS3Client", FakeRegionAwareS3Client)
     store = DummyStore()
     bloom = DummyBloomClient()
-    app = create_app(store, bloom_client=bloom, settings=_settings())
+
+    class FakeDeweyClient:
+        def resolve_artifact(self, artifact_euid: str):
+            assert artifact_euid == "AT-1"
+            return {
+                "artifact_euid": "AT-1",
+                "artifact_type": "fastq",
+                "storage_uri": "s3://dewey-bucket/RUN-1/read1.fastq.gz",
+                "metadata": {"source": "dewey"},
+            }
+
+        def resolve_artifact_set(self, artifact_set_euid: str):
+            assert artifact_set_euid == "AS-1"
+            return {
+                "artifact_set_euid": "AS-1",
+                "members": [
+                    {
+                        "artifact_euid": "AT-2",
+                        "artifact_type": "bam",
+                        "storage_uri": "s3://dewey-bucket/RUN-1/sample.bam",
+                        "metadata": {},
+                    }
+                ],
+            }
+
+    app = create_app(
+        store,
+        bloom_client=bloom,
+        dewey_client=FakeDeweyClient(),
+        settings=_settings(),
+    )
 
     with TestClient(app) as client:
         response = client.post(
@@ -154,25 +205,26 @@ def test_ingest_analysis_resolves_bloom_and_persists():
                 "lane": "1",
                 "library_barcode": "LIB-1",
                 "analysis_type": "germline",
-                "artifact_bucket": "analysis-bucket",
-                "input_files": ["s3://analysis-bucket/RUN-1/read1.fastq.gz"],
-                "metadata": {"pipeline": "beta"},
+                "input_references": [
+                    {"reference_type": "s3_uri", "value": "s3://input-bucket/a.fastq.gz"},
+                    {"reference_type": "artifact_euid", "value": "AT-1"},
+                    {"reference_type": "artifact_set_euid", "value": "AS-1"},
+                ],
             },
         )
 
     assert response.status_code == 201, response.text
     body = response.json()
     assert body["analysis_euid"] == "AN-1"
-    assert body["atlas_test_fulfillment_item_euid"] == "TPC-1"
+    assert body["internal_bucket"] == "ursa-internal"
+    assert len(body["input_references"]) == 3
     assert bloom.calls == [("RUN-1", "FLOW-1", "1", "LIB-1")]
     assert store.last_ingest["idempotency_key"] == "idem-1"
-    assert store.last_ingest["analysis_type"] == "germline"
 
 
-def test_ingest_analysis_requires_idempotency_key():
-    store = DummyStore()
-    bloom = DummyBloomClient()
-    app = create_app(store, bloom_client=bloom, settings=_settings())
+def test_ingest_analysis_requires_idempotency_key(monkeypatch):
+    monkeypatch.setattr("daylib_ursa.workset_api.RegionAwareS3Client", FakeRegionAwareS3Client)
+    app = create_app(DummyStore(), bloom_client=DummyBloomClient(), settings=_settings())
 
     with TestClient(app) as client:
         response = client.post(
@@ -183,8 +235,7 @@ def test_ingest_analysis_requires_idempotency_key():
                 "flowcell_id": "FLOW-1",
                 "lane": "1",
                 "library_barcode": "LIB-1",
-                "analysis_type": "germline",
-                "artifact_bucket": "analysis-bucket",
+                "input_references": [{"reference_type": "s3_uri", "value": "s3://input/a.fastq.gz"}],
             },
         )
 
@@ -192,68 +243,41 @@ def test_ingest_analysis_requires_idempotency_key():
     assert "Idempotency-Key" in response.text
 
 
-def test_legacy_workset_route_is_not_registered():
+def test_ingest_analysis_rejects_unfetchable_s3_input(monkeypatch):
+    monkeypatch.setattr("daylib_ursa.workset_api.RegionAwareS3Client", FailingRegionAwareS3Client)
     app = create_app(DummyStore(), bloom_client=DummyBloomClient(), settings=_settings())
 
     with TestClient(app) as client:
-        response = client.get("/worksets")
+        response = client.post(
+            "/api/analyses/ingest",
+            headers={
+                "X-API-Key": "ursa-test-key",
+                "Idempotency-Key": "idem-2",
+            },
+            json={
+                "run_euid": "RUN-1",
+                "flowcell_id": "FLOW-1",
+                "lane": "1",
+                "library_barcode": "LIB-1",
+                "input_references": [{"reference_type": "s3_uri", "value": "s3://missing/a.fastq.gz"}],
+            },
+        )
 
-    assert response.status_code == 404
-
-
-def test_root_redirects_to_login_and_health_moves_to_healthz():
-    app = create_app(DummyStore(), bloom_client=DummyBloomClient(), settings=_settings())
-
-    with TestClient(app) as client:
-        root_response = client.get("/", follow_redirects=False)
-        health_response = client.get("/healthz")
-
-    assert root_response.status_code == 307
-    assert root_response.headers["location"] == "/portal/login"
-    assert health_response.status_code == 200
-    assert health_response.json()["status"] == "healthy"
-
-
-def test_settings_force_auth_enabled_even_when_disabled_in_override():
-    settings = Settings(enable_auth=False)
-    assert settings.enable_auth is True
+    assert response.status_code == 400
+    assert "not found" in response.json()["detail"].lower()
 
 
 def test_settings_reject_non_https_cross_service_urls():
     with pytest.raises(ValueError, match="absolute https:// URL"):
-        Settings(bloom_base_url="http://bloom.example", atlas_base_url="https://atlas.example")
+        Settings(
+            bloom_base_url="http://bloom.example",
+            atlas_base_url="https://atlas.example",
+            ursa_internal_output_bucket="ursa-internal",
+        )
 
     with pytest.raises(ValueError, match="absolute https:// URL"):
-        Settings(bloom_base_url="https://bloom.example", atlas_base_url="http://atlas.example")
-
-
-def test_login_uses_non_portal_callback_uri():
-    settings = Settings(
-        cors_origins="*",
-        ursa_internal_api_key="ursa-test-key",
-        bloom_base_url="https://bloom.example",
-        atlas_base_url="https://atlas.example",
-        enable_auth=True,
-        cognito_domain="daylily-ursa-5r8giqv5p.auth.us-west-2.amazoncognito.com",
-        cognito_app_client_id="34g35v8tpurbe309a8e5t5ot7i",
-        ursa_tapdb_mount_enabled=False,
-    )
-    app = create_app(DummyStore(), bloom_client=DummyBloomClient(), settings=settings)
-
-    with TestClient(app) as client:
-        response = client.get("/portal/login")
-
-    assert response.status_code == 200
-    assert "redirect_uri=" in response.text
-    assert "auth%2Fcallback" in response.text
-    assert "portal%2Fauth%2Fcallback" not in response.text
-
-
-def test_auth_callback_redirect_target_exists():
-    app = create_app(DummyStore(), bloom_client=DummyBloomClient(), settings=_settings())
-
-    with TestClient(app) as client:
-        callback = client.get("/auth/callback", follow_redirects=False)
-
-    assert callback.status_code == 307
-    assert callback.headers["location"].startswith("/portal/login")
+        Settings(
+            bloom_base_url="https://bloom.example",
+            atlas_base_url="http://atlas.example",
+            ursa_internal_output_bucket="ursa-internal",
+        )

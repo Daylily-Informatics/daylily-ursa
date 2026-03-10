@@ -1,4 +1,4 @@
-"""FastAPI application for Ursa beta analysis flows."""
+"""FastAPI application for Ursa analysis flows."""
 
 from __future__ import annotations
 
@@ -7,16 +7,15 @@ import logging
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Annotated, Any
-from urllib.parse import urlencode
+from typing import Annotated, Any, Literal
+from urllib.parse import urlparse
 
+from botocore.exceptions import ClientError
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel, ConfigDict, Field
-from pydantic import model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from daylib_ursa.analysis_store import (
     AnalysisArtifact,
@@ -33,24 +32,24 @@ from daylib_ursa.atlas_result_client import (
 from daylib_ursa.bloom_resolver_client import BloomResolverClient, BloomResolverError
 from daylib_ursa.config import Settings, get_settings
 from daylib_ursa.dewey_client import DeweyClient, DeweyClientError
-from daylib_ursa.portal_auth import (
-    PORTAL_SESSION_COOKIE_NAME,
-    PORTAL_SESSION_MAX_AGE_SECONDS,
-    decode_id_token_claims,
-    decode_portal_session,
-    derive_identity,
-    encode_portal_session,
-    exchange_code_for_tokens,
-    fetch_userinfo,
-)
-from daylib_ursa.portal_onboarding import OnboardingError, ensure_customer_onboarding
-from daylib_ursa.portal import mount_portal
+from daylib_ursa.s3_utils import RegionAwareS3Client
 from daylib_ursa.tapdb_mount import mount_tapdb_admin
-from daylib_ursa.user_preferences import get_display_timezone_for_email
 
 LOGGER = logging.getLogger("daylily.analysis_api")
 _REPO_ROOT = Path(__file__).resolve().parent.parent
-_TEMPLATES = Jinja2Templates(directory=str(_REPO_ROOT / "templates"))
+
+
+class AnalysisInputReferenceRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reference_type: Literal["s3_uri", "artifact_euid", "artifact_set_euid"]
+    value: str
+
+    @model_validator(mode="after")
+    def validate_value(self) -> "AnalysisInputReferenceRequest":
+        if not str(self.value or "").strip():
+            raise ValueError("value is required")
+        return self
 
 
 class AnalysisIngestRequest(BaseModel):
@@ -61,16 +60,22 @@ class AnalysisIngestRequest(BaseModel):
     lane: str
     library_barcode: str
     analysis_type: str = "beta-default"
-    artifact_bucket: str
-    input_files: list[str] = Field(default_factory=list)
+    input_references: list[AnalysisInputReferenceRequest] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_input_references(self) -> "AnalysisIngestRequest":
+        if not self.input_references:
+            raise ValueError("input_references is required")
+        return self
 
 
 class AnalysisArtifactRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     artifact_type: str | None = None
-    artifact_euid: str
+    artifact_euid: str | None = None
+    storage_uri: str | None = None
     filename: str | None = None
     mime_type: str | None = None
     checksum_sha256: str | None = None
@@ -79,8 +84,10 @@ class AnalysisArtifactRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_reference_fields(self) -> "AnalysisArtifactRequest":
-        if not str(self.artifact_euid or "").strip():
-            raise ValueError("artifact_euid is required")
+        has_artifact_ref = bool(str(self.artifact_euid or "").strip())
+        has_storage_uri = bool(str(self.storage_uri or "").strip())
+        if has_artifact_ref == has_storage_uri:
+            raise ValueError("Exactly one of artifact_euid or storage_uri is required")
         return self
 
 
@@ -137,7 +144,8 @@ class AnalysisResponse(BaseModel):
     review_state: str
     result_status: str
     run_folder: str
-    artifact_bucket: str
+    internal_bucket: str
+    input_references: list[dict[str, Any]]
     result_payload: dict[str, Any]
     metadata: dict[str, Any]
     created_at: str
@@ -177,7 +185,8 @@ def _analysis_response(record: AnalysisRecord) -> AnalysisResponse:
         review_state=record.review_state,
         result_status=record.result_status,
         run_folder=record.run_folder,
-        artifact_bucket=record.artifact_bucket,
+        internal_bucket=record.internal_bucket,
+        input_references=record.input_references,
         result_payload=record.result_payload,
         metadata=record.metadata,
         created_at=record.created_at,
@@ -187,25 +196,26 @@ def _analysis_response(record: AnalysisRecord) -> AnalysisResponse:
     )
 
 
-def _build_hosted_ui_url(
-    *,
-    domain: str,
-    endpoint: str,
-    client_id: str,
-    redirect_uri: str,
-) -> str:
-    normalized_domain = domain.strip()
-    if not normalized_domain.startswith(("http://", "https://")):
-        normalized_domain = f"https://{normalized_domain}"
-    query = urlencode(
-        {
-            "client_id": client_id,
-            "response_type": "code",
-            "scope": "openid email profile",
-            "redirect_uri": redirect_uri,
-        }
-    )
-    return f"{normalized_domain.rstrip('/')}/{endpoint}?{query}"
+def _parse_s3_object_uri(value: str) -> tuple[str, str]:
+    parsed = urlparse(str(value or "").strip())
+    bucket = str(parsed.netloc or "").strip()
+    key = str(parsed.path or "").strip().lstrip("/")
+    if parsed.scheme != "s3" or not bucket or not key:
+        raise ValueError("Expected s3://<bucket>/<key> object URI")
+    return bucket, key
+
+
+def _ensure_s3_fetchable(s3_client: RegionAwareS3Client, storage_uri: str) -> None:
+    bucket, key = _parse_s3_object_uri(storage_uri)
+    try:
+        s3_client.head_object(Bucket=bucket, Key=key)
+    except ClientError as exc:
+        code = str(exc.response.get("Error", {}).get("Code") or "")
+        if code in {"404", "NoSuchKey"}:
+            raise ValueError(f"Input object not found: {storage_uri}") from exc
+        if code in {"403", "AccessDenied"}:
+            raise ValueError(f"Input object is not fetchable: {storage_uri}") from exc
+        raise ValueError(f"Input object validation failed: {storage_uri}") from exc
 
 
 def create_app(
@@ -223,15 +233,24 @@ def create_app(
     if require_api_key is False:
         raise ValueError("Ursa write API key enforcement cannot be disabled")
 
+    internal_bucket = str(getattr(settings, "ursa_internal_output_bucket", "") or "").strip()
+    if not internal_bucket:
+        raise ValueError("ursa_internal_output_bucket is required")
+
     app = FastAPI(
-        title="Daylily Ursa Beta Analysis API",
-        description="Run-linked analysis execution, review, artifacts, and Atlas result return",
-        version="3.0.0",
+        title="Daylily Ursa Analysis API",
+        description="Analysis execution, review, artifact registration, and Atlas result return",
+        version="4.0.0",
     )
     app.state.store = store
     app.state.bloom_client = bloom_client
     app.state.atlas_client = atlas_client
     app.state.dewey_client = dewey_client
+    app.state.s3_client = RegionAwareS3Client(
+        default_region=settings.get_effective_region(),
+        profile=settings.aws_profile,
+    )
+    app.state.internal_bucket = internal_bucket
     app.state.require_api_key = True
     app.state.api_key = settings.ursa_internal_api_key
 
@@ -264,11 +283,6 @@ def create_app(
         response.headers["X-Request-ID"] = request_id
         return response
 
-    @app.on_event("startup")
-    async def start_background_services() -> None:
-        if settings.ursa_cost_monitor_enabled:
-            app.state.pricing_monitor.start()
-
     @app.exception_handler(Exception)
     async def generic_exception_handler(request: Request, exc: Exception):
         if isinstance(exc, HTTPException):
@@ -296,122 +310,11 @@ def create_app(
             )
         return provided
 
-    @app.get("/", include_in_schema=False)
-    async def root() -> RedirectResponse:
-        return RedirectResponse(url="/portal/login", status_code=status.HTTP_307_TEMPORARY_REDIRECT)
-
-    @app.get("/portal/login", response_class=HTMLResponse, include_in_schema=False)
-    async def portal_login(request: Request, error: str | None = None):
-        session_cookie = request.cookies.get(PORTAL_SESSION_COOKIE_NAME)
-        if session_cookie:
-            session_identity = decode_portal_session(settings.session_secret_key, session_cookie) or {}
-            if session_identity.get("logged_in"):
-                return RedirectResponse(url="/portal", status_code=status.HTTP_307_TEMPORARY_REDIRECT)
-
-        hosted_ui_enabled = bool(
-            settings.enable_auth and settings.cognito_domain and settings.cognito_app_client_id
-        )
-        sso_login_url = ""
-        sso_signup_url = ""
-        reset_login_url = "/portal/login"
-        if hosted_ui_enabled:
-            callback_uri = f"{request.url.scheme}://{request.url.netloc}/auth/callback"
-            sso_login_url = _build_hosted_ui_url(
-                domain=str(settings.cognito_domain),
-                endpoint="login",
-                client_id=str(settings.cognito_app_client_id),
-                redirect_uri=callback_uri,
-            )
-            sso_signup_url = _build_hosted_ui_url(
-                domain=str(settings.cognito_domain),
-                endpoint="signup",
-                client_id=str(settings.cognito_app_client_id),
-                redirect_uri=callback_uri,
-            )
-            reset_login_url = sso_login_url
-        return _TEMPLATES.TemplateResponse(
-            "auth/login.html",
-            {
-                "request": request,
-                "auth_enabled": settings.enable_auth,
-                "hosted_ui_enabled": hosted_ui_enabled,
-                "sso_login_url": sso_login_url,
-                "sso_signup_url": sso_signup_url,
-                "reset_login_url": reset_login_url,
-                "error": error,
-                "cache_bust": "1",
-            },
-        )
-
-    @app.get("/auth/callback", include_in_schema=False)
-    async def auth_callback(
-        request: Request,
-        code: str | None = None,
-        error: str | None = None,
-        error_description: str | None = None,
-    ) -> RedirectResponse:
-        if error:
-            LOGGER.warning("Cognito callback error: %s (%s)", error, error_description or "")
-            return RedirectResponse(url="/portal/login?error=login_failed", status_code=307)
-        if not code:
-            LOGGER.warning("Cognito callback missing authorization code")
-            return RedirectResponse(url="/portal/login?error=missing_code", status_code=307)
-        if not settings.cognito_domain or not settings.cognito_app_client_id:
-            LOGGER.error("Cognito callback received without Cognito domain/client configuration")
-            return RedirectResponse(url="/portal/login?error=cognito_unconfigured", status_code=307)
-
-        redirect_uri = f"{request.url.scheme}://{request.url.netloc}/auth/callback"
-        try:
-            token_payload = await exchange_code_for_tokens(
-                domain=str(settings.cognito_domain),
-                code=code,
-                client_id=str(settings.cognito_app_client_id),
-                client_secret=settings.cognito_app_client_secret,
-                redirect_uri=redirect_uri,
-            )
-        except Exception:
-            LOGGER.exception("Failed to exchange Cognito authorization code")
-            return RedirectResponse(url="/portal/login?error=token_exchange_failed", status_code=307)
-
-        id_claims = decode_id_token_claims(str(token_payload.get("id_token") or ""))
-        userinfo: dict[str, Any] = {}
-        try:
-            userinfo = await fetch_userinfo(
-                domain=str(settings.cognito_domain),
-                access_token=str(token_payload.get("access_token") or ""),
-            )
-        except Exception:
-            LOGGER.exception("Failed to fetch Cognito userinfo; using ID token claims only")
-
-        identity = derive_identity(
-            claims=id_claims,
-            userinfo=userinfo,
-            default_customer_id=settings.ursa_portal_default_customer_id,
-        )
-        try:
-            identity = ensure_customer_onboarding(identity=identity, settings=settings)
-        except OnboardingError:
-            LOGGER.exception("Failed to complete customer onboarding during auth callback")
-            return RedirectResponse(url="/portal/login?error=onboarding_failed", status_code=307)
-        identity["display_timezone"] = get_display_timezone_for_email(identity.get("user_email"))
-
-        response = RedirectResponse(url="/portal", status_code=307)
-        response.set_cookie(
-            key=PORTAL_SESSION_COOKIE_NAME,
-            value=encode_portal_session(settings.session_secret_key, identity),
-            httponly=True,
-            secure=request.url.scheme == "https",
-            samesite="lax",
-            max_age=PORTAL_SESSION_MAX_AGE_SECONDS,
-            path="/",
-        )
-        return response
-
     @app.get("/healthz", tags=["health"])
     async def healthz() -> dict[str, str]:
         return {
             "status": "healthy",
-            "service": "daylily-ursa-beta-analysis",
+            "service": "daylily-ursa-analysis",
             "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         }
 
@@ -427,6 +330,7 @@ def create_app(
     ) -> AnalysisResponse:
         if not str(idempotency_key or "").strip():
             raise HTTPException(status_code=400, detail="Idempotency-Key header is required")
+
         try:
             resolution = app.state.bloom_client.resolve_run_assignment(
                 request.run_euid,
@@ -436,12 +340,81 @@ def create_app(
             )
         except BloomResolverError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+        resolved_references: list[dict[str, Any]] = []
+        for ref in request.input_references:
+            raw_value = str(ref.value or "").strip()
+            if ref.reference_type == "s3_uri":
+                try:
+                    _ensure_s3_fetchable(app.state.s3_client, raw_value)
+                except ValueError as exc:
+                    raise HTTPException(status_code=400, detail=str(exc)) from exc
+                resolved_references.append(
+                    {
+                        "reference_type": "s3_uri",
+                        "value": raw_value,
+                        "storage_uri": raw_value,
+                    }
+                )
+                continue
+
+            if app.state.dewey_client is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Dewey integration is required for artifact_euid and artifact_set_euid"
+                    ),
+                )
+
+            if ref.reference_type == "artifact_euid":
+                try:
+                    resolved = app.state.dewey_client.resolve_artifact(raw_value)
+                except DeweyClientError as exc:
+                    raise HTTPException(status_code=502, detail=str(exc)) from exc
+                resolved_references.append(
+                    {
+                        "reference_type": "artifact_euid",
+                        "value": raw_value,
+                        "artifact_euid": str(resolved.get("artifact_euid") or raw_value),
+                        "artifact_type": str(resolved.get("artifact_type") or ""),
+                        "storage_uri": str(resolved.get("storage_uri") or ""),
+                        "metadata": dict(resolved.get("metadata") or {}),
+                    }
+                )
+                continue
+
+            try:
+                resolved_set = app.state.dewey_client.resolve_artifact_set(raw_value)
+            except DeweyClientError as exc:
+                raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+            members = resolved_set.get("members")
+            member_payload = [
+                {
+                    "artifact_euid": str(member.get("artifact_euid") or ""),
+                    "artifact_type": str(member.get("artifact_type") or ""),
+                    "storage_uri": str(member.get("storage_uri") or ""),
+                    "metadata": dict(member.get("metadata") or {}),
+                }
+                for member in (members if isinstance(members, list) else [])
+                if isinstance(member, dict)
+            ]
+            resolved_references.append(
+                {
+                    "reference_type": "artifact_set_euid",
+                    "value": raw_value,
+                    "artifact_set_euid": str(resolved_set.get("artifact_set_euid") or raw_value),
+                    "artifact_euids": [str(item.get("artifact_euid") or "") for item in member_payload],
+                    "members": member_payload,
+                }
+            )
+
         record = app.state.store.ingest_analysis(
             resolution=resolution,
             analysis_type=request.analysis_type,
-            artifact_bucket=request.artifact_bucket,
+            internal_bucket=app.state.internal_bucket,
             idempotency_key=str(idempotency_key),
-            input_files=request.input_files,
+            input_references=resolved_references,
             metadata=request.metadata,
         )
         return _analysis_response(record)
@@ -482,34 +455,83 @@ def create_app(
         request: AnalysisArtifactRequest,
         _api_key: str = Depends(require_write_api_key),
     ) -> AnalysisArtifactResponse:
-        source_artifact_euid = str(request.artifact_euid or "").strip()
         if app.state.dewey_client is None:
             raise HTTPException(
                 status_code=400,
-                detail="artifact_euid requires Dewey integration configuration",
+                detail="Dewey integration configuration is required for artifact registration",
             )
-        try:
-            resolved = app.state.dewey_client.resolve_artifact(source_artifact_euid)
-        except DeweyClientError as exc:
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-        artifact_type = str(request.artifact_type or resolved.get("artifact_type") or "").strip()
-        storage_uri = str(resolved.get("storage_uri") or "").strip()
-        filename = str(request.filename or resolved.get("filename") or "").strip()
-        if not filename:
-            filename = Path(storage_uri).name or f"{source_artifact_euid}.bin"
+        artifact_type = str(request.artifact_type or "").strip()
+        storage_uri = ""
+        filename = str(request.filename or "").strip()
+        resolved_metadata: dict[str, Any] = {}
+
+        source_artifact_euid = str(request.artifact_euid or "").strip()
+        if source_artifact_euid:
+            try:
+                resolved = app.state.dewey_client.resolve_artifact(source_artifact_euid)
+            except DeweyClientError as exc:
+                raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+            artifact_type = artifact_type or str(resolved.get("artifact_type") or "").strip()
+            storage_uri = str(resolved.get("storage_uri") or "").strip()
+            filename = filename or str(resolved.get("filename") or "").strip()
+            if not filename:
+                filename = Path(storage_uri).name or f"{source_artifact_euid}.bin"
+
+            resolved_metadata = dict(resolved.get("metadata") or {})
+            resolved_metadata["dewey_artifact_euid"] = source_artifact_euid
+            resolved_metadata["dewey_resolved"] = True
+        else:
+            storage_uri = str(request.storage_uri or "").strip()
+            if not artifact_type:
+                raise HTTPException(status_code=400, detail="artifact_type is required for storage_uri")
+            try:
+                bucket, key = _parse_s3_object_uri(storage_uri)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            if bucket != app.state.internal_bucket:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "storage_uri must be in the configured Ursa internal output bucket "
+                        f"({app.state.internal_bucket})"
+                    ),
+                )
+            try:
+                _ensure_s3_fetchable(app.state.s3_client, storage_uri)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            if not filename:
+                filename = Path(key).name or "artifact.bin"
+
+            registration_metadata = {
+                "producer_system": "ursa",
+                "producer_object_euid": analysis_euid,
+                **dict(request.metadata or {}),
+            }
+            try:
+                registered_euid = app.state.dewey_client.register_artifact(
+                    artifact_type=artifact_type,
+                    storage_uri=storage_uri,
+                    metadata=registration_metadata,
+                    idempotency_key=f"{analysis_euid}:{storage_uri}",
+                )
+            except DeweyClientError as exc:
+                raise HTTPException(status_code=502, detail=str(exc)) from exc
+            resolved_metadata = {
+                **registration_metadata,
+                "dewey_artifact_euid": registered_euid,
+                "dewey_registered": True,
+            }
+
         if not artifact_type:
             raise HTTPException(status_code=400, detail="artifact_type is required")
         if not storage_uri:
-            raise HTTPException(status_code=502, detail="Dewey artifact resolve returned no storage_uri")
+            raise HTTPException(status_code=502, detail="resolved artifact storage_uri is empty")
 
-        resolved_metadata = resolved.get("metadata")
-        artifact_metadata = (
-            dict(resolved_metadata) if isinstance(resolved_metadata, dict) else {}
-        )
+        artifact_metadata = dict(resolved_metadata)
         artifact_metadata.update(dict(request.metadata or {}))
-        artifact_metadata["dewey_artifact_euid"] = source_artifact_euid
-        artifact_metadata["dewey_resolved"] = True
 
         try:
             artifact = app.state.store.add_artifact(
@@ -621,7 +643,6 @@ def create_app(
         )
         return _analysis_response(updated)
 
-    mount_portal(app, settings)
     mount_tapdb_admin(app, settings)
 
     return app

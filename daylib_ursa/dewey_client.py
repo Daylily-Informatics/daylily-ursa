@@ -39,13 +39,20 @@ class DeweyClient:
             "Authorization": f"Bearer {token}",
         }
 
+    def _http_client(self) -> tuple[httpx.Client, bool]:
+        if self.client is not None:
+            return self.client, False
+        return (
+            httpx.Client(timeout=self.timeout_seconds, verify=self.verify_ssl),
+            True,
+        )
+
     def resolve_artifact(self, artifact_euid: str) -> dict[str, Any]:
         url = f"{_require_https_url(self.base_url, field_name='Dewey base URL')}/api/v1/resolve/artifact"
         payload = {"artifact_euid": str(artifact_euid or "").strip()}
         if not payload["artifact_euid"]:
             raise DeweyClientError("artifact_euid is required")
-        client = self.client or httpx.Client(timeout=self.timeout_seconds, verify=self.verify_ssl)
-        close_client = self.client is None
+        client, close_client = self._http_client()
         try:
             response = client.post(url, json=payload, headers=self._headers())
         except httpx.HTTPError as exc:
@@ -60,6 +67,31 @@ class DeweyClient:
             raise DeweyClientError("Dewey resolve response missing storage_uri")
         if not str(body.get("artifact_type") or "").strip():
             raise DeweyClientError("Dewey resolve response missing artifact_type")
+        return body
+
+    def resolve_artifact_set(self, artifact_set_euid: str) -> dict[str, Any]:
+        url = (
+            f"{_require_https_url(self.base_url, field_name='Dewey base URL')}"
+            "/api/v1/resolve/artifact-set"
+        )
+        payload = {"artifact_set_euid": str(artifact_set_euid or "").strip()}
+        if not payload["artifact_set_euid"]:
+            raise DeweyClientError("artifact_set_euid is required")
+        client, close_client = self._http_client()
+        try:
+            response = client.post(url, json=payload, headers=self._headers())
+        except httpx.HTTPError as exc:
+            raise DeweyClientError(f"Dewey artifact-set resolve failed: {exc}") from exc
+        finally:
+            if close_client:
+                client.close()
+        if response.status_code >= 400:
+            raise DeweyClientError(
+                f"Dewey artifact-set resolve returned {response.status_code}: {response.text}"
+            )
+        body: dict[str, Any] = response.json()
+        if not str(body.get("artifact_set_euid") or "").strip():
+            raise DeweyClientError("Dewey artifact-set resolve response missing artifact_set_euid")
         return body
 
     def register_artifact(
@@ -84,8 +116,7 @@ class DeweyClient:
         clean_idempotency = str(idempotency_key or "").strip()
         if clean_idempotency:
             headers["Idempotency-Key"] = clean_idempotency
-        client = self.client or httpx.Client(timeout=self.timeout_seconds, verify=self.verify_ssl)
-        close_client = self.client is None
+        client, close_client = self._http_client()
         try:
             response = client.post(url, json=payload, headers=headers)
         except httpx.HTTPError as exc:

@@ -2,18 +2,18 @@
 
 from __future__ import annotations
 
+import hmac
 import importlib
 import logging
 import os
-from typing import Any, Callable
+from typing import Callable
 
 from fastapi import FastAPI
 from starlette.requests import HTTPConnection
-from starlette.responses import JSONResponse, RedirectResponse
+from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from daylib_ursa.config import Settings
-from daylib_ursa.portal_auth import PORTAL_SESSION_COOKIE_NAME, decode_portal_session
 
 LOGGER = logging.getLogger("daylily.tapdb_mount")
 
@@ -36,47 +36,36 @@ def _load_tapdb_admin_app() -> ASGIApp:
 
 
 class UrsaTapdbAdminGate:
-    """ASGI guard that requires an authenticated Ursa admin session."""
+    """ASGI guard that requires Ursa internal API key."""
 
-    def __init__(self, app: ASGIApp, *, session_secret_key: str) -> None:
+    def __init__(self, app: ASGIApp, *, internal_api_key: str) -> None:
         self._app = app
-        self._session_secret_key = session_secret_key
+        self._internal_api_key = str(internal_api_key or "")
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] not in {"http", "websocket"}:
             await self._app(scope, receive, send)
             return
 
-        identity = self._resolve_identity(scope)
-        if not bool(identity.get("logged_in")):
+        if not self._is_authenticated(scope):
             await self._deny_not_authenticated(scope, receive, send)
-            return
-        if not bool(identity.get("is_admin")):
-            await self._deny_not_admin(scope, receive, send)
             return
 
         await self._app(scope, receive, send)
 
-    def _resolve_identity(self, scope: Scope) -> dict[str, Any]:
+    def _is_authenticated(self, scope: Scope) -> bool:
         connection = HTTPConnection(scope)
-        raw = connection.cookies.get(PORTAL_SESSION_COOKIE_NAME)
-        if not raw:
-            return {}
-        session = decode_portal_session(self._session_secret_key, raw) or {}
-        return session if isinstance(session, dict) else {}
+        provided = str(connection.headers.get("x-api-key") or "")
+        expected = str(self._internal_api_key or "")
+        if not provided or not expected:
+            return False
+        return hmac.compare_digest(provided, expected)
 
     async def _deny_not_authenticated(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] == "websocket":
             await send({"type": "websocket.close", "code": 4401})
             return
-        response = RedirectResponse(url="/portal/login", status_code=307)
-        await response(scope, receive, send)
-
-    async def _deny_not_admin(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] == "websocket":
-            await send({"type": "websocket.close", "code": 4403})
-            return
-        response = JSONResponse({"detail": "Admin access required"}, status_code=403)
+        response = JSONResponse({"detail": "Invalid or missing API key"}, status_code=401)
         await response(scope, receive, send)
 
 
@@ -97,7 +86,7 @@ def mount_tapdb_admin(
     *,
     loader: Callable[[], ASGIApp] | None = None,
 ) -> None:
-    """Mount TapDB admin under Ursa with Ursa-admin-only gating."""
+    """Mount TapDB admin under Ursa with API-key gating."""
     if not settings.ursa_tapdb_mount_enabled:
         LOGGER.info("TapDB mount disabled by URSA_TAPDB_MOUNT_ENABLED")
         return
@@ -116,6 +105,9 @@ def mount_tapdb_admin(
             "Install daylily-tapdb admin extras or disable URSA_TAPDB_MOUNT_ENABLED."
         ) from exc
 
-    guarded_app = UrsaTapdbAdminGate(tapdb_app, session_secret_key=settings.session_secret_key)
+    guarded_app = UrsaTapdbAdminGate(
+        tapdb_app,
+        internal_api_key=settings.ursa_internal_api_key,
+    )
     app.mount(mount_path, guarded_app, name="ursa-tapdb-admin")
     LOGGER.info("Mounted TapDB admin at %s", mount_path)

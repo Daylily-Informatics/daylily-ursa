@@ -75,7 +75,8 @@ class AnalysisRecord:
     review_state: str
     result_status: str
     run_folder: str
-    artifact_bucket: str
+    internal_bucket: str
+    input_references: list[dict[str, Any]]
     result_payload: dict[str, Any]
     metadata: dict[str, Any]
     created_at: str
@@ -195,7 +196,8 @@ class AnalysisStore:
             review_state=str(payload.get("review_state") or ReviewState.PENDING.value),
             result_status=str(payload.get("result_status") or "PENDING"),
             run_folder=str(payload.get("run_folder") or ""),
-            artifact_bucket=str(payload.get("artifact_bucket") or ""),
+            internal_bucket=str(payload.get("internal_bucket") or ""),
+            input_references=list(payload.get("input_references") or []),
             result_payload=dict(payload.get("result_payload") or {}),
             metadata=dict(payload.get("metadata") or {}),
             created_at=str(payload.get("created_at") or utc_now_iso()),
@@ -216,9 +218,9 @@ class AnalysisStore:
         *,
         resolution: RunResolution,
         analysis_type: str,
-        artifact_bucket: str,
+        internal_bucket: str,
         idempotency_key: str,
-        input_files: list[str] | None = None,
+        input_references: list[dict[str, Any]] | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> AnalysisRecord:
         with self.backend.session_scope(commit=True) as session:
@@ -236,9 +238,9 @@ class AnalysisStore:
                     "state": AnalysisState.INGESTED.value,
                     "review_state": ReviewState.PENDING.value,
                     "result_status": "PENDING",
-                    "artifact_bucket": artifact_bucket,
-                    "run_folder": f"s3://{artifact_bucket}/{resolution.run_euid}/",
-                    "input_files": list(input_files or []),
+                    "internal_bucket": internal_bucket,
+                    "run_folder": f"s3://{internal_bucket}/{resolution.run_euid}/",
+                    "input_references": list(input_references or []),
                     "metadata": dict(metadata or {}),
                     "ingest_idempotency_key": idempotency_key,
                     "created_at": now,

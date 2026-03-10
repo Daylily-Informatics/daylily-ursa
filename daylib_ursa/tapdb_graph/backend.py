@@ -78,48 +78,6 @@ TEMPLATE_DEFINITIONS: tuple[TemplateDefinition, ...] = (
         "ARC",
         "Sequenced Assignment Context",
     ),
-    TemplateDefinition(
-        "actor/customer/account/1.0/",
-        "actor_template",
-        "actor_instance",
-        "CM",
-        "Portal Customer Account",
-    ),
-    TemplateDefinition(
-        "data/storage/s3-bucket-link/1.0/",
-        "data_template",
-        "data_instance",
-        "BK",
-        "Customer S3 Bucket Link",
-    ),
-    TemplateDefinition(
-        "data/manifest/stage-samples/1.0/",
-        "data_template",
-        "data_instance",
-        "MN",
-        "Stage Samples Manifest",
-    ),
-    TemplateDefinition(
-        "workflow/workset/analysis-request/1.0/",
-        "workflow_template",
-        "workflow_instance",
-        "WK",
-        "Portal Workset",
-    ),
-    TemplateDefinition(
-        "data/pricing/capture-run/1.0/",
-        "data_template",
-        "data_instance",
-        "PC",
-        "Pricing Capture Run",
-    ),
-    TemplateDefinition(
-        "data/pricing/capture-point/1.0/",
-        "data_template",
-        "data_instance",
-        "PP",
-        "Pricing Capture Point",
-    ),
 )
 
 

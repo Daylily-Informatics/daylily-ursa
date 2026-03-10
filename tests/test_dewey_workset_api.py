@@ -11,9 +11,14 @@ from daylib_ursa.config import Settings
 from daylib_ursa.workset_api import create_app
 
 
-@pytest.fixture(autouse=True)
-def _disable_portal_mount(monkeypatch):
-    monkeypatch.setattr("daylib_ursa.workset_api.mount_portal", lambda app, settings: None)
+class _FakeRegionAwareS3Client:
+    def __init__(self, default_region: str, profile: str | None = None) -> None:
+        self.default_region = default_region
+        self.profile = profile
+
+    def head_object(self, Bucket: str, Key: str, **kwargs):  # noqa: N803
+        _ = (Bucket, Key, kwargs)
+        return {"ContentLength": 1}
 
 
 class _DummyBloomClient:
@@ -58,6 +63,7 @@ def _settings() -> Settings:
         ursa_internal_api_key="ursa-test-key",
         bloom_base_url="https://bloom.example",
         atlas_base_url="https://atlas.example",
+        ursa_internal_output_bucket="ursa-internal",
         ursa_tapdb_mount_enabled=False,
     )
 
@@ -106,7 +112,8 @@ def test_add_artifact_resolves_dewey_reference():
     assert call["metadata"]["lane"] == "1"
 
 
-def test_add_artifact_registers_to_dewey_for_raw_storage_uri():
+def test_add_artifact_registers_to_dewey_for_raw_storage_uri(monkeypatch):
+    monkeypatch.setattr("daylib_ursa.workset_api.RegionAwareS3Client", _FakeRegionAwareS3Client)
     store = _DummyStore()
     captured: dict[str, str] = {}
 
@@ -136,15 +143,15 @@ def test_add_artifact_registers_to_dewey_for_raw_storage_uri():
             headers={"X-API-Key": "ursa-test-key"},
             json={
                 "artifact_type": "vcf",
-                "storage_uri": "s3://bucket/RUN-2/sample.vcf.gz",
+                "storage_uri": "s3://ursa-internal/RUN-2/sample.vcf.gz",
                 "filename": "sample.vcf.gz",
             },
         )
 
     assert response.status_code == 201, response.text
     assert captured["artifact_type"] == "vcf"
-    assert captured["storage_uri"] == "s3://bucket/RUN-2/sample.vcf.gz"
-    assert captured["idempotency_key"] == "AN-2:s3://bucket/RUN-2/sample.vcf.gz"
+    assert captured["storage_uri"] == "s3://ursa-internal/RUN-2/sample.vcf.gz"
+    assert captured["idempotency_key"] == "AN-2:s3://ursa-internal/RUN-2/sample.vcf.gz"
     assert captured["producer_system"] == "ursa"
     assert captured["producer_object_euid"] == "AN-2"
     assert store.calls[0]["metadata"]["dewey_artifact_euid"] == "AT-REG-1"
@@ -166,10 +173,11 @@ def test_add_artifact_with_reference_requires_dewey_client():
             json={"artifact_euid": "AT-1"},
         )
     assert response.status_code == 400
-    assert "requires Dewey integration" in response.json()["detail"]
+    assert "Dewey integration configuration is required" in response.json()["detail"]
 
 
-def test_add_artifact_reuses_existing_dewey_id_without_reregistering():
+def test_add_artifact_reuses_existing_dewey_id_without_reregistering(monkeypatch):
+    monkeypatch.setattr("daylib_ursa.workset_api.RegionAwareS3Client", _FakeRegionAwareS3Client)
     store = _DummyStore()
     register_calls: list[str] = []
 
@@ -194,7 +202,7 @@ def test_add_artifact_reuses_existing_dewey_id_without_reregistering():
             headers={"X-API-Key": "ursa-test-key"},
             json={
                 "artifact_type": "vcf",
-                "storage_uri": "s3://bucket/RUN-4/sample.vcf.gz",
+                "storage_uri": "s3://ursa-internal/RUN-4/sample.vcf.gz",
                 "filename": "sample.vcf.gz",
             },
         )
@@ -203,11 +211,14 @@ def test_add_artifact_reuses_existing_dewey_id_without_reregistering():
             headers={"X-API-Key": "ursa-test-key"},
             json={
                 "artifact_type": "vcf",
-                "storage_uri": "s3://bucket/RUN-4/sample.vcf.gz",
+                "storage_uri": "s3://ursa-internal/RUN-4/sample.vcf.gz",
                 "filename": "sample.vcf.gz",
             },
         )
 
     assert first.status_code == 201, first.text
     assert second.status_code == 201, second.text
-    assert register_calls == ["s3://bucket/RUN-4/sample.vcf.gz"]
+    assert register_calls == [
+        "s3://ursa-internal/RUN-4/sample.vcf.gz",
+        "s3://ursa-internal/RUN-4/sample.vcf.gz",
+    ]

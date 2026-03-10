@@ -62,9 +62,15 @@ def test_ingest_analysis_keeps_relationship_truth_on_context_reference():
             atlas_test_fulfillment_item_euid="TPC-1",
         ),
         analysis_type="germline",
-        artifact_bucket="analysis-bucket",
+        internal_bucket="analysis-bucket",
         idempotency_key="idem-1",
-        input_files=["s3://analysis-bucket/RUN-1/read1.fastq.gz"],
+        input_references=[
+            {
+                "reference_type": "s3_uri",
+                "value": "s3://analysis-bucket/RUN-1/read1.fastq.gz",
+                "storage_uri": "s3://analysis-bucket/RUN-1/read1.fastq.gz",
+            }
+        ],
         metadata={"pipeline": "beta"},
     )
 

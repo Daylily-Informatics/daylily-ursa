@@ -8,10 +8,11 @@ from unittest.mock import MagicMock, call, patch
 from daylib_ursa.tapdb_graph.backend import TEMPLATE_DEFINITIONS, TapDBBackend
 
 
-def test_bootstrap_includes_portal_onboarding_templates():
+def test_bootstrap_includes_analysis_templates_only():
     codes = {spec.template_code for spec in TEMPLATE_DEFINITIONS}
-    assert "actor/customer/account/1.0/" in codes
-    assert "data/storage/s3-bucket-link/1.0/" in codes
+    assert "workflow/analysis/run-linked/1.0/" in codes
+    assert "data/artifact/analysis-output/1.0/" in codes
+    assert "actor/customer/account/1.0/" not in codes
 
 
 def test_ensure_templates_calls_sequence_readiness():

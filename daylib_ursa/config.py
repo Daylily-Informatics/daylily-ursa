@@ -85,6 +85,10 @@ class Settings(BaseSettings):
         default="default-customer",
         description="Fallback customer ID used by the lightweight portal surface",
     )
+    ursa_internal_output_bucket: str = Field(
+        default="",
+        description="Ursa-managed internal S3 bucket for analysis outputs",
+    )
     ursa_cost_monitor_regions: str = Field(
         default="us-west-2,us-east-1,eu-central-1",
         description="Comma-separated regions used for pricing snapshots",
@@ -414,6 +418,8 @@ class Settings(BaseSettings):
                 raise ValueError("dewey_base_url is required when dewey_enabled=true")
             if not str(self.dewey_api_token or "").strip():
                 raise ValueError("dewey_api_token is required when dewey_enabled=true")
+        if not str(self.ursa_internal_output_bucket or "").strip():
+            raise ValueError("ursa_internal_output_bucket is required")
         return self
 
     def get_cors_origins(self) -> List[str]:
