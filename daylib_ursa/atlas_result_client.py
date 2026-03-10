@@ -23,9 +23,10 @@ def _require_https_url(value: str, *, field_name: str) -> str:
 
 @dataclass(frozen=True)
 class AtlasResultArtifact:
-    artifact_type: str
-    storage_uri: str
-    filename: str
+    artifact_euid: str
+    artifact_type: str | None = None
+    storage_uri: str | None = None
+    filename: str | None = None
     mime_type: str | None = None
     checksum_sha256: str | None = None
     size_bytes: int | None = None
@@ -82,6 +83,7 @@ class AtlasResultClient:
             "source_system": "daylily-ursa",
             "artifacts": [
                 {
+                    "artifact_euid": artifact.artifact_euid,
                     "artifact_type": artifact.artifact_type,
                     "storage_uri": artifact.storage_uri,
                     "filename": artifact.filename,

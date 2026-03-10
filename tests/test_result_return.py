@@ -50,7 +50,7 @@ class DummyStore:
                     checksum_sha256="abc123",
                     size_bytes=100,
                     created_at="2026-03-07T00:10:00Z",
-                    metadata={"index_string": "IDX-01"},
+                    metadata={"index_string": "IDX-01", "dewey_artifact_euid": "AT-1"},
                 )
             ],
         )
@@ -87,13 +87,14 @@ class DummyAtlasClient:
         artifacts = kwargs["artifacts"]
         assert artifacts == [
             AtlasResultArtifact(
+                artifact_euid="AT-1",
                 artifact_type="vcf",
                 storage_uri="s3://analysis-bucket/RUN-1/sample.vcf.gz",
                 filename="sample.vcf.gz",
                 mime_type="application/gzip",
                 checksum_sha256="abc123",
                 size_bytes=100,
-                metadata={"index_string": "IDX-01"},
+                metadata={"index_string": "IDX-01", "dewey_artifact_euid": "AT-1"},
             )
         ]
         return {

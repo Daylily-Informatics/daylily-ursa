@@ -129,6 +129,21 @@ class DummyAtlasClient:
         return {"status": "accepted", "atlas_result_id": "AR-1"}
 
 
+class DummyDeweyClient:
+    def register_artifact(
+        self,
+        *,
+        artifact_type: str,
+        storage_uri: str,
+        metadata: dict | None = None,
+        idempotency_key: str | None = None,
+    ) -> str:
+        return "AT-1"
+
+    def resolve_artifact(self, artifact_euid: str) -> dict:
+        return {"artifact_euid": artifact_euid}
+
+
 class FakeClusterService:
     def __init__(self) -> None:
         self._clusters = [
@@ -229,6 +244,7 @@ def _build_app(monkeypatch, tmp_path):
         DummyStore(),
         bloom_client=DummyBloomClient(),
         atlas_client=DummyAtlasClient(),
+        dewey_client=DummyDeweyClient(),
         settings=settings,
     )
 

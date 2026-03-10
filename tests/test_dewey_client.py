@@ -67,6 +67,6 @@ def test_register_artifact_uses_bearer_auth_and_idempotency_key():
         )
 
     assert artifact_euid == "AT-2"
-    assert captured["url"] == "https://dewey.example/api/v1/artifacts"
+    assert captured["url"] == "https://dewey.example/api/v1/artifacts/import"
     assert captured["authorization"] == "Bearer token-2"
     assert captured["idempotency"] == "idem-1"

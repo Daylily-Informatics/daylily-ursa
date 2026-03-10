@@ -602,6 +602,34 @@ def create_app(
                 detail="Analysis cannot be returned before manual approval",
             )
         try:
+            atlas_artifacts: list[AtlasResultArtifact] = []
+            missing_dewey_refs: list[str] = []
+            for artifact in record.artifacts:
+                dewey_artifact_euid = str(artifact.metadata.get("dewey_artifact_euid") or "").strip()
+                if not dewey_artifact_euid:
+                    missing_dewey_refs.append(artifact.artifact_euid)
+                    continue
+                atlas_artifacts.append(
+                    AtlasResultArtifact(
+                        artifact_euid=dewey_artifact_euid,
+                        artifact_type=artifact.artifact_type,
+                        storage_uri=artifact.storage_uri,
+                        filename=artifact.filename,
+                        mime_type=artifact.mime_type,
+                        checksum_sha256=artifact.checksum_sha256,
+                        size_bytes=artifact.size_bytes,
+                        metadata=artifact.metadata,
+                    )
+                )
+            if missing_dewey_refs:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "All analysis artifacts must be Dewey-registered before Atlas return. "
+                        f"Missing dewey_artifact_euid for: {', '.join(missing_dewey_refs)}"
+                    ),
+                )
+
             atlas_response = app.state.atlas_client.return_analysis_result(
                 atlas_tenant_id=record.atlas_tenant_id,
                 atlas_trf_euid=record.atlas_trf_euid,
@@ -617,18 +645,7 @@ def create_app(
                 result_status=request.result_status,
                 review_state=record.review_state,
                 result_payload=request.result_payload,
-                artifacts=[
-                    AtlasResultArtifact(
-                        artifact_type=artifact.artifact_type,
-                        storage_uri=artifact.storage_uri,
-                        filename=artifact.filename,
-                        mime_type=artifact.mime_type,
-                        checksum_sha256=artifact.checksum_sha256,
-                        size_bytes=artifact.size_bytes,
-                        metadata=artifact.metadata,
-                    )
-                    for artifact in record.artifacts
-                ],
+                artifacts=atlas_artifacts,
                 idempotency_key=str(idempotency_key),
             )
         except AtlasResultClientError as exc:

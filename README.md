@@ -53,7 +53,7 @@ export ATLAS_BASE_URL=https://localhost:8915
 export ATLAS_INTERNAL_API_KEY=replace-me
 export ATLAS_VERIFY_SSL=true
 export DEWEY_ENABLED=true
-export DEWEY_BASE_URL=https://localhost:8920
+export DEWEY_BASE_URL=https://localhost:8913
 export DEWEY_API_TOKEN=replace-with-dewey-bearer-token
 export DEWEY_VERIFY_SSL=true
 
@@ -79,7 +79,7 @@ ATLAS_BASE_URL=https://localhost:8915
 ATLAS_INTERNAL_API_KEY=replace-with-atlas-internal-api-key
 ATLAS_VERIFY_SSL=true
 DEWEY_ENABLED=true
-DEWEY_BASE_URL=https://localhost:8920
+DEWEY_BASE_URL=https://localhost:8913
 DEWEY_API_TOKEN=replace-with-dewey-bearer-token
 DEWEY_VERIFY_SSL=true
 URSA_HOST=0.0.0.0
