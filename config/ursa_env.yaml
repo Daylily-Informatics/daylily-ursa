@@ -44,3 +44,4 @@ dependencies:
       - email-validator
       - python-multipart
       - httpx
+      - sqlalchemy
