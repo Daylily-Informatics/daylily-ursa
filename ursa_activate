@@ -160,6 +160,10 @@ fi
 
 # ========== Setup PATH ==========
 if [ "$_URSA_ACTIVATE_OK" -eq 1 ]; then
+    if [ -n "${CONDA_PREFIX:-}" ] && [ -x "${CONDA_PREFIX}/bin/python" ]; then
+        export PATH="${CONDA_PREFIX}/bin:${PATH}"
+    fi
+
     if command -v python >/dev/null 2>&1; then
         _URSA_PYTHON_BIN="$(dirname "$(command -v python)")"
         case ":$PATH:" in
@@ -209,6 +213,12 @@ if [ "$_URSA_ACTIVATE_OK" -eq 1 ]; then
             log_success "Added ${SCRIPT_DIR} to PYTHONPATH"
             ;;
     esac
+
+    if command -v rehash >/dev/null 2>&1; then
+        rehash
+    elif command -v hash >/dev/null 2>&1; then
+        hash -r 2>/dev/null || true
+    fi
 
     # ========== Install Package in Development Mode ==========
     log_info "Installing ursa in development mode..."
