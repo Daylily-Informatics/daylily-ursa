@@ -95,10 +95,68 @@ def test_ursa_server_start_uses_packaged_entrypoint(monkeypatch):
     assert isinstance(cmd, list)
     assert cmd[:3] == [sys.executable, "-m", "daylib_ursa.workset_api_cli"]
     assert not any("bin/daylily-workset-api" in str(part) for part in cmd)
+    assert "--profile" in cmd
+    assert "test-profile" in cmd
 
     kwargs = captured.get("kwargs")
     assert isinstance(kwargs, dict)
     assert isinstance(kwargs.get("env"), dict)
+
+
+def test_ursa_server_start_allows_ambient_credentials(monkeypatch):
+    from daylib_ursa.cli import server as server_mod
+    import daylib_ursa.ursa_config as ursa_config_mod
+
+    class DummyUrsaConfig:
+        aws_profile = None
+        is_configured = True
+        cognito_user_pool_id = "us-west-2_testpool"
+        cognito_app_client_id = "test-app-client"
+        cognito_region = "us-west-2"
+        cognito_domain = "ursa-auth"
+
+        def get_allowed_regions(self):
+            return ["us-west-2"]
+
+    monkeypatch.delenv("AWS_PROFILE", raising=False)
+    monkeypatch.setattr(ursa_config_mod, "get_ursa_config", lambda reload=False: DummyUrsaConfig())
+    monkeypatch.setattr(server_mod, "_ensure_dir", lambda: None)
+    monkeypatch.setattr(server_mod, "_get_pid", lambda: None)
+    monkeypatch.setattr(server_mod, "_source_env_file", lambda: False)
+    monkeypatch.setattr(server_mod, "_resolve_https_cert_paths", lambda host: ("/tmp/cert.pem", "/tmp/key.pem"))
+
+    captured: dict[str, object] = {}
+
+    def _fake_run(cmd, cwd=None, **kwargs):
+        captured["cmd"] = cmd
+        captured["cwd"] = cwd
+        captured["kwargs"] = kwargs
+
+        class _DummyCompletedProcess:
+            def __init__(self, returncode: int):
+                self.returncode = returncode
+
+        return _DummyCompletedProcess(0)
+
+    monkeypatch.setattr(server_mod.subprocess, "run", _fake_run)
+
+    server_mod.start(
+        port=1234,
+        host="127.0.0.1",
+        reload=False,
+        background=False,
+    )
+
+    cmd = captured.get("cmd")
+    assert isinstance(cmd, list)
+    assert cmd[:3] == [sys.executable, "-m", "daylib_ursa.workset_api_cli"]
+    assert "--profile" not in cmd
+
+    kwargs = captured.get("kwargs")
+    assert isinstance(kwargs, dict)
+    env = kwargs.get("env")
+    assert isinstance(env, dict)
+    assert "AWS_PROFILE" not in env
 
 
 def test_ursa_cli_exposes_standardized_groups():

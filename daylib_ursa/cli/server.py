@@ -384,20 +384,13 @@ def start(
         console.print(f"   URL: [cyan]https://{host}:{port}[/cyan]")
         return
 
-    # Check AWS_PROFILE (from env or config file)
+    # Resolve AWS profile from env or config when explicitly provided.
     from daylib_ursa.ursa_config import get_ursa_config, DEFAULT_CONFIG_PATH
 
     ursa_config = get_ursa_config()
 
     aws_profile = os.environ.get("AWS_PROFILE") or ursa_config.aws_profile
-    if not aws_profile:
-        console.print("[red]✗[/red]  AWS_PROFILE not set")
-        console.print("   Set via environment: [cyan]export AWS_PROFILE=your-profile[/cyan]")
-        console.print(f"   Or in config file:   [cyan]{DEFAULT_CONFIG_PATH}[/cyan]")
-        raise typer.Exit(1)
-
-    # Set in environment for subprocess and boto3
-    if not os.environ.get("AWS_PROFILE"):
+    if aws_profile and not os.environ.get("AWS_PROFILE"):
         os.environ["AWS_PROFILE"] = aws_profile
 
     _require_auth_dependencies()
@@ -433,8 +426,6 @@ def start(
         host,
         "--port",
         str(port),
-        "--profile",
-        aws_profile,
         "--region",
         aws_region,
         "--bootstrap-tapdb",
@@ -443,6 +434,8 @@ def start(
         "--ssl-keyfile",
         ssl_keyfile,
     ]
+    if aws_profile:
+        cmd.extend(["--profile", aws_profile])
 
     # Set up environment
     env = os.environ.copy()

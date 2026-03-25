@@ -11,6 +11,7 @@ from daylib_ursa import workset_api_cli as cli
 def test_parse_args_defaults_and_no_bootstrap_flag() -> None:
     args = cli.parse_args([])
     assert args.region == "us-west-2"
+    assert args.profile is None
     assert args.host == "0.0.0.0"
     assert args.port == 8914
     assert args.bootstrap_tapdb is True
