@@ -14,7 +14,7 @@ console = Console()
 
 @env_app.command("status")
 def status():
-    """Check system status (conda, AWS, dependencies)."""
+    """Check system status (conda, AWS, dependencies, tooling)."""
     table = Table(title="System Status")
     table.add_column("Component", style="cyan")
     table.add_column("Status")
@@ -66,7 +66,16 @@ def status():
 
     # Show key dependencies
     console.print("\n[bold]Key Dependencies:[/bold]")
-    deps = ["boto3", "fastapi", "uvicorn", "pydantic", "typer", "rich"]
+    deps = [
+        "boto3",
+        "fastapi",
+        "uvicorn",
+        "pydantic",
+        "typer",
+        "rich",
+        "sqlalchemy",
+        "httpx",
+    ]
     for dep in deps:
         try:
             mod = __import__(dep)
@@ -74,6 +83,15 @@ def status():
             console.print(f"  [green]✓[/green] {dep} ({version})")
         except ImportError:
             console.print(f"  [red]✗[/red] {dep} (not installed)")
+
+    console.print("\n[bold]CLI Tools:[/bold]")
+    tools = ["aws", "pcluster", "jq", "yq", "rclone", "parallel", "fd", "psql", "node"]
+    for tool in tools:
+        path = shutil.which(tool)
+        if path:
+            console.print(f"  [green]✓[/green] {tool} ({path})")
+        else:
+            console.print(f"  [red]✗[/red] {tool} (not found)")
 
 
 @env_app.command("generate")
