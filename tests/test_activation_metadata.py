@@ -1,19 +1,18 @@
 from __future__ import annotations
 
-import tomllib
 from pathlib import Path
 
 
-def _load_pyproject() -> dict[str, object]:
+def _load_pyproject() -> str:
     pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
-    return tomllib.loads(pyproject.read_text(encoding="utf-8"))
+    return pyproject.read_text(encoding="utf-8")
 
 
 def test_pyproject_relies_on_conda_env_yaml_for_tool_union() -> None:
-    data = _load_pyproject()
-    optional = data["project"]["optional-dependencies"]
+    pyproject_text = _load_pyproject()
 
-    assert "tools" not in optional
+    assert "[project.optional-dependencies]" in pyproject_text
+    assert "\ntools = [" not in pyproject_text
 
 
 def test_ursa_activate_uses_conda_only_bootstrap() -> None:
