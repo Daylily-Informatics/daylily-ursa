@@ -164,7 +164,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install "daylily-tapdb @ git+https://github.com/Daylily-Informatics/daylily-tapdb.git@0.2.5"
+          python -m pip install "daylily-tapdb @ git+https://github.com/Daylily-Informatics/daylily-tapdb.git@0.2.7"
           python -m pip install ".[dev,auth]"
 
       - name: Run beta-critical tests
