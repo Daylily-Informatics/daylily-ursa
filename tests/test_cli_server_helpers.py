@@ -107,18 +107,27 @@ def test_resolve_https_cert_paths_generates_with_mkcert(
 
 
 def test_uri_helpers_cover_normalization_and_ports() -> None:
-    assert server_cli._runtime_oauth_host("0.0.0.0") == "localhost"
-    assert server_cli._runtime_oauth_host("example.com") == "example.com"
-    assert server_cli._default_port_for_scheme("https") == 443
-    assert server_cli._default_port_for_scheme("http") == 80
-    assert server_cli._default_port_for_scheme("ftp") is None
-    assert server_cli._normalize_uri("https://example.com/path/") == "https://example.com/path"
-    assert server_cli._uri_port("https://example.com") == 443
-    assert server_cli._uri_port("https://example.com:444") == 444
+    from cli_core_yo.oauth import (
+        default_port_for_scheme,
+        normalize_uri,
+        runtime_oauth_host,
+        uri_port,
+    )
+
+    assert runtime_oauth_host("0.0.0.0") == "localhost"
+    assert runtime_oauth_host("example.com") == "example.com"
+    assert default_port_for_scheme("https") == 443
+    assert default_port_for_scheme("http") == 80
+    assert default_port_for_scheme("ftp") is None
+    assert normalize_uri("https://example.com/path/") == "https://example.com/path"
+    assert uri_port("https://example.com") == 443
+    assert uri_port("https://example.com:444") == 444
 
 
 def test_validate_uri_list_ports_flags_invalid_and_mismatch() -> None:
-    errors = server_cli._validate_uri_list_ports(
+    from cli_core_yo.oauth import validate_uri_list_ports
+
+    errors = validate_uri_list_ports(
         uris=[
             "notaurl",
             "ftp://localhost/callback",
@@ -135,6 +144,8 @@ def test_validate_uri_list_ports_flags_invalid_and_mismatch() -> None:
 
 
 def test_validate_cognito_oauth_uris_reports_mismatch() -> None:
+    from cli_core_yo.oauth import validate_cognito_app_client
+
     app_client = {
         "ClientName": "wrong-name",
         "AllowedOAuthFlowsUserPoolClient": False,
@@ -142,12 +153,13 @@ def test_validate_cognito_oauth_uris_reports_mismatch() -> None:
         "LogoutURLs": ["https://localhost:8912/"],
         "DefaultRedirectURI": "https://localhost:8912/auth/callback",
     }
-    errors = server_cli._validate_cognito_oauth_uris(
+    errors = validate_cognito_app_client(
         app_client=app_client,
         expected_callback_url="https://localhost:8914/auth/callback",
         expected_logout_url="https://localhost:8914/",
         expected_port=8914,
         runtime_host="localhost",
+        expected_client_name="ursa",
     )
     assert any("name mismatch" in error for error in errors)
     assert any("OAuth2 flows enabled" in error for error in errors)
@@ -224,29 +236,31 @@ def test_source_env_file_reads_key_values(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    from cli_core_yo.server import source_env_file
+
     env_file = tmp_path / ".env"
     env_file.write_text("X=1\nY='two'\n# comment\n", encoding="utf-8")
-    monkeypatch.setattr(server_cli.Path, "cwd", lambda: tmp_path)
     monkeypatch.delenv("X", raising=False)
     monkeypatch.delenv("Y", raising=False)
 
-    assert server_cli._source_env_file() is True
+    assert source_env_file(env_file) is True
     assert os.environ["X"] == "1"
     assert os.environ["Y"] == "two"
 
 
 def test_stop_handles_missing_pid(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(server_cli, "_get_pid", lambda: None)
+    # stop() delegates to stop_pid imported into server_cli namespace
+    monkeypatch.setattr(server_cli, "stop_pid", lambda _pf: (False, "No PID file"))
     server_cli.stop()
 
 
 def test_stop_permission_error_exits(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(server_cli, "_get_pid", lambda: 999)
-
-    def fake_kill(_pid: int, _sig: int) -> None:
-        raise PermissionError
-
-    monkeypatch.setattr(server_cli.os, "kill", fake_kill)
+    # stop() delegates to stop_pid; "Permission" in msg triggers Exit(1)
+    monkeypatch.setattr(
+        server_cli,
+        "stop_pid",
+        lambda _pf: (False, "Permission denied"),
+    )
 
     with pytest.raises(typer.Exit) as exc:
         server_cli.stop()

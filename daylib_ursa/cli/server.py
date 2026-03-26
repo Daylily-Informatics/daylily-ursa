@@ -1,18 +1,26 @@
 """Server management commands for the Ursa beta analysis API."""
 
 import os
-import signal
 import subprocess
 import sys
 import time
 import shutil
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Optional
-from urllib.parse import urlparse
 
 import typer
 import boto3
+from cli_core_yo.oauth import runtime_oauth_host, validate_cognito_app_client
+from cli_core_yo.server import (
+    display_host,
+    latest_log,
+    list_logs,
+    new_log_path,
+    read_pid,
+    source_env_file,
+    stop_pid,
+    write_pid,
+)
 from rich.console import Console
 
 server_app = typer.Typer(help="API server management commands")
@@ -23,9 +31,8 @@ CONFIG_DIR = Path.home() / ".config" / "ursa"
 LOG_DIR = CONFIG_DIR / "logs"
 PID_FILE = CONFIG_DIR / "server.pid"
 CERT_DIR = CONFIG_DIR / "certs"
-DEFAULT_SSL_CERT_FILE = CERT_DIR / "ursa-localhost.pem"
-DEFAULT_SSL_KEY_FILE = CERT_DIR / "ursa-localhost-key.pem"
-_LOCAL_OAUTH_HOSTS = {"localhost", "127.0.0.1", "::1"}
+DEFAULT_SSL_CERT_FILE = CERT_DIR / "cert.pem"
+DEFAULT_SSL_KEY_FILE = CERT_DIR / "key.pem"
 REQUIRED_COGNITO_APP_CLIENT_NAME = "ursa"
 
 
@@ -113,162 +120,8 @@ def _resolve_https_cert_paths(host: str) -> tuple[str, str]:
     return str(cert_path), str(key_path)
 
 
-def _runtime_oauth_host(host: str) -> str:
-    """Resolve runtime callback host for browser-facing URLs."""
-    if host in ("0.0.0.0", "::"):
-        return "localhost"
-    return host
 
 
-def _default_port_for_scheme(scheme: str) -> Optional[int]:
-    """Return implicit port for known URI schemes."""
-    if scheme == "https":
-        return 443
-    if scheme == "http":
-        return 80
-    return None
-
-
-def _normalize_uri(uri: str) -> str:
-    """Normalize URI for reliable comparison."""
-    parsed = urlparse(uri.strip())
-    path = parsed.path or "/"
-    if path != "/":
-        path = path.rstrip("/")
-    normalized = parsed._replace(path=path, params="", query="", fragment="")
-    return normalized.geturl()
-
-
-def _uri_port(uri: str) -> Optional[int]:
-    """Resolve explicit or implicit URI port."""
-    parsed = urlparse(uri.strip())
-    if not parsed.scheme or not parsed.netloc:
-        return None
-    return parsed.port or _default_port_for_scheme(parsed.scheme.lower())
-
-
-def _is_local_oauth_uri(uri: str, runtime_host: str) -> bool:
-    """Return True when URI points to local runtime host."""
-    parsed = urlparse(uri.strip())
-    hostname = (parsed.hostname or "").lower()
-    return hostname in _LOCAL_OAUTH_HOSTS or hostname == runtime_host.lower()
-
-
-def _validate_uri_list_ports(
-    *,
-    uris: list[str],
-    label: str,
-    expected_port: int,
-    runtime_host: str,
-) -> list[str]:
-    """Validate URI structure and port alignment for local endpoints."""
-    errors: list[str] = []
-    for raw_uri in uris:
-        uri = raw_uri.strip()
-        parsed = urlparse(uri)
-        if not parsed.scheme or not parsed.netloc:
-            errors.append(f"{label} contains invalid URI: {uri}")
-            continue
-        if parsed.scheme not in {"http", "https"}:
-            errors.append(f"{label} contains unsupported URI scheme: {uri}")
-            continue
-        if _is_local_oauth_uri(uri, runtime_host):
-            uri_port = _uri_port(uri)
-            if uri_port != expected_port:
-                errors.append(
-                    f"{label} URI port mismatch for local endpoint: {uri} "
-                    f"(expected port {expected_port})"
-                )
-    return errors
-
-
-def _validate_cognito_oauth_uris(
-    *,
-    app_client: dict,
-    expected_callback_url: str,
-    expected_logout_url: str,
-    expected_port: int,
-    runtime_host: str,
-    expected_client_name: str = REQUIRED_COGNITO_APP_CLIENT_NAME,
-) -> list[str]:
-    """Validate Cognito app-client OAuth URLs against runtime expectations."""
-    errors: list[str] = []
-    actual_client_name = str(app_client.get("ClientName") or "").strip()
-    callback_urls = [str(u) for u in (app_client.get("CallbackURLs") or []) if u]
-    logout_urls = [str(u) for u in (app_client.get("LogoutURLs") or []) if u]
-    default_redirect_uri = str(app_client.get("DefaultRedirectURI") or "").strip()
-
-    if not actual_client_name:
-        errors.append("Cognito app client has no ClientName configured")
-    elif actual_client_name != expected_client_name:
-        errors.append(
-            "Cognito app client name mismatch: "
-            f"found '{actual_client_name}', expected '{expected_client_name}'"
-        )
-    if not app_client.get("AllowedOAuthFlowsUserPoolClient", False):
-        errors.append("Cognito app client does not have OAuth2 flows enabled")
-    if not callback_urls:
-        errors.append("Cognito app client has no CallbackURLs configured")
-    if not logout_urls:
-        errors.append("Cognito app client has no LogoutURLs configured")
-
-    errors.extend(
-        _validate_uri_list_ports(
-            uris=callback_urls,
-            label="CallbackURLs",
-            expected_port=expected_port,
-            runtime_host=runtime_host,
-        )
-    )
-    errors.extend(
-        _validate_uri_list_ports(
-            uris=logout_urls,
-            label="LogoutURLs",
-            expected_port=expected_port,
-            runtime_host=runtime_host,
-        )
-    )
-    if default_redirect_uri:
-        errors.extend(
-            _validate_uri_list_ports(
-                uris=[default_redirect_uri],
-                label="DefaultRedirectURI",
-                expected_port=expected_port,
-                runtime_host=runtime_host,
-            )
-        )
-
-    normalized_callbacks = {_normalize_uri(u) for u in callback_urls}
-    normalized_logouts = {_normalize_uri(u) for u in logout_urls}
-    normalized_expected_callback = _normalize_uri(expected_callback_url)
-    normalized_expected_logout = _normalize_uri(expected_logout_url)
-    normalized_default_redirect = (
-        _normalize_uri(default_redirect_uri) if default_redirect_uri else ""
-    )
-
-    if normalized_expected_callback not in normalized_callbacks:
-        errors.append(
-            "Expected callback URI is not configured in Cognito app client: "
-            f"{expected_callback_url}"
-        )
-    if normalized_expected_logout not in normalized_logouts:
-        errors.append(
-            f"Expected logout URI is not configured in Cognito app client: {expected_logout_url}"
-        )
-    if default_redirect_uri and normalized_default_redirect not in normalized_callbacks:
-        errors.append(
-            f"Cognito app client DefaultRedirectURI is not in CallbackURLs: {default_redirect_uri}"
-        )
-
-    errors.extend(
-        _validate_uri_list_ports(
-            uris=[expected_callback_url, expected_logout_url],
-            label="Configured OAuth URI",
-            expected_port=expected_port,
-            runtime_host=runtime_host,
-        )
-    )
-    return errors
 
 
 def _describe_cognito_app_client(
@@ -310,18 +163,6 @@ def _require_cognito_configuration(ursa_config) -> None:
         raise typer.Exit(1)
 
 
-def _get_log_file() -> Path:
-    """Get timestamped log file path."""
-    ts = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
-    return LOG_DIR / f"server_{ts}.log"
-
-
-def _get_latest_log() -> Optional[Path]:
-    """Get the most recent log file."""
-    logs = sorted(LOG_DIR.glob("server_*.log"), reverse=True)
-    return logs[0] if logs else None
-
-
 def _get_pid() -> Optional[int]:
     """Get the running server PID if exists."""
     if PID_FILE.exists():
@@ -341,20 +182,42 @@ def _get_pid() -> Optional[int]:
     return None
 
 
-def _source_env_file() -> bool:
-    """Source .env file if it exists."""
-    env_file = Path.cwd() / ".env"
-    if env_file.exists():
-        with open(env_file) as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    key, _, value = line.partition("=")
-                    # Remove quotes if present
-                    value = value.strip().strip('"').strip("'")
-                    os.environ[key.strip()] = value
-        return True
-    return False
+
+def _run_cognito_uri_check(port: int, host: str, aws_profile: str) -> None:
+    """Validate Cognito app-client callback/logout URIs match runtime port."""
+    user_pool_id = os.environ.get("COGNITO_USER_POOL_ID", "")
+    app_client_id = os.environ.get("COGNITO_APP_CLIENT_ID", "")
+    region = os.environ.get("COGNITO_REGION", os.environ.get("AWS_REGION", "us-west-2"))
+    if not user_pool_id or not app_client_id:
+        return
+    try:
+        app_client = _describe_cognito_app_client(
+            profile=aws_profile,
+            region=region,
+            user_pool_id=user_pool_id,
+            app_client_id=app_client_id,
+        )
+    except Exception as exc:
+        console.print(f"[yellow]⚠[/yellow]  Could not fetch Cognito app client: {exc}")
+        return
+
+    oauth_host = runtime_oauth_host(host)
+    expected_callback = f"https://{oauth_host}:{port}/auth/callback"
+    expected_logout = f"https://{oauth_host}:{port}/"
+    errors = validate_cognito_app_client(
+        app_client=app_client,
+        expected_callback_url=expected_callback,
+        expected_logout_url=expected_logout,
+        expected_port=port,
+        runtime_host=oauth_host,
+        expected_client_name=REQUIRED_COGNITO_APP_CLIENT_NAME,
+    )
+    if errors:
+        console.print("[yellow]⚠[/yellow]  Cognito URI validation warnings:")
+        for err in errors:
+            console.print(f"   • {err}")
+        console.print(f"   Server is starting on port [cyan]{port}[/cyan]")
+        console.print("   Use [dim]--no-check-cognito-uris[/dim] to skip\n")
 
 
 @server_app.command("start")
@@ -365,17 +228,22 @@ def start(
     background: bool = typer.Option(
         True, "--background/--foreground", "-b/-f", help="Run in background"
     ),
+    check_cognito_uris: bool = typer.Option(
+        True,
+        "--check-cognito-uris/--no-check-cognito-uris",
+        help="Validate Cognito callback/logout URI ports before startup",
+    ),
 ):
     """Start the Ursa beta analysis API server."""
     _ensure_dir()
 
     # Source .env file
-    if _source_env_file():
+    if source_env_file(Path.cwd() / ".env"):
         console.print("[dim]Loaded .env file[/dim]")
 
     # Override with env vars if set
-    port = int(os.environ.get("URSA_PORT", port))
-    host = os.environ.get("URSA_HOST", host)
+    port = int(os.environ.get("URSA_RUNTIME__PORT", os.environ.get("URSA_PORT", port)))
+    host = os.environ.get("URSA_RUNTIME__HOST", os.environ.get("URSA_HOST", host))
 
     # Check if already running
     pid = _get_pid()
@@ -395,6 +263,9 @@ def start(
 
     _require_auth_dependencies()
     _require_cognito_configuration(ursa_config)
+
+    if check_cognito_uris:
+        _run_cognito_uri_check(port, host, aws_profile or "default")
 
     aws_region = (
         os.environ.get("AWS_REGION")
@@ -448,7 +319,7 @@ def start(
         console.print("[dim]Auto-reload enabled (foreground mode)[/dim]")
 
     if background:
-        log_file = _get_log_file()
+        log_file = new_log_path(LOG_DIR)
         log_f = open(log_file, "w", buffering=1)  # Line-buffered
 
         proc = subprocess.Popen(
@@ -474,7 +345,7 @@ def start(
                         console.print(f"   {line}")
             raise typer.Exit(1)
 
-        PID_FILE.write_text(str(proc.pid))
+        write_pid(PID_FILE, proc.pid)
         console.print(f"[green]✓[/green]  Server started (PID {proc.pid})")
         console.print(f"   URL: [cyan]https://{host}:{port}[/cyan]")
         console.print(f"   Logs: [dim]{log_file}[/dim]")
@@ -492,30 +363,14 @@ def start(
 @server_app.command("stop")
 def stop():
     """Stop the Ursa API server."""
-    pid = _get_pid()
-    if not pid:
-        console.print("[yellow]⚠[/yellow]  No server running")
-        return
-
-    try:
-        os.kill(pid, signal.SIGTERM)
-        for _ in range(10):
-            time.sleep(0.5)
-            try:
-                os.kill(pid, 0)
-            except ProcessLookupError:
-                break
-        else:
-            os.kill(pid, signal.SIGKILL)
-
-        PID_FILE.unlink(missing_ok=True)
-        console.print(f"[green]✓[/green]  Server stopped (was PID {pid})")
-    except ProcessLookupError:
-        PID_FILE.unlink(missing_ok=True)
-        console.print("[yellow]⚠[/yellow]  Server was not running")
-    except PermissionError:
-        console.print(f"[red]✗[/red]  Permission denied stopping PID {pid}")
+    stopped, msg = stop_pid(PID_FILE)
+    if stopped:
+        console.print(f"[green]✓[/green]  {msg}")
+    elif "Permission" in msg:
+        console.print(f"[red]✗[/red]  {msg}")
         raise typer.Exit(1)
+    else:
+        console.print(f"[yellow]⚠[/yellow]  {msg}")
 
 
 @server_app.command("status")
@@ -523,11 +378,12 @@ def status():
     """Check the status of the Ursa beta analysis API server."""
     pid = _get_pid()
     if pid:
-        port = os.environ.get("URSA_PORT", "8914")
-        host = os.environ.get("URSA_HOST", "0.0.0.0")
-        log_file = _get_latest_log()
+        port = os.environ.get("URSA_RUNTIME__PORT", os.environ.get("URSA_PORT", "8914"))
+        host = os.environ.get("URSA_RUNTIME__HOST", os.environ.get("URSA_HOST", "0.0.0.0"))
+        log_file = latest_log(LOG_DIR)
+        dh = display_host(host)
         console.print(f"[green]●[/green]  Server is [green]running[/green] (PID {pid})")
-        console.print(f"   URL: [cyan]https://{host}:{port}[/cyan]")
+        console.print(f"   URL: [cyan]https://{dh}:{port}[/cyan]")
         if log_file:
             console.print(f"   Logs: [dim]{log_file}[/dim]")
     else:
@@ -541,17 +397,17 @@ def logs(
 ):
     """View and follow Ursa API server logs (Ctrl+C to stop)."""
     if all_logs:
-        log_files = sorted(LOG_DIR.glob("server_*.log"), reverse=True)
-        if not log_files:
+        log_entries = list_logs(LOG_DIR)
+        if not log_entries:
             console.print("[yellow]⚠[/yellow]  No log files found.")
             return
-        console.print(f"[bold]Server log files ({len(log_files)}):[/bold]")
-        for lf in log_files[:20]:
+        console.print(f"[bold]Server log files ({len(log_entries)}):[/bold]")
+        for lf in log_entries[:20]:
             size = lf.stat().st_size
             console.print(f"  {lf.name}  [dim]({size:,} bytes)[/dim]")
         return
 
-    log_file = _get_latest_log()
+    log_file = latest_log(LOG_DIR)
     if not log_file:
         console.print("[yellow]⚠[/yellow]  No log file found. Start the server first.")
         return
