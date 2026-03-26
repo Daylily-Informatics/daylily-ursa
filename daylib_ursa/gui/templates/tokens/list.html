@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1 class="page-title">User Tokens</h1>
+        <p class="page-subtitle">Self-service bearer credentials preserved inside the restored shell.</p>
+    </div>
+</div>
+
+<section class="card" style="margin-bottom: 1rem;">
+    <form id="token-create-form">
+        <div class="grid grid-2">
+            <div class="form-group"><label class="form-label" for="token_name">Token Name</label><input id="token_name" name="token_name" class="form-control" required></div>
+            <div class="form-group"><label class="form-label" for="scope">Scope</label><input id="scope" name="scope" class="form-control" value="internal_rw"></div>
+            <div class="form-group"><label class="form-label" for="expires_in_days">Expires In Days</label><input id="expires_in_days" name="expires_in_days" type="number" class="form-control" value="30" min="1"></div>
+            <div class="form-group"><label class="form-label" for="note">Note</label><input id="note" name="note" class="form-control"></div>
+        </div>
+        <div class="toolbar"><button class="btn btn-primary" type="submit">Create Token</button></div>
+    </form>
+</section>
+
+<div class="table-container">
+    <table>
+        <thead><tr><th>Name</th><th>EUID</th><th>Scope</th><th>Status</th><th>Expires</th><th>Action</th></tr></thead>
+        <tbody>
+            {% for token in tokens %}
+            <tr>
+                <td><a href="/tokens/{{ token.token_euid }}">{{ token.token_name }}</a></td>
+                <td class="mono">{{ token.token_euid }}</td>
+                <td>{{ token.scope }}</td>
+                <td>{{ token.status }}</td>
+                <td>{{ token.expires_at }}</td>
+                <td><button class="btn btn-outline btn-sm" type="button" data-revoke-token="{{ token.token_euid }}">Revoke</button></td>
+            </tr>
+            {% else %}
+            <tr><td colspan="6" class="text-muted">No tokens found.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+UrsaPortal.bindJsonForm("#token-create-form", async (form) => {
+  const data = UrsaPortal.formToObject(form);
+  await UrsaPortal.apiRequest("/api/v1/user-tokens", {
+    method: "POST",
+    body: {
+      token_name: data.token_name,
+      scope: data.scope,
+      expires_in_days: Number(data.expires_in_days || 30),
+      note: data.note || null,
+    },
+  });
+  window.location.reload();
+});
+UrsaPortal.bindClick("[data-revoke-token]", async (button) => {
+  await UrsaPortal.apiRequest(`/api/v1/user-tokens/${encodeURIComponent(button.dataset.revokeToken)}/revoke`, {
+    method: "POST",
+    body: { note: "revoked from gui" },
+  });
+  window.location.reload();
+});
+</script>
+{% endblock %}

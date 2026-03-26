@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <a href="/manifests" class="small"><i class="fa-solid fa-arrow-left"></i> Back to Manifest Generator</a>
+        <h1 class="page-title">{{ manifest.name }}</h1>
+        <p class="page-subtitle mono">{{ manifest.manifest_euid }}</p>
+    </div>
+</div>
+
+<section class="grid grid-3" style="margin-bottom: 1rem;">
+    <article class="stat-card"><div><div class="stat-value">{{ manifest.artifact_euids | length }}</div><div class="stat-label">Canonical Artifacts</div></div></article>
+    <article class="stat-card"><div><div class="stat-value">{{ manifest.input_references | length }}</div><div class="stat-label">Ordered Inputs</div></div></article>
+    <article class="stat-card"><div><div class="stat-value">{{ manifest.artifact_set_euid or "mixed" }}</div><div class="stat-label">Primary Set</div></div></article>
+</section>
+
+<section class="grid grid-2">
+    <article class="card">
+        <div class="card-header"><h3 class="card-title">Ordered Input References</h3></div>
+        <div class="table-container">
+            <table>
+                <thead><tr><th>Type</th><th>Value</th><th>Resolved</th></tr></thead>
+                <tbody>
+                    {% for ref in manifest.input_references %}
+                    <tr>
+                        <td class="mono">{{ ref.reference_type }}</td>
+                        <td class="mono">{{ ref.value }}</td>
+                        <td class="mono">{{ ref.artifact_euid or ref.artifact_set_euid or "" }}</td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="3" class="text-muted">No ordered references stored.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </article>
+    <article class="card">
+        <div class="card-header"><h3 class="card-title">Canonical Artifact EUIDs</h3></div>
+        <div class="table-container">
+            <table>
+                <thead><tr><th>Artifact EUID</th></tr></thead>
+                <tbody>
+                    {% for artifact_euid in manifest.artifact_euids %}
+                    <tr><td class="mono">{{ artifact_euid }}</td></tr>
+                    {% else %}
+                    <tr><td class="text-muted">No canonical artifacts stored.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </article>
+</section>
+
+<section class="card" style="margin-top: 1rem;">
+    <div class="card-header"><h3 class="card-title">Payload</h3></div>
+    <pre class="json-block">{{ manifest_payload_json }}</pre>
+</section>
+{% endblock %}

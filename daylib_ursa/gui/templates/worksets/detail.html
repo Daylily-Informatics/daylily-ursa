@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <a href="/worksets" class="small"><i class="fa-solid fa-arrow-left"></i> Back to Worksets</a>
+        <h1 class="page-title">{{ workset.name }}</h1>
+        <p class="page-subtitle mono">{{ workset.workset_euid }}</p>
+    </div>
+    <div class="toolbar">
+        <a href="/manifests" class="btn btn-primary">Create Manifest</a>
+    </div>
+</div>
+
+<section class="grid grid-4" style="margin-bottom: 1rem;">
+    <article class="stat-card"><div><div class="stat-value">{{ workset.artifact_set_euids | length }}</div><div class="stat-label">Artifact Sets</div></div></article>
+    <article class="stat-card"><div><div class="stat-value">{{ workset.manifests | length }}</div><div class="stat-label">Manifests</div></div></article>
+    <article class="stat-card"><div><div class="stat-value">{{ workset.analysis_euids | length }}</div><div class="stat-label">Analyses</div></div></article>
+    <article class="stat-card"><div><div class="stat-value">{{ workset.state }}</div><div class="stat-label">State</div></div></article>
+</section>
+
+<section class="grid grid-2">
+    <article class="card">
+        <div class="card-header"><h3 class="card-title">Linked Manifests</h3></div>
+        <div class="table-container">
+            <table>
+                <thead><tr><th>Name</th><th>EUID</th><th>Inputs</th></tr></thead>
+                <tbody>
+                    {% for manifest in workset.manifests %}
+                    <tr>
+                        <td><a href="/manifests/{{ manifest.manifest_euid }}">{{ manifest.name }}</a></td>
+                        <td class="mono">{{ manifest.manifest_euid }}</td>
+                        <td>{{ manifest.artifact_euids | length }}</td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="3" class="text-muted">No manifests for this workset.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </article>
+    <article class="card">
+        <div class="card-header"><h3 class="card-title">Linked Analyses</h3></div>
+        <div class="table-container">
+            <table>
+                <thead><tr><th>Analysis</th><th>Type</th><th>State</th></tr></thead>
+                <tbody>
+                    {% for analysis in analyses %}
+                    <tr>
+                        <td><a href="/analyses/{{ analysis.analysis_euid }}" class="mono">{{ analysis.analysis_euid }}</a></td>
+                        <td>{{ analysis.analysis_type }}</td>
+                        <td>{{ analysis.state }}</td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="3" class="text-muted">No analyses linked to this workset.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </article>
+</section>
+
+<section class="card" style="margin-top: 1rem;">
+    <div class="card-header"><h3 class="card-title">Payload</h3></div>
+    <pre class="json-block">{{ workset_payload_json }}</pre>
+</section>
+{% endblock %}

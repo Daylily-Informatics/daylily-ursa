@@ -6,6 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from daylib_ursa.analysis_store import AnalysisArtifact, AnalysisRecord, AnalysisState, ReviewState
+from daylib_ursa.auth import ActorContext
 from daylib_ursa.atlas_result_client import AtlasResultArtifact, AtlasResultClient, AtlasResultClientError
 from daylib_ursa.config import Settings
 from daylib_ursa.workset_api import create_app
@@ -15,6 +16,7 @@ class DummyStore:
     def __init__(self) -> None:
         self.record = AnalysisRecord(
             analysis_euid="AN-1",
+            workset_euid=None,
             run_euid="RUN-1",
             flowcell_id="FLOW-1",
             lane="1",
@@ -100,6 +102,25 @@ class DummyAtlasClient:
         }
 
 
+class DummyIdentityClient:
+    def resolve_access_token(self, access_token: str) -> ActorContext:
+        assert access_token == "atlas-token"
+        return ActorContext(
+            user_id="user-1",
+            atlas_tenant_id="TEN-1",
+            roles=("admin",),
+            auth_source="atlas_bearer",
+        )
+
+    def resolve_user(self, user_id: str) -> ActorContext:  # pragma: no cover - not used here
+        return ActorContext(
+            user_id=user_id,
+            atlas_tenant_id="TEN-1",
+            roles=("admin",),
+            auth_source="ursa_token",
+        )
+
+
 def _settings() -> Settings:
     return Settings(
         cors_origins="*",
@@ -123,14 +144,15 @@ def test_return_analysis_result_calls_atlas_and_marks_returned():
         store,
         bloom_client=DummyBloomClient(),
         atlas_client=atlas,
+        identity_client=DummyIdentityClient(),
         settings=_settings(),
     )
 
     with TestClient(app) as client:
         response = client.post(
-            "/api/analyses/AN-1/return",
+            "/api/v1/analyses/AN-1/return",
             headers={
-                "X-API-Key": "ursa-test-key",
+                "Authorization": "Bearer atlas-token",
                 "Idempotency-Key": "return-1",
             },
             json={
@@ -154,14 +176,15 @@ def test_return_analysis_result_requires_manual_approval():
         store,
         bloom_client=DummyBloomClient(),
         atlas_client=atlas,
+        identity_client=DummyIdentityClient(),
         settings=_settings(),
     )
 
     with TestClient(app) as client:
         response = client.post(
-            "/api/analyses/AN-1/return",
+            "/api/v1/analyses/AN-1/return",
             headers={
-                "X-API-Key": "ursa-test-key",
+                "Authorization": "Bearer atlas-token",
                 "Idempotency-Key": "return-1",
             },
             json={
@@ -182,6 +205,7 @@ def test_review_analysis_updates_review_state():
         store,
         bloom_client=DummyBloomClient(),
         atlas_client=atlas,
+        identity_client=DummyIdentityClient(),
         settings=_settings(),
     )
 
@@ -199,8 +223,8 @@ def test_review_analysis_updates_review_state():
 
     with TestClient(app) as client:
         response = client.post(
-            "/api/analyses/AN-1/review",
-            headers={"X-API-Key": "ursa-test-key"},
+            "/api/v1/analyses/AN-1/review",
+            headers={"Authorization": "Bearer atlas-token"},
             json={"review_state": "APPROVED", "reviewer": "qa@example.com"},
         )
 

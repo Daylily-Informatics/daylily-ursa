@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ page_title }} | Ursa</title>
+    <link rel="stylesheet" href="{{ request.url_for('ui-static', path='styles.css') }}">
+</head>
+<body>
+    <div class="app-shell">
+        <aside class="side-nav">
+            <div class="brand">
+                <a href="/">Ursa</a>
+                <p>TapDB + Dewey backend</p>
+            </div>
+            <nav>
+                <a href="/" class="{% if active_view == 'dashboard' %}active{% endif %}">Dashboard</a>
+                <a href="/worksets" class="{% if active_view in ['worksets', 'workset_detail'] %}active{% endif %}">Worksets</a>
+                <a href="/manifests" class="{% if active_view in ['manifests', 'manifest_detail'] %}active{% endif %}">Manifests</a>
+                <a href="/analyses" class="{% if active_view in ['analyses', 'analysis_detail'] %}active{% endif %}">Analyses</a>
+                <a href="/artifacts" class="{% if active_view == 'artifacts' %}active{% endif %}">Artifacts</a>
+                <a href="/tokens" class="{% if active_view in ['tokens', 'token_detail'] %}active{% endif %}">User Tokens</a>
+                {% if actor.is_admin %}
+                <a href="/clusters" class="{% if active_view in ['clusters', 'cluster_detail', 'cluster_job_detail'] %}active{% endif %}">Clusters</a>
+                <a href="/admin/tokens" class="{% if active_view == 'admin_tokens' %}active{% endif %}">Admin Tokens</a>
+                <a href="/admin/clients" class="{% if active_view in ['admin_clients', 'admin_client_detail'] %}active{% endif %}">Client Registrations</a>
+                {% endif %}
+            </nav>
+        </aside>
+        <main class="main-panel">
+            <header class="topbar">
+                <div>
+                    <p class="eyebrow">Atlas-backed session</p>
+                    <h1>{{ page_title }}</h1>
+                </div>
+                <div class="actor-card">
+                    <div>
+                        <strong>{{ actor.display_name or actor.email or actor.user_id }}</strong>
+                        <p>{{ actor.organization or actor.atlas_tenant_id }}</p>
+                    </div>
+                    <a class="button ghost" href="/logout">Log Out</a>
+                </div>
+            </header>
+
+            <section class="summary-strip">
+                <div class="summary-card">
+                    <span class="label">Tenant</span>
+                    <strong>{{ actor.atlas_tenant_id }}</strong>
+                </div>
+                <div class="summary-card">
+                    <span class="label">Roles</span>
+                    <strong>{{ ", ".join(actor.roles) }}</strong>
+                </div>
+                <div class="summary-card">
+                    <span class="label">Site</span>
+                    <strong>{{ actor.site or "Unassigned" }}</strong>
+                </div>
+                <div class="summary-card">
+                    <span class="label">Auth Source</span>
+                    <strong>{{ actor.auth_source }}</strong>
+                </div>
+            </section>
+
+            <section class="flash" id="flash"></section>
+            <section class="panel" id="page-controls"></section>
+            <section class="panel" id="page-content"></section>
+        </main>
+    </div>
+
+    <script id="ursa-page-config" type="application/json">{{ page_config_json | safe }}</script>
+    <script src="{{ request.url_for('ui-static', path='app.js') }}" defer></script>
+</body>
+</html>

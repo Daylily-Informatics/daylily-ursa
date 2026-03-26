@@ -3,11 +3,22 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
-from daylib_ursa.tapdb_graph import TapDBBackend, from_json_addl, utc_now_iso
-from daylily_tapdb import generic_instance
+try:
+    from daylib_ursa.tapdb_graph import TapDBBackend, from_json_addl, utc_now_iso
+    from daylily_tapdb import generic_instance
+except ImportError:  # pragma: no cover - import-time compatibility for reduced test envs
+    TapDBBackend = Any  # type: ignore[assignment]
+    generic_instance = Any  # type: ignore[assignment]
+
+    def from_json_addl(instance) -> dict[str, Any]:
+        return dict(getattr(instance, "json_addl", {}) or {})
+
+    def utc_now_iso() -> str:
+        return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 class AnalysisState(str, Enum):
@@ -61,6 +72,7 @@ class AnalysisArtifact:
 @dataclass(frozen=True)
 class AnalysisRecord:
     analysis_euid: str
+    workset_euid: str | None
     run_euid: str
     flowcell_id: str
     lane: str
@@ -124,7 +136,7 @@ class AnalysisStore:
     def _artifact_from_instance(self, instance: generic_instance) -> AnalysisArtifact:
         payload = from_json_addl(instance)
         return AnalysisArtifact(
-            artifact_euid=str(instance.euid),
+            artifact_euid=str(payload.get("artifact_euid") or instance.euid),
             artifact_type=str(payload.get("artifact_type") or ""),
             storage_uri=str(payload.get("storage_uri") or ""),
             filename=str(payload.get("filename") or ""),
@@ -176,8 +188,19 @@ class AnalysisStore:
         payload = from_json_addl(instance)
         context = self._context_payload(session, instance)
         atlas_return = self._atlas_return_payload(session, instance)
+        workset_euid = None
+        list_parents = getattr(self.backend, "list_parents", None)
+        if callable(list_parents):
+            workset_parents = list_parents(
+                session,
+                child=instance,
+                relationship_type="workset_analysis",
+            )
+            if workset_parents:
+                workset_euid = str(workset_parents[0].euid)
         return AnalysisRecord(
             analysis_euid=str(instance.euid),
+            workset_euid=workset_euid,
             run_euid=str(context.get("run_euid") or ""),
             flowcell_id=str(context.get("flowcell_id") or ""),
             lane=str(context.get("lane") or ""),
@@ -212,6 +235,29 @@ class AnalysisStore:
             if analysis is None:
                 return None
             return self._record_from_instance(session, analysis, self._artifacts(session, analysis))
+
+    def list_analyses(
+        self,
+        *,
+        atlas_tenant_id: str | None = None,
+        workset_euid: str | None = None,
+        limit: int = 200,
+    ) -> list[AnalysisRecord]:
+        with self.backend.session_scope(commit=False) as session:
+            rows = self.backend.list_instances_by_template(
+                session,
+                template_code=ANALYSIS_TEMPLATE,
+                limit=limit,
+            )
+            records: list[AnalysisRecord] = []
+            for analysis in rows:
+                record = self._record_from_instance(session, analysis, self._artifacts(session, analysis))
+                if atlas_tenant_id and record.atlas_tenant_id != atlas_tenant_id:
+                    continue
+                if workset_euid and record.workset_euid != workset_euid:
+                    continue
+                records.append(record)
+            return records
 
     def ingest_analysis(
         self,
@@ -337,13 +383,16 @@ class AnalysisStore:
             analysis = self._find_analysis(session, analysis_euid, for_update=True)
             if analysis is None:
                 raise KeyError(f"analysis not found: {analysis_euid}")
+            dewey_artifact_euid = str((metadata or {}).get("dewey_artifact_euid") or "").strip()
+            if not dewey_artifact_euid:
+                raise ValueError("dewey_artifact_euid is required for persisted analysis artifacts")
             for child in self.backend.list_children(
                 session,
                 parent=analysis,
                 relationship_type="analysis_artifact",
             ):
                 payload = dict(child.json_addl or {})
-                if str(payload.get("storage_uri") or "") == storage_uri:
+                if str(payload.get("artifact_euid") or "") == dewey_artifact_euid:
                     return self._artifact_from_instance(child)
 
             artifact = self.backend.create_instance(
@@ -351,6 +400,7 @@ class AnalysisStore:
                 ARTIFACT_TEMPLATE,
                 filename,
                 json_addl={
+                    "artifact_euid": dewey_artifact_euid,
                     "artifact_type": artifact_type,
                     "storage_uri": storage_uri,
                     "filename": filename,

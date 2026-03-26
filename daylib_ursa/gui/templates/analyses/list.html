@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1 class="page-title">Analyses</h1>
+        <p class="page-subtitle">Current review and result-return pages preserved in the restored shell.</p>
+    </div>
+</div>
+
+<div class="table-container">
+    <table>
+        <thead><tr><th>Analysis</th><th>Type</th><th>State</th><th>Review</th><th>Result</th><th>Workset</th></tr></thead>
+        <tbody>
+            {% for analysis in analyses %}
+            <tr>
+                <td><a href="/analyses/{{ analysis.analysis_euid }}" class="mono">{{ analysis.analysis_euid }}</a></td>
+                <td>{{ analysis.analysis_type }}</td>
+                <td>{{ analysis.state }}</td>
+                <td>{{ analysis.review_state }}</td>
+                <td>{{ analysis.result_status }}</td>
+                <td class="mono">{{ analysis.workset_euid or "" }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="6" class="text-muted">No analyses found.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1 class="page-title">Dewey Artifact Tools</h1>
+        <p class="page-subtitle">Preserved current import and resolve tooling inside the restored shell.</p>
+    </div>
+</div>
+
+<section class="grid grid-2">
+    <article class="card">
+        <div class="card-header"><h3 class="card-title">Import Raw S3 Object</h3></div>
+        <form id="artifact-import-form">
+            <div class="form-group"><label class="form-label" for="artifact_type">Artifact Type</label><input id="artifact_type" name="artifact_type" class="form-control" value="fastq" required></div>
+            <div class="form-group"><label class="form-label" for="storage_uri">Storage URI</label><input id="storage_uri" name="storage_uri" class="form-control mono" placeholder="s3://bucket/key" required></div>
+            <div class="form-group"><label class="form-label" for="import_metadata">Metadata JSON</label><textarea id="import_metadata" name="metadata" class="form-textarea mono">{}</textarea></div>
+            <div class="toolbar"><button class="btn btn-primary" type="submit">Import</button></div>
+        </form>
+    </article>
+    <article class="card">
+        <div class="card-header"><h3 class="card-title">Resolve Dewey Reference</h3></div>
+        <form id="artifact-resolve-form">
+            <div class="form-group"><label class="form-label" for="resolve_type">Reference Type</label><select id="resolve_type" name="resolve_type" class="form-select"><option value="artifact_euid">artifact_euid</option><option value="artifact_set_euid">artifact_set_euid</option></select></div>
+            <div class="form-group"><label class="form-label" for="resolve_value">Value</label><input id="resolve_value" name="resolve_value" class="form-control mono" required></div>
+            <div class="toolbar"><button class="btn btn-primary" type="submit">Resolve</button></div>
+        </form>
+    </article>
+</section>
+
+<section class="card" style="margin-top: 1rem;">
+    <div class="card-header"><h3 class="card-title">Result</h3></div>
+    <pre class="json-block" id="artifact-result">{}</pre>
+</section>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const resultEl = document.getElementById("artifact-result");
+UrsaPortal.bindJsonForm("#artifact-import-form", async (form) => {
+  const data = UrsaPortal.formToObject(form);
+  const result = await UrsaPortal.apiRequest("/api/v1/artifacts/import", {
+    method: "POST",
+    body: {
+      artifact_type: data.artifact_type,
+      storage_uri: data.storage_uri,
+      metadata: UrsaPortal.parseJsonText(data.metadata, {}),
+    },
+  });
+  resultEl.textContent = JSON.stringify(result, null, 2);
+});
+UrsaPortal.bindJsonForm("#artifact-resolve-form", async (form) => {
+  const data = UrsaPortal.formToObject(form);
+  const payload = {};
+  payload[data.resolve_type] = data.resolve_value;
+  const result = await UrsaPortal.apiRequest("/api/v1/artifacts/resolve", { method: "POST", body: payload });
+  resultEl.textContent = JSON.stringify(result, null, 2);
+});
+</script>
+{% endblock %}

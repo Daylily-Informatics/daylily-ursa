@@ -2,6 +2,6 @@
 
 import os
 
-# Set WHITELIST_DOMAINS=all for tests to allow test@example.com
+# Set URSA_AUTH__WHITELIST_DOMAINS=all for tests to allow test@example.com
 # This must be set before importing any daylib_ursa modules
-os.environ.setdefault("WHITELIST_DOMAINS", "all")
+os.environ.setdefault("URSA_AUTH__WHITELIST_DOMAINS", "all")

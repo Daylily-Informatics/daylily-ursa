@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <a href="/analyses" class="small"><i class="fa-solid fa-arrow-left"></i> Back to Analyses</a>
+        <h1 class="page-title">Analysis {{ analysis.analysis_euid }}</h1>
+        <p class="page-subtitle">{{ analysis.analysis_type }} · {{ analysis.state }}</p>
+    </div>
+</div>
+
+<section class="grid grid-2">
+    <article class="card">
+        <div class="card-header"><h3 class="card-title">Review</h3></div>
+        <form id="analysis-review-form">
+            <div class="form-group">
+                <label class="form-label" for="review_state">Review State</label>
+                <select id="review_state" name="review_state" class="form-select">
+                    <option value="APPROVED">APPROVED</option>
+                    <option value="REJECTED">REJECTED</option>
+                    <option value="PENDING">PENDING</option>
+                </select>
+            </div>
+            <div class="form-group"><label class="form-label" for="reviewer">Reviewer</label><input id="reviewer" name="reviewer" class="form-control"></div>
+            <div class="form-group"><label class="form-label" for="notes">Notes</label><textarea id="notes" name="notes" class="form-textarea"></textarea></div>
+            <div class="toolbar"><button class="btn btn-primary" type="submit">Submit Review</button></div>
+        </form>
+    </article>
+    <article class="card">
+        <div class="card-header"><h3 class="card-title">Return Result</h3></div>
+        <form id="analysis-return-form">
+            <div class="form-group"><label class="form-label" for="idempotency_key">Idempotency Key</label><input id="idempotency_key" name="idempotency_key" class="form-control" required></div>
+            <div class="form-group"><label class="form-label" for="result_payload">Result Payload</label><textarea id="result_payload" name="result_payload" class="form-textarea mono">{}</textarea></div>
+            <div class="toolbar"><button class="btn btn-primary" type="submit">Return to Atlas</button></div>
+        </form>
+    </article>
+</section>
+
+<section class="card" style="margin-top: 1rem;">
+    <div class="card-header"><h3 class="card-title">Payload</h3></div>
+    <pre class="json-block">{{ analysis_payload_json }}</pre>
+</section>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+UrsaPortal.bindJsonForm("#analysis-review-form", async (form) => {
+  const data = UrsaPortal.formToObject(form);
+  await UrsaPortal.apiRequest("/api/v1/analyses/{{ analysis.analysis_euid }}/review", {
+    method: "POST",
+    body: data,
+  });
+  window.location.reload();
+});
+UrsaPortal.bindJsonForm("#analysis-return-form", async (form) => {
+  const data = UrsaPortal.formToObject(form);
+  await UrsaPortal.apiRequest("/api/v1/analyses/{{ analysis.analysis_euid }}/return", {
+    method: "POST",
+    headers: { "Idempotency-Key": data.idempotency_key },
+    body: { result_payload: UrsaPortal.parseJsonText(data.result_payload, {}), result_status: "COMPLETED" },
+  });
+  window.location.reload();
+});
+</script>
+{% endblock %}

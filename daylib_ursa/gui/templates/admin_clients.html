@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1 class="page-title">Client Registrations</h1>
+        <p class="page-subtitle">Preserved current client-registration flows under the PR19-style tools shell.</p>
+    </div>
+</div>
+
+<section class="card" style="margin-bottom: 1rem;">
+    <form id="client-create-form">
+        <div class="grid grid-2">
+            <div class="form-group"><label class="form-label" for="client_name">Client Name</label><input id="client_name" name="client_name" class="form-control" required></div>
+            <div class="form-group"><label class="form-label" for="owner_user_id">Owner User ID</label><input id="owner_user_id" name="owner_user_id" class="form-control" required></div>
+        </div>
+        <div class="form-group"><label class="form-label" for="scopes">Scopes JSON</label><textarea id="scopes" name="scopes" class="form-textarea mono">["internal_rw"]</textarea></div>
+        <div class="form-group"><label class="form-label" for="metadata">Metadata JSON</label><textarea id="metadata" name="metadata" class="form-textarea mono">{}</textarea></div>
+        <div class="toolbar"><button class="btn btn-primary" type="submit">Create Client Registration</button></div>
+    </form>
+</section>
+
+<div class="table-container">
+    <table>
+        <thead><tr><th>Client</th><th>Owner</th><th>Scopes</th><th>State</th></tr></thead>
+        <tbody>
+            {% for client in clients %}
+            <tr>
+                <td><a href="/admin/clients/{{ client.client_registration_euid }}">{{ client.client_name }}</a></td>
+                <td>{{ client.owner_user_id }}</td>
+                <td>{{ client.scopes | join(", ") }}</td>
+                <td>{{ client.state }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="4" class="text-muted">No client registrations.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+UrsaPortal.bindJsonForm("#client-create-form", async (form) => {
+  const data = UrsaPortal.formToObject(form);
+  const created = await UrsaPortal.apiRequest("/api/v1/admin/client-registrations", {
+    method: "POST",
+    body: {
+      client_name: data.client_name,
+      owner_user_id: data.owner_user_id,
+      scopes: UrsaPortal.parseJsonText(data.scopes, []),
+      metadata: UrsaPortal.parseJsonText(data.metadata, {}),
+    },
+  });
+  window.location.assign(`/admin/clients/${encodeURIComponent(created.client_registration_euid)}`);
+});
+</script>
+{% endblock %}

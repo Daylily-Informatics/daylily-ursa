@@ -1,0 +1,251 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container container-wide">
+    <div class="page-header d-flex justify-between align-center flex-wrap gap-lg">
+        <div>
+            <h1 class="page-title">Worksets</h1>
+            <p class="page-subtitle">Manage your genomics processing jobs with the PR19 workset table restored.</p>
+        </div>
+        <div class="page-actions">
+            <a href="/worksets/new" class="btn btn-primary">
+                <i class="fas fa-plus"></i> New Workset
+            </a>
+            <a href="/manifests" class="btn btn-outline">
+                <i class="fas fa-list-check"></i> Manifest Generator
+            </a>
+            <button class="btn btn-outline" type="button" onclick="refreshWorksets()">
+                <i class="fas fa-sync-alt"></i> Refresh
+            </button>
+        </div>
+    </div>
+
+    <div class="card mb-lg">
+        <div class="d-flex flex-wrap gap-md align-center">
+            <div class="form-group mb-0" style="min-width: 200px;">
+                <select class="form-control form-select" id="filter-status" onchange="filterWorksets()">
+                    <option value="">All Statuses</option>
+                    <option value="active"{% if filter_status == 'active' %} selected{% endif %}>Active</option>
+                    <option value="complete"{% if filter_status == 'complete' %} selected{% endif %}>Complete</option>
+                    <option value="completed"{% if filter_status == 'completed' %} selected{% endif %}>Completed</option>
+                    <option value="error"{% if filter_status == 'error' %} selected{% endif %}>Error</option>
+                </select>
+            </div>
+            <div class="form-group mb-0" style="min-width: 150px;">
+                <select class="form-control form-select" id="filter-type" onchange="filterWorksets()">
+                    <option value="">All Types</option>
+                    <option value="clinical"{% if filter_type == 'clinical' %} selected{% endif %}>Clinical</option>
+                    <option value="ruo"{% if filter_type == 'ruo' %} selected{% endif %}>Research (RUO)</option>
+                    <option value="lsmc"{% if filter_type == 'lsmc' %} selected{% endif %}>Lab Services (LSMC)</option>
+                </select>
+            </div>
+            <div class="form-group mb-0" style="flex: 1; min-width: 250px;">
+                <input type="text" class="form-control" id="search-worksets"
+                       placeholder="Search worksets..."
+                       value="{{ filter_search | default('') }}"
+                       oninput="handleSearchInput()">
+            </div>
+            <div class="form-group mb-0">
+                <select class="form-control form-select" id="filter-sort" onchange="filterWorksets()">
+                    <option value="created_desc"{% if filter_sort == 'created_desc' or not filter_sort %} selected{% endif %}>Newest First</option>
+                    <option value="created_asc"{% if filter_sort == 'created_asc' %} selected{% endif %}>Oldest First</option>
+                    <option value="status"{% if filter_sort == 'status' %} selected{% endif %}>By Status</option>
+                </select>
+            </div>
+            {% if filter_status or filter_type or filter_search %}
+            <div class="form-group mb-0">
+                <button type="button" class="btn btn-outline btn-sm" onclick="clearFilters()">
+                    <i class="fas fa-times"></i> Clear
+                </button>
+            </div>
+            {% endif %}
+        </div>
+        <div class="mt-sm text-muted text-sm">
+            Showing {{ worksets | length }} of {{ total_count }} workset{{ 's' if total_count != 1 else '' }}{% if filter_status or filter_type or filter_search %} (filtered){% endif %}
+        </div>
+    </div>
+
+    <div class="table-container" style="overflow-x: auto;">
+        <table class="table" id="worksets-table">
+            <thead>
+                <tr>
+                    <th>
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="select-all" onchange="toggleSelectAll()">
+                        </label>
+                    </th>
+                    <th>Workset ID</th>
+                    <th>Workset Name</th>
+                    <th>Created</th>
+                    <th>Type</th>
+                    <th>Tenant</th>
+                    <th>TapDB Status</th>
+                    <th>Pipeline</th>
+                    <th>Cluster</th>
+                    <th>Region</th>
+                    <th>Samples</th>
+                    <th>Progress</th>
+                    <th>Last Updated</th>
+                    <th>Compute Cost</th>
+                    <th>Storage</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% if worksets %}
+                {% for ws in worksets %}
+                <tr data-workset-id="{{ ws.workset_id }}" data-status="{{ ws.state | lower }}" data-type="{{ ws.workset_type | lower }}">
+                    <td>
+                        <label class="checkbox-label">
+                            <input type="checkbox" class="workset-checkbox" value="{{ ws.workset_id }}" onchange="updateBulkActions()">
+                        </label>
+                    </td>
+                    <td>
+                        <a href="/worksets/{{ ws.workset_id }}" class="text-accent mono">{{ ws.workset_id }}</a>
+                    </td>
+                    <td>
+                        <a href="/worksets/{{ ws.workset_id }}" class="text-accent" style="font-weight: 500;">
+                            {{ ws.workset_name or ws.workset_id }}
+                        </a>
+                    </td>
+                    <td class="text-sm">{{ ws.created_at[:16] | replace('T', ' ') if ws.created_at else '—' }}</td>
+                    <td>
+                        {% set wtype = ws.workset_type | lower %}
+                        {% if wtype == 'clinical' %}
+                        <span class="badge badge-clinical">Clinical</span>
+                        {% elif wtype == 'lsmc' %}
+                        <span class="badge badge-lsmc">LSMC</span>
+                        {% else %}
+                        <span class="badge badge-ruo">RUO</span>
+                        {% endif %}
+                    </td>
+                    <td><span class="text-muted">{{ ws.customer_id or 'Unknown' }}</span></td>
+                    <td><span class="badge badge-{{ ws.state | lower | replace('_', '-') }}">{{ ws.state }}</span></td>
+                    <td>{{ ws.pipeline_type or 'germline' }}</td>
+                    <td>{% if ws.execution_cluster_name %}<code>{{ ws.execution_cluster_name }}</code>{% else %}<span class="text-muted">—</span>{% endif %}</td>
+                    <td>{% if ws.execution_cluster_region %}<span class="badge badge-secondary">{{ ws.execution_cluster_region }}</span>{% else %}<span class="text-muted">—</span>{% endif %}</td>
+                    <td>{{ ws.sample_count }}</td>
+                    <td style="min-width: 140px;">
+                        {% if ws.progress > 0 %}
+                        <div class="progress" style="height: 6px;">
+                            <div class="progress-bar" style="width: {{ ws.progress }}%"></div>
+                        </div>
+                        <small class="text-muted">{{ ws.progress }}%</small>
+                        {% elif ws.state | lower in ['complete', 'completed'] %}
+                        <span class="text-success"><i class="fas fa-check"></i> Done</span>
+                        {% elif ws.state | lower == 'error' %}
+                        <span class="text-error"><i class="fas fa-times"></i> Failed</span>
+                        {% else %}
+                        <span class="text-muted">Pending</span>
+                        {% endif %}
+                    </td>
+                    <td class="text-sm">{{ ws.updated_at[:16] | replace('T', ' ') if ws.updated_at else '—' }}</td>
+                    <td>{% if ws.compute_cost %}${{ "%.2f"|format(ws.compute_cost) }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
+                    <td>{% if ws.storage_available %}{{ ws.storage_human }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
+                    <td>
+                        <div class="d-flex gap-sm">
+                            <a href="/worksets/{{ ws.workset_id }}" class="btn btn-outline btn-sm" title="View Details">
+                                <i class="fas fa-eye"></i>
+                            </a>
+                            <a href="/manifests?workset={{ ws.workset_id }}" class="btn btn-outline btn-sm" title="Open Manifest Generator">
+                                <i class="fas fa-list-check"></i>
+                            </a>
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+                {% else %}
+                <tr>
+                    <td colspan="16">
+                        <div class="empty-state">
+                            <div class="empty-state-icon"><i class="fas fa-folder-open"></i></div>
+                            <h4 class="empty-state-title">No worksets yet</h4>
+                            <p class="empty-state-text">Create your first workset to start processing genomics data.</p>
+                            <a href="/worksets/new" class="btn btn-primary">
+                                <i class="fas fa-plus"></i> Create Workset
+                            </a>
+                        </div>
+                    </td>
+                </tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+
+    <div class="card mt-lg d-none" id="bulk-actions">
+        <div class="d-flex align-center gap-lg flex-wrap">
+            <span><strong id="selected-count">0</strong> worksets selected</span>
+            <div class="d-flex gap-sm flex-wrap">
+                <button class="btn btn-outline btn-sm" type="button" onclick="clearSelection()">
+                    <i class="fas fa-times"></i> Clear
+                </button>
+                <a href="/manifests" class="btn btn-outline btn-sm">
+                    <i class="fas fa-list-check"></i> Manifest Generator
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let searchDebounceTimer = null;
+
+function filterWorksets(isSearchInput = false) {
+    const status = document.getElementById('filter-status')?.value || '';
+    const type = document.getElementById('filter-type')?.value || '';
+    const search = document.getElementById('search-worksets')?.value || '';
+    const sort = document.getElementById('filter-sort')?.value || 'created_desc';
+    const params = new URLSearchParams();
+    if (status) params.set('status', status);
+    if (type) params.set('type', type);
+    if (search.trim()) params.set('search', search.trim());
+    if (sort && sort !== 'created_desc') params.set('sort', sort);
+    const newUrl = '/worksets' + (params.toString() ? `?${params.toString()}` : '');
+    if (isSearchInput) {
+        clearTimeout(searchDebounceTimer);
+        searchDebounceTimer = setTimeout(() => window.location.assign(newUrl), 350);
+        return;
+    }
+    window.location.assign(newUrl);
+}
+
+function handleSearchInput() {
+    filterWorksets(true);
+}
+
+function clearFilters() {
+    window.location.assign('/worksets');
+}
+
+function toggleSelectAll() {
+    const selectAll = document.getElementById('select-all');
+    document.querySelectorAll('.workset-checkbox').forEach((checkbox) => {
+        checkbox.checked = !!selectAll?.checked;
+    });
+    updateBulkActions();
+}
+
+function updateBulkActions() {
+    const checked = document.querySelectorAll('.workset-checkbox:checked');
+    const bulkActions = document.getElementById('bulk-actions');
+    const countEl = document.getElementById('selected-count');
+    if (bulkActions) bulkActions.classList.toggle('d-none', checked.length === 0);
+    if (countEl) countEl.textContent = checked.length;
+}
+
+function clearSelection() {
+    document.querySelectorAll('.workset-checkbox').forEach((checkbox) => {
+        checkbox.checked = false;
+    });
+    const selectAll = document.getElementById('select-all');
+    if (selectAll) selectAll.checked = false;
+    updateBulkActions();
+}
+
+function refreshWorksets() {
+    window.location.reload();
+}
+</script>
+{% endblock %}

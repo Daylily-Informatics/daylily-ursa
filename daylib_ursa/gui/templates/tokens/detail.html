@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <a href="/tokens" class="small"><i class="fa-solid fa-arrow-left"></i> Back to Tokens</a>
+        <h1 class="page-title">{{ token.token_name }}</h1>
+        <p class="page-subtitle mono">{{ token.token_euid }}</p>
+    </div>
+</div>
+
+<section class="grid grid-4" style="margin-bottom: 1rem;">
+    <article class="stat-card"><div><div class="stat-value">{{ token.scope }}</div><div class="stat-label">Scope</div></div></article>
+    <article class="stat-card"><div><div class="stat-value">{{ token.status }}</div><div class="stat-label">Status</div></div></article>
+    <article class="stat-card"><div><div class="stat-value">{{ token.last_used_at or "Never" }}</div><div class="stat-label">Last Used</div></div></article>
+    <article class="stat-card"><div><div class="stat-value">{{ token.expires_at }}</div><div class="stat-label">Expires</div></div></article>
+</section>
+
+<section class="card">
+    <div class="card-header"><h3 class="card-title">Usage</h3></div>
+    <div class="table-container">
+        <table>
+            <thead><tr><th>When</th><th>Method</th><th>Endpoint</th><th>Status</th></tr></thead>
+            <tbody>
+                {% for item in usage %}
+                <tr><td>{{ item.created_at }}</td><td>{{ item.http_method }}</td><td>{{ item.endpoint }}</td><td>{{ item.response_status }}</td></tr>
+                {% else %}
+                <tr><td colspan="4" class="text-muted">No usage events.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+{% endblock %}

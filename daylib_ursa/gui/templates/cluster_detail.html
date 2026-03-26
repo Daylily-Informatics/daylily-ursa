@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <a href="/clusters" class="small"><i class="fa-solid fa-arrow-left"></i> Back to Clusters</a>
+        <h1 class="page-title">{{ cluster.cluster_name }}</h1>
+        <p class="page-subtitle">{{ cluster.region }} · {{ cluster.cluster_status }}</p>
+    </div>
+</div>
+
+<section class="grid grid-2">
+    <article class="card">
+        <div class="card-header"><h3 class="card-title">Cluster Snapshot</h3></div>
+        <pre class="json-block">{{ cluster_payload_json }}</pre>
+    </article>
+    <article class="card">
+        <div class="card-header"><h3 class="card-title">Related Jobs</h3></div>
+        <div class="table-container">
+            <table>
+                <thead><tr><th>Job</th><th>State</th><th>Updated</th></tr></thead>
+                <tbody>
+                    {% for job in jobs %}
+                    <tr><td><a href="/clusters/jobs/{{ job.job_euid }}" class="mono">{{ job.job_euid }}</a></td><td>{{ job.state }}</td><td>{{ job.updated_at }}</td></tr>
+                    {% else %}
+                    <tr><td colspan="3" class="text-muted">No related jobs.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </article>
+</section>
+{% endblock %}

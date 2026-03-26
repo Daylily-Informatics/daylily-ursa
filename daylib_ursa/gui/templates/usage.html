@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1 class="page-title">Usage Summary</h1>
+        <p class="page-subtitle">Current Ursa-owned workload and reference volume. Billing-specific customer constructs stay retired.</p>
+    </div>
+</div>
+
+<section class="grid grid-4" style="margin-bottom: 1rem;">
+    <article class="stat-card"><div><div class="stat-value">{{ usage.worksets_total }}</div><div class="stat-label">Total Worksets</div></div></article>
+    <article class="stat-card"><div><div class="stat-value">{{ usage.manifests_total }}</div><div class="stat-label">Manifests</div></div></article>
+    <article class="stat-card"><div><div class="stat-value">{{ usage.analysis_total }}</div><div class="stat-label">Analyses</div></div></article>
+    <article class="stat-card"><div><div class="stat-value">{{ usage.artifact_references }}</div><div class="stat-label">Artifact References</div></div></article>
+</section>
+
+<section class="grid grid-3" style="margin-bottom: 1.5rem;">
+    <article class="card">
+        <h3 class="card-title">Execution</h3>
+        <p class="small">Active worksets: <strong>{{ usage.active_worksets }}</strong></p>
+        <p class="small">Completed worksets: <strong>{{ usage.completed_worksets }}</strong></p>
+    </article>
+    <article class="card">
+        <h3 class="card-title">Linked Storage</h3>
+        <p class="small">Linked buckets: <strong>{{ usage.linked_buckets }}</strong></p>
+        <p class="small">Storage cost model: <strong>$0.00</strong> placeholder, retired customer billing logic not restored.</p>
+    </article>
+    <article class="card">
+        <h3 class="card-title">Cost-Style Summary</h3>
+        <p class="small">Compute: <strong>${{ "%.2f"|format(usage.estimated_compute_cost_usd) }}</strong></p>
+        <p class="small">Storage: <strong>${{ "%.2f"|format(usage.estimated_storage_cost_usd) }}</strong></p>
+        <p class="small">Transfer: <strong>${{ "%.2f"|format(usage.estimated_transfer_cost_usd) }}</strong></p>
+    </article>
+</section>
+
+<section class="card">
+    <div class="card-header">
+        <h3 class="card-title">Recent Workload</h3>
+    </div>
+    <div class="table-container">
+        <table>
+            <thead><tr><th>Kind</th><th>Name</th><th>State</th><th>Link</th></tr></thead>
+            <tbody>
+                {% for workset in worksets %}
+                <tr><td>Workset</td><td>{{ workset.name }}</td><td>{{ workset.state }}</td><td><a href="/worksets/{{ workset.workset_euid }}">Open</a></td></tr>
+                {% endfor %}
+                {% for manifest in manifests[:10] %}
+                <tr><td>Manifest</td><td>{{ manifest.name }}</td><td>{{ manifest.state }}</td><td><a href="/manifests/{{ manifest.manifest_euid }}">Open</a></td></tr>
+                {% endfor %}
+                {% for analysis in analyses[:10] %}
+                <tr><td>Analysis</td><td class="mono">{{ analysis.analysis_euid }}</td><td>{{ analysis.state }}</td><td><a href="/analyses/{{ analysis.analysis_euid }}">Open</a></td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+{% endblock %}

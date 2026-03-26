@@ -1,0 +1,687 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container">
+    <div class="page-header">
+        <div>
+            <h1 class="page-title">Workset Manifest Generator</h1>
+            <p class="page-subtitle">Create and save <code>stage_samples.tsv</code> manifests with the PR19 editor, now backed by current Ursa manifest records.</p>
+        </div>
+    </div>
+
+    <div style="max-width: 95%; margin: 0 auto;">
+        <div class="card">
+            <h3 class="card-title"><i class="fas fa-cogs"></i> Run Configuration</h3>
+            <div class="grid grid-2">
+                <div class="form-group">
+                    <label for="workset_euid" class="form-label">Workset</label>
+                    <select id="workset_euid" class="form-control form-select">
+                        <option value="">Select workset...</option>
+                        {% for workset in worksets %}
+                        <option value="{{ workset.workset_euid }}">{{ workset.name }} ({{ workset.workset_euid }})</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="manifest-save-name" class="form-label">Manifest Name</label>
+                    <input type="text" id="manifest-save-name" class="form-control" placeholder="WK1234">
+                </div>
+                <div class="form-group">
+                    <label for="run_id" class="form-label">Run ID</label>
+                    <input type="text" id="run_id" class="form-control" placeholder="RU1">
+                </div>
+                <div class="form-group">
+                    <label for="stage_target" class="form-label">Stage Target</label>
+                    <input type="text" id="stage_target" class="form-control" value="/fsx/staged_sample_data/">
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <h3 class="card-title"><i class="fas fa-dna"></i> Analysis Inputs</h3>
+                <button type="button" class="btn btn-outline btn-sm" id="add-input-btn">
+                    <i class="fas fa-plus"></i> Add Input
+                </button>
+            </div>
+
+            <p class="text-muted mb-md">Each analysis input becomes a row in <code>stage_samples.tsv</code>. Edit rows individually, import a TSV, or browse linked buckets to select FASTQ files.</p>
+
+            <div id="inputs-container"></div>
+
+            <div class="mt-lg">
+                <input type="file" id="tsv-upload" accept=".tsv,.csv,.txt" class="d-none">
+                <div class="d-flex gap-sm flex-wrap">
+                    <button type="button" class="btn btn-outline btn-sm" id="import-tsv-btn">
+                        <i class="fas fa-file-upload"></i> Import TSV/CSV
+                    </button>
+                    <button type="button" class="btn btn-outline btn-sm" id="download-template-btn">
+                        <i class="fas fa-file-download"></i> Download Template
+                    </button>
+                    <button type="button" class="btn btn-outline btn-sm" id="discover-s3-btn">
+                        <i class="fas fa-search"></i> Discover from S3
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <div class="d-flex gap-sm">
+                    <button class="btn btn-outline btn-sm" type="button" id="copy-manifest-btn">
+                        <i class="fas fa-copy"></i> Copy
+                    </button>
+                    <button class="btn btn-outline btn-sm" type="button" id="save-manifest-btn">
+                        <i class="fas fa-save"></i> Save
+                    </button>
+                    <button class="btn btn-primary btn-sm" type="button" id="download-manifest-btn">
+                        <i class="fas fa-download"></i> Download
+                    </button>
+                </div>
+                <h3 class="card-title">Manifest Preview (TSV)</h3>
+            </div>
+            <div class="json-block" style="max-height: 280px;">
+                <pre id="manifest-preview" style="white-space: pre;"># Add analysis inputs to generate the manifest</pre>
+            </div>
+
+            <div class="p-md" style="border-top: 1px solid var(--color-gray-200);">
+                <div class="d-flex gap-sm" style="align-items: end;">
+                    <div class="form-group" style="flex: 1; margin-bottom: 0;">
+                        <label for="saved-manifest-select" class="form-label">Load saved manifest</label>
+                        <select id="saved-manifest-select" class="form-control">
+                            <option value="">(none)</option>
+                            {% for manifest in manifests %}
+                            <option value="{{ manifest.manifest_euid }}">{{ manifest.name }} ({{ manifest.manifest_euid }})</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <button class="btn btn-outline btn-sm" type="button" id="refresh-saved-manifests-btn">
+                        <i class="fas fa-sync"></i> Refresh
+                    </button>
+                    <button class="btn btn-primary btn-sm" type="button" id="load-saved-manifest-btn">
+                        <i class="fas fa-upload"></i> Load
+                    </button>
+                    <button class="btn btn-outline btn-sm" type="button" id="download-saved-manifest-btn">
+                        <i class="fas fa-download"></i> Download
+                    </button>
+                </div>
+            </div>
+
+            <div class="mt-md p-md" style="background: var(--color-gray-100); border-radius: var(--radius-md); font-size: 0.8rem;">
+                <strong>Required columns:</strong>
+                <code>RUN_ID, SAMPLE_ID, EXPERIMENTID, SAMPLE_TYPE, LIB_PREP, SEQ_VENDOR, SEQ_PLATFORM, LANE, SEQBC_ID, PATH_TO_CONCORDANCE_DATA_DIR, R1_FQ, R2_FQ, STAGE_DIRECTIVE, STAGE_TARGET, SUBSAMPLE_PCT, IS_POS_CTRL, IS_NEG_CTRL, N_X, N_Y, EXTERNAL_SAMPLE_ID</code>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal-overlay" id="input-edit-modal">
+    <div class="modal-content" style="max-width: 900px;">
+        <div class="modal-header">
+            <h3><i class="fas fa-edit"></i> Edit Analysis Input</h3>
+            <button class="modal-close" type="button" onclick="closeModal('input-edit-modal')">&times;</button>
+        </div>
+        <div class="modal-body" id="input-modal-body"></div>
+        <div class="modal-footer">
+            <button class="btn btn-outline" type="button" onclick="closeModal('input-edit-modal')">Cancel</button>
+            <button class="btn btn-primary" type="button" id="save-input-modal-btn">Save</button>
+        </div>
+    </div>
+</div>
+
+<div class="modal-overlay" id="file-browser-modal">
+    <div class="modal-content" style="max-width: 900px;">
+        <div class="modal-header">
+            <h3><i class="fas fa-folder-open"></i> Select FASTQ from S3</h3>
+            <button class="modal-close" type="button" onclick="closeModal('file-browser-modal')">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div class="mb-md d-flex gap-sm" style="align-items: flex-end;">
+                <div class="form-group" style="flex: 1; margin-bottom: 0;">
+                    <label class="form-label">Linked bucket</label>
+                    <select id="browser-bucket-select" class="form-control"></select>
+                </div>
+                <a href="/buckets" target="_blank" class="btn btn-outline btn-sm">
+                    <i class="fas fa-external-link-alt"></i> Manage Buckets
+                </a>
+            </div>
+            <div class="mb-md">
+                <nav class="breadcrumb" id="browser-breadcrumb"></nav>
+            </div>
+            <div id="browser-file-list" style="max-height: 400px; overflow-y: auto;"></div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-outline" type="button" onclick="closeModal('file-browser-modal')">Cancel</button>
+        </div>
+    </div>
+</div>
+
+<style>
+.analysis-input-row {
+    padding: var(--spacing-md);
+    background: var(--color-gray-100);
+    border-radius: var(--radius-md);
+    margin-bottom: var(--spacing-md);
+    border-left: 3px solid var(--color-accent);
+}
+.analysis-input-row:last-child { margin-bottom: 0; }
+.analysis-input-row .input-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: var(--spacing-sm);
+}
+.analysis-input-row .input-title {
+    font-weight: 600;
+    color: var(--color-accent);
+}
+.analysis-input-row .input-summary {
+    font-size: 0.875rem;
+    color: var(--color-gray-600);
+}
+.input-group {
+    display: flex;
+    gap: 0;
+}
+.input-group .form-control {
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+}
+.input-group .btn {
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+    border-left: none;
+}
+.file-list-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.75rem 0.9rem;
+    border-bottom: 1px solid var(--color-gray-200);
+}
+.file-list-item.folder { cursor: pointer; }
+.file-list-item:hover { background: rgba(15, 52, 96, 0.04); }
+.breadcrumb {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+}
+.breadcrumb-item {
+    color: var(--color-accent);
+}
+</style>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(() => {
+    const MANIFEST_COLUMNS = [
+        'RUN_ID', 'SAMPLE_ID', 'EXPERIMENTID', 'SAMPLE_TYPE', 'LIB_PREP',
+        'SEQ_VENDOR', 'SEQ_PLATFORM', 'LANE', 'SEQBC_ID',
+        'PATH_TO_CONCORDANCE_DATA_DIR', 'R1_FQ', 'R2_FQ',
+        'STAGE_DIRECTIVE', 'STAGE_TARGET', 'SUBSAMPLE_PCT',
+        'IS_POS_CTRL', 'IS_NEG_CTRL', 'N_X', 'N_Y', 'EXTERNAL_SAMPLE_ID'
+    ];
+
+    const COLUMN_DEFAULTS = {
+        SAMPLE_TYPE: 'blood',
+        LIB_PREP: 'noampwgs',
+        SEQ_VENDOR: 'ILMN',
+        SEQ_PLATFORM: 'NOVASEQX',
+        LANE: '0',
+        SEQBC_ID: 'S1',
+        PATH_TO_CONCORDANCE_DATA_DIR: '',
+        STAGE_DIRECTIVE: 'stage_data',
+        STAGE_TARGET: '/fsx/staged_sample_data/',
+        SUBSAMPLE_PCT: 'na',
+        IS_POS_CTRL: 'false',
+        IS_NEG_CTRL: 'false',
+        N_X: '1',
+        N_Y: '1',
+    };
+
+    const pageData = UrsaPortal.parsePageData();
+    let analysisInputs = [];
+    let inputIndex = 0;
+    let currentEditIndex = null;
+    let currentFileBrowserTarget = null;
+    let currentBucketId = null;
+    let currentBrowserPrefix = '';
+
+    function initialInput(data = {}) {
+        const idx = inputIndex++;
+        return {
+            idx,
+            RUN_ID: document.getElementById('run_id')?.value || 'R0',
+            SAMPLE_ID: '',
+            EXPERIMENTID: '',
+            SAMPLE_TYPE: COLUMN_DEFAULTS.SAMPLE_TYPE,
+            LIB_PREP: COLUMN_DEFAULTS.LIB_PREP,
+            SEQ_VENDOR: COLUMN_DEFAULTS.SEQ_VENDOR,
+            SEQ_PLATFORM: COLUMN_DEFAULTS.SEQ_PLATFORM,
+            LANE: COLUMN_DEFAULTS.LANE,
+            SEQBC_ID: COLUMN_DEFAULTS.SEQBC_ID,
+            PATH_TO_CONCORDANCE_DATA_DIR: COLUMN_DEFAULTS.PATH_TO_CONCORDANCE_DATA_DIR,
+            R1_FQ: '',
+            R2_FQ: '',
+            STAGE_DIRECTIVE: COLUMN_DEFAULTS.STAGE_DIRECTIVE,
+            STAGE_TARGET: document.getElementById('stage_target')?.value || COLUMN_DEFAULTS.STAGE_TARGET,
+            SUBSAMPLE_PCT: COLUMN_DEFAULTS.SUBSAMPLE_PCT,
+            IS_POS_CTRL: COLUMN_DEFAULTS.IS_POS_CTRL,
+            IS_NEG_CTRL: COLUMN_DEFAULTS.IS_NEG_CTRL,
+            N_X: COLUMN_DEFAULTS.N_X,
+            N_Y: COLUMN_DEFAULTS.N_Y,
+            EXTERNAL_SAMPLE_ID: '',
+            ...data,
+            idx,
+        };
+    }
+
+    function renderInputs() {
+        const container = document.getElementById('inputs-container');
+        container.innerHTML = '';
+        analysisInputs.forEach((input) => {
+            const row = document.createElement('div');
+            row.className = 'analysis-input-row';
+            row.innerHTML = `
+                <div class="input-header">
+                    <span class="input-title">${escapeHtml(input.SAMPLE_ID || `(Input ${input.idx + 1})`)}</span>
+                    <div class="d-flex gap-sm">
+                        <button type="button" class="btn btn-outline btn-sm" data-edit="${input.idx}">
+                            <i class="fas fa-edit"></i> Edit
+                        </button>
+                        <button type="button" class="btn btn-outline btn-sm" data-remove="${input.idx}" ${analysisInputs.length === 1 ? 'disabled' : ''}>
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </div>
+                </div>
+                <div class="input-summary">
+                    <span><strong>R1:</strong> ${escapeHtml((input.R1_FQ || '').split('/').pop() || 'Not set')}</span>
+                    <span class="ml-md"><strong>Platform:</strong> ${escapeHtml(input.SEQ_PLATFORM)}</span>
+                    <span class="ml-md"><strong>Type:</strong> ${escapeHtml(input.SAMPLE_TYPE)}</span>
+                </div>
+            `;
+            row.querySelector('[data-edit]')?.addEventListener('click', () => editInput(input.idx));
+            row.querySelector('[data-remove]')?.addEventListener('click', () => removeInput(input.idx));
+            container.appendChild(row);
+        });
+    }
+
+    function updateManifestPreview() {
+        const preview = document.getElementById('manifest-preview');
+        if (!analysisInputs.length) {
+            preview.textContent = '# Add analysis inputs to generate the manifest';
+            return;
+        }
+        const tsv = generateManifestTSV();
+        preview.textContent = tsv;
+    }
+
+    function generateManifestTSV() {
+        const lines = [MANIFEST_COLUMNS.join('\t')];
+        analysisInputs.forEach((input) => {
+            const row = MANIFEST_COLUMNS.map((column) => {
+                if (column === 'RUN_ID') return document.getElementById('run_id')?.value || input.RUN_ID || '';
+                if (column === 'STAGE_TARGET') return document.getElementById('stage_target')?.value || input.STAGE_TARGET || '';
+                return String(input[column] || '');
+            });
+            lines.push(row.join('\t'));
+        });
+        return lines.join('\n');
+    }
+
+    function addAnalysisInput(data = null) {
+        analysisInputs.push(initialInput(data || {}));
+        renderInputs();
+        updateManifestPreview();
+    }
+
+    function removeInput(idx) {
+        if (analysisInputs.length <= 1) return;
+        analysisInputs = analysisInputs.filter((input) => input.idx !== idx);
+        renderInputs();
+        updateManifestPreview();
+    }
+
+    function buildEditForm(input) {
+        return `
+            <div class="grid grid-2">
+                <div class="form-group">
+                    <label class="form-label">Sample ID</label>
+                    <input class="form-control" data-field="SAMPLE_ID" value="${escapeHtml(input.SAMPLE_ID)}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Experiment ID</label>
+                    <input class="form-control" data-field="EXPERIMENTID" value="${escapeHtml(input.EXPERIMENTID)}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">External Sample ID</label>
+                    <input class="form-control" data-field="EXTERNAL_SAMPLE_ID" value="${escapeHtml(input.EXTERNAL_SAMPLE_ID)}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Sample Type</label>
+                    <input class="form-control" data-field="SAMPLE_TYPE" value="${escapeHtml(input.SAMPLE_TYPE)}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Library Prep</label>
+                    <input class="form-control" data-field="LIB_PREP" value="${escapeHtml(input.LIB_PREP)}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Sequencing Platform</label>
+                    <input class="form-control" data-field="SEQ_PLATFORM" value="${escapeHtml(input.SEQ_PLATFORM)}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">R1 FASTQ</label>
+                    <div class="input-group">
+                        <input class="form-control mono" data-field="R1_FQ" value="${escapeHtml(input.R1_FQ)}">
+                        <button class="btn btn-outline" type="button" data-browse="R1_FQ"><i class="fas fa-folder-open"></i></button>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">R2 FASTQ</label>
+                    <div class="input-group">
+                        <input class="form-control mono" data-field="R2_FQ" value="${escapeHtml(input.R2_FQ)}">
+                        <button class="btn btn-outline" type="button" data-browse="R2_FQ"><i class="fas fa-folder-open"></i></button>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Lane</label>
+                    <input class="form-control" data-field="LANE" value="${escapeHtml(input.LANE)}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Seq Barcode</label>
+                    <input class="form-control" data-field="SEQBC_ID" value="${escapeHtml(input.SEQBC_ID)}">
+                </div>
+            </div>
+        `;
+    }
+
+    function editInput(idx) {
+        const input = analysisInputs.find((item) => item.idx === idx);
+        if (!input) return;
+        currentEditIndex = idx;
+        document.getElementById('input-modal-body').innerHTML = buildEditForm(input);
+        document.querySelectorAll('[data-browse]').forEach((button) => {
+            button.addEventListener('click', () => openFileBrowser(button.dataset.browse));
+        });
+        showModal('input-edit-modal');
+    }
+
+    function saveInputFromModal() {
+        const input = analysisInputs.find((item) => item.idx === currentEditIndex);
+        if (!input) return;
+        document.querySelectorAll('#input-modal-body [data-field]').forEach((field) => {
+            input[field.dataset.field] = field.value;
+        });
+        renderInputs();
+        updateManifestPreview();
+        closeModal('input-edit-modal');
+    }
+
+    function parseManifestText(text) {
+        const lines = String(text || '').split(/\r?\n/).filter((line) => line.trim());
+        if (!lines.length) return [];
+        const delimiter = lines[0].includes('\t') ? '\t' : ',';
+        const headers = lines[0].split(delimiter).map((value) => value.trim());
+        return lines.slice(1).map((line) => {
+            const values = line.split(delimiter);
+            const row = {};
+            headers.forEach((header, index) => {
+                row[header] = (values[index] || '').trim();
+            });
+            return row;
+        });
+    }
+
+    function loadInputsFromTSVContent(tsv) {
+        const rows = parseManifestText(tsv);
+        analysisInputs = rows.map((row) => initialInput(row));
+        if (!analysisInputs.length) addAnalysisInput();
+        renderInputs();
+        updateManifestPreview();
+    }
+
+    function downloadTemplate() {
+        const template = [MANIFEST_COLUMNS.join('\t')].join('\n');
+        const blob = new Blob([template], { type: 'text/tab-separated-values' });
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = 'analysis_samples_template.tsv';
+        anchor.click();
+        URL.revokeObjectURL(url);
+    }
+
+    function copyManifest() {
+        UrsaPortal.copyText(generateManifestTSV(), 'Manifest copied to clipboard');
+    }
+
+    function downloadManifest() {
+        const blob = new Blob([generateManifestTSV()], { type: 'text/tab-separated-values' });
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = `${document.getElementById('manifest-save-name')?.value || 'stage_samples'}.tsv`;
+        anchor.click();
+        URL.revokeObjectURL(url);
+    }
+
+    function manifestInputReferences() {
+        const seen = new Set();
+        const refs = [];
+        analysisInputs.forEach((input) => {
+            ['R1_FQ', 'R2_FQ'].forEach((field) => {
+                const value = String(input[field] || '').trim();
+                if (!value || !value.startsWith('s3://') || seen.has(value)) return;
+                seen.add(value);
+                refs.push({ reference_type: 's3_uri', value });
+            });
+        });
+        return refs;
+    }
+
+    async function refreshSavedManifests() {
+        const manifests = await UrsaPortal.apiRequest('/api/v1/manifests');
+        const select = document.getElementById('saved-manifest-select');
+        const current = select.value;
+        select.innerHTML = '<option value="">(none)</option>' + manifests.map((manifest) => (
+            `<option value="${escapeHtml(manifest.manifest_euid)}">${escapeHtml(manifest.name)} (${escapeHtml(manifest.manifest_euid)})</option>`
+        )).join('');
+        if (current) select.value = current;
+    }
+
+    async function saveManifest() {
+        const worksetEuid = document.getElementById('workset_euid')?.value || '';
+        const name = document.getElementById('manifest-save-name')?.value.trim() || '';
+        if (!worksetEuid) throw new Error('Select a workset first.');
+        if (!name) throw new Error('Enter a manifest name.');
+        const inputReferences = manifestInputReferences();
+        if (!inputReferences.length) throw new Error('Add at least one S3 FASTQ reference before saving.');
+        const created = await UrsaPortal.apiRequest('/api/v1/manifests', {
+            method: 'POST',
+            body: {
+                workset_euid: worksetEuid,
+                name,
+                input_references: inputReferences,
+                metadata: {
+                    editor_manifest_tsv: generateManifestTSV(),
+                    editor_analysis_inputs: analysisInputs,
+                    editor_run_config: {
+                        run_id: document.getElementById('run_id')?.value || '',
+                        stage_target: document.getElementById('stage_target')?.value || '',
+                    },
+                },
+            },
+        });
+        await refreshSavedManifests();
+        document.getElementById('saved-manifest-select').value = created.manifest_euid;
+        showToast('success', 'Manifest saved');
+    }
+
+    async function loadSelectedManifest() {
+        const manifestId = document.getElementById('saved-manifest-select')?.value || '';
+        if (!manifestId) {
+            throw new Error('Select a saved manifest first.');
+        }
+        const detail = await UrsaPortal.apiRequest(`/api/v1/manifests/${encodeURIComponent(manifestId)}`);
+        const metadata = detail.metadata || {};
+        if (metadata.editor_run_config) {
+            document.getElementById('run_id').value = metadata.editor_run_config.run_id || '';
+            document.getElementById('stage_target').value = metadata.editor_run_config.stage_target || COLUMN_DEFAULTS.STAGE_TARGET;
+        }
+        if (Array.isArray(metadata.editor_analysis_inputs) && metadata.editor_analysis_inputs.length) {
+            analysisInputs = metadata.editor_analysis_inputs.map((input) => initialInput(input));
+        } else if (metadata.editor_manifest_tsv) {
+            loadInputsFromTSVContent(metadata.editor_manifest_tsv);
+            return;
+        } else {
+            const tsv = await UrsaPortal.apiRequest(`/api/v1/manifests/${encodeURIComponent(manifestId)}/download`);
+            loadInputsFromTSVContent(tsv);
+            return;
+        }
+        if (detail.workset_euid) {
+            document.getElementById('workset_euid').value = detail.workset_euid;
+        }
+        document.getElementById('manifest-save-name').value = detail.name || '';
+        renderInputs();
+        updateManifestPreview();
+        showToast('success', 'Manifest loaded into editor');
+    }
+
+    function downloadSelectedManifest() {
+        const manifestId = document.getElementById('saved-manifest-select')?.value || '';
+        if (!manifestId) {
+            showToast('warning', 'Select a saved manifest first');
+            return;
+        }
+        window.location.assign(`/api/v1/manifests/${encodeURIComponent(manifestId)}/download`);
+    }
+
+    async function openFileBrowser(targetField) {
+        currentFileBrowserTarget = targetField;
+        const bucketSelect = document.getElementById('browser-bucket-select');
+        const buckets = pageData.buckets || [];
+        bucketSelect.innerHTML = buckets.length
+            ? buckets.map((bucket, index) => `<option value="${escapeHtml(bucket.bucket_id)}"${index === 0 ? ' selected' : ''}>${escapeHtml(bucket.display_name || bucket.bucket_name)}</option>`).join('')
+            : '<option value="">No linked buckets</option>';
+        currentBucketId = bucketSelect.value;
+        currentBrowserPrefix = '';
+        showModal('file-browser-modal');
+        if (currentBucketId) {
+            await browseFolder('');
+        }
+    }
+
+    async function browseFolder(prefix) {
+        if (!currentBucketId) return;
+        currentBrowserPrefix = prefix;
+        const payload = await UrsaPortal.apiRequest(`/api/v1/buckets/${encodeURIComponent(currentBucketId)}/objects?prefix=${encodeURIComponent(prefix || '')}`);
+        const breadcrumb = document.getElementById('browser-breadcrumb');
+        const fileList = document.getElementById('browser-file-list');
+        breadcrumb.innerHTML = (payload.breadcrumbs || []).map((crumb) => (
+            `<a href="#" class="breadcrumb-item" data-prefix="${escapeHtml(crumb.prefix || '')}">${escapeHtml(crumb.name)}</a>`
+        )).join(' / ');
+        breadcrumb.querySelectorAll('[data-prefix]').forEach((item) => {
+            item.addEventListener('click', (event) => {
+                event.preventDefault();
+                browseFolder(item.dataset.prefix || '');
+            });
+        });
+        const items = payload.items || [];
+        fileList.innerHTML = '';
+        if (payload.parent_prefix !== null && payload.parent_prefix !== undefined) {
+            const parent = document.createElement('div');
+            parent.className = 'file-list-item folder';
+            parent.innerHTML = `<span><i class="fas fa-level-up-alt"></i> ..</span><span class="text-muted">Parent Directory</span>`;
+            parent.addEventListener('click', () => browseFolder(payload.parent_prefix || ''));
+            fileList.appendChild(parent);
+        }
+        items.forEach((item) => {
+            const row = document.createElement('div');
+            row.className = `file-list-item ${item.is_folder ? 'folder' : ''}`;
+            row.innerHTML = `
+                <div>
+                    <i class="fas ${item.is_folder ? 'fa-folder' : 'fa-file'}"></i>
+                    ${escapeHtml(item.name)}
+                </div>
+                <div class="d-flex gap-sm align-center">
+                    <span class="text-muted text-sm">${escapeHtml(item.size_human || '--')}</span>
+                    ${item.is_folder ? '' : '<button class="btn btn-outline btn-sm" type="button">Select</button>'}
+                </div>
+            `;
+            if (item.is_folder) {
+                row.addEventListener('click', () => browseFolder(item.key));
+            } else {
+                row.querySelector('button')?.addEventListener('click', () => {
+                    const field = document.querySelector(`#input-modal-body [data-field="${currentFileBrowserTarget}"]`);
+                    if (field) field.value = `s3://${payload.bucket.bucket_name}/${item.key}`;
+                    closeModal('file-browser-modal');
+                });
+            }
+            fileList.appendChild(row);
+        });
+    }
+
+    function discoverFromS3() {
+        if (!analysisInputs.length) {
+            addAnalysisInput();
+        }
+        editInput(analysisInputs[analysisInputs.length - 1].idx);
+    }
+
+    function hydrateFromQuery() {
+        const params = new URLSearchParams(window.location.search);
+        const workset = params.get('workset');
+        if (workset) {
+            const worksetSelect = document.getElementById('workset_euid');
+            if (worksetSelect) {
+                worksetSelect.value = workset;
+            }
+        }
+    }
+
+    document.getElementById('save-input-modal-btn')?.addEventListener('click', saveInputFromModal);
+    document.getElementById('add-input-btn')?.addEventListener('click', () => addAnalysisInput());
+    document.getElementById('download-template-btn')?.addEventListener('click', downloadTemplate);
+    document.getElementById('copy-manifest-btn')?.addEventListener('click', copyManifest);
+    document.getElementById('download-manifest-btn')?.addEventListener('click', downloadManifest);
+    document.getElementById('save-manifest-btn')?.addEventListener('click', async () => {
+        try {
+            await saveManifest();
+        } catch (error) {
+            showToast('error', error.message);
+        }
+    });
+    document.getElementById('refresh-saved-manifests-btn')?.addEventListener('click', refreshSavedManifests);
+    document.getElementById('load-saved-manifest-btn')?.addEventListener('click', async () => {
+        try {
+            await loadSelectedManifest();
+        } catch (error) {
+            showToast('error', error.message);
+        }
+    });
+    document.getElementById('download-saved-manifest-btn')?.addEventListener('click', downloadSelectedManifest);
+    document.getElementById('discover-s3-btn')?.addEventListener('click', discoverFromS3);
+    document.getElementById('run_id')?.addEventListener('input', updateManifestPreview);
+    document.getElementById('stage_target')?.addEventListener('input', updateManifestPreview);
+    document.getElementById('browser-bucket-select')?.addEventListener('change', async (event) => {
+        currentBucketId = event.target.value;
+        currentBrowserPrefix = '';
+        if (currentBucketId) await browseFolder('');
+    });
+    document.getElementById('tsv-upload')?.addEventListener('change', async (event) => {
+        const file = event.target.files?.[0];
+        if (!file) return;
+        const text = await file.text();
+        loadInputsFromTSVContent(text);
+    });
+    document.getElementById('import-tsv-btn')?.addEventListener('click', () => {
+        document.getElementById('tsv-upload')?.click();
+    });
+
+    addAnalysisInput();
+    hydrateFromQuery();
+    updateManifestPreview();
+})();
+</script>
+{% endblock %}

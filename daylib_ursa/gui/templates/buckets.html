@@ -1,0 +1,380 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container">
+    <div class="page-header d-flex justify-between align-center flex-wrap gap-lg">
+        <div>
+            <h1 class="page-title">S3 Bucket Management</h1>
+            <p class="page-subtitle">Link, validate, browse, edit, and upload against linked S3 buckets in the restored PR19 flow.</p>
+        </div>
+    </div>
+
+    <div class="alert alert-info mb-xl">
+        <i class="fas fa-info-circle"></i>
+        <div>
+            <strong>About linked buckets</strong>
+            <p class="mb-0">Ursa validates read/list/write access, supports folder creation and uploads on writable buckets, and exposes the same linked-bucket browser used by the manifest generator.</p>
+        </div>
+    </div>
+
+    <div class="card mb-xl">
+        <div class="d-flex justify-between align-center flex-wrap gap-lg">
+            <div>
+                <h3 class="card-title"><i class="fas fa-plus"></i> Link a Bucket</h3>
+                <p class="text-muted mb-0">Link a new S3 bucket to browse inputs, upload data, and compose manifests.</p>
+            </div>
+            <div class="d-flex gap-sm flex-wrap">
+                <button class="btn btn-primary" type="button" onclick="showModal('link-bucket-modal')">
+                    <i class="fas fa-plus"></i> Link New Bucket
+                </button>
+                <a href="/manifests" class="btn btn-outline">
+                    <i class="fas fa-list-check"></i> Manifest Generator
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <div class="card mb-xl">
+        <h3 class="card-title"><i class="fas fa-database"></i> Linked Buckets</h3>
+
+        {% if buckets %}
+        <div class="bucket-list">
+            {% for bucket in buckets %}
+            <div class="bucket-card {% if bucket.is_validated %}bucket-valid{% else %}bucket-invalid{% endif %}">
+                <div class="bucket-header">
+                    <div class="bucket-info">
+                        <div class="bucket-name">
+                            <a href="https://s3.console.aws.amazon.com/s3/buckets/{{ bucket.bucket_name }}?region={{ bucket.region or 'us-east-1' }}" target="_blank" title="Open in AWS Console" class="aws-link">
+                                <i class="fab fa-aws"></i>
+                            </a>
+                            <strong>{{ bucket.display_name or bucket.bucket_name }}</strong>
+                        </div>
+                        <span class="badge badge-{{ 'success' if bucket.is_validated else 'error' }}">
+                            {{ 'Valid' if bucket.is_validated else 'Needs Attention' }}
+                        </span>
+                        <span class="badge badge-outline">{{ bucket.bucket_type }}</span>
+                        {% if bucket.read_only %}
+                        <span class="badge badge-warning">Read-only</span>
+                        {% endif %}
+                    </div>
+                    <div class="bucket-actions">
+                        <a href="/buckets/{{ bucket.bucket_id }}{% if bucket.prefix_restriction %}?prefix={{ bucket.prefix_restriction }}{% endif %}" class="btn btn-sm btn-primary">
+                            <i class="fas fa-folder-open"></i> Browse
+                        </a>
+                        <button class="btn btn-sm btn-outline" type="button" onclick="revalidateBucket('{{ bucket.bucket_id }}')">
+                            <i class="fas fa-sync-alt"></i>
+                        </button>
+                        <button class="btn btn-sm btn-outline" type="button" onclick="editBucket('{{ bucket.bucket_id }}')">
+                            <i class="fas fa-edit"></i>
+                        </button>
+                        <button class="btn btn-sm btn-outline text-error" type="button" onclick="unlinkBucket('{{ bucket.bucket_id }}')">
+                            <i class="fas fa-unlink"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="bucket-details">
+                    <div class="bucket-meta">
+                        <span><i class="fab fa-aws"></i> <code>s3://{{ bucket.bucket_name }}</code></span>
+                        <span><i class="fas fa-folder"></i> Prefix: <code>{{ bucket.prefix_restriction if bucket.prefix_restriction else '/' }}</code></span>
+                        {% if bucket.region %}
+                        <span><i class="fas fa-globe"></i> {{ bucket.region }}</span>
+                        {% endif %}
+                        <span><i class="fas fa-clock"></i> Linked: {{ bucket.created_at[:10] if bucket.created_at else 'Unknown' }}</span>
+                    </div>
+
+                    {% if bucket.description %}
+                    <p class="bucket-description">{{ bucket.description }}</p>
+                    {% endif %}
+
+                    <div class="validation-status mt-md">
+                        <div class="validation-checks">
+                            <span class="check-item {% if bucket.can_read %}check-pass{% else %}check-fail{% endif %}">
+                                <i class="fas fa-{{ 'check' if bucket.can_read else 'times' }}"></i> Read
+                            </span>
+                            <span class="check-item {% if bucket.can_write %}check-pass{% else %}check-fail{% endif %}">
+                                <i class="fas fa-{{ 'check' if bucket.can_write else 'times' }}"></i> Write
+                            </span>
+                            <span class="check-item {% if bucket.can_list %}check-pass{% else %}check-fail{% endif %}">
+                                <i class="fas fa-{{ 'check' if bucket.can_list else 'times' }}"></i> List
+                            </span>
+                        </div>
+                    </div>
+
+                    {% if bucket.remediation_steps %}
+                    <div class="remediation-box mt-md">
+                        <div class="remediation-header">
+                            <i class="fas fa-wrench"></i> Validation Notes
+                        </div>
+                        <ol class="remediation-steps">
+                            {% for step in bucket.remediation_steps %}
+                            <li>{{ step }}</li>
+                            {% endfor %}
+                        </ol>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="empty-state">
+            <div class="empty-state-icon"><i class="fas fa-database"></i></div>
+            <h4 class="empty-state-title">No buckets linked</h4>
+            <p class="empty-state-text">Link an S3 bucket to start browsing and composing manifest inputs.</p>
+            <button class="btn btn-primary" type="button" onclick="showModal('link-bucket-modal')">
+                <i class="fas fa-plus"></i> Link First Bucket
+            </button>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<div class="modal" id="link-bucket-modal">
+    <div class="modal-content modal-lg">
+        <div class="modal-header">
+            <h3>Link S3 Bucket</h3>
+            <button class="modal-close" type="button" onclick="closeModal('link-bucket-modal')">&times;</button>
+        </div>
+        <div class="modal-body">
+            <form id="link-bucket-form">
+                <div class="form-group">
+                    <label class="form-label">Bucket Name</label>
+                    <div class="input-with-button">
+                        <input type="text" class="form-control" id="bucket-name" placeholder="s3://my-genomics-bucket" required>
+                        <button type="button" class="btn btn-outline" onclick="validateBucketBeforeLink()">
+                            <i class="fas fa-check-circle"></i> Validate
+                        </button>
+                    </div>
+                    <small class="form-text">The S3 bucket URI or raw bucket name.</small>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Bucket Type</label>
+                        <select class="form-control form-select" id="bucket-type">
+                            <option value="secondary">Secondary</option>
+                            <option value="primary">Primary</option>
+                            <option value="archive">Archive</option>
+                            <option value="shared">Shared</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Display Name</label>
+                        <input type="text" class="form-control" id="bucket-display-name" placeholder="Friendly name for this bucket">
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Prefix Restriction</label>
+                    <input type="text" class="form-control" id="bucket-prefix" placeholder="data/fastq/">
+                    <small class="form-text">Optional. Restrict the linked bucket to a specific prefix.</small>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Description</label>
+                    <textarea class="form-control" id="bucket-description" rows="2" placeholder="Description of this bucket's purpose"></textarea>
+                </div>
+
+                <div class="form-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="bucket-read-only">
+                        <span>Read-only access</span>
+                    </label>
+                </div>
+
+                <div id="bucket-validation-results" class="validation-results-box d-none mt-lg">
+                    <hr>
+                    <h4><i class="fas fa-clipboard-check"></i> Validation Results</h4>
+                    <div id="validation-content"></div>
+                </div>
+            </form>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-outline" onclick="closeModal('link-bucket-modal')">Cancel</button>
+            <button type="button" class="btn btn-primary" onclick="linkBucket()">
+                <i class="fas fa-link"></i> Link Bucket
+            </button>
+        </div>
+    </div>
+</div>
+
+<div class="modal" id="edit-bucket-modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3><i class="fas fa-edit"></i> Edit Bucket</h3>
+            <button class="modal-close" type="button" onclick="closeModal('edit-bucket-modal')">&times;</button>
+        </div>
+        <div class="modal-body">
+            <form id="edit-bucket-form">
+                <div class="form-group">
+                    <label class="form-label">Bucket Name</label>
+                    <div class="form-static" id="edit-bucket-name">-</div>
+                    <small class="form-text">Bucket name cannot be changed.</small>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Display Name</label>
+                    <input type="text" class="form-control" id="edit-display-name">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Bucket Type</label>
+                    <select class="form-control form-select" id="edit-bucket-type">
+                        <option value="secondary">Secondary</option>
+                        <option value="primary">Primary</option>
+                        <option value="archive">Archive</option>
+                        <option value="shared">Shared</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Prefix Restriction</label>
+                    <input type="text" class="form-control" id="edit-bucket-prefix" placeholder="data/fastq/">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Description</label>
+                    <textarea class="form-control" id="edit-bucket-description" rows="2"></textarea>
+                </div>
+                <div class="form-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="edit-bucket-read-only">
+                        <span>Read-only access</span>
+                    </label>
+                </div>
+            </form>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-outline" onclick="closeModal('edit-bucket-modal')">Cancel</button>
+            <button type="button" class="btn btn-primary" onclick="saveBucketEdit()">
+                <i class="fas fa-save"></i> Save Changes
+            </button>
+        </div>
+    </div>
+</div>
+
+<style>
+.bucket-list { display: flex; flex-direction: column; gap: var(--spacing-lg); }
+.bucket-card { border: 1px solid var(--color-gray-300); border-radius: var(--radius-lg); padding: var(--spacing-lg); background: rgba(255,255,255,0.8); }
+.bucket-card.bucket-valid { border-left: 4px solid var(--color-success); }
+.bucket-card.bucket-invalid { border-left: 4px solid var(--color-error); }
+.bucket-header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: var(--spacing-md); }
+.bucket-info { display: flex; align-items: center; gap: var(--spacing-md); flex-wrap: wrap; }
+.bucket-name { display: flex; align-items: center; gap: var(--spacing-sm); font-size: 1.125rem; }
+.bucket-name i { color: #ff9900; }
+.bucket-name .aws-link { text-decoration: none; transition: transform 0.2s; display: inline-flex; }
+.bucket-name .aws-link:hover { transform: scale(1.2); }
+.bucket-actions { display: flex; gap: var(--spacing-sm); }
+.bucket-meta { display: flex; gap: var(--spacing-xl); flex-wrap: wrap; color: var(--color-gray-600); font-size: 0.875rem; }
+.bucket-meta span { display: flex; align-items: center; gap: var(--spacing-xs); }
+.validation-checks { display: flex; gap: var(--spacing-lg); flex-wrap: wrap; }
+.check-item { display: flex; align-items: center; gap: var(--spacing-xs); font-size: 0.875rem; }
+.check-pass { color: var(--color-success); }
+.check-fail { color: var(--color-error); }
+.remediation-box { background: #fff3cd; border: 1px solid #ffc107; border-radius: var(--radius-md); padding: var(--spacing-md); }
+.remediation-header { font-weight: 600; margin-bottom: var(--spacing-sm); color: #856404; }
+.remediation-steps { margin: 0; padding-left: var(--spacing-lg); color: #856404; }
+.input-with-button { display: flex; gap: var(--spacing-sm); }
+.input-with-button .form-control { flex: 1; }
+.validation-results-box { background: var(--color-gray-100); border-radius: var(--radius-md); padding: var(--spacing-md); }
+</style>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let currentBucketId = null;
+
+function bucketPayload(prefix = 'bucket') {
+    const isEdit = prefix === 'edit';
+    const displayNameField = document.getElementById(isEdit ? 'edit-display-name' : 'bucket-display-name');
+    const bucketTypeField = document.getElementById(isEdit ? 'edit-bucket-type' : 'bucket-type');
+    const descriptionField = document.getElementById(isEdit ? 'edit-bucket-description' : 'bucket-description');
+    const prefixField = document.getElementById(isEdit ? 'edit-bucket-prefix' : 'bucket-prefix');
+    const readOnlyField = document.getElementById(isEdit ? 'edit-bucket-read-only' : 'bucket-read-only');
+    return {
+        bucket_name: isEdit ? document.getElementById('edit-bucket-name').textContent : document.getElementById('bucket-name').value,
+        display_name: displayNameField?.value || null,
+        bucket_type: bucketTypeField?.value || 'secondary',
+        description: descriptionField?.value || null,
+        prefix_restriction: prefixField?.value || null,
+        read_only: !!readOnlyField?.checked,
+        metadata: {},
+    };
+}
+
+function renderValidationResult(result) {
+    const box = document.getElementById('bucket-validation-results');
+    const content = document.getElementById('validation-content');
+    box.classList.remove('d-none');
+    content.innerHTML = `
+        <div class="validation-summary">
+            <p><strong>Region:</strong> ${escapeHtml(result.region || 'Unknown')}</p>
+            <p><strong>Status:</strong> ${result.is_validated ? 'Validated' : 'Needs attention'}</p>
+        </div>
+        <div class="validation-details">
+            <div class="validation-item"><span class="label">Read</span><span>${result.can_read ? 'Yes' : 'No'}</span></div>
+            <div class="validation-item"><span class="label">Write</span><span>${result.can_write ? 'Yes' : 'No'}</span></div>
+            <div class="validation-item"><span class="label">List</span><span>${result.can_list ? 'Yes' : 'No'}</span></div>
+        </div>
+        ${result.remediation_steps?.length ? `<ol class="remediation-list">${result.remediation_steps.map((step) => `<li>${escapeHtml(step)}</li>`).join('')}</ol>` : ''}
+    `;
+}
+
+async function validateBucketBeforeLink() {
+    const result = await UrsaPortal.apiRequest('/api/v1/buckets/validate', {
+        method: 'POST',
+        body: bucketPayload(),
+    });
+    renderValidationResult(result);
+}
+
+async function linkBucket() {
+    await UrsaPortal.apiRequest('/api/v1/buckets', {
+        method: 'POST',
+        body: bucketPayload(),
+    });
+    window.location.reload();
+}
+
+async function revalidateBucket(bucketId) {
+    await UrsaPortal.apiRequest(`/api/v1/buckets/${encodeURIComponent(bucketId)}/revalidate`, {
+        method: 'POST',
+    });
+    window.location.reload();
+}
+
+async function editBucket(bucketId) {
+    const bucket = await UrsaPortal.apiRequest(`/api/v1/buckets/${encodeURIComponent(bucketId)}`);
+    currentBucketId = bucketId;
+    document.getElementById('edit-bucket-name').textContent = bucket.bucket_name;
+    document.getElementById('edit-display-name').value = bucket.display_name || '';
+    document.getElementById('edit-bucket-type').value = bucket.bucket_type || 'secondary';
+    document.getElementById('edit-bucket-prefix').value = bucket.prefix_restriction || '';
+    document.getElementById('edit-bucket-description').value = bucket.description || '';
+    document.getElementById('edit-bucket-read-only').checked = !!bucket.read_only;
+    showModal('edit-bucket-modal');
+}
+
+async function saveBucketEdit() {
+    if (!currentBucketId) return;
+    await UrsaPortal.apiRequest(`/api/v1/buckets/${encodeURIComponent(currentBucketId)}`, {
+        method: 'PATCH',
+        body: {
+            display_name: document.getElementById('edit-display-name').value || null,
+            bucket_type: document.getElementById('edit-bucket-type').value,
+            prefix_restriction: document.getElementById('edit-bucket-prefix').value || null,
+            description: document.getElementById('edit-bucket-description').value || null,
+            read_only: document.getElementById('edit-bucket-read-only').checked,
+        },
+    });
+    window.location.reload();
+}
+
+async function unlinkBucket(bucketId) {
+    if (!confirm('Unlink this bucket? Files remain in S3 but will no longer appear in Ursa.')) {
+        return;
+    }
+    await UrsaPortal.apiRequest(`/api/v1/buckets/${encodeURIComponent(bucketId)}`, {
+        method: 'DELETE',
+    });
+    window.location.reload();
+}
+</script>
+{% endblock %}

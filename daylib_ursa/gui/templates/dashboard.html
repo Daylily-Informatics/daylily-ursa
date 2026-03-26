@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1 class="page-title">Welcome back</h1>
+        <p class="page-subtitle">PR19 styling over the current Ursa workset, manifest, and cluster APIs.</p>
+    </div>
+    <div class="toolbar">
+        <a href="/worksets/new" class="btn btn-primary"><i class="fa-solid fa-plus"></i> New Workset</a>
+        <a href="/manifests" class="btn btn-outline">Generate Manifest</a>
+    </div>
+</div>
+
+<section class="grid grid-4" style="margin-bottom: 1rem;">
+    <article class="stat-card">
+        <div class="card-icon"><i class="fa-solid fa-layer-group"></i></div>
+        <div><div class="stat-value">{{ stats.worksets }}</div><div class="stat-label">Worksets</div></div>
+    </article>
+    <article class="stat-card">
+        <div class="card-icon success"><i class="fa-solid fa-list-check"></i></div>
+        <div><div class="stat-value">{{ stats.manifests }}</div><div class="stat-label">Manifests</div></div>
+    </article>
+    <article class="stat-card">
+        <div class="card-icon info"><i class="fa-solid fa-flask"></i></div>
+        <div><div class="stat-value">{{ stats.analyses }}</div><div class="stat-label">Analyses</div></div>
+    </article>
+    <article class="stat-card">
+        <div class="card-icon highlight"><i class="fa-solid fa-key"></i></div>
+        <div><div class="stat-value">{{ stats.tokens }}</div><div class="stat-label">Tokens</div></div>
+    </article>
+</section>
+
+<section class="grid grid-4" style="margin-bottom: 1.5rem;">
+    <article class="stat-card">
+        <div><div class="stat-value">{{ stats.active_worksets }}</div><div class="stat-label">Active</div></div>
+    </article>
+    <article class="stat-card">
+        <div><div class="stat-value">{{ stats.completed_worksets }}</div><div class="stat-label">Completed</div></div>
+    </article>
+    <article class="stat-card">
+        <div><div class="stat-value">{{ stats.errored_worksets }}</div><div class="stat-label">Errors</div></div>
+    </article>
+    <article class="stat-card">
+        <div><div class="stat-value">{{ stats.buckets }}</div><div class="stat-label">Linked Buckets</div></div>
+    </article>
+</section>
+
+{% if stats.clusters is defined %}
+<section class="grid grid-2" style="margin-bottom: 1.5rem;">
+    <article class="card">
+        <h3 class="card-title">Admin Summary</h3>
+        <div class="grid grid-2">
+            <div><div class="stat-value">{{ stats.clusters }}</div><div class="stat-label">Clusters</div></div>
+            <div><div class="stat-value">{{ stats.cluster_jobs }}</div><div class="stat-label">Cluster Jobs</div></div>
+        </div>
+    </article>
+    <article class="card">
+        <h3 class="card-title">Current Session</h3>
+        <p class="small">Tenant: <strong>{{ actor.atlas_tenant_id }}</strong></p>
+        <p class="small">Roles: {{ ", ".join(actor.roles) }}</p>
+        <p class="small">Auth Source: {{ actor.auth_source }}</p>
+    </article>
+</section>
+{% endif %}
+
+<section class="grid grid-2">
+    <article class="card">
+        <div class="card-header">
+            <h3 class="card-title">Recent Worksets</h3>
+            <a href="/worksets" class="btn btn-outline btn-sm">View All</a>
+        </div>
+        <div class="table-container">
+            <table>
+                <thead><tr><th>Name</th><th>EUID</th><th>State</th><th>Artifacts</th></tr></thead>
+                <tbody>
+                    {% for workset in worksets %}
+                    <tr>
+                        <td><a href="/worksets/{{ workset.workset_euid }}">{{ workset.name }}</a></td>
+                        <td class="mono">{{ workset.workset_euid }}</td>
+                        <td><span class="badge badge-info">{{ workset.state }}</span></td>
+                        <td>{{ workset.artifact_set_euids | length }}</td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="4" class="text-muted">No worksets yet.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </article>
+    <article class="card">
+        <div class="card-header">
+            <h3 class="card-title">Recent Manifests</h3>
+            <a href="/manifests" class="btn btn-outline btn-sm">Open Generator</a>
+        </div>
+        <div class="table-container">
+            <table>
+                <thead><tr><th>Name</th><th>Workset</th><th>Inputs</th></tr></thead>
+                <tbody>
+                    {% for manifest in recent_manifests %}
+                    <tr>
+                        <td><a href="/manifests/{{ manifest.manifest_euid }}">{{ manifest.name }}</a></td>
+                        <td class="mono">{{ manifest.workset_euid }}</td>
+                        <td>{{ manifest.artifact_euids | length }}</td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="3" class="text-muted">No manifests yet.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </article>
+</section>
+{% endblock %}

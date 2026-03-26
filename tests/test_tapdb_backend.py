@@ -1,91 +1,45 @@
-"""Unit tests for TapDB backend readiness hardening."""
+"""Tests for the thin Ursa TapDB adapter."""
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-from unittest.mock import MagicMock, call, patch
+from pathlib import Path
 
+import pytest
+
+from daylib_ursa.tapdb_graph import backend as backend_module
 from daylib_ursa.tapdb_graph.backend import TEMPLATE_DEFINITIONS, TapDBBackend
 
 
-def test_bootstrap_includes_analysis_templates_only():
+def test_backend_adapter_reexports_tapdb_ursa_surface() -> None:
+    assert TapDBBackend.__mro__[1].__name__ == "UrsaTapdbRepository"
+    assert backend_module.TEMPLATE_DEFINITIONS is TEMPLATE_DEFINITIONS
+    assert callable(backend_module.from_json_addl)
+    assert callable(backend_module.to_action_history_entry)
+    assert callable(backend_module.utc_now_iso)
+
+
+def test_template_definitions_cover_phase_one_objects_when_available() -> None:
+    if not TEMPLATE_DEFINITIONS:
+        pytest.skip("TapDB package in this environment does not expose URSA templates")
+
     codes = {spec.template_code for spec in TEMPLATE_DEFINITIONS}
     assert "workflow/analysis/run-linked/1.0/" in codes
-    assert "data/artifact/analysis-output/1.0/" in codes
-    assert "actor/customer/account/1.0/" not in codes
+    assert "workflow/workset/gui-ready/1.0/" in codes
+    assert "data/manifest/dewey-bound/1.0/" in codes
+    assert "integration/auth/user-token/1.0/" in codes
+    assert "integration/auth/client-registration/1.0/" in codes
 
 
-def test_ensure_templates_calls_sequence_readiness():
-    backend = TapDBBackend.__new__(TapDBBackend)
-    backend._ensure_template = MagicMock()
-    backend.ensure_instance_sequences = MagicMock()
-    session = MagicMock()
+def test_adapter_module_fallback_is_explicit_when_templates_are_unavailable() -> None:
+    if TEMPLATE_DEFINITIONS:
+        pytest.skip("URSA templates are available in this environment")
 
-    backend.ensure_templates(session)
-
-    assert backend._ensure_template.call_count == len(TEMPLATE_DEFINITIONS)
-    backend.ensure_instance_sequences.assert_called_once_with(session)
+    with pytest.raises(RuntimeError, match="TapDB backend is unavailable"):
+        TapDBBackend()
 
 
-def test_ensure_instance_sequences_ensures_each_required_prefix_once():
-    backend = TapDBBackend.__new__(TapDBBackend)
-    backend._required_instance_prefixes = MagicMock(return_value=["AN", "AF", "AN"])
-    session = MagicMock()
-
-    with patch("daylib_ursa.tapdb_graph.backend.ensure_instance_prefix_sequence") as ensure_seq:
-        backend.ensure_instance_sequences(session)
-
-    ensure_seq.assert_has_calls(
-        [
-            call(session, "AF"),
-            call(session, "AN"),
-        ]
-    )
-    assert ensure_seq.call_count == 2
-
-
-def test_create_instance_ensures_template_and_sequence():
-    backend = TapDBBackend.__new__(TapDBBackend)
-    backend.templates = MagicMock()
-    backend.factory = MagicMock()
-    backend.ensure_templates = MagicMock()
-    backend._normalize_prefix = TapDBBackend._normalize_prefix
-
-    template = SimpleNamespace(instance_prefix="an")
-    backend.templates.get_template.side_effect = [None, template]
-
-    row = SimpleNamespace(json_addl={}, bstatus="active", is_singleton=False)
-    backend.factory.create_instance.return_value = row
-    session = MagicMock()
-
-    with patch("daylib_ursa.tapdb_graph.backend.ensure_instance_prefix_sequence") as ensure_seq:
-        created = backend.create_instance(
-            session=session,
-            template_code="workflow/analysis/run-linked/1.0/",
-            name="Analysis",
-            json_addl={"analysis_type": "beta-default"},
-            bstatus="created",
-            singleton=True,
-        )
-
-    backend.ensure_templates.assert_called_once_with(session)
-    ensure_seq.assert_called_once_with(session, "AN")
-    assert created.json_addl["analysis_type"] == "beta-default"
-    assert created.bstatus == "created"
-    assert created.is_singleton is True
-
-
-def test_get_missing_instance_sequences_reports_gaps():
-    backend = TapDBBackend.__new__(TapDBBackend)
-    backend._required_instance_sequence_names = MagicMock(
-        return_value=["af_instance_seq", "an_instance_seq"]
-    )
-    session = MagicMock()
-    session.execute.return_value.fetchall.return_value = [
-        ("an_instance_seq",),
-        ("other_instance_seq",),
-    ]
-
-    missing = backend.get_missing_instance_sequences(session)
-
-    assert missing == ["af_instance_seq"]
+def test_adapter_module_has_no_sqlalchemy_dependency() -> None:
+    source = Path("daylib_ursa/tapdb_graph/backend.py").read_text(encoding="utf-8")
+    assert "sqlalchemy" not in source
+    assert "session.execute" not in source
+    assert "sys.path.insert" not in source

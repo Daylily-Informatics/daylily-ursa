@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Login | Ursa</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css">
+    <link rel="stylesheet" href="{{ request.url_for('ui-static', path='main.css') }}">
+</head>
+<body>
+    <main class="login-shell">
+        <section class="login-card">
+            <div class="page-header" style="margin-bottom: 2rem;">
+                <div>
+                    <h1 class="page-title">Ursa PR19 Portal</h1>
+                    <p class="page-subtitle">Restore the legacy shell on top of the current Atlas-backed Ursa backend.</p>
+                </div>
+            </div>
+            {% if error %}
+            <div class="alert alert-error">
+                <i class="fa-solid fa-triangle-exclamation"></i>
+                <div>{{ error }}</div>
+            </div>
+            {% endif %}
+            <form method="post" action="/login">
+                <input type="hidden" name="next_path" value="{{ next_path }}">
+                <div class="form-group">
+                    <label for="access_token" class="form-label">Atlas Access Token</label>
+                    <input id="access_token" name="access_token" class="form-control" required autofocus>
+                </div>
+                <div class="toolbar">
+                    <button class="btn btn-primary" type="submit"><i class="fa-solid fa-right-to-bracket"></i> Sign In</button>
+                </div>
+            </form>
+        </section>
+    </main>
+</body>
+</html>

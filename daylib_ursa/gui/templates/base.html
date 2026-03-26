@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Ursa customer portal">
+    <title>{{ page_title }} | Ursa</title>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <link rel="stylesheet" href="{{ request.url_for('ui-static', path='main.css') }}">
+    {% block extra_head %}{% endblock %}
+</head>
+<body>
+    <header class="header">
+        <div class="container">
+            <div class="header-content">
+                <a href="/" class="logo">
+                    <svg class="logo-icon" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                        <circle cx="8" cy="12" r="2.5" fill="#00d9a6"/>
+                        <circle cx="14" cy="8" r="2.5" fill="#00d9a6"/>
+                        <circle cx="22" cy="10" r="2.5" fill="#00d9a6"/>
+                        <circle cx="20" cy="18" r="2.5" fill="#00d9a6"/>
+                        <circle cx="28" cy="22" r="2.5" fill="#e94560"/>
+                        <circle cx="34" cy="28" r="2.5" fill="#e94560"/>
+                        <circle cx="36" cy="36" r="2.5" fill="#e94560"/>
+                        <path d="M8 12L14 8L22 10L20 18L8 12" stroke="currentColor" stroke-width="1" stroke-opacity="0.4"/>
+                        <path d="M22 10L28 22L34 28L36 36" stroke="currentColor" stroke-width="1" stroke-opacity="0.4"/>
+                    </svg>
+                    <span>Ursa</span>
+                </a>
+
+                <nav class="nav">
+                    <button class="menu-toggle" type="button" aria-label="Toggle menu" data-menu-toggle>
+                        <i class="fas fa-bars"></i>
+                    </button>
+
+                    <ul class="nav-links" id="nav-links">
+                        <li><a href="/" class="nav-link {% if active_page == 'dashboard' %}active{% endif %}">Dashboard</a></li>
+                        <li><a href="/worksets" class="nav-link {% if active_page == 'worksets' %}active{% endif %}">Worksets</a></li>
+                        <li><a href="/manifests" class="nav-link {% if active_page == 'manifests' %}active{% endif %}">Manifest Generator</a></li>
+                        <li><a href="/buckets" class="nav-link {% if active_page == 'buckets' %}active{% endif %}">Buckets</a></li>
+                        {% if actor.is_admin %}
+                        <li><a href="/clusters" class="nav-link {% if active_page == 'clusters' %}active{% endif %}">Clusters</a></li>
+                        {% endif %}
+                        <li><a href="/usage" class="nav-link {% if active_page == 'usage' %}active{% endif %}">Usage</a></li>
+                    </ul>
+
+                    <div class="nav-user">
+                        {% if actor.is_admin %}
+                        <span class="badge badge-warning">
+                            <i class="fas fa-shield-alt"></i> ADMIN
+                        </span>
+                        {% endif %}
+                        <div class="user-menu">
+                            <div class="user-avatar" id="user-avatar" title="{{ actor.display_name or actor.email or actor.user_id }}">
+                                {{ ((actor.display_name or actor.email or actor.user_id)[0]) | upper }}
+                            </div>
+                            <div class="dropdown-menu" id="user-dropdown">
+                                <div class="dropdown-item">
+                                    <i class="fas fa-user"></i>
+                                    <span>{{ actor.display_name or actor.email or actor.user_id }}</span>
+                                </div>
+                                <a href="/logout" class="dropdown-item">
+                                    <i class="fas fa-sign-out-alt"></i> Sign Out
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                </nav>
+            </div>
+        </div>
+        <div class="secondary-nav">
+            <div class="container">
+                <div class="secondary-title">Tools</div>
+                <ul class="secondary-links">
+                    <li><a href="/analyses" class="secondary-link {% if secondary_page == 'analyses' %}active{% endif %}">Analyses</a></li>
+                    <li><a href="/artifacts" class="secondary-link {% if secondary_page == 'artifacts' %}active{% endif %}">Dewey Tools</a></li>
+                    <li><a href="/tokens" class="secondary-link {% if secondary_page == 'tokens' %}active{% endif %}">User Tokens</a></li>
+                    {% if actor.is_admin %}
+                    <li><a href="/admin/tokens" class="secondary-link {% if secondary_page == 'admin_tokens' %}active{% endif %}">Admin Tokens</a></li>
+                    <li><a href="/admin/clients" class="secondary-link {% if secondary_page == 'admin_clients' %}active{% endif %}">Client Registrations</a></li>
+                    {% endif %}
+                </ul>
+            </div>
+        </div>
+    </header>
+
+    <div class="toast-container" id="toast-container"></div>
+
+    <main class="main">
+        {% block content %}{% endblock %}
+    </main>
+
+    <footer class="footer">
+        <div class="container">
+            <div class="footer-content">
+                <div class="footer-brand">
+                    <div class="footer-logo">
+                        <svg class="footer-logo-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                            <circle cx="5" cy="7" r="1.5" fill="#00d9a6"/>
+                            <circle cx="8" cy="5" r="1.5" fill="#00d9a6"/>
+                            <circle cx="12" cy="6" r="1.5" fill="#00d9a6"/>
+                            <circle cx="11" cy="10" r="1.5" fill="#00d9a6"/>
+                            <circle cx="15" cy="12" r="1.5" fill="#e94560"/>
+                            <circle cx="18" cy="15" r="1.5" fill="#e94560"/>
+                            <circle cx="20" cy="19" r="1.5" fill="#e94560"/>
+                        </svg>
+                        Ursa
+                    </div>
+                    <p>PR19 shell restored on current Ursa routes, with Dewey-backed manifests and linked-bucket workflows.</p>
+                </div>
+                <div>
+                    <h4 class="footer-title">Primary</h4>
+                    <ul class="footer-links">
+                        <li><a href="/">Dashboard</a></li>
+                        <li><a href="/worksets">Worksets</a></li>
+                        <li><a href="/manifests">Manifest Generator</a></li>
+                        <li><a href="/buckets">Buckets</a></li>
+                    </ul>
+                </div>
+                <div>
+                    <h4 class="footer-title">Operations</h4>
+                    <ul class="footer-links">
+                        {% if actor.is_admin %}
+                        <li><a href="/clusters">Clusters</a></li>
+                        {% endif %}
+                        <li><a href="/usage">Usage</a></li>
+                        <li><a href="/analyses">Analyses</a></li>
+                        <li><a href="/tokens">Tokens</a></li>
+                    </ul>
+                </div>
+            </div>
+            <div class="footer-bottom">
+                <p>&copy; Ursa</p>
+            </div>
+        </div>
+    </footer>
+
+    <div class="loading-overlay d-none" id="loading-overlay">
+        <div class="spinner loading-spinner"></div>
+        <p class="mt-md">Loading...</p>
+    </div>
+
+    <script id="ursa-page-data" type="application/json">{{ page_data_json | safe }}</script>
+    <script>
+        window.UrsaConfig = {
+            allowedRegions: {{ (allowed_regions or []) | tojson if allowed_regions is defined else '[]' }},
+            isAdmin: {{ 'true' if actor.is_admin else 'false' }},
+            actorUserId: {{ (actor.user_id or '') | tojson }},
+        };
+    </script>
+    <script src="{{ request.url_for('ui-static', path='portal.js') }}"></script>
+    {% block extra_js %}{% endblock %}
+</body>
+</html>

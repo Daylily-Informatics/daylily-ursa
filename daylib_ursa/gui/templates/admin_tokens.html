@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1 class="page-title">Admin Tokens</h1>
+        <p class="page-subtitle">Current admin token issuance remains available as a secondary admin surface.</p>
+    </div>
+</div>
+
+<section class="card" style="margin-bottom: 1rem;">
+    <form id="admin-token-form">
+        <div class="grid grid-2">
+            <div class="form-group"><label class="form-label" for="owner_user_id">Owner User ID</label><input id="owner_user_id" name="owner_user_id" class="form-control" required></div>
+            <div class="form-group"><label class="form-label" for="token_name">Token Name</label><input id="token_name" name="token_name" class="form-control" required></div>
+            <div class="form-group"><label class="form-label" for="scope">Scope</label><input id="scope" name="scope" class="form-control" value="internal_rw"></div>
+            <div class="form-group"><label class="form-label" for="expires_in_days">Expires In Days</label><input id="expires_in_days" name="expires_in_days" type="number" class="form-control" value="30"></div>
+        </div>
+        <div class="toolbar"><button class="btn btn-primary" type="submit">Create Admin Token</button></div>
+    </form>
+</section>
+
+<div class="table-container">
+    <table>
+        <thead><tr><th>Owner</th><th>Token</th><th>Scope</th><th>Status</th><th>Client Registration</th><th>Action</th></tr></thead>
+        <tbody>
+            {% for token in tokens %}
+            <tr>
+                <td>{{ token.owner_user_id }}</td>
+                <td class="mono">{{ token.token_euid }}</td>
+                <td>{{ token.scope }}</td>
+                <td>{{ token.status }}</td>
+                <td class="mono">{{ token.client_registration_euid or "" }}</td>
+                <td><button class="btn btn-outline btn-sm" type="button" data-admin-revoke="{{ token.token_euid }}">Revoke</button></td>
+            </tr>
+            {% else %}
+            <tr><td colspan="6" class="text-muted">No admin-issued tokens.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+UrsaPortal.bindJsonForm("#admin-token-form", async (form) => {
+  const data = UrsaPortal.formToObject(form);
+  await UrsaPortal.apiRequest("/api/v1/admin/user-tokens", {
+    method: "POST",
+    body: {
+      owner_user_id: data.owner_user_id,
+      token_name: data.token_name,
+      scope: data.scope,
+      expires_in_days: Number(data.expires_in_days || 30),
+    },
+  });
+  window.location.reload();
+});
+UrsaPortal.bindClick("[data-admin-revoke]", async (button) => {
+  await UrsaPortal.apiRequest(`/api/v1/admin/user-tokens/${encodeURIComponent(button.dataset.adminRevoke)}/revoke`, {
+    method: "POST",
+    body: { note: "revoked from admin gui" },
+  });
+  window.location.reload();
+});
+</script>
+{% endblock %}

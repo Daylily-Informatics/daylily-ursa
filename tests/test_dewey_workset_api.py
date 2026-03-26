@@ -94,7 +94,7 @@ def test_add_artifact_resolves_dewey_reference():
 
     with TestClient(app) as client:
         response = client.post(
-            "/api/analyses/AN-1/artifacts",
+            "/api/v1/analyses/AN-1/artifacts",
             headers={"X-API-Key": "ursa-test-key"},
             json={
                 "artifact_euid": "AT-1",
@@ -112,22 +112,12 @@ def test_add_artifact_resolves_dewey_reference():
     assert call["metadata"]["lane"] == "1"
 
 
-def test_add_artifact_registers_to_dewey_for_raw_storage_uri(monkeypatch):
-    monkeypatch.setattr("daylib_ursa.workset_api.RegionAwareS3Client", _FakeRegionAwareS3Client)
+def test_add_artifact_rejects_raw_storage_uri_inputs() -> None:
     store = _DummyStore()
-    captured: dict[str, str] = {}
 
     class _FakeDeweyClient:
         def resolve_artifact(self, _artifact_euid: str):  # pragma: no cover - not used in this path
-            raise AssertionError("resolve_artifact should not be called for raw storage_uri inputs")
-
-        def register_artifact(self, *, artifact_type: str, storage_uri: str, metadata, idempotency_key: str):
-            captured["artifact_type"] = artifact_type
-            captured["storage_uri"] = storage_uri
-            captured["idempotency_key"] = idempotency_key
-            captured["producer_system"] = metadata["producer_system"]
-            captured["producer_object_euid"] = metadata["producer_object_euid"]
-            return "AT-REG-1"
+            raise AssertionError("resolve_artifact should not be called for invalid raw storage_uri inputs")
 
     app = create_app(
         store,
@@ -139,7 +129,7 @@ def test_add_artifact_registers_to_dewey_for_raw_storage_uri(monkeypatch):
 
     with TestClient(app) as client:
         response = client.post(
-            "/api/analyses/AN-2/artifacts",
+            "/api/v1/analyses/AN-2/artifacts",
             headers={"X-API-Key": "ursa-test-key"},
             json={
                 "artifact_type": "vcf",
@@ -148,13 +138,8 @@ def test_add_artifact_registers_to_dewey_for_raw_storage_uri(monkeypatch):
             },
         )
 
-    assert response.status_code == 201, response.text
-    assert captured["artifact_type"] == "vcf"
-    assert captured["storage_uri"] == "s3://ursa-internal/RUN-2/sample.vcf.gz"
-    assert captured["idempotency_key"] == "AN-2:s3://ursa-internal/RUN-2/sample.vcf.gz"
-    assert captured["producer_system"] == "ursa"
-    assert captured["producer_object_euid"] == "AN-2"
-    assert store.calls[0]["metadata"]["dewey_artifact_euid"] == "AT-REG-1"
+    assert response.status_code == 422
+    assert "/api/v1/artifacts/import" in response.text
 
 
 def test_add_artifact_with_reference_requires_dewey_client():
@@ -168,57 +153,9 @@ def test_add_artifact_with_reference_requires_dewey_client():
     )
     with TestClient(app) as client:
         response = client.post(
-            "/api/analyses/AN-3/artifacts",
+            "/api/v1/analyses/AN-3/artifacts",
             headers={"X-API-Key": "ursa-test-key"},
             json={"artifact_euid": "AT-1"},
         )
-    assert response.status_code == 400
-    assert "Dewey integration configuration is required" in response.json()["detail"]
-
-
-def test_add_artifact_reuses_existing_dewey_id_without_reregistering(monkeypatch):
-    monkeypatch.setattr("daylib_ursa.workset_api.RegionAwareS3Client", _FakeRegionAwareS3Client)
-    store = _DummyStore()
-    register_calls: list[str] = []
-
-    class _FakeDeweyClient:
-        def resolve_artifact(self, _artifact_euid: str):  # pragma: no cover - not used
-            raise AssertionError("resolve_artifact should not be called")
-
-        def register_artifact(self, *, artifact_type: str, storage_uri: str, metadata, idempotency_key: str):
-            register_calls.append(storage_uri)
-            return "AT-REG-1"
-
-    app = create_app(
-        store,
-        bloom_client=_DummyBloomClient(),
-        atlas_client=None,
-        dewey_client=_FakeDeweyClient(),
-        settings=_settings(),
-    )
-    with TestClient(app) as client:
-        first = client.post(
-            "/api/analyses/AN-4/artifacts",
-            headers={"X-API-Key": "ursa-test-key"},
-            json={
-                "artifact_type": "vcf",
-                "storage_uri": "s3://ursa-internal/RUN-4/sample.vcf.gz",
-                "filename": "sample.vcf.gz",
-            },
-        )
-        second = client.post(
-            "/api/analyses/AN-4/artifacts",
-            headers={"X-API-Key": "ursa-test-key"},
-            json={
-                "artifact_type": "vcf",
-                "storage_uri": "s3://ursa-internal/RUN-4/sample.vcf.gz",
-                "filename": "sample.vcf.gz",
-            },
-        )
-
-    assert first.status_code == 201, first.text
-    assert second.status_code == 201, second.text
-    assert register_calls == [
-        "s3://ursa-internal/RUN-4/sample.vcf.gz",
-        "s3://ursa-internal/RUN-4/sample.vcf.gz",
-    ]
+    assert response.status_code == 503
+    assert "Dewey client is not configured" in response.json()["detail"]

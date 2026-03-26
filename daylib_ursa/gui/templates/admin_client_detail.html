@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <a href="/admin/clients" class="small"><i class="fa-solid fa-arrow-left"></i> Back to Client Registrations</a>
+        <h1 class="page-title">{{ client_registration.client_name }}</h1>
+        <p class="page-subtitle mono">{{ client_registration.client_registration_euid }}</p>
+    </div>
+</div>
+
+<section class="card" style="margin-bottom: 1rem;">
+    <div class="card-header"><h3 class="card-title">Issue Client Token</h3></div>
+    <form id="client-token-form">
+        <div class="grid grid-2">
+            <div class="form-group"><label class="form-label" for="token_name">Token Name</label><input id="token_name" name="token_name" class="form-control" required></div>
+            <div class="form-group"><label class="form-label" for="scope">Scope</label><input id="scope" name="scope" class="form-control" value="{{ client_registration.scopes[0] if client_registration.scopes else 'internal_rw' }}"></div>
+            <div class="form-group"><label class="form-label" for="expires_in_days">Expires In Days</label><input id="expires_in_days" name="expires_in_days" type="number" class="form-control" value="30"></div>
+            <div class="form-group"><label class="form-label" for="note">Note</label><input id="note" name="note" class="form-control"></div>
+        </div>
+        <div class="toolbar"><button class="btn btn-primary" type="submit">Issue Token</button></div>
+    </form>
+</section>
+
+<section class="grid grid-2">
+    <article class="card">
+        <div class="card-header"><h3 class="card-title">Registration</h3></div>
+        <pre class="json-block">{{ client_payload_json }}</pre>
+    </article>
+    <article class="card">
+        <div class="card-header"><h3 class="card-title">Issued Tokens</h3></div>
+        <div class="table-container">
+            <table>
+                <thead><tr><th>Token</th><th>Scope</th><th>Status</th><th>Action</th></tr></thead>
+                <tbody>
+                    {% for token in tokens %}
+                    <tr>
+                        <td class="mono">{{ token.token_euid }}</td>
+                        <td>{{ token.scope }}</td>
+                        <td>{{ token.status }}</td>
+                        <td><button class="btn btn-outline btn-sm" type="button" data-client-token-revoke="{{ token.token_euid }}">Revoke</button></td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="4" class="text-muted">No issued tokens.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </article>
+</section>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+UrsaPortal.bindJsonForm("#client-token-form", async (form) => {
+  const data = UrsaPortal.formToObject(form);
+  await UrsaPortal.apiRequest("/api/v1/admin/client-registrations/{{ client_registration.client_registration_euid }}/tokens", {
+    method: "POST",
+    body: {
+      token_name: data.token_name,
+      scope: data.scope,
+      expires_in_days: Number(data.expires_in_days || 30),
+      note: data.note || null,
+    },
+  });
+  window.location.reload();
+});
+UrsaPortal.bindClick("[data-client-token-revoke]", async (button) => {
+  await UrsaPortal.apiRequest(`/api/v1/admin/user-tokens/${encodeURIComponent(button.dataset.clientTokenRevoke)}/revoke`, {
+    method: "POST",
+    body: { note: "revoked from client detail" },
+  });
+  window.location.reload();
+});
+</script>
+{% endblock %}

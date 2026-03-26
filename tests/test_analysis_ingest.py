@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from botocore.exceptions import ClientError
 from fastapi.testclient import TestClient
 import pytest
 
@@ -21,6 +20,7 @@ class DummyStore:
     def __init__(self) -> None:
         self.record = AnalysisRecord(
             analysis_euid="AN-1",
+            workset_euid=None,
             run_euid="RUN-1",
             flowcell_id="FLOW-1",
             lane="1",
@@ -129,22 +129,6 @@ class DummyBloomClient:
         )
 
 
-class FakeRegionAwareS3Client:
-    def __init__(self, default_region: str, profile: str | None = None) -> None:
-        self.default_region = default_region
-        self.profile = profile
-        self.checked: list[tuple[str, str]] = []
-
-    def head_object(self, Bucket: str, Key: str, **kwargs):  # noqa: N803
-        self.checked.append((Bucket, Key))
-        return {"ContentLength": 1}
-
-
-class FailingRegionAwareS3Client(FakeRegionAwareS3Client):
-    def head_object(self, Bucket: str, Key: str, **kwargs):  # noqa: N803
-        raise ClientError({"Error": {"Code": "404", "Message": "Not Found"}}, "HeadObject")
-
-
 def _settings() -> Settings:
     return Settings(
         cors_origins="*",
@@ -156,8 +140,7 @@ def _settings() -> Settings:
     )
 
 
-def test_ingest_analysis_resolves_mixed_input_references(monkeypatch):
-    monkeypatch.setattr("daylib_ursa.workset_api.RegionAwareS3Client", FakeRegionAwareS3Client)
+def test_ingest_analysis_resolves_mixed_input_references():
     store = DummyStore()
     bloom = DummyBloomClient()
 
@@ -194,7 +177,7 @@ def test_ingest_analysis_resolves_mixed_input_references(monkeypatch):
 
     with TestClient(app) as client:
         response = client.post(
-            "/api/analyses/ingest",
+            "/api/v1/analyses/ingest",
             headers={
                 "X-API-Key": "ursa-test-key",
                 "Idempotency-Key": "idem-1",
@@ -206,7 +189,6 @@ def test_ingest_analysis_resolves_mixed_input_references(monkeypatch):
                 "library_barcode": "LIB-1",
                 "analysis_type": "germline",
                 "input_references": [
-                    {"reference_type": "s3_uri", "value": "s3://input-bucket/a.fastq.gz"},
                     {"reference_type": "artifact_euid", "value": "AT-1"},
                     {"reference_type": "artifact_set_euid", "value": "AS-1"},
                 ],
@@ -217,25 +199,24 @@ def test_ingest_analysis_resolves_mixed_input_references(monkeypatch):
     body = response.json()
     assert body["analysis_euid"] == "AN-1"
     assert body["internal_bucket"] == "ursa-internal"
-    assert len(body["input_references"]) == 3
+    assert len(body["input_references"]) == 2
     assert bloom.calls == [("RUN-1", "FLOW-1", "1", "LIB-1")]
     assert store.last_ingest["idempotency_key"] == "idem-1"
 
 
 def test_ingest_analysis_requires_idempotency_key(monkeypatch):
-    monkeypatch.setattr("daylib_ursa.workset_api.RegionAwareS3Client", FakeRegionAwareS3Client)
     app = create_app(DummyStore(), bloom_client=DummyBloomClient(), settings=_settings())
 
     with TestClient(app) as client:
         response = client.post(
-            "/api/analyses/ingest",
+            "/api/v1/analyses/ingest",
             headers={"X-API-Key": "ursa-test-key"},
             json={
                 "run_euid": "RUN-1",
                 "flowcell_id": "FLOW-1",
                 "lane": "1",
                 "library_barcode": "LIB-1",
-                "input_references": [{"reference_type": "s3_uri", "value": "s3://input/a.fastq.gz"}],
+                "input_references": [{"reference_type": "artifact_euid", "value": "AT-1"}],
             },
         )
 
@@ -243,13 +224,12 @@ def test_ingest_analysis_requires_idempotency_key(monkeypatch):
     assert "Idempotency-Key" in response.text
 
 
-def test_ingest_analysis_rejects_unfetchable_s3_input(monkeypatch):
-    monkeypatch.setattr("daylib_ursa.workset_api.RegionAwareS3Client", FailingRegionAwareS3Client)
+def test_ingest_analysis_requires_dewey_client():
     app = create_app(DummyStore(), bloom_client=DummyBloomClient(), settings=_settings())
 
     with TestClient(app) as client:
         response = client.post(
-            "/api/analyses/ingest",
+            "/api/v1/analyses/ingest",
             headers={
                 "X-API-Key": "ursa-test-key",
                 "Idempotency-Key": "idem-2",
@@ -259,12 +239,12 @@ def test_ingest_analysis_rejects_unfetchable_s3_input(monkeypatch):
                 "flowcell_id": "FLOW-1",
                 "lane": "1",
                 "library_barcode": "LIB-1",
-                "input_references": [{"reference_type": "s3_uri", "value": "s3://missing/a.fastq.gz"}],
+                "input_references": [{"reference_type": "artifact_euid", "value": "AT-1"}],
             },
         )
 
-    assert response.status_code == 400
-    assert "not found" in response.json()["detail"].lower()
+    assert response.status_code == 503
+    assert "Dewey integration is required" in response.json()["detail"]
 
 
 def test_settings_reject_non_https_cross_service_urls():

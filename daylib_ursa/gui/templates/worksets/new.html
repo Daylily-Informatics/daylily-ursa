@@ -1,0 +1,445 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container container-sm">
+    <div class="page-header">
+        <div>
+            <a href="/worksets" class="text-muted mb-md d-block">
+                <i class="fas fa-arrow-left"></i> Back to Worksets
+            </a>
+            <h1 class="page-title">Submit New Workset</h1>
+            <p class="page-subtitle">Restore the PR19 submission flow on current Ursa worksets and manifests.</p>
+        </div>
+    </div>
+
+    <div class="card" style="background: linear-gradient(135deg, #1a3a4a, #0d2633); border-left: 4px solid var(--color-accent);">
+        <h4 style="margin-top: 0; color: #fff;"><i class="fas fa-lightbulb text-warning"></i> Quick Start Guide</h4>
+        <p style="margin-bottom: var(--spacing-sm); color: #c8d4db;">A <strong>workset</strong> is a batch of analysis inputs processed together. Use this page to capture the operational metadata, then attach either a saved manifest or a TSV you upload here.</p>
+        <ol style="margin: 0; padding-left: var(--spacing-lg); line-height: 1.8; color: #c8d4db;">
+            <li>Name the workset and select the pipeline metadata.</li>
+            <li>Choose a saved manifest or upload a <code>stage_samples.tsv</code> file.</li>
+            <li>Set priority, notifications, and cluster preferences.</li>
+            <li>Submit once the cost estimate and sample preview look right.</li>
+        </ol>
+    </div>
+
+    <form id="workset-form">
+        <div class="card">
+            <h3 class="card-title"><span class="badge badge-in-progress">1</span> Basic Information</h3>
+            <p class="text-muted mb-lg">Identify the workset and capture pipeline metadata. These values are stored with the current Ursa workset record.</p>
+
+            <div class="form-group">
+                <label for="workset_name" class="form-label">Workset Name</label>
+                <input type="text" id="workset_name" name="workset_name" class="form-control" placeholder="ProjectX-Cohort1-Jan2026" required>
+                <p class="form-text">Use a stable descriptive name. This becomes the current Ursa workset name.</p>
+            </div>
+
+            <div class="grid grid-2">
+                <div class="form-group">
+                    <label for="pipeline_type" class="form-label">Pipeline Type</label>
+                    <select id="pipeline_type" name="pipeline_type" class="form-control form-select" required>
+                        <option value="">Select pipeline...</option>
+                        <option value="test_help">Test Help</option>
+                        <option value="germline_wgs_snv">Germline WGS SNV Only</option>
+                        <option value="germline_wgs_snv_sv">Germline WGS SNV + SV</option>
+                        <option value="germline_wgs_kitchensink">Germline WGS Kitchensink</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="reference_genome" class="form-label">Reference Genome</label>
+                    <select id="reference_genome" name="reference_genome" class="form-control form-select" required>
+                        <option value="">Select reference...</option>
+                        <option value="GRCh38">GRCh38</option>
+                        <option value="GRCh37">GRCh37</option>
+                        <option value="T2T-CHM13">T2T-CHM13</option>
+                        <option value="GRCm39">GRCm39</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="workset_type" class="form-label">Workset Type</label>
+                <div class="d-flex gap-lg flex-wrap">
+                    <label class="radio-card" style="flex: 1; min-width: 200px;">
+                        <input type="radio" name="workset_type" value="ruo" checked>
+                        <div class="radio-card-content">
+                            <span class="badge badge-ruo mb-sm">RUO</span>
+                            <strong>Research Use Only</strong>
+                            <p class="text-muted mb-0 text-sm">Non-clinical workflows.</p>
+                        </div>
+                    </label>
+                    <label class="radio-card" style="flex: 1; min-width: 200px;">
+                        <input type="radio" name="workset_type" value="clinical">
+                        <div class="radio-card-content">
+                            <span class="badge badge-clinical mb-sm">Clinical</span>
+                            <strong>Clinical / Patient Data</strong>
+                            <p class="text-muted mb-0 text-sm">Operational metadata only; billing stays out of Ursa.</p>
+                        </div>
+                    </label>
+                    <label class="radio-card" style="flex: 1; min-width: 200px;">
+                        <input type="radio" name="workset_type" value="lsmc">
+                        <div class="radio-card-content">
+                            <span class="badge badge-lsmc mb-sm">LSMC</span>
+                            <strong>Lab Services</strong>
+                            <p class="text-muted mb-0 text-sm">Service-managed execution metadata.</p>
+                        </div>
+                    </label>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h3 class="card-title"><span class="badge badge-in-progress">2</span> Input Files</h3>
+            <p class="text-muted mb-lg">Attach a saved manifest or upload a TSV. For uploaded TSVs, Ursa will derive S3 references and create a Dewey-backed manifest automatically.</p>
+
+            <div class="form-group">
+                <label class="form-label">Use Saved Manifest</label>
+                <div class="d-flex gap-md align-center">
+                    <select id="saved-manifest-select" class="form-control form-select" style="flex: 1;">
+                        <option value="">Choose a saved manifest...</option>
+                        {% for manifest in manifests %}
+                        <option value="{{ manifest.manifest_euid }}">{{ manifest.name }} ({{ manifest.manifest_euid }})</option>
+                        {% endfor %}
+                    </select>
+                    <button type="button" class="btn btn-outline" id="refresh-manifests-btn">
+                        <i class="fas fa-sync"></i>
+                    </button>
+                </div>
+                <p class="form-text">Selecting a saved manifest clones it onto the new workset when you submit.</p>
+            </div>
+
+            <div id="saved-manifest-preview" class="d-none mb-lg">
+                <div class="card" style="background: #1a2a33; margin-top: var(--spacing-md);">
+                    <div class="d-flex justify-between align-center mb-md">
+                        <h4 style="margin: 0; color: #fff;"><i class="fas fa-file-alt text-accent"></i> <span id="saved-manifest-name">Manifest</span></h4>
+                        <span class="badge badge-info" id="saved-manifest-sample-count">0 references</span>
+                    </div>
+                    <p id="saved-manifest-created" class="text-muted mb-md"></p>
+                </div>
+            </div>
+
+            <hr style="border: none; border-top: 1px solid var(--color-gray-300); margin: var(--spacing-lg) 0;">
+
+            <div class="form-group">
+                <label for="manifest-input" class="form-label">Or Upload New Manifest (TSV)</label>
+                <div class="file-upload" onclick="document.getElementById('manifest-input').click()">
+                    <div class="file-upload-icon"><i class="fas fa-file-alt"></i></div>
+                    <p class="file-upload-text">Click to upload your <code>stage_samples.tsv</code> manifest.</p>
+                    <input type="file" id="manifest-input" class="file-upload-input" accept=".tsv,.csv,.txt">
+                </div>
+                <p class="form-text">When a TSV is uploaded, its S3 URIs are imported into Dewey during workset submission.</p>
+            </div>
+
+            <div id="manifest-preview" class="mt-lg d-none">
+                <h4>Manifest Preview</h4>
+                <div class="table-container">
+                    <table class="table" id="manifest-table">
+                        <thead id="manifest-thead"></thead>
+                        <tbody id="manifest-tbody"></tbody>
+                    </table>
+                </div>
+                <p class="text-muted mt-md"><span id="manifest-row-count">0</span> sample rows detected</p>
+            </div>
+
+            <div class="mt-lg" style="background: #1a2a33; border-radius: var(--radius-md); padding: var(--spacing-md); border: 1px solid #2a3a44;">
+                <p class="mb-sm" style="color: #fff;"><strong>Need to create or edit a manifest?</strong></p>
+                <p class="mb-md" style="color: #a8b8c8;">Open the restored Manifest Generator for TSV editing, saved-manifest reuse, and linked-bucket browsing.</p>
+                <a href="/manifests" class="btn btn-outline btn-sm">
+                    <i class="fas fa-magic"></i> Open Manifest Generator
+                </a>
+            </div>
+        </div>
+
+        <div class="card">
+            <h3 class="card-title"><span class="badge badge-in-progress">3</span> Processing Options</h3>
+            <p class="text-muted mb-lg">Capture operational metadata and cluster preferences. These values are stored on the workset record and reused by the restored PR19 tables.</p>
+
+            <div class="grid grid-2">
+                <div class="form-group">
+                    <label for="priority" class="form-label">Priority</label>
+                    <select id="priority" name="priority" class="form-control form-select">
+                        <option value="normal">Normal</option>
+                        <option value="high">High</option>
+                        <option value="low">Low</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="notification_email" class="form-label">Notification Email</label>
+                    <input type="email" id="notification_email" name="notification_email" class="form-control" placeholder="notify@example.com">
+                </div>
+            </div>
+
+            <div class="grid grid-2">
+                <div class="form-group">
+                    <label for="preferred_cluster" class="form-label">Preferred Cluster</label>
+                    <input list="cluster-options" id="preferred_cluster" name="preferred_cluster" class="form-control" placeholder="cluster-name">
+                    <datalist id="cluster-options">
+                        {% for cluster in clusters %}
+                        <option value="{{ cluster.cluster_name }}">{{ cluster.region }}</option>
+                        {% endfor %}
+                    </datalist>
+                    <p class="form-text">Optional. Kept as current Ursa metadata unless you are attaching a cluster-specific workflow downstream.</p>
+                </div>
+                <div class="form-group">
+                    <label for="cluster_region" class="form-label">Cluster Region</label>
+                    <select id="cluster_region" name="cluster_region" class="form-control form-select">
+                        <option value="">Select region...</option>
+                        {% for region in allowed_regions %}
+                        <option value="{{ region }}">{{ region }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label class="checkbox-label">
+                    <input type="checkbox" id="enable_qc" name="enable_qc" checked>
+                    <span><strong>Enable QC reports</strong></span>
+                </label>
+            </div>
+            <div class="form-group">
+                <label class="checkbox-label">
+                    <input type="checkbox" id="archive_results" name="archive_results" checked>
+                    <span><strong>Archive results metadata after 30 days</strong></span>
+                </label>
+            </div>
+        </div>
+
+        <div class="card" id="cost-estimate">
+            <h3 class="card-title"><i class="fas fa-calculator"></i> Cost Estimate</h3>
+            <p class="text-muted mb-lg">Operational estimate only. No account or billing model is restored here.</p>
+            <div class="grid grid-4">
+                <div>
+                    <div class="stat-value text-accent" id="est-cost">$0.00</div>
+                    <div class="stat-label">Estimated Cost</div>
+                </div>
+                <div>
+                    <div class="stat-value" id="est-time">0h</div>
+                    <div class="stat-label">Estimated Time</div>
+                </div>
+                <div>
+                    <div class="stat-value" id="est-vcpu">0</div>
+                    <div class="stat-label">vCPU Hours</div>
+                </div>
+                <div>
+                    <div class="stat-value" id="est-samples">0</div>
+                    <div class="stat-label">Samples</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="d-flex justify-between mt-xl">
+            <a href="/worksets" class="btn btn-outline">Cancel</a>
+            <button type="submit" class="btn btn-primary">
+                <i class="fas fa-play"></i> Submit Workset
+            </button>
+        </div>
+    </form>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(() => {
+    const pageData = UrsaPortal.parsePageData();
+    let uploadedManifestText = '';
+    let uploadedManifestRows = [];
+    let selectedManifestDetail = null;
+
+    function splitManifestLine(line, delimiter) {
+        return line.split(delimiter).map((value) => value.trim());
+    }
+
+    function parseManifestText(text) {
+        const lines = String(text || '').split(/\r?\n/).filter((line) => line.trim());
+        if (!lines.length) return { headers: [], rows: [] };
+        const delimiter = lines[0].includes('\t') ? '\t' : ',';
+        const headers = splitManifestLine(lines[0], delimiter);
+        const rows = lines.slice(1).map((line) => {
+            const values = splitManifestLine(line, delimiter);
+            const row = {};
+            headers.forEach((header, index) => {
+                row[header] = values[index] || '';
+            });
+            return row;
+        });
+        return { headers, rows };
+    }
+
+    function renderManifestPreview(headers, rows) {
+        const preview = document.getElementById('manifest-preview');
+        const thead = document.getElementById('manifest-thead');
+        const tbody = document.getElementById('manifest-tbody');
+        const rowCount = document.getElementById('manifest-row-count');
+        if (!preview || !thead || !tbody || !rowCount) return;
+        if (!headers.length) {
+            preview.classList.add('d-none');
+            thead.innerHTML = '';
+            tbody.innerHTML = '';
+            rowCount.textContent = '0';
+            return;
+        }
+        preview.classList.remove('d-none');
+        thead.innerHTML = `<tr>${headers.map((header) => `<th>${escapeHtml(header)}</th>`).join('')}</tr>`;
+        tbody.innerHTML = rows.slice(0, 10).map((row) => (
+            `<tr>${headers.map((header) => `<td>${escapeHtml(row[header] || '')}</td>`).join('')}</tr>`
+        )).join('');
+        rowCount.textContent = String(rows.length);
+        updateEstimate();
+    }
+
+    function updateEstimate() {
+        const sampleCount = uploadedManifestRows.length || (selectedManifestDetail?.artifact_euids?.length || 0);
+        const priority = document.getElementById('priority')?.value || 'normal';
+        const multiplier = priority === 'high' ? 2 : priority === 'low' ? 0.6 : 1;
+        const computeHours = sampleCount * 3;
+        const estimatedCost = computeHours * 4.25 * multiplier;
+        document.getElementById('est-samples').textContent = String(sampleCount);
+        document.getElementById('est-vcpu').textContent = String(computeHours * 8);
+        document.getElementById('est-time').textContent = sampleCount ? `${Math.max(2, Math.round(computeHours / 2))}h` : '0h';
+        document.getElementById('est-cost').textContent = `$${estimatedCost.toFixed(2)}`;
+    }
+
+    async function refreshManifestList() {
+        const select = document.getElementById('saved-manifest-select');
+        if (!select) return;
+        const manifests = await UrsaPortal.apiRequest('/api/v1/manifests');
+        const selected = select.value;
+        select.innerHTML = '<option value="">Choose a saved manifest...</option>' + manifests.map((manifest) => (
+            `<option value="${escapeHtml(manifest.manifest_euid)}">${escapeHtml(manifest.name)} (${escapeHtml(manifest.manifest_euid)})</option>`
+        )).join('');
+        if (selected) select.value = selected;
+    }
+
+    async function loadSelectedManifest() {
+        const manifestId = document.getElementById('saved-manifest-select')?.value || '';
+        const preview = document.getElementById('saved-manifest-preview');
+        if (!manifestId) {
+            selectedManifestDetail = null;
+            preview?.classList.add('d-none');
+            updateEstimate();
+            return;
+        }
+        selectedManifestDetail = await UrsaPortal.apiRequest(`/api/v1/manifests/${encodeURIComponent(manifestId)}`);
+        preview?.classList.remove('d-none');
+        document.getElementById('saved-manifest-name').textContent = selectedManifestDetail.name;
+        document.getElementById('saved-manifest-sample-count').textContent = `${selectedManifestDetail.artifact_euids.length} references`;
+        document.getElementById('saved-manifest-created').textContent = `Created ${selectedManifestDetail.created_at}`;
+        updateEstimate();
+    }
+
+    function manifestInputReferencesFromRows(rows) {
+        const seen = new Set();
+        const refs = [];
+        rows.forEach((row) => {
+            ['R1_FQ', 'R2_FQ'].forEach((field) => {
+                const value = String(row[field] || '').trim();
+                if (!value || !value.startsWith('s3://') || seen.has(value)) return;
+                seen.add(value);
+                refs.push({ reference_type: 's3_uri', value });
+            });
+        });
+        return refs;
+    }
+
+    async function cloneManifestToWorkset(worksetEuid, manifest) {
+        const payload = {
+            workset_euid: worksetEuid,
+            name: manifest.name,
+            metadata: {
+                ...(manifest.metadata || {}),
+                source_manifest_euid: manifest.manifest_euid,
+            },
+        };
+        if (Array.isArray(manifest.input_references) && manifest.input_references.length) {
+            payload.input_references = manifest.input_references.map((item) => ({
+                reference_type: item.reference_type,
+                value: item.value,
+            }));
+        } else {
+            payload.artifact_set_euid = manifest.artifact_set_euid;
+            payload.artifact_euids = manifest.artifact_euids || [];
+        }
+        await UrsaPortal.apiRequest('/api/v1/manifests', { method: 'POST', body: payload });
+    }
+
+    async function submitWorkset(event) {
+        event.preventDefault();
+        const form = document.getElementById('workset-form');
+        const formData = new FormData(form);
+        const metadata = {
+            pipeline_type: formData.get('pipeline_type'),
+            reference_genome: formData.get('reference_genome'),
+            workset_type: formData.get('workset_type'),
+            priority: formData.get('priority'),
+            notification_email: formData.get('notification_email'),
+            preferred_cluster: formData.get('preferred_cluster'),
+            cluster_region: formData.get('cluster_region'),
+            enable_qc: formData.get('enable_qc') === 'on',
+            archive_results: formData.get('archive_results') === 'on',
+            sample_count: uploadedManifestRows.length || (selectedManifestDetail?.artifact_euids?.length || 0),
+        };
+        const artifactSetEuids = selectedManifestDetail?.artifact_set_euid ? [selectedManifestDetail.artifact_set_euid] : [];
+        showLoading('Creating workset...');
+        try {
+            const created = await UrsaPortal.apiRequest('/api/v1/worksets', {
+                method: 'POST',
+                body: {
+                    name: formData.get('workset_name'),
+                    artifact_set_euids: artifactSetEuids,
+                    metadata,
+                },
+            });
+            if (selectedManifestDetail) {
+                await cloneManifestToWorkset(created.workset_euid, selectedManifestDetail);
+            } else if (uploadedManifestRows.length) {
+                const inputReferences = manifestInputReferencesFromRows(uploadedManifestRows);
+                if (!inputReferences.length) {
+                    throw new Error('Uploaded manifest does not contain any S3 URIs in R1_FQ or R2_FQ.');
+                }
+                await UrsaPortal.apiRequest('/api/v1/manifests', {
+                    method: 'POST',
+                    body: {
+                        workset_euid: created.workset_euid,
+                        name: `${formData.get('workset_name')} manifest`,
+                        input_references: inputReferences,
+                        metadata: {
+                            editor_manifest_tsv: uploadedManifestText,
+                            editor_analysis_inputs: uploadedManifestRows,
+                            submitted_from: 'workset_create',
+                        },
+                    },
+                });
+            }
+            window.location.assign(`/worksets/${encodeURIComponent(created.workset_euid)}`);
+        } finally {
+            hideLoading();
+        }
+    }
+
+    document.getElementById('manifest-input')?.addEventListener('change', async (event) => {
+        const file = event.target.files?.[0];
+        if (!file) return;
+        uploadedManifestText = await file.text();
+        const parsed = parseManifestText(uploadedManifestText);
+        uploadedManifestRows = parsed.rows;
+        selectedManifestDetail = null;
+        document.getElementById('saved-manifest-select').value = '';
+        document.getElementById('saved-manifest-preview').classList.add('d-none');
+        renderManifestPreview(parsed.headers, parsed.rows);
+    });
+
+    document.getElementById('saved-manifest-select')?.addEventListener('change', async () => {
+        uploadedManifestText = '';
+        uploadedManifestRows = [];
+        renderManifestPreview([], []);
+        await loadSelectedManifest();
+    });
+
+    document.getElementById('refresh-manifests-btn')?.addEventListener('click', refreshManifestList);
+    document.getElementById('priority')?.addEventListener('change', updateEstimate);
+    document.getElementById('workset-form')?.addEventListener('submit', submitWorkset);
+    updateEstimate();
+})();
+</script>
+{% endblock %}

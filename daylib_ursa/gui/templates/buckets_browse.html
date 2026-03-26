@@ -1,0 +1,355 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container">
+    <a href="/buckets" class="text-muted mb-md d-block">
+        <i class="fas fa-arrow-left"></i> Back to Bucket Management
+    </a>
+
+    <div class="page-header d-flex justify-between align-center flex-wrap gap-lg">
+        <div>
+            <h1 class="page-title">
+                <i class="fab fa-aws" style="color: #ff9900;"></i>
+                {{ bucket.display_name or bucket.bucket_name }}
+            </h1>
+            <p class="page-subtitle">
+                <code>{{ bucket.bucket_name }}</code>
+                {% if bucket.read_only %}
+                <span class="badge badge-warning ml-md">Read-only</span>
+                {% endif %}
+                {% if not bucket.can_write %}
+                <span class="badge badge-outline ml-sm">No Write Access</span>
+                {% endif %}
+            </p>
+        </div>
+        <div class="page-actions">
+            {% if bucket.can_write and not bucket.read_only %}
+            <button class="btn btn-primary" type="button" onclick="showNewFolderModal()">
+                <i class="fas fa-folder-plus"></i> New Folder
+            </button>
+            <button class="btn btn-outline" type="button" onclick="showUploadModal()">
+                <i class="fas fa-upload"></i> Upload Files
+            </button>
+            {% endif %}
+            <button class="btn btn-outline" type="button" onclick="window.location.reload()">
+                <i class="fas fa-sync-alt"></i> Refresh
+            </button>
+        </div>
+    </div>
+
+    <div class="card mb-lg">
+        <div class="breadcrumb-path">
+            <i class="fas fa-folder-open"></i>
+            {% for crumb in breadcrumbs %}
+            {% if loop.last %}
+            <span class="breadcrumb-current">{{ crumb.name }}</span>
+            {% else %}
+            <a href="?prefix={{ crumb.prefix | urlencode }}" class="breadcrumb-link">{{ crumb.name }}</a>
+            <span class="breadcrumb-sep">/</span>
+            {% endif %}
+            {% endfor %}
+            <button class="btn btn-sm btn-outline ml-auto" type="button" onclick="copyPathToClipboard()">
+                <i class="fas fa-copy"></i> Copy Path
+            </button>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="browse-header d-flex justify-between align-center mb-md">
+            <span class="text-muted">{{ items | length }} items</span>
+            {% if bucket.can_write and not bucket.read_only %}
+            <span class="text-muted text-sm">
+                <i class="fas fa-info-circle"></i>
+                Writable bucket. Uploads and deletes apply directly to S3.
+            </span>
+            {% endif %}
+        </div>
+
+        {% if parent_prefix is not none %}
+        <div class="browse-item browse-folder" onclick="navigateTo('{{ parent_prefix | default('', true) }}')">
+            <div class="browse-icon"><i class="fas fa-level-up-alt"></i></div>
+            <div class="browse-name">..</div>
+            <div class="browse-format text-muted">Parent</div>
+            <div class="browse-size">--</div>
+            <div class="browse-modified">--</div>
+            <div class="browse-actions"></div>
+        </div>
+        {% endif %}
+
+        {% if items %}
+        {% for item in items %}
+        <div class="browse-item {% if item.is_folder %}browse-folder{% else %}browse-file{% endif %}" {% if item.is_folder %}onclick="navigateTo('{{ item.key }}')"{% endif %}>
+            <div class="browse-icon">
+                {% if item.is_folder %}
+                <i class="fas fa-folder" style="color: #ffc107;"></i>
+                {% elif item.file_format == 'fastq' %}
+                <i class="fas fa-dna" style="color: #28a745;"></i>
+                {% elif item.file_format == 'bam' %}
+                <i class="fas fa-align-left" style="color: #007bff;"></i>
+                {% elif item.file_format == 'vcf' %}
+                <i class="fas fa-list-alt" style="color: #6f42c1;"></i>
+                {% else %}
+                <i class="fas fa-file"></i>
+                {% endif %}
+            </div>
+            <div class="browse-name">{{ item.name }}</div>
+            <div class="browse-format">
+                {% if item.file_format %}
+                <span class="badge badge-outline">{{ item.file_format | upper }}</span>
+                {% endif %}
+            </div>
+            <div class="browse-size">{{ item.size_human }}</div>
+            <div class="browse-modified">{{ item.last_modified[:10] if item.last_modified else '--' }}</div>
+            <div class="browse-actions">
+                {% if not item.is_folder %}
+                <button class="btn btn-sm btn-outline" type="button" onclick="event.stopPropagation(); previewFile('{{ item.key }}')">
+                    <i class="fas fa-eye"></i>
+                </button>
+                <button class="btn btn-sm btn-outline" type="button" onclick="event.stopPropagation(); downloadFile('{{ item.key }}')">
+                    <i class="fas fa-download"></i>
+                </button>
+                {% if bucket.can_write and not bucket.read_only %}
+                <button class="btn btn-sm btn-outline text-error" type="button" onclick="event.stopPropagation(); confirmDelete('{{ item.key }}', '{{ item.name }}')">
+                    <i class="fas fa-trash"></i>
+                </button>
+                {% endif %}
+                {% endif %}
+            </div>
+        </div>
+        {% endfor %}
+        {% else %}
+        <div class="empty-state">
+            <div class="empty-state-icon"><i class="fas fa-folder-open"></i></div>
+            <h4 class="empty-state-title">Empty folder</h4>
+            <p class="empty-state-text">No files or folders in this location.</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<div class="modal" id="new-folder-modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3><i class="fas fa-folder-plus"></i> Create New Folder</h3>
+            <button class="modal-close" type="button" onclick="closeModal('new-folder-modal')">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div class="form-group">
+                <label class="form-label">Folder Name</label>
+                <input type="text" class="form-control" id="new-folder-name" placeholder="Enter folder name">
+                <small class="form-text">Folder will be created at: <code id="folder-path-preview">{{ current_prefix }}</code></small>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-outline" onclick="closeModal('new-folder-modal')">Cancel</button>
+            <button type="button" class="btn btn-primary" onclick="createFolder()">
+                <i class="fas fa-folder-plus"></i> Create Folder
+            </button>
+        </div>
+    </div>
+</div>
+
+<div class="modal" id="upload-modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3><i class="fas fa-upload"></i> Upload Files</h3>
+            <button class="modal-close" type="button" onclick="closeModal('upload-modal')">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div class="form-group">
+                <label class="form-label">Select files</label>
+                <input type="file" id="upload-files" class="form-control" multiple>
+            </div>
+            <div id="upload-progress" class="d-none mt-md">
+                <div id="upload-items"></div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-outline" onclick="closeModal('upload-modal')">Cancel</button>
+            <button type="button" class="btn btn-primary" id="start-upload-btn" onclick="startUpload()">
+                <i class="fas fa-upload"></i> Start Upload
+            </button>
+        </div>
+    </div>
+</div>
+
+<div class="modal" id="delete-modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3><i class="fas fa-exclamation-triangle text-error"></i> Confirm Delete</h3>
+            <button class="modal-close" type="button" onclick="closeModal('delete-modal')">&times;</button>
+        </div>
+        <div class="modal-body">
+            <p>Delete <strong id="delete-file-name">-</strong>?</p>
+            <code id="delete-file-key">-</code>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-outline" onclick="closeModal('delete-modal')">Cancel</button>
+            <button type="button" class="btn btn-danger" onclick="executeDelete()">
+                <i class="fas fa-trash"></i> Delete File
+            </button>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const BUCKET_ID = {{ bucket.bucket_id | tojson }};
+const BUCKET_NAME = {{ bucket.bucket_name | tojson }};
+const CURRENT_PREFIX = {{ current_prefix | tojson }};
+let pendingDeleteKey = null;
+
+function navigateTo(prefix) {
+    window.location.assign(`?prefix=${encodeURIComponent(prefix)}`);
+}
+
+function copyPathToClipboard() {
+    UrsaPortal.copyText(`s3://${BUCKET_NAME}/${CURRENT_PREFIX || ''}`, 'Bucket path copied');
+}
+
+function showNewFolderModal() {
+    document.getElementById('new-folder-name').value = '';
+    document.getElementById('folder-path-preview').textContent = CURRENT_PREFIX + '[folder-name]/';
+    showModal('new-folder-modal');
+}
+
+async function createFolder() {
+    const folderName = document.getElementById('new-folder-name').value.trim();
+    if (!folderName) {
+        showToast('error', 'Folder name is required');
+        return;
+    }
+    await UrsaPortal.apiRequest(`/api/v1/buckets/${encodeURIComponent(BUCKET_ID)}/folders?prefix=${encodeURIComponent(CURRENT_PREFIX)}`, {
+        method: 'POST',
+        body: { folder_name: folderName },
+    });
+    window.location.reload();
+}
+
+function showUploadModal() {
+    document.getElementById('upload-files').value = '';
+    document.getElementById('upload-progress').classList.add('d-none');
+    document.getElementById('upload-items').innerHTML = '';
+    showModal('upload-modal');
+}
+
+async function startUpload() {
+    const files = Array.from(document.getElementById('upload-files').files || []);
+    if (!files.length) {
+        showToast('warning', 'Select at least one file');
+        return;
+    }
+    const progress = document.getElementById('upload-progress');
+    const items = document.getElementById('upload-items');
+    progress.classList.remove('d-none');
+    items.innerHTML = '';
+    for (const file of files) {
+        const form = new FormData();
+        form.append('file', file);
+        form.append('prefix', CURRENT_PREFIX);
+        const row = document.createElement('div');
+        row.className = 'mb-sm';
+        row.textContent = `Uploading ${file.name}...`;
+        items.appendChild(row);
+        await fetch(`/api/v1/buckets/${encodeURIComponent(BUCKET_ID)}/upload`, {
+            method: 'POST',
+            credentials: 'same-origin',
+            body: form,
+        }).then(async (response) => {
+            if (!response.ok) {
+                const payload = await response.json().catch(() => ({ detail: 'Upload failed' }));
+                throw new Error(payload.detail || 'Upload failed');
+            }
+            row.textContent = `Uploaded ${file.name}`;
+        }).catch((error) => {
+            row.textContent = `Failed ${file.name}: ${error.message}`;
+        });
+    }
+    setTimeout(() => window.location.reload(), 600);
+}
+
+async function downloadFile(key) {
+    const payload = await UrsaPortal.apiRequest(`/api/v1/buckets/${encodeURIComponent(BUCKET_ID)}/objects/download-url?key=${encodeURIComponent(key)}`);
+    window.open(payload.url, '_blank', 'noopener');
+}
+
+async function previewFile(key) {
+    const payload = await UrsaPortal.apiRequest(`/api/v1/buckets/${encodeURIComponent(BUCKET_ID)}/objects/preview?key=${encodeURIComponent(key)}`);
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay active';
+    modal.id = 'preview-modal';
+    modal.innerHTML = `
+        <div class="modal-content" style="max-width: 900px;">
+            <div class="modal-header">
+                <div>
+                    <h3 style="margin: 0;">${escapeHtml(payload.filename)}</h3>
+                    <small class="text-muted">${escapeHtml(payload.file_type)} • ${escapeHtml(String(payload.size))} bytes</small>
+                </div>
+                <button class="modal-close" type="button">&times;</button>
+            </div>
+            <div class="modal-body" style="padding: 0;">
+                <pre class="json-block" style="margin: 0; max-height: 60vh; white-space: pre-wrap;">${escapeHtml((payload.lines || []).join('\n'))}</pre>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-outline" type="button">Close</button>
+            </div>
+        </div>
+    `;
+    modal.querySelectorAll('button').forEach((button) => button.addEventListener('click', () => modal.remove()));
+    modal.addEventListener('click', (event) => {
+        if (event.target === modal) modal.remove();
+    });
+    document.body.appendChild(modal);
+}
+
+function confirmDelete(fileKey, fileName) {
+    pendingDeleteKey = fileKey;
+    document.getElementById('delete-file-name').textContent = fileName;
+    document.getElementById('delete-file-key').textContent = fileKey;
+    showModal('delete-modal');
+}
+
+async function executeDelete() {
+    if (!pendingDeleteKey) return;
+    await UrsaPortal.apiRequest(`/api/v1/buckets/${encodeURIComponent(BUCKET_ID)}/objects?key=${encodeURIComponent(pendingDeleteKey)}`, {
+        method: 'DELETE',
+    });
+    window.location.reload();
+}
+</script>
+
+<style>
+.breadcrumb-path {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    padding: var(--spacing-sm) 0;
+    font-size: 0.95rem;
+    flex-wrap: wrap;
+}
+.breadcrumb-link { color: var(--color-accent); }
+.breadcrumb-sep { color: var(--color-gray-400); }
+.breadcrumb-current { font-weight: 500; }
+.browse-header { padding-bottom: var(--spacing-md); border-bottom: 1px solid var(--color-gray-200); }
+.browse-item {
+    display: grid;
+    grid-template-columns: 40px 1fr 100px 100px 100px 120px;
+    align-items: center;
+    gap: var(--spacing-md);
+    padding: var(--spacing-md);
+    border-bottom: 1px solid var(--color-gray-100);
+}
+.browse-item:hover { background: rgba(15, 52, 96, 0.03); }
+.browse-folder { cursor: pointer; }
+.browse-icon { text-align: center; font-size: 1.25rem; }
+.browse-name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.browse-format, .browse-size, .browse-modified { text-align: right; color: var(--color-gray-600); font-size: 0.875rem; }
+.browse-actions { text-align: center; display: flex; gap: var(--spacing-xs); justify-content: flex-end; }
+@media (max-width: 768px) {
+    .browse-item { grid-template-columns: 30px 1fr 120px; }
+    .browse-format, .browse-size, .browse-modified { display: none; }
+}
+</style>
+{% endblock %}
