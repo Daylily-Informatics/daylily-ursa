@@ -12,6 +12,32 @@ env_app = typer.Typer(help="Environment and configuration commands")
 console = Console()
 
 
+@env_app.command("validate")
+def validate():
+    """Validate Ursa configuration file and report issues."""
+    from daylib_ursa.ursa_config import DEFAULT_CONFIG_PATH, validate_config_file
+
+    config_path = DEFAULT_CONFIG_PATH
+    if not config_path.exists():
+        console.print(f"[yellow]⚠[/yellow]  Config file not found: {config_path}")
+        console.print("   Create one with: [cyan]ursa config generate[/cyan]")
+        raise typer.Exit(1)
+
+    is_valid, errors, warnings = validate_config_file(config_path)
+    if errors:
+        console.print(f"[red]Found {len(errors)} error(s):[/red]")
+        for err in errors:
+            console.print(f"  [red]•[/red] {err}")
+    if warnings:
+        console.print(f"[yellow]Found {len(warnings)} warning(s):[/yellow]")
+        for w in warnings:
+            console.print(f"  [yellow]•[/yellow] {w}")
+    if is_valid and not warnings:
+        console.print(f"[green]✓[/green]  Configuration is valid: {config_path}")
+    if not is_valid:
+        raise typer.Exit(1)
+
+
 @env_app.command("status")
 def status():
     """Check system status (conda, AWS, dependencies, tooling)."""
