@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import os
 from functools import lru_cache
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -93,6 +93,18 @@ class Settings(BaseSettings):
         default=None,
         description="AWS Cognito Hosted UI domain (optional, used for SSO/OAuth flows)",
     )
+    cognito_region: Optional[str] = Field(
+        default=None,
+        description="AWS region where the Cognito User Pool is deployed",
+    )
+    cognito_callback_url: Optional[str] = Field(
+        default=None,
+        description="Explicit HTTPS callback URL registered for Cognito Hosted UI",
+    )
+    cognito_logout_url: Optional[str] = Field(
+        default=None,
+        description="Explicit HTTPS logout redirect URL registered for Cognito Hosted UI",
+    )
     enable_auth: bool = Field(
         default=False,
         description="Enable authentication (requires Cognito configuration)",
@@ -118,6 +130,18 @@ class Settings(BaseSettings):
     daylily_env: str = Field(
         default="development",
         description="Environment: development, staging, production",
+    )
+    deployment_name: str = Field(
+        default="",
+        description="Deployment name shown in non-production UI chrome",
+    )
+    deployment_color: str = Field(
+        default="#0f766e",
+        description="Deployment banner color shown in non-production UI chrome",
+    )
+    deployment_is_production: bool = Field(
+        default=False,
+        description="Whether this deployment should hide the non-production banner",
     )
 
     # ========== Demo Mode ==========
@@ -311,6 +335,15 @@ class Settings(BaseSettings):
         """Check if authentication is properly configured."""
         return bool(self.cognito_user_pool_id and self.cognito_app_client_id)
 
+    @property
+    def deployment(self) -> Dict[str, Any]:
+        """Return deployment chrome metadata for templates."""
+        return {
+            "name": self.deployment_name,
+            "color": self.deployment_color,
+            "is_production": self.deployment_is_production,
+        }
+
     def get_rate_limit_whitelist(self) -> List[str]:
         """Get list of whitelisted IPs/user IDs for rate limiting."""
         if not self.rate_limit_whitelist:
@@ -413,6 +446,33 @@ class Settings(BaseSettings):
         return True, ""
 
 
+def _yaml_seed_from_ursa_config() -> Dict[str, Any]:
+    """Seed YAML-owned settings fields from UrsaConfig."""
+    try:
+        from daylib.ursa_config import get_ursa_config
+
+        ursa_config = get_ursa_config()
+    except Exception:
+        return {}
+
+    seed: Dict[str, Any] = {}
+    field_map = {
+        "cognito_user_pool_id": ursa_config.cognito_user_pool_id,
+        "cognito_app_client_id": ursa_config.cognito_app_client_id,
+        "cognito_app_client_secret": ursa_config.cognito_app_client_secret,
+        "cognito_domain": ursa_config.cognito_domain,
+        "cognito_region": ursa_config.cognito_region,
+        "cognito_callback_url": getattr(ursa_config, "cognito_callback_url", None),
+        "cognito_logout_url": getattr(ursa_config, "cognito_logout_url", None),
+        "deployment_name": getattr(ursa_config.deployment, "name", ""),
+        "deployment_color": getattr(ursa_config.deployment, "color", "#0f766e"),
+        "deployment_is_production": getattr(ursa_config.deployment, "is_production", False),
+    }
+    for key, value in field_map.items():
+        seed[key] = value
+    return seed
+
+
 @lru_cache
 def get_settings() -> Settings:
     """Get cached settings instance.
@@ -420,7 +480,7 @@ def get_settings() -> Settings:
     Settings are loaded once and cached for the lifetime of the application.
     Use this function as a FastAPI dependency.
     """
-    return Settings()
+    return Settings(**_yaml_seed_from_ursa_config())
 
 
 def clear_settings_cache() -> None:

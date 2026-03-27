@@ -187,10 +187,16 @@ TAPDB_ENV=dev
 
 # Authentication (optional)
 ENABLE_AUTH=false
-COGNITO_USER_POOL_ID=us-west-2_xxxxxxxx
-COGNITO_CLIENT_ID=xxxxxxxxxxxxxxxxxxxxxxxxxx
 SESSION_SECRET_KEY=change-this-in-production
 WHITELIST_DOMAINS=all  # or comma-separated: company.com,partner.org
+
+# Cognito runtime settings live in ~/.config/ursa/ursa-config.yaml
+# cognito_user_pool_id: us-west-2_xxxxxxxx
+# cognito_app_client_id: xxxxxxxxxxxxxxxxxxxxxxxxxx
+# cognito_domain: your-domain-prefix.auth.us-west-2.amazoncognito.com
+# cognito_region: us-west-2
+# cognito_callback_url: https://localhost:8914/auth/callback
+# cognito_logout_url: https://localhost:8914/portal/login
 
 # Server
 URSA_HOST=0.0.0.0

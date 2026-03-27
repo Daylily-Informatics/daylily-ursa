@@ -120,12 +120,8 @@ TAPDB_ENV=dev
 # Set to 'true' to enable Cognito authentication
 ENABLE_AUTH=false
 
-# Cognito settings (required if ENABLE_AUTH=true)
-# Run 'daycog setup --client-name ursa' from daylily-cognito to create, or set manually
-# COGNITO_USER_POOL_ID=us-west-2_xxxxxxxxx
-# COGNITO_APP_CLIENT_ID=xxxxxxxxxxxxxxxxxxxxxxxxxx
-# COGNITO_APP_CLIENT_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxxx
-# COGNITO_DOMAIN=your-domain-prefix.auth.us-west-2.amazoncognito.com
+# Cognito settings are loaded from ~/.config/ursa/ursa-config.yaml.
+# Keep runtime Cognito parameters out of this .env file.
 
 # ========== S3 Configuration ==========
 # Default S3 bucket for workset data

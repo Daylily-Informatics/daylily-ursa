@@ -180,6 +180,10 @@ def create_app(
         version="2.0.0",
     )
 
+    @app.get("/favicon.ico", include_in_schema=False)
+    async def favicon() -> RedirectResponse:
+        return RedirectResponse(url="/static/favicon.svg", status_code=307)
+
     # Enable CORS with settings-based configuration
     try:
         cors_origins = settings.get_cors_origins()

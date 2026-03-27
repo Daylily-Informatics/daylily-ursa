@@ -106,13 +106,11 @@ def configure_logging(verbose: bool) -> None:
 def main(argv: Optional[Sequence[str]] = None) -> int:
     """Main entry point."""
 
-    from daylib.ursa_config import get_ursa_config
+    from daylib.config import get_settings
 
     args = parse_args(argv)
     configure_logging(args.verbose)
-
-    # Load UrsaConfig for centralized settings
-    ursa_config = get_ursa_config()
+    settings = get_settings()
 
     LOGGER.info("Initializing TapDB workset state store (namespace via TAPDB_* env vars)")
     state_db = WorksetStateDB()
@@ -165,43 +163,24 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             )
             return 1
 
-        # Env vars take precedence, then ursa config.
-        user_pool_id = os.getenv("COGNITO_USER_POOL_ID") or ursa_config.cognito_user_pool_id
-        app_client_id = (
-            os.getenv("COGNITO_CLIENT_ID")
-            or os.getenv("COGNITO_APP_CLIENT_ID")
-            or ursa_config.cognito_app_client_id
-        )
-        app_client_secret = (
-            os.getenv("COGNITO_APP_CLIENT_SECRET")
-            or getattr(ursa_config, "cognito_app_client_secret", None)
-        )
-        cognito_region = (
-            os.getenv("COGNITO_REGION")
-            or ursa_config.cognito_region
-            or args.region
-        )
+        user_pool_id = settings.cognito_user_pool_id
+        app_client_id = settings.cognito_app_client_id
+        app_client_secret = settings.cognito_app_client_secret
+        cognito_region = settings.cognito_region or args.region
 
         if not user_pool_id or not app_client_id:
             LOGGER.error(
                 "Authentication enabled but Cognito not configured. "
-                "Set COGNITO_USER_POOL_ID and COGNITO_APP_CLIENT_ID in environment "
-                "or daycog-managed env files (for example ~/.config/daycog/default.env)"
+                "Set cognito_user_pool_id and cognito_app_client_id in "
+                "~/.config/ursa/ursa-config.yaml"
             )
             return 1
 
-        source_pool = ursa_config.get_value_source("cognito_user_pool_id")
-        source_client = ursa_config.get_value_source("cognito_app_client_id")
         LOGGER.info(
-            "Initializing Cognito authentication (pool: %s [%s], client: [%s])",
+            "Initializing Cognito authentication (pool: %s, client: %s)",
             user_pool_id,
-            source_pool,
-            source_client,
+            app_client_id,
         )
-
-        from daylib.config import get_settings
-
-        settings = get_settings()
         cognito_auth = CognitoAuth(
             region=cognito_region,
             user_pool_id=user_pool_id,
@@ -244,6 +223,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         customer_manager=customer_manager,
         enable_auth=enable_auth,
         file_registry=file_registry,
+        settings=settings,
     )
 
     auth_status = "ENABLED" if enable_auth else "DISABLED"

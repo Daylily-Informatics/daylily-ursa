@@ -3,7 +3,7 @@
 This module provides:
 - List of AWS regions to scan for ParallelCluster instances
 - Per-region SSH key configuration for multi-region cluster access
-- AWS profile and Cognito settings (overridden by environment variables)
+- AWS profile and Cognito settings loaded from YAML
 
 S3 buckets are discovered from cluster tags (aws-parallelcluster-monitor-bucket)
 rather than being configured statically per region.
@@ -43,6 +43,15 @@ class RegionConfig:
             return None
         return str(Path(self.ssh_pem).expanduser())
 
+
+@dataclass
+class DeploymentConfig:
+    """UI deployment chrome metadata."""
+
+    name: str = ""
+    color: str = "#0f766e"
+    is_production: bool = False
+
 # Canonical config path (XDG Base Directory convention)
 DEFAULT_CONFIG_PATH = Path.home() / ".config" / "ursa" / "ursa-config.yaml"
 
@@ -62,7 +71,10 @@ VALID_FIELDS = {
     "cognito_app_client_id": (str, "Cognito App Client ID"),
     "cognito_app_client_secret": (str, "Cognito App Client Secret"),
     "cognito_domain": (str, "Cognito Hosted UI domain"),
+    "cognito_callback_url": (str, "Cognito Hosted UI callback URL"),
+    "cognito_logout_url": (str, "Cognito Hosted UI logout URL"),
     "whitelist_domains": (str, "Allowed email domains for registration/login"),
+    "deployment": (dict, "Deployment metadata for non-production UI chrome"),
 }
 
 
@@ -139,11 +151,32 @@ def validate_config_file(path: Path) -> Tuple[bool, List[str], List[str]]:
         "cognito_app_client_id",
         "cognito_app_client_secret",
         "cognito_domain",
+        "cognito_callback_url",
+        "cognito_logout_url",
         "whitelist_domains",
     ]:
         if field_name in data and data[field_name] is not None:
             if not isinstance(data[field_name], str):
                 errors.append(f"'{field_name}' must be a string, got {type(data[field_name]).__name__}")
+
+    deployment = data.get("deployment")
+    if deployment is not None:
+        if not isinstance(deployment, dict):
+            errors.append(f"'deployment' must be a mapping, got {type(deployment).__name__}")
+        else:
+            for field_name in ["name", "color"]:
+                if field_name in deployment and deployment[field_name] is not None and not isinstance(deployment[field_name], str):
+                    errors.append(
+                        f"'deployment.{field_name}' must be a string, got {type(deployment[field_name]).__name__}"
+                    )
+            if (
+                "is_production" in deployment
+                and deployment["is_production"] is not None
+                and not isinstance(deployment["is_production"], bool)
+            ):
+                errors.append(
+                    f"'deployment.is_production' must be a boolean, got {type(deployment['is_production']).__name__}"
+                )
 
     is_valid = len(errors) == 0
     return is_valid, errors, warnings
@@ -167,22 +200,31 @@ class UrsaConfig:
     """AWS profile to use (overridden by AWS_PROFILE env var)."""
 
     cognito_user_pool_id: Optional[str] = None
-    """Cognito User Pool ID (overridden by COGNITO_USER_POOL_ID env var)."""
+    """Cognito User Pool ID loaded from YAML."""
 
     cognito_app_client_id: Optional[str] = None
-    """Cognito App Client ID (overridden by COGNITO_APP_CLIENT_ID env var)."""
+    """Cognito App Client ID loaded from YAML."""
 
     cognito_app_client_secret: Optional[str] = None
-    """Cognito App Client Secret (overridden by COGNITO_APP_CLIENT_SECRET env var)."""
+    """Cognito App Client Secret loaded from YAML."""
 
     cognito_domain: Optional[str] = None
-    """Cognito Hosted UI domain (overridden by COGNITO_DOMAIN env var)."""
+    """Cognito Hosted UI domain loaded from YAML."""
 
     cognito_region: Optional[str] = None
-    """AWS region where Cognito User Pool is deployed (overridden by COGNITO_REGION env var)."""
+    """AWS region where Cognito User Pool is deployed, loaded from YAML."""
+
+    cognito_callback_url: Optional[str] = None
+    """Explicit Cognito Hosted UI callback URL loaded from YAML."""
+
+    cognito_logout_url: Optional[str] = None
+    """Explicit Cognito Hosted UI logout URL loaded from YAML."""
 
     whitelist_domains: Optional[str] = None
     """Allowed registration/login email domains (overridden by WHITELIST_DOMAINS env var)."""
+
+    deployment: DeploymentConfig = field(default_factory=DeploymentConfig)
+    """Deployment metadata for non-production UI chrome."""
 
     _config_path: Optional[Path] = None
     """Path where config was loaded from."""
@@ -197,14 +239,8 @@ class UrsaConfig:
     def load(cls, config_path: Optional[Path] = None) -> "UrsaConfig":
         """Load configuration from YAML file.
 
-        Environment variables take precedence over config file values:
-        - AWS_PROFILE overrides aws_profile
-        - COGNITO_USER_POOL_ID overrides cognito_user_pool_id
-        - COGNITO_APP_CLIENT_ID overrides cognito_app_client_id
-        - COGNITO_APP_CLIENT_SECRET overrides cognito_app_client_secret
-        - COGNITO_DOMAIN overrides cognito_domain
-        - COGNITO_REGION overrides cognito_region
-        - WHITELIST_DOMAINS overrides whitelist_domains
+        Runtime Cognito configuration is YAML-only. AWS profile and whitelist
+        domain controls may still be provided through environment variables.
 
         Args:
             config_path: Path to config file. If not provided, looks for
@@ -294,13 +330,17 @@ class UrsaConfig:
                 path, ", ".join(region_map.keys())
             )
 
-        # Environment variables take precedence over config file
+        deployment_data = data.get("deployment") or {}
+
+        # Cognito runtime configuration is YAML-only.
         aws_profile = os.environ.get("AWS_PROFILE") or data.get("aws_profile")
-        cognito_user_pool_id = os.environ.get("COGNITO_USER_POOL_ID") or data.get("cognito_user_pool_id")
-        cognito_app_client_id = os.environ.get("COGNITO_APP_CLIENT_ID") or data.get("cognito_app_client_id")
-        cognito_app_client_secret = os.environ.get("COGNITO_APP_CLIENT_SECRET") or data.get("cognito_app_client_secret")
-        cognito_domain = os.environ.get("COGNITO_DOMAIN") or data.get("cognito_domain")
-        cognito_region = os.environ.get("COGNITO_REGION") or data.get("cognito_region")
+        cognito_user_pool_id = data.get("cognito_user_pool_id")
+        cognito_app_client_id = data.get("cognito_app_client_id")
+        cognito_app_client_secret = data.get("cognito_app_client_secret")
+        cognito_domain = data.get("cognito_domain")
+        cognito_region = data.get("cognito_region")
+        cognito_callback_url = data.get("cognito_callback_url")
+        cognito_logout_url = data.get("cognito_logout_url")
         whitelist_domains = os.environ.get("WHITELIST_DOMAINS") or data.get("whitelist_domains")
 
         config = cls(
@@ -311,7 +351,14 @@ class UrsaConfig:
             cognito_app_client_secret=cognito_app_client_secret,
             cognito_domain=cognito_domain,
             cognito_region=cognito_region,
+            cognito_callback_url=cognito_callback_url,
+            cognito_logout_url=cognito_logout_url,
             whitelist_domains=whitelist_domains,
+            deployment=DeploymentConfig(
+                name=str(deployment_data.get("name") or ""),
+                color=str(deployment_data.get("color") or "#0f766e"),
+                is_production=bool(deployment_data.get("is_production", False)),
+            ),
             _config_path=path,
             _from_legacy_path=from_legacy,
             _region_map=region_map,
@@ -373,16 +420,16 @@ class UrsaConfig:
         return os.environ.get("AWS_PROFILE") or self.aws_profile
 
     def get_effective_cognito_region(self) -> Optional[str]:
-        """Get the effective Cognito region (env var or config).
+        """Get the configured Cognito region from YAML.
 
         Returns:
             Cognito region, or None if not configured.
         """
-        return os.environ.get("COGNITO_REGION") or self.cognito_region
+        return self.cognito_region
 
     def get_effective_cognito_domain(self) -> Optional[str]:
-        """Get the effective Cognito Hosted UI domain (env var or config)."""
-        return os.environ.get("COGNITO_DOMAIN") or self.cognito_domain
+        """Get the configured Cognito Hosted UI domain from YAML."""
+        return self.cognito_domain
 
     def get_value_source(self, field: str) -> str:
         """Get the source of a configuration value.
@@ -395,11 +442,6 @@ class UrsaConfig:
         """
         env_map = {
             "aws_profile": "AWS_PROFILE",
-            "cognito_region": "COGNITO_REGION",
-            "cognito_user_pool_id": "COGNITO_USER_POOL_ID",
-            "cognito_app_client_id": "COGNITO_APP_CLIENT_ID",
-            "cognito_app_client_secret": "COGNITO_APP_CLIENT_SECRET",
-            "cognito_domain": "COGNITO_DOMAIN",
             "whitelist_domains": "WHITELIST_DOMAINS",
         }
 

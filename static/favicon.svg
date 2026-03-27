@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Ursa">
+  <rect width="64" height="64" rx="14" fill="#07151f"/>
+  <path d="M16 18 24 14 34 17 31 28 16 18Z" fill="#00d9a6"/>
+  <path d="M34 17 43 31 50 38 54 49" fill="none" stroke="#f472b6" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="16" cy="18" r="4" fill="#00d9a6"/>
+  <circle cx="24" cy="14" r="4" fill="#00d9a6"/>
+  <circle cx="34" cy="17" r="4" fill="#00d9a6"/>
+  <circle cx="31" cy="28" r="4" fill="#00d9a6"/>
+  <circle cx="43" cy="31" r="4" fill="#f472b6"/>
+  <circle cx="50" cy="38" r="4" fill="#f472b6"/>
+  <circle cx="54" cy="49" r="4" fill="#f472b6"/>
+</svg>

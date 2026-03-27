@@ -281,37 +281,52 @@
             <div id="cognito-vars" class="tab-content">
                 <h4 class="mb-md">Cognito Authentication (Optional)</h4>
                 <div class="alert alert-info mb-md">
-                    <strong>Note:</strong> Only required if authentication is enabled. Install <code>python-jose[cryptography]</code> for JWT validation.
+                    <strong>Note:</strong> Runtime Cognito settings are loaded from <code>~/.config/ursa/ursa-config.yaml</code>. Install <code>python-jose[cryptography]</code> for JWT validation.
                 </div>
                 <div class="table-responsive">
                     <table class="table">
                         <thead>
                             <tr>
-                                <th>Variable</th>
-                                <th>Current Value</th>
+                                <th>Setting</th>
+                                <th>Configured Value</th>
                                 <th>Description</th>
                             </tr>
                         </thead>
                         <tbody>
                             <tr>
-                                <td><code>COGNITO_USER_POOL_ID</code></td>
-                                <td>{% if env_vars.COGNITO_USER_POOL_ID %}<span class="env-value set">{{ env_vars.COGNITO_USER_POOL_ID }}</span>{% else %}<span class="env-value not-set">Not set</span>{% endif %}</td>
+                                <td><code>cognito_user_pool_id</code></td>
+                                <td>{% if cognito_config.user_pool_id %}<span class="env-value set">{{ cognito_config.user_pool_id }}</span>{% else %}<span class="env-value not-set">Not set</span>{% endif %}</td>
                                 <td>AWS Cognito User Pool ID (format: region_randomstring)</td>
                             </tr>
                             <tr>
-                                <td><code>COGNITO_APP_CLIENT_ID</code></td>
-                                <td>{% if env_vars.COGNITO_APP_CLIENT_ID %}<span class="env-value set">{{ env_vars.COGNITO_APP_CLIENT_ID }}</span>{% else %}<span class="env-value not-set">Not set</span>{% endif %}</td>
+                                <td><code>cognito_app_client_id</code></td>
+                                <td>{% if cognito_config.app_client_id %}<span class="env-value set">{{ cognito_config.app_client_id }}</span>{% else %}<span class="env-value not-set">Not set</span>{% endif %}</td>
                                 <td>Cognito App Client ID for authentication</td>
                             </tr>
                             <tr>
-                                <td><code>COGNITO_APP_CLIENT_SECRET</code></td>
-                                <td>{% if env_vars.COGNITO_APP_CLIENT_SECRET %}<span class="env-value set">{{ env_vars.COGNITO_APP_CLIENT_SECRET }}</span>{% else %}<span class="env-value not-set">Not set</span>{% endif %}</td>
+                                <td><code>cognito_app_client_secret</code></td>
+                                <td>{% if cognito_config.app_client_secret %}<span class="env-value set">{{ cognito_config.app_client_secret }}</span>{% else %}<span class="env-value not-set">Not set</span>{% endif %}</td>
                                 <td>Optional app client secret (required if client is configured with GenerateSecret=true)</td>
                             </tr>
                             <tr>
-                                <td><code>COGNITO_DOMAIN</code></td>
-                                <td>{% if env_vars.COGNITO_DOMAIN %}<span class="env-value set">{{ env_vars.COGNITO_DOMAIN }}</span>{% else %}<span class="env-value not-set">Not set</span>{% endif %}</td>
-                                <td>Optional Cognito Hosted UI domain for SSO/OAuth flows</td>
+                                <td><code>cognito_domain</code></td>
+                                <td>{% if cognito_config.domain %}<span class="env-value set">{{ cognito_config.domain }}</span>{% else %}<span class="env-value not-set">Not set</span>{% endif %}</td>
+                                <td>Cognito Hosted UI domain for SSO/OAuth flows</td>
+                            </tr>
+                            <tr>
+                                <td><code>cognito_region</code></td>
+                                <td>{% if cognito_config.region %}<span class="env-value set">{{ cognito_config.region }}</span>{% else %}<span class="env-value not-set">Not set</span>{% endif %}</td>
+                                <td>AWS region where the Cognito User Pool is deployed</td>
+                            </tr>
+                            <tr>
+                                <td><code>cognito_callback_url</code></td>
+                                <td>{% if cognito_config.callback_url %}<span class="env-value set">{{ cognito_config.callback_url }}</span>{% else %}<span class="env-value not-set">Not set</span>{% endif %}</td>
+                                <td>Registered HTTPS callback URL for the Hosted UI sign-in flow</td>
+                            </tr>
+                            <tr>
+                                <td><code>cognito_logout_url</code></td>
+                                <td>{% if cognito_config.logout_url %}<span class="env-value set">{{ cognito_config.logout_url }}</span>{% else %}<span class="env-value not-set">Not set</span>{% endif %}</td>
+                                <td>Registered HTTPS logout redirect URL for the Hosted UI sign-out flow</td>
                             </tr>
                         </tbody>
                     </table>

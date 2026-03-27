@@ -143,6 +143,7 @@ def _get_template_context(request: Request, deps: PortalDependencies, **kwargs) 
         "auth_enabled": deps.enable_auth,
         "current_year": datetime.now().year,
         "cache_bust": cache_bust,
+        "deployment": deps.settings.deployment,
     }
     if "customer" in kwargs and kwargs["customer"]:
         context["customer_id"] = kwargs["customer"].customer_id
@@ -245,24 +246,24 @@ def _clear_portal_auth_session(request: Request) -> None:
 
 
 def _get_effective_cognito_domain(deps: PortalDependencies) -> Optional[str]:
-    """Get Cognito Hosted UI domain from env or settings."""
-    return os.getenv("COGNITO_DOMAIN") or deps.settings.cognito_domain
+    """Get Cognito Hosted UI domain from YAML-backed settings."""
+    return deps.settings.cognito_domain
 
 
-def _get_effective_callback_url(request: Request) -> str:
-    """Get OAuth callback URL from env or request context."""
-    configured = os.getenv("COGNITO_CALLBACK_URL")
+def _get_effective_callback_url(request: Request, deps: PortalDependencies) -> str:
+    """Get OAuth callback URL from YAML-backed settings."""
+    configured = deps.settings.cognito_callback_url
     if configured:
         return configured
     return str(request.url_for("portal_auth_callback"))
 
 
-def _get_effective_logout_url(request: Request) -> str:
-    """Get OAuth logout return URL from env or request context."""
-    configured = os.getenv("COGNITO_LOGOUT_URL")
+def _get_effective_logout_url(request: Request, deps: PortalDependencies) -> str:
+    """Get OAuth logout return URL from YAML-backed settings."""
+    configured = deps.settings.cognito_logout_url
     if configured:
         return configured
-    return str(request.base_url)
+    return str(request.url_for("portal_login"))
 
 
 def _build_signup_url(
@@ -756,7 +757,7 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
         if hosted_ui_enabled and not error and not success:
             if sso or signup or not request.query_params:
                 _clear_portal_auth_session(request)
-                callback_url = _get_effective_callback_url(request)
+                callback_url = _get_effective_callback_url(request, deps)
                 state_token = secrets.token_urlsafe(24)
                 request.session["oauth_state"] = state_token
 
@@ -783,7 +784,7 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
 
         if hosted_ui_enabled and (sso or signup):
             _clear_portal_auth_session(request)
-            callback_url = _get_effective_callback_url(request)
+            callback_url = _get_effective_callback_url(request, deps)
             state_token = secrets.token_urlsafe(24)
             request.session["oauth_state"] = state_token
 
@@ -845,7 +846,7 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
 
         domain = _get_effective_cognito_domain(deps)
         client_id = deps.settings.cognito_app_client_id
-        callback_url = _get_effective_callback_url(request)
+        callback_url = _get_effective_callback_url(request, deps)
         if not domain or not client_id:
             _clear_portal_auth_session(request)
             return RedirectResponse(url="/portal/login?error=Cognito+OAuth+not+configured", status_code=302)
@@ -1020,7 +1021,7 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
             logout_url = build_logout_url(
                 domain=domain,
                 client_id=client_id,
-                logout_uri=_get_effective_logout_url(request),
+                logout_uri=_get_effective_logout_url(request, deps),
             )
             return RedirectResponse(url=logout_url, status_code=302)
 
@@ -2993,20 +2994,34 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
             "TAPDB_DATABASE_NAME": os.getenv("TAPDB_DATABASE_NAME"),
             "TAPDB_ENV": os.getenv("TAPDB_ENV"),
             "TAPDB_CONFIG_PATH": os.getenv("TAPDB_CONFIG_PATH"),
-            "COGNITO_USER_POOL_ID": app_settings.cognito_user_pool_id,
-            "COGNITO_APP_CLIENT_ID": app_settings.cognito_app_client_id,
-            "COGNITO_APP_CLIENT_SECRET": "***" if app_settings.cognito_app_client_secret else None,
-            "COGNITO_DOMAIN": app_settings.cognito_domain,
             "DAYLILY_PRIMARY_REGION": os.getenv("DAYLILY_PRIMARY_REGION"),
             "DAYLILY_MULTI_REGION": os.getenv("DAYLILY_MULTI_REGION"),
             "APPTAINER_HOME": os.getenv("APPTAINER_HOME"),
             "DAY_BIOME": os.getenv("DAY_BIOME"),
             "DAY_ROOT": os.getenv("DAY_ROOT"),
         }
+        cognito_config = {
+            "user_pool_id": app_settings.cognito_user_pool_id,
+            "app_client_id": app_settings.cognito_app_client_id,
+            "app_client_secret": "***" if app_settings.cognito_app_client_secret else None,
+            "domain": app_settings.cognito_domain,
+            "region": app_settings.cognito_region,
+            "callback_url": app_settings.cognito_callback_url,
+            "logout_url": app_settings.cognito_logout_url,
+        }
         return deps.templates.TemplateResponse(
             request,
             "account.html",
-            _get_template_context(request, deps, customer=customer, active_page="account", env_vars=env_vars, session_info=session_info, db_customer_id=db_customer_id),
+            _get_template_context(
+                request,
+                deps,
+                customer=customer,
+                active_page="account",
+                env_vars=env_vars,
+                cognito_config=cognito_config,
+                session_info=session_info,
+                db_customer_id=db_customer_id,
+            ),
         )
 
     # ========== Static Pages ==========
@@ -3081,12 +3096,12 @@ def create_portal_router(deps: PortalDependencies) -> APIRouter:
                 "key": "Auth backend initialized",
                 "value": "Yes" if bool(deps.enable_auth and deps.cognito_auth) else "No",
             },
-            {"key": "Cognito region", "value": os.getenv("COGNITO_REGION") or "Not set"},
+            {"key": "Cognito region", "value": app_settings.cognito_region or "Not set"},
             {"key": "User pool ID", "value": app_settings.cognito_user_pool_id or "Not set"},
             {"key": "App client ID", "value": app_settings.cognito_app_client_id or "Not set"},
             {"key": "Hosted UI domain", "value": _get_effective_cognito_domain(deps) or "Not set"},
-            {"key": "Callback URL", "value": _get_effective_callback_url(request)},
-            {"key": "Logout URL", "value": _get_effective_logout_url(request)},
+            {"key": "Callback URL", "value": _get_effective_callback_url(request, deps)},
+            {"key": "Logout URL", "value": _get_effective_logout_url(request, deps)},
         ]
 
         tapdb_rows = [

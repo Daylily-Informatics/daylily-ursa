@@ -427,42 +427,38 @@ def start(
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
 
-    # Set auth env var for the API server
+    # Set auth mode flag for the API server. Runtime Cognito settings are read
+    # from Ursa YAML config inside the subprocess.
     if auth:
         _require_auth_dependencies()
         env["DAYLILY_ENABLE_AUTH"] = "true"
-        # Pass Cognito config from ursa config to environment if not already set
-        if getattr(ursa_config, "cognito_user_pool_id", None) and not os.environ.get("COGNITO_USER_POOL_ID"):
-            env["COGNITO_USER_POOL_ID"] = str(ursa_config.cognito_user_pool_id)
-        if getattr(ursa_config, "cognito_app_client_id", None) and not os.environ.get("COGNITO_APP_CLIENT_ID"):
-            env["COGNITO_APP_CLIENT_ID"] = str(ursa_config.cognito_app_client_id)
-        if getattr(ursa_config, "cognito_app_client_secret", None) and not os.environ.get("COGNITO_APP_CLIENT_SECRET"):
-            env["COGNITO_APP_CLIENT_SECRET"] = str(ursa_config.cognito_app_client_secret)
-        if getattr(ursa_config, "cognito_domain", None) and not os.environ.get("COGNITO_DOMAIN"):
-            env["COGNITO_DOMAIN"] = str(ursa_config.cognito_domain)
-        if getattr(ursa_config, "cognito_region", None) and not os.environ.get("COGNITO_REGION"):
-            env["COGNITO_REGION"] = str(ursa_config.cognito_region)
 
         missing: list[str] = []
-        if not env.get("COGNITO_USER_POOL_ID"):
-            missing.append("COGNITO_USER_POOL_ID")
-        if not (env.get("COGNITO_APP_CLIENT_ID") or env.get("COGNITO_CLIENT_ID")):
-            missing.append("COGNITO_APP_CLIENT_ID")
-        if not env.get("COGNITO_REGION"):
-            missing.append("COGNITO_REGION")
+        if not getattr(ursa_config, "cognito_user_pool_id", None):
+            missing.append("cognito_user_pool_id")
+        if not getattr(ursa_config, "cognito_app_client_id", None):
+            missing.append("cognito_app_client_id")
+        if not getattr(ursa_config, "cognito_region", None):
+            missing.append("cognito_region")
         if missing:
             console.print("[red]✗[/red]  Authentication enabled but Cognito config is missing")
             console.print("   Missing: [cyan]" + ", ".join(missing) + "[/cyan]")
-            console.print("   Set via environment variables or in your Ursa config file")
+            console.print("   Set them in [cyan]~/.config/ursa/ursa-config.yaml[/cyan]")
             raise typer.Exit(1)
 
         oauth_host = _runtime_oauth_host(host)
-        expected_callback_url = env.get("COGNITO_CALLBACK_URL") or f"https://{oauth_host}:{port}/auth/callback"
-        expected_logout_url = env.get("COGNITO_LOGOUT_URL") or f"https://{oauth_host}:{port}/"
+        expected_callback_url = (
+            getattr(ursa_config, "cognito_callback_url", None)
+            or f"https://{oauth_host}:{port}/auth/callback"
+        )
+        expected_logout_url = (
+            getattr(ursa_config, "cognito_logout_url", None)
+            or f"https://{oauth_host}:{port}/portal/login"
+        )
 
-        user_pool_id = str(env["COGNITO_USER_POOL_ID"])
-        app_client_id = str(env.get("COGNITO_APP_CLIENT_ID") or env.get("COGNITO_CLIENT_ID") or "")
-        cognito_region = str(env["COGNITO_REGION"])
+        user_pool_id = str(ursa_config.cognito_user_pool_id or "")
+        app_client_id = str(ursa_config.cognito_app_client_id or "")
+        cognito_region = str(ursa_config.cognito_region or aws_region)
 
         try:
             app_client = _describe_cognito_app_client(
