@@ -141,26 +141,29 @@ def _describe_cognito_app_client(
     return dict(response.get("UserPoolClient") or {})
 
 
-def _require_cognito_configuration(ursa_config) -> None:
-    """Require Cognito configuration and project it into env vars."""
+def _require_cognito_configuration(ursa_config) -> dict[str, str]:
+    """Require Cognito configuration from YAML config without exporting env vars."""
     field_map = {
-        "COGNITO_USER_POOL_ID": "cognito_user_pool_id",
-        "COGNITO_APP_CLIENT_ID": "cognito_app_client_id",
-        "COGNITO_REGION": "cognito_region",
-        "COGNITO_DOMAIN": "cognito_domain",
+        "cognito_user_pool_id": "Cognito user pool ID",
+        "cognito_app_client_id": "Cognito app client ID",
+        "cognito_region": "Cognito region",
+        "cognito_domain": "Cognito domain",
+        "cognito_callback_url": "Cognito callback URL",
+        "cognito_logout_url": "Cognito logout URL",
     }
     missing: list[str] = []
-    for env_key, attr_name in field_map.items():
-        if not os.environ.get(env_key):
-            value = getattr(ursa_config, attr_name, None)
-            if value:
-                os.environ[env_key] = str(value)
-            else:
-                missing.append(env_key)
+    resolved: dict[str, str] = {}
+    for attr_name, label in field_map.items():
+        value = str(getattr(ursa_config, attr_name, "") or "").strip()
+        if value:
+            resolved[attr_name] = value
+        else:
+            missing.append(label)
     if missing:
         console.print("[red]✗[/red]  Authentication is mandatory but Cognito config is missing")
-        console.print("   Missing: [cyan]" + ", ".join(missing) + "[/cyan]")
+        console.print("   Missing YAML fields: [cyan]" + ", ".join(missing) + "[/cyan]")
         raise typer.Exit(1)
+    return resolved
 
 
 def _get_pid() -> Optional[int]:
@@ -183,13 +186,16 @@ def _get_pid() -> Optional[int]:
 
 
 
-def _run_cognito_uri_check(port: int, host: str, aws_profile: str) -> None:
-    """Validate Cognito app-client callback/logout URIs match runtime port."""
-    user_pool_id = os.environ.get("COGNITO_USER_POOL_ID", "")
-    app_client_id = os.environ.get("COGNITO_APP_CLIENT_ID", "")
-    region = os.environ.get("COGNITO_REGION", os.environ.get("AWS_REGION", "us-west-2"))
-    if not user_pool_id or not app_client_id:
-        return
+def _run_cognito_uri_check(
+    port: int,
+    host: str,
+    aws_profile: str,
+    cognito_config: dict[str, str],
+) -> None:
+    """Validate Cognito app-client callback/logout URIs match YAML configuration."""
+    user_pool_id = cognito_config["cognito_user_pool_id"]
+    app_client_id = cognito_config["cognito_app_client_id"]
+    region = cognito_config["cognito_region"]
     try:
         app_client = _describe_cognito_app_client(
             profile=aws_profile,
@@ -202,8 +208,8 @@ def _run_cognito_uri_check(port: int, host: str, aws_profile: str) -> None:
         return
 
     oauth_host = runtime_oauth_host(host)
-    expected_callback = f"https://{oauth_host}:{port}/auth/callback"
-    expected_logout = f"https://{oauth_host}:{port}/"
+    expected_callback = cognito_config["cognito_callback_url"]
+    expected_logout = cognito_config["cognito_logout_url"]
     errors = validate_cognito_app_client(
         app_client=app_client,
         expected_callback_url=expected_callback,
@@ -262,10 +268,10 @@ def start(
         os.environ["AWS_PROFILE"] = aws_profile
 
     _require_auth_dependencies()
-    _require_cognito_configuration(ursa_config)
+    cognito_config = _require_cognito_configuration(ursa_config)
 
     if check_cognito_uris:
-        _run_cognito_uri_check(port, host, aws_profile or "default")
+        _run_cognito_uri_check(port, host, aws_profile or "default", cognito_config)
 
     aws_region = (
         os.environ.get("AWS_REGION")

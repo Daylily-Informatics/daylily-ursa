@@ -12,13 +12,7 @@
 # NOTE: S3 buckets are discovered from cluster tags (aws-parallelcluster-monitor-bucket)
 # rather than being configured here. Each cluster's bucket is set during cluster creation.
 #
-# Environment variables take precedence over config file values:
-# - AWS_PROFILE overrides aws_profile
-# - COGNITO_REGION overrides cognito_region
-# - COGNITO_USER_POOL_ID overrides cognito_user_pool_id
-# - COGNITO_APP_CLIENT_ID overrides cognito_app_client_id
-
-# AWS profile to use (overridden by AWS_PROFILE env var if set)
+# AWS profile to use (AWS_PROFILE may still override this)
 aws_profile: lsmc
 
 # List of AWS regions to scan for ParallelCluster instances
@@ -49,7 +43,16 @@ regions:
 #   tapdb config init --client-id local --database-name ursa --env dev
 #   tapdb bootstrap local
 
-# Cognito configuration (overridden by env vars COGNITO_USER_POOL_ID, COGNITO_APP_CLIENT_ID, COGNITO_REGION)
+# Cognito configuration is read from this YAML file.
 # cognito_user_pool_id: us-west-2_xxxxxxxx
 # cognito_app_client_id: xxxxxxxxxxxxxxxxxxxxxxxxxx
 # cognito_region: us-west-2  # AWS region where Cognito User Pool is deployed
+# cognito_domain: your-domain-prefix.auth.us-west-2.amazoncognito.com
+# cognito_callback_url: https://localhost:8914/auth/callback
+# cognito_logout_url: https://localhost:8914/login
+
+# Non-production deployment chrome
+deployment:
+  name: ""
+  color: "#0f766e"
+  is_production: false

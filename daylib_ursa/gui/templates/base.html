@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="Ursa customer portal">
     <title>{{ page_title }} | Ursa</title>
+    <link rel="icon" href="/ui/static/favicon.svg" type="image/svg+xml">
 
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -15,6 +16,9 @@
     {% block extra_head %}{% endblock %}
 </head>
 <body>
+    {% if deployment and not deployment.is_production and deployment.name %}
+    <div style="height:18px;line-height:18px;background:{{ deployment.color }};color:#ffffff;text-align:center;font-size:11px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;">{{ deployment.name|upper }}</div>
+    {% endif %}
     <header class="header">
         <div class="container">
             <div class="header-content">

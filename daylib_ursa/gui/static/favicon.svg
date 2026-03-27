@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Ursa">
+  <rect width="64" height="64" rx="14" fill="#12263a"/>
+  <circle cx="18" cy="20" r="4" fill="#00d9a6"/>
+  <circle cx="28" cy="14" r="4" fill="#00d9a6"/>
+  <circle cx="40" cy="18" r="4" fill="#00d9a6"/>
+  <circle cx="36" cy="30" r="4" fill="#00d9a6"/>
+  <circle cx="46" cy="40" r="4" fill="#ff6b6b"/>
+  <circle cx="54" cy="48" r="4" fill="#ff6b6b"/>
+  <path d="M18 20L28 14L40 18L36 30" fill="none" stroke="#f4f7fb" stroke-opacity=".4" stroke-width="2.5"/>
+  <path d="M40 18L46 40L54 48" fill="none" stroke="#f4f7fb" stroke-opacity=".4" stroke-width="2.5"/>
+</svg>

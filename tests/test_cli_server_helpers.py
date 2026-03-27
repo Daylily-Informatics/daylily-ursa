@@ -166,7 +166,7 @@ def test_validate_cognito_oauth_uris_reports_mismatch() -> None:
     assert any("Expected callback URI is not configured" in error for error in errors)
 
 
-def test_require_cognito_configuration_sets_env_from_config(
+def test_require_cognito_configuration_reads_yaml_only_fields(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     cfg = SimpleNamespace(
@@ -174,6 +174,8 @@ def test_require_cognito_configuration_sets_env_from_config(
         cognito_app_client_id="client",
         cognito_region="us-west-2",
         cognito_domain="example.auth.us-west-2.amazoncognito.com",
+        cognito_callback_url="https://localhost:8914/auth/callback",
+        cognito_logout_url="https://localhost:8914/login",
     )
     for key in (
         "COGNITO_USER_POOL_ID",
@@ -181,14 +183,15 @@ def test_require_cognito_configuration_sets_env_from_config(
         "COGNITO_REGION",
         "COGNITO_DOMAIN",
     ):
-        monkeypatch.delenv(key, raising=False)
+        monkeypatch.setenv(key, f"env-{key.lower()}")
 
-    server_cli._require_cognito_configuration(cfg)
+    resolved = server_cli._require_cognito_configuration(cfg)
 
-    assert os.environ["COGNITO_USER_POOL_ID"] == "pool"
-    assert os.environ["COGNITO_APP_CLIENT_ID"] == "client"
-    assert os.environ["COGNITO_REGION"] == "us-west-2"
-    assert "amazoncognito.com" in os.environ["COGNITO_DOMAIN"]
+    assert resolved["cognito_user_pool_id"] == "pool"
+    assert resolved["cognito_app_client_id"] == "client"
+    assert resolved["cognito_region"] == "us-west-2"
+    assert resolved["cognito_callback_url"] == "https://localhost:8914/auth/callback"
+    assert os.environ["COGNITO_USER_POOL_ID"] == "env-cognito_user_pool_id"
 
 
 def test_require_cognito_configuration_raises_when_missing(
@@ -199,6 +202,8 @@ def test_require_cognito_configuration_raises_when_missing(
         cognito_app_client_id="",
         cognito_region="",
         cognito_domain="",
+        cognito_callback_url="",
+        cognito_logout_url="",
     )
     for key in (
         "COGNITO_USER_POOL_ID",
@@ -266,4 +271,3 @@ def test_stop_permission_error_exits(monkeypatch: pytest.MonkeyPatch) -> None:
         server_cli.stop()
 
     assert exc.value.exit_code == 1
-

@@ -59,6 +59,8 @@ def test_ursa_server_start_uses_packaged_entrypoint(monkeypatch):
         cognito_app_client_id = "test-app-client"
         cognito_region = "us-west-2"
         cognito_domain = "ursa-auth"
+        cognito_callback_url = "https://localhost:8914/auth/callback"
+        cognito_logout_url = "https://localhost:8914/login"
 
         def get_allowed_regions(self):
             return ["us-west-2"]
@@ -67,8 +69,10 @@ def test_ursa_server_start_uses_packaged_entrypoint(monkeypatch):
     monkeypatch.setattr(ursa_config_mod, "get_ursa_config", lambda reload=False: DummyUrsaConfig())
     monkeypatch.setattr(server_mod, "_ensure_dir", lambda: None)
     monkeypatch.setattr(server_mod, "_get_pid", lambda: None)
-    monkeypatch.setattr(server_mod, "_source_env_file", lambda: False)
+    monkeypatch.setattr(server_mod, "source_env_file", lambda _path: False)
     monkeypatch.setattr(server_mod, "_resolve_https_cert_paths", lambda host: ("/tmp/cert.pem", "/tmp/key.pem"))
+    monkeypatch.setattr(server_mod, "_require_auth_dependencies", lambda: None)
+    monkeypatch.setattr(server_mod, "_run_cognito_uri_check", lambda *args, **kwargs: None)
 
     captured: dict[str, object] = {}
 
@@ -114,6 +118,8 @@ def test_ursa_server_start_allows_ambient_credentials(monkeypatch):
         cognito_app_client_id = "test-app-client"
         cognito_region = "us-west-2"
         cognito_domain = "ursa-auth"
+        cognito_callback_url = "https://localhost:8914/auth/callback"
+        cognito_logout_url = "https://localhost:8914/login"
 
         def get_allowed_regions(self):
             return ["us-west-2"]
@@ -122,8 +128,10 @@ def test_ursa_server_start_allows_ambient_credentials(monkeypatch):
     monkeypatch.setattr(ursa_config_mod, "get_ursa_config", lambda reload=False: DummyUrsaConfig())
     monkeypatch.setattr(server_mod, "_ensure_dir", lambda: None)
     monkeypatch.setattr(server_mod, "_get_pid", lambda: None)
-    monkeypatch.setattr(server_mod, "_source_env_file", lambda: False)
+    monkeypatch.setattr(server_mod, "source_env_file", lambda _path: False)
     monkeypatch.setattr(server_mod, "_resolve_https_cert_paths", lambda host: ("/tmp/cert.pem", "/tmp/key.pem"))
+    monkeypatch.setattr(server_mod, "_require_auth_dependencies", lambda: None)
+    monkeypatch.setattr(server_mod, "_run_cognito_uri_check", lambda *args, **kwargs: None)
 
     captured: dict[str, object] = {}
 
