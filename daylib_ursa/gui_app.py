@@ -19,6 +19,14 @@ def mount_gui(app: FastAPI) -> None:
     if static_root.is_dir():
         app.mount("/ui/static", StaticFiles(directory=str(static_root)), name="ui-static")
 
+    def _deployment_context() -> dict[str, object]:
+        settings = getattr(app.state, "settings", None)
+        return {
+            "name": str(getattr(settings, "deployment_name", "") or ""),
+            "color": str(getattr(settings, "deployment_color", "#0f766e") or "#0f766e"),
+            "is_production": bool(getattr(settings, "deployment_is_production", False)),
+        }
+
     def _next_path(raw_value: str | None) -> str:
         value = str(raw_value or "").strip()
         return value if value.startswith("/") else "/"
@@ -94,6 +102,7 @@ def mount_gui(app: FastAPI) -> None:
             "active_page": active_page,
             "secondary_page": secondary_page,
             "page_data_json": json.dumps(context or {}, default=_json_default),
+            "deployment": _deployment_context(),
         }
         template_context.update(context or {})
         return templates.TemplateResponse(request, template_name, template_context)
@@ -374,6 +383,7 @@ def mount_gui(app: FastAPI) -> None:
                 "request": request,
                 "next_path": _next_path(next),
                 "error": None,
+                "deployment": _deployment_context(),
             },
         )
 
@@ -392,6 +402,7 @@ def mount_gui(app: FastAPI) -> None:
                     "request": request,
                     "next_path": _next_path(next_path),
                     "error": "Atlas access token is required",
+                    "deployment": _deployment_context(),
                 },
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
@@ -405,11 +416,16 @@ def mount_gui(app: FastAPI) -> None:
                     "request": request,
                     "next_path": _next_path(next_path),
                     "error": str(exc),
+                    "deployment": _deployment_context(),
                 },
                 status_code=status.HTTP_401_UNAUTHORIZED,
             )
         request.session["atlas_access_token"] = token
         return RedirectResponse(url=_next_path(next_path), status_code=status.HTTP_303_SEE_OTHER)
+
+    @app.get("/favicon.ico", include_in_schema=False)
+    async def favicon_redirect() -> RedirectResponse:
+        return RedirectResponse(url="/ui/static/favicon.svg", status_code=status.HTTP_307_TEMPORARY_REDIRECT)
 
     @app.get("/logout")
     async def logout(request: Request):

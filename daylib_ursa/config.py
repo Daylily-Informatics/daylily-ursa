@@ -19,6 +19,30 @@ from daylib_ursa.domain_access import (
 )
 
 
+def _yaml_seed_from_ursa_config() -> dict[str, object]:
+    """Seed YAML-owned runtime settings from Ursa config before env resolution."""
+    try:
+        from daylib_ursa.ursa_config import get_ursa_config
+
+        cfg = get_ursa_config()
+    except Exception:
+        return {}
+
+    return {
+        "aws_profile": cfg.aws_profile,
+        "cognito_user_pool_id": cfg.cognito_user_pool_id,
+        "cognito_app_client_id": cfg.cognito_app_client_id,
+        "cognito_app_client_secret": cfg.cognito_app_client_secret,
+        "cognito_domain": cfg.cognito_domain,
+        "cognito_region": cfg.cognito_region,
+        "cognito_callback_url": cfg.cognito_callback_url,
+        "cognito_logout_url": cfg.cognito_logout_url,
+        "deployment_name": cfg.deployment_name,
+        "deployment_color": cfg.deployment_color,
+        "deployment_is_production": cfg.deployment_is_production,
+    }
+
+
 def _require_https_url(value: str, *, field_name: str) -> str:
     normalized = str(value or "").strip()
     if not normalized:
@@ -169,6 +193,18 @@ class Settings(BaseSettings):
         default=None,
         description="AWS Cognito Hosted UI domain (optional, used for SSO/OAuth flows)",
     )
+    cognito_region: Optional[str] = Field(
+        default=None,
+        description="AWS region where the Cognito User Pool is deployed",
+    )
+    cognito_callback_url: Optional[str] = Field(
+        default=None,
+        description="Explicit HTTPS callback URL registered for Cognito Hosted UI",
+    )
+    cognito_logout_url: Optional[str] = Field(
+        default=None,
+        description="Explicit HTTPS logout redirect URL registered for Cognito Hosted UI",
+    )
     enable_auth: bool = Field(
         default=True,
         description="Authentication is mandatory and always enabled",
@@ -194,6 +230,18 @@ class Settings(BaseSettings):
     daylily_env: str = Field(
         default="development",
         description="Environment: development, staging, production",
+    )
+    deployment_name: str = Field(
+        default="",
+        description="Deployment name shown in non-production UI chrome",
+    )
+    deployment_color: str = Field(
+        default="#0f766e",
+        description="Deployment banner color shown in non-production UI chrome",
+    )
+    deployment_is_production: bool = Field(
+        default=False,
+        description="Whether this deployment should hide non-production chrome",
     )
 
     # ========== Demo Mode ==========
@@ -416,6 +464,13 @@ class Settings(BaseSettings):
     def validate_dewey_base_url(cls, v: str) -> str:
         return _validate_optional_https_url(v, field_name="dewey_base_url")
 
+    @field_validator("cognito_callback_url", "cognito_logout_url")
+    @classmethod
+    def validate_optional_cognito_urls(cls, v: Optional[str], info) -> Optional[str]:
+        if v is None:
+            return None
+        return _validate_optional_https_url(v, field_name=str(info.field_name))
+
     @model_validator(mode="after")
     def validate_dewey_integration(self) -> "Settings":
         if self.dewey_enabled:
@@ -459,7 +514,7 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         """Check if running in production environment."""
-        return self.daylily_env == "production"
+        return self.daylily_env == "production" or self.deployment_is_production
 
     @property
     def is_development(self) -> bool:
@@ -483,6 +538,14 @@ class Settings(BaseSettings):
     def auth_configured(self) -> bool:
         """Check if authentication is properly configured."""
         return bool(self.cognito_user_pool_id and self.cognito_app_client_id)
+
+    @property
+    def deployment(self) -> dict[str, object]:
+        return {
+            "name": self.deployment_name,
+            "color": self.deployment_color,
+            "is_production": self.deployment_is_production,
+        }
 
     def get_rate_limit_whitelist(self) -> List[str]:
         """Get list of whitelisted IPs/user IDs for rate limiting."""
@@ -593,7 +656,7 @@ def get_settings() -> Settings:
     Settings are loaded once and cached for the lifetime of the application.
     Use this function as a FastAPI dependency.
     """
-    return Settings()
+    return Settings(**_yaml_seed_from_ursa_config())
 
 
 def clear_settings_cache() -> None:
@@ -610,4 +673,6 @@ def get_settings_for_testing(**overrides) -> Settings:
 
     This bypasses the cache, allowing tests to use custom configuration.
     """
-    return Settings(**overrides)
+    payload = _yaml_seed_from_ursa_config()
+    payload.update(overrides)
+    return Settings(**payload)
