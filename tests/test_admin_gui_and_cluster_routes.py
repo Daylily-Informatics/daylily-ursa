@@ -110,7 +110,9 @@ class MemoryBackend:
             if target is child and (relationship_type is None or rel == relationship_type)
         ]
 
-    def find_instance_by_euid(self, session, *, template_code: str, value: str, for_update: bool = False):
+    def find_instance_by_euid(
+        self, session, *, template_code: str, value: str, for_update: bool = False
+    ):
         _ = (session, for_update)
         for instance in self.instances:
             if instance.template_code == template_code and instance.euid == value:
@@ -126,12 +128,15 @@ class MemoryBackend:
                 return instance
         return None
 
-    def list_instances_by_property(self, session, *, template_code: str, key: str, value: str, limit: int = 200):
+    def list_instances_by_property(
+        self, session, *, template_code: str, key: str, value: str, limit: int = 200
+    ):
         _ = session
         rows = [
             instance
             for instance in self.instances
-            if instance.template_code == template_code and str(instance.json_addl.get(key) or "") == value
+            if instance.template_code == template_code
+            and str(instance.json_addl.get(key) or "") == value
         ]
         return list(reversed(rows))[:limit]
 
@@ -322,12 +327,18 @@ class MemoryResourceStore:
 
     def list_linked_buckets(self, *, tenant_id: uuid.UUID, limit: int = 200):
         _ = limit
-        return [item for item in self.buckets.values() if item.tenant_id == tenant_id and item.state != "DELETED"]
+        return [
+            item
+            for item in self.buckets.values()
+            if item.tenant_id == tenant_id and item.state != "DELETED"
+        ]
 
     def get_linked_bucket(self, bucket_id: str):
         return self.buckets.get(bucket_id)
 
-    def create_client_registration(self, *, client_name: str, owner_user_id: str, sponsor_user_id: str, scopes, metadata):
+    def create_client_registration(
+        self, *, client_name: str, owner_user_id: str, sponsor_user_id: str, scopes, metadata
+    ):
         self._client_seq += 1
         record = ClientRegistrationRecord(
             client_registration_euid=f"UC-{self._client_seq}",
@@ -353,7 +364,9 @@ class MemoryResourceStore:
             values = [item for item in values if item.owner_user_id == owner_user_id]
         return values
 
-    def add_cluster_job(self, *, cluster_name: str, owner_user_id: str, sponsor_user_id: str) -> ClusterJobRecord:
+    def add_cluster_job(
+        self, *, cluster_name: str, owner_user_id: str, sponsor_user_id: str
+    ) -> ClusterJobRecord:
         self._job_seq += 1
         record = ClusterJobRecord(
             job_euid=f"CJ-{self._job_seq}",
@@ -399,7 +412,9 @@ class MemoryResourceStore:
 
 
 class DummyClusterInfo:
-    def __init__(self, cluster_name: str, region: str, cluster_status: str = "CREATE_COMPLETE") -> None:
+    def __init__(
+        self, cluster_name: str, region: str, cluster_status: str = "CREATE_COMPLETE"
+    ) -> None:
         self.cluster_name = cluster_name
         self.region = region
         self.cluster_status = cluster_status
@@ -416,7 +431,9 @@ class DummyClusterInfo:
 
 
 class DummyClusterService:
-    def get_all_clusters_with_status(self, *, force_refresh: bool = False, fetch_ssh_status: bool = False):
+    def get_all_clusters_with_status(
+        self, *, force_refresh: bool = False, fetch_ssh_status: bool = False
+    ):
         _ = (force_refresh, fetch_ssh_status)
         return [DummyClusterInfo("cluster-1", "us-west-2")]
 
@@ -445,7 +462,9 @@ class DummyClusterJobManager:
     def __init__(self, resource_store: MemoryResourceStore) -> None:
         self.resource_store = resource_store
 
-    def start_create_job(self, *, cluster_name: str, owner_user_id: str, sponsor_user_id: str, **_kwargs):
+    def start_create_job(
+        self, *, cluster_name: str, owner_user_id: str, sponsor_user_id: str, **_kwargs
+    ):
         return self.resource_store.add_cluster_job(
             cluster_name=cluster_name,
             owner_user_id=owner_user_id,
@@ -457,7 +476,13 @@ class DummyS3Client:
     def list_objects_v2(self, Bucket: str, **kwargs):  # noqa: N803
         _ = (Bucket, kwargs)
         return {
-            "Contents": [{"Key": "incoming/data.txt", "Size": 5, "LastModified": datetime(2026, 3, 25, tzinfo=timezone.utc)}],
+            "Contents": [
+                {
+                    "Key": "incoming/data.txt",
+                    "Size": 5,
+                    "LastModified": datetime(2026, 3, 25, tzinfo=timezone.utc),
+                }
+            ],
             "CommonPrefixes": [{"Prefix": "incoming/subdir/"}],
         }
 
@@ -556,7 +581,9 @@ def test_admin_routes_cover_me_user_search_client_tokens_and_clusters() -> None:
             headers={"Authorization": "Bearer atlas-token"},
             json={"note": "revoked in test"},
         )
-        cluster_list = client.get("/api/v1/clusters", headers={"Authorization": "Bearer atlas-token"})
+        cluster_list = client.get(
+            "/api/v1/clusters", headers={"Authorization": "Bearer atlas-token"}
+        )
         cluster_job = client.post(
             "/api/v1/clusters",
             headers={"Authorization": "Bearer atlas-token"},
@@ -567,7 +594,9 @@ def test_admin_routes_cover_me_user_search_client_tokens_and_clusters() -> None:
                 "s3_bucket_name": "ursa-bucket",
             },
         )
-        cluster_jobs = client.get("/api/v1/clusters/jobs", headers={"Authorization": "Bearer atlas-token"})
+        cluster_jobs = client.get(
+            "/api/v1/clusters/jobs", headers={"Authorization": "Bearer atlas-token"}
+        )
         cluster_job_detail = client.get(
             f"/api/v1/clusters/jobs/{cluster_job.json()['job_euid']}",
             headers={"Authorization": "Bearer atlas-token"},

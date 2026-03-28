@@ -38,11 +38,7 @@ def _create_test_app():
 
 def test_public_routes_are_versioned_and_legacy_customer_routes_are_absent() -> None:
     app = _create_test_app()
-    paths = {
-        getattr(route, "path", "")
-        for route in app.routes
-        if getattr(route, "path", "")
-    }
+    paths = {getattr(route, "path", "") for route in app.routes if getattr(route, "path", "")}
     public_api_paths = {path for path in paths if path.startswith("/api")}
     assert public_api_paths
     assert all(path.startswith("/api/v1/") for path in public_api_paths)
@@ -51,11 +47,7 @@ def test_public_routes_are_versioned_and_legacy_customer_routes_are_absent() -> 
 
 def test_phase_one_route_families_exist() -> None:
     app = _create_test_app()
-    paths = {
-        getattr(route, "path", "")
-        for route in app.routes
-        if getattr(route, "path", "")
-    }
+    paths = {getattr(route, "path", "") for route in app.routes if getattr(route, "path", "")}
     expected = {
         "/api/v1/me",
         "/api/v1/analyses",
@@ -84,7 +76,9 @@ def test_all_decorated_routes_have_direct_request_coverage() -> None:
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
             for decorator in node.decorator_list:
-                if not isinstance(decorator, ast.Call) or not isinstance(decorator.func, ast.Attribute):
+                if not isinstance(decorator, ast.Call) or not isinstance(
+                    decorator.func, ast.Attribute
+                ):
                     continue
                 method = decorator.func.attr.upper()
                 if method not in {"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"}:
@@ -134,15 +128,17 @@ def test_all_decorated_routes_have_direct_request_coverage() -> None:
         pattern = re.sub(r"\\\{[^{}]+\\\}", r"[^/]+", pattern)
         return re.fullmatch(pattern, sample) is not None
 
-    decorated_routes = (
-        iter_routes("daylib_ursa/workset_api.py")
-        | iter_routes("daylib_ursa/gui_app.py")
+    decorated_routes = iter_routes("daylib_ursa/workset_api.py") | iter_routes(
+        "daylib_ursa/gui_app.py"
     )
     request_samples = iter_direct_request_samples()
     missing = sorted(
         (method, route)
         for method, route in decorated_routes
-        if not any(method == sample_method and route_matches(route, sample_route) for sample_method, sample_route in request_samples)
+        if not any(
+            method == sample_method and route_matches(route, sample_route)
+            for sample_method, sample_route in request_samples
+        )
     )
 
     assert missing == []

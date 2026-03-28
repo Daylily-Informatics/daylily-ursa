@@ -87,7 +87,9 @@ class DeweyClient:
             if close_client:
                 client.close()
         if response.status_code >= 400:
-            raise DeweyClientError(f"Dewey resolve returned {response.status_code}: {response.text}")
+            raise DeweyClientError(
+                f"Dewey resolve returned {response.status_code}: {response.text}"
+            )
         body = response.json()
         if not isinstance(body, dict):
             raise DeweyClientError("Dewey resolve response was not a JSON object")

@@ -16,6 +16,7 @@ except ImportError:  # pragma: no cover - import-time compatibility for reduced 
     def utc_now_iso() -> str:
         return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
+
 WORKSET_TEMPLATE = "workflow/workset/gui-ready/1.0/"
 MANIFEST_TEMPLATE = "data/manifest/dewey-bound/1.0/"
 DEWEY_IMPORT_TEMPLATE = "action/artifact/dewey-import/1.0/"
@@ -199,7 +200,9 @@ class ResourceStore:
             tenant_id=ResourceStore._parse_tenant_uuid(payload.get("tenant_id")),
             owner_user_id=str(payload.get("owner_user_id") or ""),
             state=str(payload.get("state") or instance.bstatus),
-            artifact_set_euids=[str(item) for item in list(payload.get("artifact_set_euids") or [])],
+            artifact_set_euids=[
+                str(item) for item in list(payload.get("artifact_set_euids") or [])
+            ],
             metadata=dict(payload.get("metadata") or {}),
             created_at=str(payload.get("created_at") or utc_now_iso()),
             updated_at=str(payload.get("updated_at") or payload.get("created_at") or utc_now_iso()),
@@ -258,7 +261,9 @@ class ResourceStore:
             return_code = None
         return ClusterJobRecord(
             job_euid=str(instance.euid),
-            job_name=str(instance.name or payload.get("job_name") or payload.get("cluster_name") or ""),
+            job_name=str(
+                instance.name or payload.get("job_name") or payload.get("cluster_name") or ""
+            ),
             cluster_name=str(payload.get("cluster_name") or ""),
             region=str(payload.get("region") or ""),
             region_az=str(payload.get("region_az") or ""),
@@ -445,7 +450,9 @@ class ResourceStore:
             ],
         )
 
-    def list_linked_buckets(self, *, tenant_id: uuid.UUID, limit: int = 200) -> list[LinkedBucketRecord]:
+    def list_linked_buckets(
+        self, *, tenant_id: uuid.UUID, limit: int = 200
+    ) -> list[LinkedBucketRecord]:
         with self.backend.session_scope(commit=False) as session:
             rows = self.backend.list_instances_by_property(
                 session,
@@ -593,9 +600,7 @@ class ResourceStore:
                 updates["can_list"] = bool(can_list)
             if remediation_steps is not None:
                 updates["remediation_steps"] = [
-                    str(item)
-                    for item in list(remediation_steps or [])
-                    if str(item or "").strip()
+                    str(item) for item in list(remediation_steps or []) if str(item or "").strip()
                 ]
             if metadata is not None:
                 merged_metadata = dict(payload.get("metadata") or {})
@@ -734,7 +739,9 @@ class ResourceStore:
             state=str(payload.get("state") or instance.bstatus),
         )
 
-    def get_client_registration(self, client_registration_euid: str) -> ClientRegistrationRecord | None:
+    def get_client_registration(
+        self, client_registration_euid: str
+    ) -> ClientRegistrationRecord | None:
         with self.backend.session_scope(commit=False) as session:
             client = self.backend.find_instance_by_euid(
                 session,
@@ -861,12 +868,20 @@ class ResourceStore:
                     "job_euid": str(job.euid),
                     "revision_no": revision_no,
                     "state": state,
-                    "started_at": started_at if started_at is not None else latest_payload.get("started_at"),
-                    "completed_at": completed_at if completed_at is not None else latest_payload.get("completed_at"),
-                    "return_code": return_code if return_code is not None else latest_payload.get("return_code"),
+                    "started_at": started_at
+                    if started_at is not None
+                    else latest_payload.get("started_at"),
+                    "completed_at": completed_at
+                    if completed_at is not None
+                    else latest_payload.get("completed_at"),
+                    "return_code": return_code
+                    if return_code is not None
+                    else latest_payload.get("return_code"),
                     "error": error if error is not None else latest_payload.get("error"),
                     "output_summary": (
-                        output_summary if output_summary is not None else latest_payload.get("output_summary")
+                        output_summary
+                        if output_summary is not None
+                        else latest_payload.get("output_summary")
                     ),
                     "cluster": dict(cluster or latest_payload.get("cluster") or {}),
                     "created_by": created_by,

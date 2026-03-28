@@ -45,7 +45,9 @@ def _ursa_info_hook() -> list[tuple[str, str]]:
     rows.append(
         (
             "AWS Profile",
-            os.environ.get("AWS_PROFILE") or getattr(settings, "aws_profile", None) or DEFAULT_AWS_PROFILE,
+            os.environ.get("AWS_PROFILE")
+            or getattr(settings, "aws_profile", None)
+            or DEFAULT_AWS_PROFILE,
         )
     )
     rows.append(
@@ -108,7 +110,9 @@ def _ensure_tapdb_dependency() -> None:
 
 _ensure_tapdb_dependency()
 
-_CONFIG_TEMPLATE = (Path(__file__).resolve().parents[2] / "config" / "ursa-config.example.yaml").read_bytes()
+_CONFIG_TEMPLATE = (
+    Path(__file__).resolve().parents[2] / "config" / "ursa-config.example.yaml"
+).read_bytes()
 
 
 spec = CliSpec(

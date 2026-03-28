@@ -201,7 +201,9 @@ def _resolve_runtime_env(
     env = os.environ.copy()
     env["AWS_PROFILE"] = (profile or DEFAULT_AWS_PROFILE).strip() or DEFAULT_AWS_PROFILE
     env["AWS_REGION"] = (region or DEFAULT_AWS_REGION).strip() or DEFAULT_AWS_REGION
-    env["TAPDB_CLIENT_ID"] = (client_id or DEFAULT_TAPDB_CLIENT_ID).strip() or DEFAULT_TAPDB_CLIENT_ID
+    env["TAPDB_CLIENT_ID"] = (
+        client_id or DEFAULT_TAPDB_CLIENT_ID
+    ).strip() or DEFAULT_TAPDB_CLIENT_ID
     env["TAPDB_DATABASE_NAME"] = (
         namespace or DEFAULT_TAPDB_DATABASE_NAME
     ).strip() or DEFAULT_TAPDB_DATABASE_NAME
@@ -242,7 +244,9 @@ def _resolve_tapdb_config_path(*, namespace: str, client_id: str) -> str | None:
     if user_scoped.exists():
         return str(user_scoped)
 
-    user_legacy_scoped = Path.home() / ".config" / "tapdb" / f"tapdb-config-{normalized_namespace}.yaml"
+    user_legacy_scoped = (
+        Path.home() / ".config" / "tapdb" / f"tapdb-config-{normalized_namespace}.yaml"
+    )
     if user_legacy_scoped.exists():
         return str(user_legacy_scoped)
     return None
@@ -331,7 +335,8 @@ def get_tapdb_bundle(
 
     cfg = _get_tapdb_db_config_for_env(runtime_env["TAPDB_ENV"])
     connection = TAPDBConnection(
-        app_username=str(app_username or runtime_env["TAPDB_CLIENT_ID"]).strip() or runtime_env["TAPDB_CLIENT_ID"],
+        app_username=str(app_username or runtime_env["TAPDB_CLIENT_ID"]).strip()
+        or runtime_env["TAPDB_CLIENT_ID"],
         db_hostname=f"{cfg.get('host', 'localhost')}:{cfg.get('port', '5432')}",
         db_user=cfg.get("user"),
         db_pass=cfg.get("password", ""),

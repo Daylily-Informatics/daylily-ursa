@@ -9,7 +9,11 @@ from fastapi.testclient import TestClient
 
 from daylib_ursa.analysis_store import AnalysisArtifact, AnalysisRecord, AnalysisState, ReviewState
 from daylib_ursa.auth import CurrentUser, Role
-from daylib_ursa.atlas_result_client import AtlasResultArtifact, AtlasResultClient, AtlasResultClientError
+from daylib_ursa.atlas_result_client import (
+    AtlasResultArtifact,
+    AtlasResultClient,
+    AtlasResultClientError,
+)
 from daylib_ursa.config import Settings
 from daylib_ursa.workset_api import create_app
 

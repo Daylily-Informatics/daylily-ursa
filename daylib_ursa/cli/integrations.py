@@ -32,7 +32,9 @@ def _require_dewey_client() -> DeweyClient:
     token = str(getattr(settings, "dewey_api_token", "") or "").strip()
     if not base_url or not token:
         console.print("[red]✗[/red] Dewey integration is not fully configured")
-        console.print("   Required settings: [cyan]dewey_base_url[/cyan], [cyan]dewey_api_token[/cyan]")
+        console.print(
+            "   Required settings: [cyan]dewey_base_url[/cyan], [cyan]dewey_api_token[/cyan]"
+        )
         raise typer.Exit(1)
     return DeweyClient(
         base_url=base_url,
@@ -74,7 +76,9 @@ def resolve_artifact(
 
 @dewey_app.command("resolve-artifact-set")
 def resolve_artifact_set(
-    artifact_set_euid: str = typer.Option(..., "--artifact-set-euid", help="Dewey artifact-set EUID"),
+    artifact_set_euid: str = typer.Option(
+        ..., "--artifact-set-euid", help="Dewey artifact-set EUID"
+    ),
 ) -> None:
     """Resolve a Dewey artifact set and print the returned payload."""
     client = _require_dewey_client()
@@ -102,8 +106,12 @@ def get_artifact(
 def import_artifact(
     artifact_type: str = typer.Option(..., "--artifact-type", help="Artifact type"),
     storage_uri: str = typer.Option(..., "--storage-uri", help="Artifact storage URI"),
-    metadata_json: str = typer.Option("{}", "--metadata-json", help="Artifact metadata JSON object"),
-    idempotency_key: str = typer.Option("", "--idempotency-key", help="Optional import idempotency key"),
+    metadata_json: str = typer.Option(
+        "{}", "--metadata-json", help="Artifact metadata JSON object"
+    ),
+    idempotency_key: str = typer.Option(
+        "", "--idempotency-key", help="Optional import idempotency key"
+    ),
 ) -> None:
     """Import an artifact into Dewey and print the new artifact EUID."""
     client = _require_dewey_client()

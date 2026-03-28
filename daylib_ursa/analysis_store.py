@@ -126,7 +126,9 @@ class AnalysisStore:
             for_update=for_update,
         )
 
-    def _find_analysis_by_ingest_key(self, session, idempotency_key: str) -> generic_instance | None:
+    def _find_analysis_by_ingest_key(
+        self, session, idempotency_key: str
+    ) -> generic_instance | None:
         return self.backend.find_instance_by_external_id(
             session,
             template_code=ANALYSIS_TEMPLATE,
@@ -147,7 +149,9 @@ class AnalysisStore:
             filename=str(payload.get("filename") or ""),
             mime_type=str(payload.get("mime_type") or "") or None,
             checksum_sha256=str(payload.get("checksum_sha256") or "") or None,
-            size_bytes=int(payload["size_bytes"]) if payload.get("size_bytes") is not None else None,
+            size_bytes=int(payload["size_bytes"])
+            if payload.get("size_bytes") is not None
+            else None,
             created_at=str(payload.get("created_at") or utc_now_iso()),
             metadata=dict(payload.get("metadata") or {}),
         )
@@ -256,7 +260,9 @@ class AnalysisStore:
             )
             records: list[AnalysisRecord] = []
             for analysis in rows:
-                record = self._record_from_instance(session, analysis, self._artifacts(session, analysis))
+                record = self._record_from_instance(
+                    session, analysis, self._artifacts(session, analysis)
+                )
                 if tenant_id and record.tenant_id != tenant_id:
                     continue
                 if workset_euid and record.workset_euid != workset_euid:
@@ -277,7 +283,9 @@ class AnalysisStore:
         with self.backend.session_scope(commit=True) as session:
             existing = self._find_analysis_by_ingest_key(session, idempotency_key)
             if existing is not None:
-                return self._record_from_instance(session, existing, self._artifacts(session, existing))
+                return self._record_from_instance(
+                    session, existing, self._artifacts(session, existing)
+                )
 
             now = utc_now_iso()
             analysis = self.backend.create_instance(
@@ -508,7 +516,10 @@ class AnalysisStore:
             if analysis is None:
                 raise KeyError(f"analysis not found: {analysis_euid}")
             payload = self._payload(analysis)
-            if str(payload.get("review_state") or ReviewState.PENDING.value) != ReviewState.APPROVED.value:
+            if (
+                str(payload.get("review_state") or ReviewState.PENDING.value)
+                != ReviewState.APPROVED.value
+            ):
                 raise ValueError("Analysis cannot be returned before manual approval")
 
             for event in self.backend.list_children(
@@ -518,7 +529,9 @@ class AnalysisStore:
             ):
                 event_payload = dict(event.json_addl or {})
                 if str(event_payload.get("idempotency_key") or "") == idempotency_key:
-                    return self._record_from_instance(session, analysis, self._artifacts(session, analysis))
+                    return self._record_from_instance(
+                        session, analysis, self._artifacts(session, analysis)
+                    )
 
             returned_at = utc_now_iso()
             payload["state"] = AnalysisState.RETURNED.value

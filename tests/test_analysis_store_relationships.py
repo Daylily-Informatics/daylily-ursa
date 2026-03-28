@@ -46,7 +46,11 @@ class _FakeBackend:
 
     def list_children(self, session, *, parent, relationship_type):
         _ = session
-        return [child for source, child, rel in self.lineages if source is parent and rel == relationship_type]
+        return [
+            child
+            for source, child, rel in self.lineages
+            if source is parent and rel == relationship_type
+        ]
 
 
 def test_ingest_analysis_keeps_relationship_truth_on_context_reference():

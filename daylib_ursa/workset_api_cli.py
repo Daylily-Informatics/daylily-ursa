@@ -63,7 +63,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         raise ValueError("BLOOM_API_TOKEN is required for authenticated Ursa->Bloom integration")
     atlas_api_key = str(settings.atlas_internal_api_key or "").strip()
     if not atlas_api_key:
-        raise ValueError("ATLAS_INTERNAL_API_KEY is required for authenticated Ursa->Atlas integration")
+        raise ValueError(
+            "ATLAS_INTERNAL_API_KEY is required for authenticated Ursa->Atlas integration"
+        )
 
     LOGGER.info("Initializing Ursa beta analysis store")
     store = AnalysisStore()

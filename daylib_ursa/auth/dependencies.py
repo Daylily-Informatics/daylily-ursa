@@ -102,6 +102,7 @@ class AtlasUserDirectoryEntry:
     display_name: str | None
     is_active: bool
 
+
 def _normalize_roles(raw_roles: Any) -> list[str]:
     if isinstance(raw_roles, str):
         values = [item for item in raw_roles.split(",") if item.strip()]
@@ -173,7 +174,8 @@ def _get_current_user_from_session(request: Request) -> CurrentUser | None:
             auth_source=str(session.get("auth_source") or "cognito").strip() or "cognito",
             token_euid=str(session.get("token_euid") or "").strip() or None,
             token_scope=str(session.get("token_scope") or "").strip() or None,
-            client_registration_euid=str(session.get("client_registration_euid") or "").strip() or None,
+            client_registration_euid=str(session.get("client_registration_euid") or "").strip()
+            or None,
             organization=str(session.get("organization") or "").strip() or None,
             site=str(session.get("site") or "").strip() or None,
         )
@@ -217,9 +219,7 @@ class CognitoAuthProvider:
         self.app_client_id = str(app_client_id or "").strip()
         self.region = str(region or "").strip()
         self._jwks_cache = (
-            JWKSCache(self.region, self.user_pool_id)
-            if self.user_pool_id and self.region
-            else None
+            JWKSCache(self.region, self.user_pool_id) if self.user_pool_id and self.region else None
         )
 
     @property
@@ -291,10 +291,7 @@ class CognitoUserDirectoryService:
 
     def _entry_from_user(self, item: dict[str, Any]) -> AtlasUserDirectoryEntry:
         attrs = self._attrs_to_dict(item)
-        user_id = (
-            str(attrs.get("sub") or "").strip()
-            or str(item.get("Username") or "").strip()
-        )
+        user_id = str(attrs.get("sub") or "").strip() or str(item.get("Username") or "").strip()
         tenant_id = _parse_uuid(
             attrs.get("custom:tenant_id") or attrs.get("tenant_id"),
             label="tenant_id",

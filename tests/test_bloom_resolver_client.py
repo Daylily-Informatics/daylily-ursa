@@ -47,7 +47,9 @@ def test_resolve_run_assignment_raises_for_bad_response():
         return httpx.Response(404, json={"detail": "not found"})
 
     client = httpx.Client(transport=httpx.MockTransport(handler))
-    resolver = BloomResolverClient(base_url="https://bloom.example", token="bloom-token", client=client)
+    resolver = BloomResolverClient(
+        base_url="https://bloom.example", token="bloom-token", client=client
+    )
 
     with pytest.raises(BloomResolverError, match="404"):
         resolver.resolve_run_assignment("RUN-1", "FLOW-1", "1", "LIB-1")
@@ -65,7 +67,9 @@ def test_resolve_run_assignment_raises_for_missing_fields():
         )
 
     client = httpx.Client(transport=httpx.MockTransport(handler))
-    resolver = BloomResolverClient(base_url="https://bloom.example", token="bloom-token", client=client)
+    resolver = BloomResolverClient(
+        base_url="https://bloom.example", token="bloom-token", client=client
+    )
 
     with pytest.raises(BloomResolverError, match="missing required fields"):
         resolver.resolve_run_assignment("RUN-1", "FLOW-1", "1", "LIB-1")

@@ -17,7 +17,18 @@ from urllib.parse import urlparse
 
 import boto3
 from botocore.exceptions import ClientError
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile, status
+from fastapi import (
+    Depends,
+    FastAPI,
+    File,
+    Form,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+    status,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -573,7 +584,9 @@ def _workset_response(record: WorksetRecord) -> WorksetResponse:
     )
 
 
-def _token_response(record: UserTokenRecord, *, plaintext_token: str | None = None) -> UserTokenResponse:
+def _token_response(
+    record: UserTokenRecord, *, plaintext_token: str | None = None
+) -> UserTokenResponse:
     return UserTokenResponse(
         token_euid=record.token_euid,
         owner_user_id=record.owner_user_id,
@@ -791,7 +804,9 @@ def _preview_s3_object(
     is_text = ext.lower() in text_extensions or content_type.startswith("text/")
     max_download = 10 * 1024 * 1024
     if file_size > max_download:
-        response = s3_client.get_object(Bucket=bucket_name, Key=key, Range=f"bytes=0-{max_download}")
+        response = s3_client.get_object(
+            Bucket=bucket_name, Key=key, Range=f"bytes=0-{max_download}"
+        )
     else:
         response = s3_client.get_object(Bucket=bucket_name, Key=key)
     body = response["Body"].read()
@@ -1012,7 +1027,9 @@ def create_app(
         auth_provider = CognitoAuthProvider(
             user_pool_id=str(getattr(settings, "cognito_user_pool_id", "") or "").strip(),
             app_client_id=str(getattr(settings, "cognito_app_client_id", "") or "").strip(),
-            region=str(getattr(settings, "cognito_region", "") or settings.get_effective_region()).strip(),
+            region=str(
+                getattr(settings, "cognito_region", "") or settings.get_effective_region()
+            ).strip(),
         )
     app.state.auth_provider = auth_provider
 
@@ -1038,11 +1055,7 @@ def create_app(
     )
     app.state.cluster_service = cluster_service
 
-    if (
-        token_service is None
-        and resource_store is not None
-        and hasattr(resource_store, "backend")
-    ):
+    if token_service is None and resource_store is not None and hasattr(resource_store, "backend"):
         token_service = UserTokenService(
             backend=resource_store.backend,
             user_lookup=user_directory.get_user if user_directory is not None else None,
@@ -1188,7 +1201,9 @@ def create_app(
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         canonical = str(resolved.get("artifact_euid") or "").strip()
         if not canonical:
-            raise HTTPException(status_code=502, detail="Dewey resolve response missing artifact_euid")
+            raise HTTPException(
+                status_code=502, detail="Dewey resolve response missing artifact_euid"
+            )
         return canonical
 
     def resolve_dewey_artifact_set_payload(artifact_set_euid: str) -> dict[str, Any]:
@@ -1221,7 +1236,9 @@ def create_app(
         if not normalized_set_euid:
             raise HTTPException(status_code=400, detail="artifact_set_euid is required")
         resolved_set = resolve_dewey_artifact_set_payload(normalized_set_euid)
-        canonical_set_euid = str(resolved_set.get("artifact_set_euid") or normalized_set_euid).strip()
+        canonical_set_euid = str(
+            resolved_set.get("artifact_set_euid") or normalized_set_euid
+        ).strip()
         allowed_member_euids = {
             str(member.get("artifact_euid") or "").strip()
             for member in list(resolved_set.get("members") or [])
@@ -1265,11 +1282,18 @@ def create_app(
         request: ManifestCreateRequest,
     ) -> tuple[str | None, list[str], list[dict[str, Any]], dict[str, Any]]:
         if not request.input_references:
-            canonical_set_euid, canonical_artifact_euids, input_references = validate_manifest_artifact_references(
-                str(request.artifact_set_euid or ""),
-                request.artifact_euids,
+            canonical_set_euid, canonical_artifact_euids, input_references = (
+                validate_manifest_artifact_references(
+                    str(request.artifact_set_euid or ""),
+                    request.artifact_euids,
+                )
             )
-            return canonical_set_euid, canonical_artifact_euids, input_references, dict(request.metadata or {})
+            return (
+                canonical_set_euid,
+                canonical_artifact_euids,
+                input_references,
+                dict(request.metadata or {}),
+            )
 
         if app.state.dewey_client is None:
             raise HTTPException(status_code=503, detail="Dewey client is not configured")
@@ -1389,8 +1413,14 @@ def create_app(
     ) -> dict[str, Any]:
         normalized_prefix = str(prefix or "").lstrip("/")
         restricted_prefix = _normalize_prefix(bucket.prefix_restriction)
-        if restricted_prefix and normalized_prefix and not normalized_prefix.startswith(restricted_prefix):
-            raise HTTPException(status_code=403, detail="Prefix is outside the linked bucket restriction")
+        if (
+            restricted_prefix
+            and normalized_prefix
+            and not normalized_prefix.startswith(restricted_prefix)
+        ):
+            raise HTTPException(
+                status_code=403, detail="Prefix is outside the linked bucket restriction"
+            )
         effective_prefix = normalized_prefix or restricted_prefix or ""
         try:
             response = app.state.s3_client.list_objects_v2(
@@ -1433,14 +1463,20 @@ def create_app(
                     "key": key,
                     "size_bytes": size_bytes,
                     "size_human": _format_file_size(size_bytes),
-                    "last_modified": last_modified.isoformat() if hasattr(last_modified, "isoformat") else None,
+                    "last_modified": last_modified.isoformat()
+                    if hasattr(last_modified, "isoformat")
+                    else None,
                     "file_format": _detect_file_format(name),
                 }
             )
         breadcrumbs = [{"name": "/", "prefix": restricted_prefix or ""}]
         if effective_prefix:
             root_prefix = restricted_prefix or ""
-            suffix = effective_prefix[len(root_prefix):] if root_prefix and effective_prefix.startswith(root_prefix) else effective_prefix
+            suffix = (
+                effective_prefix[len(root_prefix) :]
+                if root_prefix and effective_prefix.startswith(root_prefix)
+                else effective_prefix
+            )
             current_parts = [part for part in suffix.rstrip("/").split("/") if part]
             running_prefix = root_prefix
             for part in current_parts:
@@ -1451,8 +1487,14 @@ def create_app(
         else:
             trimmed = effective_prefix.rstrip("/")
             parent_parts = trimmed.split("/")[:-1]
-            parent_prefix = "/".join(parent_parts) + "/" if parent_parts else (restricted_prefix or "")
-            if restricted_prefix and parent_prefix and not parent_prefix.startswith(restricted_prefix):
+            parent_prefix = (
+                "/".join(parent_parts) + "/" if parent_parts else (restricted_prefix or "")
+            )
+            if (
+                restricted_prefix
+                and parent_prefix
+                and not parent_prefix.startswith(restricted_prefix)
+            ):
                 parent_prefix = restricted_prefix
         return {
             "bucket": _linked_bucket_response(bucket),
@@ -1481,7 +1523,9 @@ def create_app(
         except Exception:
             LOGGER.exception("Failed to list EC2 keypairs for %s", region)
         try:
-            session = boto3.Session(**({k: v for k, v in session_kwargs.items() if k != "region_name"}))
+            session = boto3.Session(
+                **({k: v for k, v in session_kwargs.items() if k != "region_name"})
+            )
             s3 = session.client("s3", region_name=region)
             response = s3.list_buckets()
             buckets = sorted(
@@ -1585,7 +1629,9 @@ def create_app(
                     "reference_type": "artifact_set_euid",
                     "value": raw_value,
                     "artifact_set_euid": str(resolved_set.get("artifact_set_euid") or raw_value),
-                    "artifact_euids": [str(item.get("artifact_euid") or "") for item in member_payload],
+                    "artifact_euids": [
+                        str(item.get("artifact_euid") or "") for item in member_payload
+                    ],
                     "members": member_payload,
                 }
             )
@@ -1730,7 +1776,9 @@ def create_app(
         if not actor.is_admin and record.tenant_id != actor.tenant_id:
             raise HTTPException(status_code=403, detail="Analysis is outside the caller tenant")
         if app.state.atlas_client is None:
-            raise HTTPException(status_code=503, detail="Atlas result return client is not configured")
+            raise HTTPException(
+                status_code=503, detail="Atlas result return client is not configured"
+            )
         if record.review_state != ReviewState.APPROVED.value:
             raise HTTPException(
                 status_code=409,
@@ -1740,7 +1788,9 @@ def create_app(
             atlas_artifacts: list[AtlasResultArtifact] = []
             missing_dewey_refs: list[str] = []
             for artifact in record.artifacts:
-                dewey_artifact_euid = str(artifact.metadata.get("dewey_artifact_euid") or "").strip()
+                dewey_artifact_euid = str(
+                    artifact.metadata.get("dewey_artifact_euid") or ""
+                ).strip()
                 if not dewey_artifact_euid:
                     missing_dewey_refs.append(artifact.artifact_euid)
                     continue
@@ -1807,7 +1857,9 @@ def create_app(
         )
         return [_workset_response(item) for item in items]
 
-    @app.post("/api/v1/worksets", response_model=WorksetResponse, status_code=status.HTTP_201_CREATED)
+    @app.post(
+        "/api/v1/worksets", response_model=WorksetResponse, status_code=status.HTTP_201_CREATED
+    )
     async def create_workset(
         request: WorksetCreateRequest,
         actor: RequireAuth,
@@ -1844,7 +1896,9 @@ def create_app(
         records = resources.list_manifests(tenant_id=actor.tenant_id)
         return [_manifest_response(item) for item in records]
 
-    @app.post("/api/v1/manifests", response_model=ManifestResponse, status_code=status.HTTP_201_CREATED)
+    @app.post(
+        "/api/v1/manifests", response_model=ManifestResponse, status_code=status.HTTP_201_CREATED
+    )
     async def create_manifest(
         request: ManifestCreateRequest,
         actor: RequireAuth,
@@ -1855,10 +1909,12 @@ def create_app(
             raise HTTPException(status_code=404, detail="Workset not found")
         if not actor.is_admin and workset.tenant_id != actor.tenant_id:
             raise HTTPException(status_code=403, detail="Workset is outside the caller tenant")
-        artifact_set_euid, artifact_euids, input_references, metadata = resolve_manifest_input_references(
-            actor=actor,
-            resources=resources,
-            request=request,
+        artifact_set_euid, artifact_euids, input_references, metadata = (
+            resolve_manifest_input_references(
+                actor=actor,
+                resources=resources,
+                request=request,
+            )
         )
         record = resources.create_manifest(
             workset_euid=request.workset_euid,
@@ -1908,7 +1964,11 @@ def create_app(
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
 
-    @app.post("/api/v1/artifacts/import", response_model=ArtifactImportResponse, status_code=status.HTTP_201_CREATED)
+    @app.post(
+        "/api/v1/artifacts/import",
+        response_model=ArtifactImportResponse,
+        status_code=status.HTTP_201_CREATED,
+    )
     async def import_artifact_to_dewey(
         request: ArtifactImportRequest,
         actor: RequireAuth,
@@ -1982,7 +2042,9 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    @app.post("/api/v1/buckets", response_model=LinkedBucketResponse, status_code=status.HTTP_201_CREATED)
+    @app.post(
+        "/api/v1/buckets", response_model=LinkedBucketResponse, status_code=status.HTTP_201_CREATED
+    )
     async def create_linked_bucket(
         request: LinkedBucketCreateRequest,
         actor: RequireAuth,
@@ -2032,11 +2094,15 @@ def create_app(
         actor: RequireAuth,
         resources: ResourceStore = Depends(require_resource_store),
     ) -> LinkedBucketResponse:
-        existing = require_linked_bucket_record(bucket_id=bucket_id, actor=actor, resources=resources)
+        existing = require_linked_bucket_record(
+            bucket_id=bucket_id, actor=actor, resources=resources
+        )
         validation = _validate_bucket_access(
             app.state.s3_client,
             bucket_name=existing.bucket_name,
-            prefix_restriction=request.prefix_restriction if request.prefix_restriction is not None else existing.prefix_restriction,
+            prefix_restriction=request.prefix_restriction
+            if request.prefix_restriction is not None
+            else existing.prefix_restriction,
             read_only=bool(existing.read_only if request.read_only is None else request.read_only),
         )
         updated = resources.update_linked_bucket(
@@ -2064,7 +2130,9 @@ def create_app(
         actor: RequireAuth,
         resources: ResourceStore = Depends(require_resource_store),
     ) -> LinkedBucketResponse:
-        existing = require_linked_bucket_record(bucket_id=bucket_id, actor=actor, resources=resources)
+        existing = require_linked_bucket_record(
+            bucket_id=bucket_id, actor=actor, resources=resources
+        )
         validation = _validate_bucket_access(
             app.state.s3_client,
             bucket_name=existing.bucket_name,
@@ -2131,10 +2199,14 @@ def create_app(
             key=current_prefix,
             prefix_restriction=record.prefix_restriction,
         ):
-            raise HTTPException(status_code=403, detail="Prefix is outside the linked bucket restriction")
+            raise HTTPException(
+                status_code=403, detail="Prefix is outside the linked bucket restriction"
+            )
         folder_key = f"{current_prefix}{folder_name}/"
         if not _object_within_prefix(key=folder_key, prefix_restriction=record.prefix_restriction):
-            raise HTTPException(status_code=403, detail="Folder is outside the linked bucket restriction")
+            raise HTTPException(
+                status_code=403, detail="Folder is outside the linked bucket restriction"
+            )
         try:
             app.state.s3_client.put_object(Bucket=record.bucket_name, Key=folder_key, Body=b"")
             app.state.s3_client.put_object(
@@ -2163,10 +2235,14 @@ def create_app(
         current_prefix = str(prefix or "").lstrip("/")
         key = f"{current_prefix}{filename}"
         if not _object_within_prefix(key=key, prefix_restriction=record.prefix_restriction):
-            raise HTTPException(status_code=403, detail="File is outside the linked bucket restriction")
+            raise HTTPException(
+                status_code=403, detail="File is outside the linked bucket restriction"
+            )
         try:
             extra_args = {"ContentType": file.content_type or "application/octet-stream"}
-            app.state.s3_client.upload_fileobj(file.file, Bucket=record.bucket_name, Key=key, ExtraArgs=extra_args)
+            app.state.s3_client.upload_fileobj(
+                file.file, Bucket=record.bucket_name, Key=key, ExtraArgs=extra_args
+            )
         except ClientError as exc:
             raise HTTPException(status_code=502, detail=f"Failed to upload file: {exc}") from exc
         return {"success": True, "key": key, "bucket": record.bucket_name}
@@ -2180,8 +2256,12 @@ def create_app(
     ) -> dict[str, str]:
         record = require_linked_bucket_record(bucket_id=bucket_id, actor=actor, resources=resources)
         normalized_key = str(key or "").lstrip("/")
-        if not _object_within_prefix(key=normalized_key, prefix_restriction=record.prefix_restriction):
-            raise HTTPException(status_code=403, detail="Object is outside the linked bucket restriction")
+        if not _object_within_prefix(
+            key=normalized_key, prefix_restriction=record.prefix_restriction
+        ):
+            raise HTTPException(
+                status_code=403, detail="Object is outside the linked bucket restriction"
+            )
         try:
             url = app.state.s3_client.generate_presigned_url(
                 "get_object",
@@ -2189,7 +2269,9 @@ def create_app(
                 ExpiresIn=3600,
             )
         except ClientError as exc:
-            raise HTTPException(status_code=502, detail=f"Failed to generate download URL: {exc}") from exc
+            raise HTTPException(
+                status_code=502, detail=f"Failed to generate download URL: {exc}"
+            ) from exc
         return {"url": url}
 
     @app.get("/api/v1/buckets/{bucket_id}/objects/preview")
@@ -2202,8 +2284,12 @@ def create_app(
     ) -> dict[str, Any]:
         record = require_linked_bucket_record(bucket_id=bucket_id, actor=actor, resources=resources)
         normalized_key = str(key or "").lstrip("/")
-        if not _object_within_prefix(key=normalized_key, prefix_restriction=record.prefix_restriction):
-            raise HTTPException(status_code=403, detail="Object is outside the linked bucket restriction")
+        if not _object_within_prefix(
+            key=normalized_key, prefix_restriction=record.prefix_restriction
+        ):
+            raise HTTPException(
+                status_code=403, detail="Object is outside the linked bucket restriction"
+            )
         try:
             return _preview_s3_object(
                 app.state.s3_client,
@@ -2225,8 +2311,12 @@ def create_app(
         if record.read_only or not record.can_write:
             raise HTTPException(status_code=400, detail="Bucket is read-only")
         normalized_key = str(key or "").lstrip("/")
-        if not _object_within_prefix(key=normalized_key, prefix_restriction=record.prefix_restriction):
-            raise HTTPException(status_code=403, detail="Object is outside the linked bucket restriction")
+        if not _object_within_prefix(
+            key=normalized_key, prefix_restriction=record.prefix_restriction
+        ):
+            raise HTTPException(
+                status_code=403, detail="Object is outside the linked bucket restriction"
+            )
         try:
             app.state.s3_client.delete_object(Bucket=record.bucket_name, Key=normalized_key)
         except ClientError as exc:
@@ -2255,9 +2345,7 @@ def create_app(
         actor: RequireAdmin,
         resources: ResourceStore = Depends(require_resource_store),
     ) -> list[ClusterJobResponse]:
-        records = resources.list_cluster_jobs(
-            tenant_id=None if actor.is_admin else actor.tenant_id
-        )
+        records = resources.list_cluster_jobs(tenant_id=None if actor.is_admin else actor.tenant_id)
         return [_cluster_job_response(item) for item in records]
 
     @app.get("/api/v1/clusters/jobs/{job_euid}", response_model=ClusterJobResponse)
@@ -2376,7 +2464,9 @@ def create_app(
     ) -> list[UserTokenResponse]:
         return [_token_response(item) for item in service.list_tokens(actor=actor)]
 
-    @app.post("/api/v1/user-tokens", response_model=UserTokenResponse, status_code=status.HTTP_201_CREATED)
+    @app.post(
+        "/api/v1/user-tokens", response_model=UserTokenResponse, status_code=status.HTTP_201_CREATED
+    )
     async def create_user_token(
         request: UserTokenCreateRequest,
         actor: RequireAuth,
@@ -2432,7 +2522,11 @@ def create_app(
             for item in service.list_tokens(actor=actor, owner_user_id=owner_user_id)
         ]
 
-    @app.post("/api/v1/admin/user-tokens", response_model=UserTokenResponse, status_code=status.HTTP_201_CREATED)
+    @app.post(
+        "/api/v1/admin/user-tokens",
+        response_model=UserTokenResponse,
+        status_code=status.HTTP_201_CREATED,
+    )
     async def admin_create_user_token(
         request: AdminUserTokenCreateRequest,
         actor: RequireAdmin,
@@ -2566,7 +2660,9 @@ def create_app(
         if registration is None:
             raise HTTPException(status_code=404, detail="Client registration not found")
         requested_scope = str(request.scope or "internal_ro").strip().lower()
-        if registration.scopes and requested_scope not in {str(item).strip().lower() for item in registration.scopes}:
+        if registration.scopes and requested_scope not in {
+            str(item).strip().lower() for item in registration.scopes
+        }:
             raise HTTPException(
                 status_code=400,
                 detail=(

@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 from typer.testing import CliRunner
 
+
 def _read_project_scripts(pyproject: Path) -> dict[str, str]:
     """Parse the [project.scripts] table from pyproject.toml.
 
@@ -71,7 +72,9 @@ def test_ursa_server_start_uses_packaged_entrypoint(monkeypatch):
     monkeypatch.setattr(server_mod, "_ensure_dir", lambda: None)
     monkeypatch.setattr(server_mod, "_get_pid", lambda: None)
     monkeypatch.setattr(server_mod, "source_env_file", lambda _path: False)
-    monkeypatch.setattr(server_mod, "_resolve_https_cert_paths", lambda host: ("/tmp/cert.pem", "/tmp/key.pem"))
+    monkeypatch.setattr(
+        server_mod, "_resolve_https_cert_paths", lambda host: ("/tmp/cert.pem", "/tmp/key.pem")
+    )
     monkeypatch.setattr(server_mod, "_require_auth_dependencies", lambda: None)
     monkeypatch.setattr(server_mod, "_run_cognito_uri_check", lambda *args, **kwargs: None)
     monkeypatch.setattr(
@@ -85,7 +88,9 @@ def test_ursa_server_start_uses_packaged_entrypoint(monkeypatch):
             tapdb_env="dev",
         ),
     )
-    monkeypatch.setattr(server_mod, "export_database_url_for_target", lambda **_kwargs: "postgresql://test-db")
+    monkeypatch.setattr(
+        server_mod, "export_database_url_for_target", lambda **_kwargs: "postgresql://test-db"
+    )
 
     captured: dict[str, object] = {}
 
@@ -93,6 +98,7 @@ def test_ursa_server_start_uses_packaged_entrypoint(monkeypatch):
         captured["cmd"] = cmd
         captured["cwd"] = cwd
         captured["kwargs"] = kwargs
+
         class _DummyCompletedProcess:
             def __init__(self, returncode: int):
                 self.returncode = returncode
@@ -149,7 +155,9 @@ def test_ursa_server_start_allows_ambient_credentials(monkeypatch):
     monkeypatch.setattr(server_mod, "_ensure_dir", lambda: None)
     monkeypatch.setattr(server_mod, "_get_pid", lambda: None)
     monkeypatch.setattr(server_mod, "source_env_file", lambda _path: False)
-    monkeypatch.setattr(server_mod, "_resolve_https_cert_paths", lambda host: ("/tmp/cert.pem", "/tmp/key.pem"))
+    monkeypatch.setattr(
+        server_mod, "_resolve_https_cert_paths", lambda host: ("/tmp/cert.pem", "/tmp/key.pem")
+    )
     monkeypatch.setattr(server_mod, "_require_auth_dependencies", lambda: None)
     monkeypatch.setattr(server_mod, "_run_cognito_uri_check", lambda *args, **kwargs: None)
     monkeypatch.setattr(
@@ -163,7 +171,9 @@ def test_ursa_server_start_allows_ambient_credentials(monkeypatch):
             tapdb_env="dev",
         ),
     )
-    monkeypatch.setattr(server_mod, "export_database_url_for_target", lambda **_kwargs: "postgresql://test-db")
+    monkeypatch.setattr(
+        server_mod, "export_database_url_for_target", lambda **_kwargs: "postgresql://test-db"
+    )
 
     captured: dict[str, object] = {}
 

@@ -94,7 +94,9 @@ class MemoryBackend:
             if target is child and (relationship_type is None or rel == relationship_type)
         ]
 
-    def find_instance_by_euid(self, session, *, template_code: str, value: str, for_update: bool = False):
+    def find_instance_by_euid(
+        self, session, *, template_code: str, value: str, for_update: bool = False
+    ):
         _ = (session, for_update)
         for instance in self.instances:
             if instance.template_code == template_code and instance.euid == value:
@@ -110,12 +112,15 @@ class MemoryBackend:
                 return instance
         return None
 
-    def list_instances_by_property(self, session, *, template_code: str, key: str, value: str, limit: int = 200):
+    def list_instances_by_property(
+        self, session, *, template_code: str, key: str, value: str, limit: int = 200
+    ):
         _ = session
         rows = [
             instance
             for instance in self.instances
-            if instance.template_code == template_code and str(instance.json_addl.get(key) or "") == value
+            if instance.template_code == template_code
+            and str(instance.json_addl.get(key) or "") == value
         ]
         return list(reversed(rows))[:limit]
 
@@ -132,7 +137,9 @@ class DummyResourceStore:
 
 
 class DummyAnalysisStore:
-    def list_analyses(self, *, tenant_id=None, workset_euid=None, limit=200):  # pragma: no cover - not used
+    def list_analyses(
+        self, *, tenant_id=None, workset_euid=None, limit=200
+    ):  # pragma: no cover - not used
         _ = (tenant_id, workset_euid, limit)
         return []
 
@@ -148,7 +155,9 @@ def _settings() -> Settings:
     )
 
 
-def _actor(*, user_id: str = USER_ID, tenant_id: uuid.UUID = TENANT_ID, roles: list[str] | None = None) -> CurrentUser:
+def _actor(
+    *, user_id: str = USER_ID, tenant_id: uuid.UUID = TENANT_ID, roles: list[str] | None = None
+) -> CurrentUser:
     return CurrentUser(
         sub=user_id,
         email="user@example.test",

@@ -42,7 +42,9 @@ class MemoryResourceStore:
         _ = limit
         return [item for item in self.worksets.values() if item.tenant_id == tenant_id]
 
-    def create_workset(self, *, name: str, tenant_id: uuid.UUID, owner_user_id: str, artifact_set_euids, metadata):
+    def create_workset(
+        self, *, name: str, tenant_id: uuid.UUID, owner_user_id: str, artifact_set_euids, metadata
+    ):
         self._workset_seq += 1
         record = WorksetRecord(
             workset_euid=f"WS-{self._workset_seq}",
@@ -67,7 +69,16 @@ class MemoryResourceStore:
         _ = limit
         return [item for item in self.manifests.values() if item.tenant_id == tenant_id]
 
-    def create_manifest(self, *, workset_euid: str, name: str, artifact_set_euid: str | None, artifact_euids, input_references, metadata):
+    def create_manifest(
+        self,
+        *,
+        workset_euid: str,
+        name: str,
+        artifact_set_euid: str | None,
+        artifact_euids,
+        input_references,
+        metadata,
+    ):
         workset = self.worksets[workset_euid]
         self._manifest_seq += 1
         manifest = ManifestRecord(
@@ -106,7 +117,11 @@ class MemoryResourceStore:
 
     def list_linked_buckets(self, *, tenant_id: uuid.UUID, limit: int = 200):
         _ = limit
-        return [item for item in self.buckets.values() if item.tenant_id == tenant_id and item.state != "DELETED"]
+        return [
+            item
+            for item in self.buckets.values()
+            if item.tenant_id == tenant_id and item.state != "DELETED"
+        ]
 
     def create_linked_bucket(
         self,
@@ -128,7 +143,11 @@ class MemoryResourceStore:
         metadata=None,
     ):
         for item in self.buckets.values():
-            if item.tenant_id == tenant_id and item.bucket_name == bucket_name and item.state != "DELETED":
+            if (
+                item.tenant_id == tenant_id
+                and item.bucket_name == bucket_name
+                and item.state != "DELETED"
+            ):
                 raise ValueError(f"Bucket already linked: {bucket_name}")
         self._bucket_seq += 1
         record = LinkedBucketRecord(
@@ -168,19 +187,33 @@ class MemoryResourceStore:
             tenant_id=record.tenant_id,
             owner_user_id=record.owner_user_id,
             display_name=updates.get("display_name", record.display_name),
-            metadata=record.metadata if updates.get("metadata") is None else updates.get("metadata"),
+            metadata=record.metadata
+            if updates.get("metadata") is None
+            else updates.get("metadata"),
             created_at=record.created_at,
             updated_at="2026-03-25T00:20:30Z",
             state=record.state,
-            bucket_type=record.bucket_type if updates.get("bucket_type") is None else updates.get("bucket_type"),
+            bucket_type=record.bucket_type
+            if updates.get("bucket_type") is None
+            else updates.get("bucket_type"),
             description=updates.get("description", record.description),
             prefix_restriction=updates.get("prefix_restriction", record.prefix_restriction),
-            read_only=record.read_only if updates.get("read_only") is None else updates.get("read_only"),
+            read_only=record.read_only
+            if updates.get("read_only") is None
+            else updates.get("read_only"),
             region=updates.get("region", record.region),
-            is_validated=record.is_validated if updates.get("is_validated") is None else updates.get("is_validated"),
-            can_read=record.can_read if updates.get("can_read") is None else updates.get("can_read"),
-            can_write=record.can_write if updates.get("can_write") is None else updates.get("can_write"),
-            can_list=record.can_list if updates.get("can_list") is None else updates.get("can_list"),
+            is_validated=record.is_validated
+            if updates.get("is_validated") is None
+            else updates.get("is_validated"),
+            can_read=record.can_read
+            if updates.get("can_read") is None
+            else updates.get("can_read"),
+            can_write=record.can_write
+            if updates.get("can_write") is None
+            else updates.get("can_write"),
+            can_list=record.can_list
+            if updates.get("can_list") is None
+            else updates.get("can_list"),
             remediation_steps=updates.get("remediation_steps", record.remediation_steps),
         )
         self.buckets[bucket_id] = updated
@@ -214,7 +247,15 @@ class MemoryResourceStore:
         self.buckets[bucket_id] = deleted
         return deleted
 
-    def record_dewey_import(self, *, artifact_euid: str, artifact_type: str, storage_uri: str, actor_user_id: str, metadata=None):
+    def record_dewey_import(
+        self,
+        *,
+        artifact_euid: str,
+        artifact_type: str,
+        storage_uri: str,
+        actor_user_id: str,
+        metadata=None,
+    ):
         return SimpleNamespace(
             import_euid="DI-1",
             artifact_euid=artifact_euid,
@@ -233,7 +274,9 @@ class DummyAnalysisStore:
 
 
 class DummyClusterService:
-    def get_all_clusters_with_status(self, *, force_refresh: bool = False, fetch_ssh_status: bool = False):
+    def get_all_clusters_with_status(
+        self, *, force_refresh: bool = False, fetch_ssh_status: bool = False
+    ):
         _ = (force_refresh, fetch_ssh_status)
         return []
 
@@ -298,7 +341,9 @@ class DummyS3Client:
         _ = (Bucket, Key, kwargs)
         return {"Body": io.BytesIO(b"alpha\nbeta\n")}
 
-    def generate_presigned_url(self, ClientMethod: str, Params: dict, ExpiresIn: int = 3600, **kwargs):  # noqa: N803
+    def generate_presigned_url(
+        self, ClientMethod: str, Params: dict, ExpiresIn: int = 3600, **kwargs
+    ):  # noqa: N803
         _ = (ClientMethod, Params, ExpiresIn, kwargs)
         return "https://example.test/download"
 
@@ -319,7 +364,11 @@ def _settings() -> Settings:
     )
 
 
-def _create_test_app(*, resource_store: MemoryResourceStore | None = None, dewey_client: DummyDeweyClient | None = None):
+def _create_test_app(
+    *,
+    resource_store: MemoryResourceStore | None = None,
+    dewey_client: DummyDeweyClient | None = None,
+):
     app = create_app(
         DummyAnalysisStore(),
         bloom_client=object(),
@@ -366,7 +415,9 @@ def test_workset_and_manifest_routes_use_versioned_user_api() -> None:
     assert manifest.json()["tenant_id"] == str(TENANT_ID)
     assert listed_worksets.json()[0]["manifests"][0]["manifest_euid"] == "MF-1"
     assert listed_manifests.json()[0]["artifact_set_euid"] == "AS-1"
-    assert listed_manifests.json()[0]["input_references"][0]["reference_type"] == "artifact_set_euid"
+    assert (
+        listed_manifests.json()[0]["input_references"][0]["reference_type"] == "artifact_set_euid"
+    )
     assert clusters.status_code == 200
     assert clusters.json() == {"items": []}
 

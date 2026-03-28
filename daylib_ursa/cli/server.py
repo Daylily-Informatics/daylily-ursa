@@ -128,10 +128,6 @@ def _resolve_https_cert_paths(host: str) -> tuple[str, str]:
     return str(cert_path), str(key_path)
 
 
-
-
-
-
 def _describe_cognito_app_client(
     *,
     profile: str,
@@ -191,7 +187,6 @@ def _get_pid() -> Optional[int]:
         except (ValueError, ProcessLookupError, PermissionError, subprocess.SubprocessError):
             PID_FILE.unlink(missing_ok=True)
     return None
-
 
 
 def _run_cognito_uri_check(

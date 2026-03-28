@@ -235,4 +235,6 @@ def register(registry: CommandRegistry, spec: CliSpec) -> None:
     _ = spec
     registry.add_command("env", "validate", validate, help_text="Validate Ursa configuration file.")
     registry.add_command("env", "generate", generate, help_text="Generate a local .env template.")
-    registry.add_command("env", "clean", clean, help_text="Remove cached files and build artifacts.")
+    registry.add_command(
+        "env", "clean", clean, help_text="Remove cached files and build artifacts."
+    )

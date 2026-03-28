@@ -18,6 +18,7 @@ def create_app(*args: Any, **kwargs: Any):
 
     return _create_app(*args, **kwargs)
 
+
 __all__ = [
     "__version__",
     "AnalysisStore",

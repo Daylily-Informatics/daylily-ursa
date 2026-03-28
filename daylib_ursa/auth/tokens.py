@@ -154,7 +154,9 @@ class UserTokenService:
             last_used_at=str(revision_payload.get("last_used_at") or "").strip() or None,
             revoked_at=str(revision_payload.get("revoked_at") or "").strip() or None,
             note=str(revision_payload.get("note") or "").strip() or None,
-            client_registration_euid=str(token_payload.get("client_registration_euid") or "").strip()
+            client_registration_euid=str(
+                token_payload.get("client_registration_euid") or ""
+            ).strip()
             or None,
         )
 
@@ -189,8 +191,10 @@ class UserTokenService:
             raise AuthError("Client-bound tokens require admin privileges")
         owner_user = self._resolve_owner_snapshot(actor=actor, owner_user_id=owner)
         expires_at = (
-            datetime.now(UTC) + timedelta(days=max(1, min(int(expires_in_days or 30), 3650)))
-        ).isoformat().replace("+00:00", "Z")
+            (datetime.now(UTC) + timedelta(days=max(1, min(int(expires_in_days or 30), 3650))))
+            .isoformat()
+            .replace("+00:00", "Z")
+        )
         plaintext = self.generate_plaintext_token()
         token_hash = self.hash_token(plaintext)
         token_prefix = self.display_prefix(plaintext)
@@ -243,7 +247,9 @@ class UserTokenService:
             )
             return self._token_record(session, token), plaintext
 
-    def list_tokens(self, *, actor: CurrentUser, owner_user_id: str | None = None) -> list[UserTokenRecord]:
+    def list_tokens(
+        self, *, actor: CurrentUser, owner_user_id: str | None = None
+    ) -> list[UserTokenRecord]:
         target_owner = None if owner_user_id is None else str(owner_user_id).strip()
         if target_owner is None:
             target_owner = actor.sub
@@ -266,7 +272,9 @@ class UserTokenService:
                 )
             return [self._token_record(session, token) for token in tokens]
 
-    def revoke_token(self, *, actor: CurrentUser, token_euid: str, note: str | None = None) -> UserTokenRecord:
+    def revoke_token(
+        self, *, actor: CurrentUser, token_euid: str, note: str | None = None
+    ) -> UserTokenRecord:
         with self.backend.session_scope(commit=True) as session:
             token = self.backend.find_instance_by_euid(
                 session,
