@@ -1,12 +1,19 @@
 """Environment and configuration commands for Ursa CLI."""
 
+from __future__ import annotations
+
 import os
 import shutil
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import typer
 from rich.console import Console
 from rich.table import Table
+
+if TYPE_CHECKING:
+    from cli_core_yo.registry import CommandRegistry
+    from cli_core_yo.spec import CliSpec
 
 env_app = typer.Typer(help="Environment and configuration commands")
 console = Console()
@@ -221,3 +228,13 @@ def clean():
         console.print(f"\n[green]✓[/green]  Cleaned {removed} items")
     else:
         console.print("[dim]Nothing to clean[/dim]")
+
+
+def register(registry: CommandRegistry, spec: CliSpec) -> None:
+    """cli-core-yo plugin: extend the built-in env group."""
+    _ = spec
+    registry.add_command("env", "validate", validate, help_text="Validate Ursa configuration file.")
+    registry.add_command("env", "generate", generate, help_text="Generate a local .env template.")
+    registry.add_command(
+        "env", "clean", clean, help_text="Remove cached files and build artifacts."
+    )

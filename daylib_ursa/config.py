@@ -118,23 +118,26 @@ class Settings(BaseSettings):
         default="",
         description="Ursa-managed internal S3 bucket for analysis outputs",
     )
-    ursa_cost_monitor_regions: str = Field(
-        default="us-west-2,us-east-1,eu-central-1",
-        description="Comma-separated regions used for pricing snapshots",
+    database_backend: str = Field(
+        default="tapdb",
+        description="Database backend for Ursa runtime",
     )
-    ursa_cost_monitor_partitions: str = Field(
-        default="i8,i128,i192,i192mem,i192bigmem",
-        description="Comma-separated production partitions used for pricing snapshots",
+    database_target: str = Field(
+        default="local",
+        description="TapDB database target to resolve (local or aurora)",
     )
-    ursa_cost_monitor_interval_hours: int = Field(
-        default=6,
-        description="Recurring pricing snapshot interval in hours",
+    tapdb_client_id: str = Field(
+        default="ursa",
+        description="TapDB client identifier",
     )
-    ursa_cost_monitor_config_path: Optional[str] = Field(
-        default=None,
-        description="Optional cluster YAML path passed to daylily-ec pricing snapshot",
+    tapdb_database_name: str = Field(
+        default="daylily-ursa",
+        description="TapDB namespace / database name",
     )
-
+    tapdb_env: str = Field(
+        default="dev",
+        description="TapDB environment selector",
+    )
     ursa_cost_monitor_regions: str = Field(
         default="us-west-2",
         description="Comma-separated regions used for pricing snapshots",
@@ -434,6 +437,24 @@ class Settings(BaseSettings):
         if v.lower() not in allowed:
             raise ValueError(f"daylily_env must be one of: {allowed}")
         return v.lower()
+
+    @field_validator("database_backend")
+    @classmethod
+    def validate_database_backend(cls, v: str) -> str:
+        allowed = {"tapdb", "postgres", "postgresql"}
+        normalized = str(v or "").strip().lower()
+        if normalized not in allowed:
+            raise ValueError(f"database_backend must be one of: {allowed}")
+        return normalized
+
+    @field_validator("database_target")
+    @classmethod
+    def validate_database_target(cls, v: str) -> str:
+        allowed = {"local", "aurora"}
+        normalized = str(v or "").strip().lower()
+        if normalized not in allowed:
+            raise ValueError(f"database_target must be one of: {allowed}")
+        return normalized
 
     @field_validator("enable_auth", mode="before")
     @classmethod

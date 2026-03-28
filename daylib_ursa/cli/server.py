@@ -1,12 +1,14 @@
 """Server management commands for the Ursa beta analysis API."""
 
+from __future__ import annotations
+
 import os
+import shutil
 import subprocess
 import sys
 import time
-import shutil
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 import typer
 import boto3
@@ -16,12 +18,18 @@ from cli_core_yo.server import (
     latest_log,
     list_logs,
     new_log_path,
-    read_pid,
     source_env_file,
     stop_pid,
     write_pid,
 )
 from rich.console import Console
+
+from daylib_ursa.config import get_settings
+from daylib_ursa.integrations.tapdb_runtime import export_database_url_for_target
+
+if TYPE_CHECKING:
+    from cli_core_yo.registry import CommandRegistry
+    from cli_core_yo.spec import CliSpec
 
 server_app = typer.Typer(help="API server management commands")
 console = Console()
@@ -120,10 +128,6 @@ def _resolve_https_cert_paths(host: str) -> tuple[str, str]:
     return str(cert_path), str(key_path)
 
 
-
-
-
-
 def _describe_cognito_app_client(
     *,
     profile: str,
@@ -183,7 +187,6 @@ def _get_pid() -> Optional[int]:
         except (ValueError, ProcessLookupError, PermissionError, subprocess.SubprocessError):
             PID_FILE.unlink(missing_ok=True)
     return None
-
 
 
 def _run_cognito_uri_check(
@@ -319,6 +322,22 @@ def start(
     env["PYTHONUNBUFFERED"] = "1"
     env["ENABLE_AUTH"] = "true"
 
+    settings = get_settings()
+    env["DATABASE_BACKEND"] = settings.database_backend
+    env["DATABASE_TARGET"] = settings.database_target
+    env["TAPDB_CLIENT_ID"] = settings.tapdb_client_id
+    env["TAPDB_DATABASE_NAME"] = settings.tapdb_database_name
+    env["TAPDB_ENV"] = settings.tapdb_env
+    if settings.database_backend == "tapdb":
+        env["DATABASE_URL"] = export_database_url_for_target(
+            target=settings.database_target,
+            profile=aws_profile,
+            region=aws_region,
+            client_id=settings.tapdb_client_id,
+            namespace=settings.tapdb_database_name,
+            tapdb_env=settings.tapdb_env,
+        )
+
     if reload:
         cmd.append("--reload")
         background = False  # Reload requires foreground
@@ -434,3 +453,9 @@ def restart(
     stop()
     time.sleep(1)
     start(port=port, host=host, reload=False, background=True)
+
+
+def register(registry: CommandRegistry, spec: CliSpec) -> None:
+    """cli-core-yo plugin: register server command group."""
+    _ = spec
+    registry.add_typer_app(None, server_app, "server", "API server management")

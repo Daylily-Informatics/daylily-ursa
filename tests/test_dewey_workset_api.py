@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 
-import pytest
 from fastapi.testclient import TestClient
 
 from daylib_ursa.analysis_store import AnalysisArtifact
@@ -22,7 +21,9 @@ class _FakeRegionAwareS3Client:
 
 
 class _DummyBloomClient:
-    def resolve_run_assignment(self, *_args, **_kwargs):  # pragma: no cover - not used in these tests
+    def resolve_run_assignment(
+        self, *_args, **_kwargs
+    ):  # pragma: no cover - not used in these tests
         raise AssertionError("Bloom resolver should not be called in Dewey artifact tests")
 
 
@@ -81,7 +82,9 @@ def test_add_artifact_resolves_dewey_reference():
                 "metadata": {"producer_system": "bloom"},
             }
 
-        def register_artifact(self, **kwargs):  # pragma: no cover - should not be called in this path
+        def register_artifact(
+            self, **kwargs
+        ):  # pragma: no cover - should not be called in this path
             raise AssertionError("register_artifact should not be called for artifact_euid inputs")
 
     app = create_app(
@@ -117,7 +120,9 @@ def test_add_artifact_rejects_raw_storage_uri_inputs() -> None:
 
     class _FakeDeweyClient:
         def resolve_artifact(self, _artifact_euid: str):  # pragma: no cover - not used in this path
-            raise AssertionError("resolve_artifact should not be called for invalid raw storage_uri inputs")
+            raise AssertionError(
+                "resolve_artifact should not be called for invalid raw storage_uri inputs"
+            )
 
     app = create_app(
         store,

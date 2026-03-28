@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
+import uuid
 
 import httpx
 
@@ -101,7 +102,7 @@ class BloomResolverClient:
             lane=str(body["lane"]),
             library_barcode=str(body["library_barcode"]),
             sequenced_library_assignment_euid=str(body["sequenced_library_assignment_euid"]),
-            atlas_tenant_id=str(body["atlas_tenant_id"]),
+            tenant_id=uuid.UUID(str(body["atlas_tenant_id"])),
             atlas_trf_euid=str(body["atlas_trf_euid"]),
             atlas_test_euid=str(body["atlas_test_euid"]),
             atlas_test_fulfillment_item_euid=str(body["atlas_test_fulfillment_item_euid"]),

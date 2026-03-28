@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -7,9 +8,12 @@ from datetime import datetime, timezone
 import pytest
 from fastapi.testclient import TestClient
 
-from daylib_ursa.auth import ActorContext, AuthError, UserTokenService
+from daylib_ursa.auth import AuthError, CurrentUser, Role, UserTokenService
 from daylib_ursa.config import Settings
 from daylib_ursa.workset_api import create_app
+
+TENANT_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
+USER_ID = "00000000-0000-0000-0000-000000000101"
 
 
 @dataclass
@@ -22,6 +26,7 @@ class _Instance:
     template_code: str
     created_dt: datetime
     modified_dt: datetime
+    tenant_id: uuid.UUID | None = None
     polymorphic_discriminator: str = "generic_instance"
 
 
@@ -36,7 +41,17 @@ class MemoryBackend:
         _ = commit
         yield object()
 
-    def create_instance(self, session, template_code: str, name: str, *, json_addl, bstatus, singleton=False):
+    def create_instance(
+        self,
+        session,
+        template_code: str,
+        name: str,
+        *,
+        json_addl,
+        bstatus,
+        tenant_id: uuid.UUID | None = None,
+        singleton: bool = False,
+    ):
         _ = (session, singleton)
         self._uid += 1
         prefix = {
@@ -54,6 +69,7 @@ class MemoryBackend:
             template_code=template_code,
             created_dt=now,
             modified_dt=now,
+            tenant_id=tenant_id,
         )
         self.instances.append(instance)
         return instance
@@ -78,7 +94,9 @@ class MemoryBackend:
             if target is child and (relationship_type is None or rel == relationship_type)
         ]
 
-    def find_instance_by_euid(self, session, *, template_code: str, value: str, for_update: bool = False):
+    def find_instance_by_euid(
+        self, session, *, template_code: str, value: str, for_update: bool = False
+    ):
         _ = (session, for_update)
         for instance in self.instances:
             if instance.template_code == template_code and instance.euid == value:
@@ -94,12 +112,15 @@ class MemoryBackend:
                 return instance
         return None
 
-    def list_instances_by_property(self, session, *, template_code: str, key: str, value: str, limit: int = 200):
+    def list_instances_by_property(
+        self, session, *, template_code: str, key: str, value: str, limit: int = 200
+    ):
         _ = session
         rows = [
             instance
             for instance in self.instances
-            if instance.template_code == template_code and str(instance.json_addl.get(key) or "") == value
+            if instance.template_code == template_code
+            and str(instance.json_addl.get(key) or "") == value
         ]
         return list(reversed(rows))[:limit]
 
@@ -109,34 +130,17 @@ class MemoryBackend:
         return list(reversed(rows))[:limit]
 
 
-class DummyIdentityClient:
-    def resolve_access_token(self, access_token: str) -> ActorContext:
-        assert access_token == "atlas-token"
-        return ActorContext(
-            user_id="user-1",
-            atlas_tenant_id="TEN-1",
-            roles=("admin",),
-            auth_source="atlas_bearer",
-        )
-
-    def resolve_user(self, user_id: str) -> ActorContext:
-        return ActorContext(
-            user_id=user_id,
-            atlas_tenant_id="TEN-1",
-            roles=("admin",),
-            auth_source="ursa_token",
-        )
-
-
 class DummyResourceStore:
-    def list_worksets(self, *, atlas_tenant_id: str, limit: int = 100):
-        _ = (atlas_tenant_id, limit)
+    def list_worksets(self, *, tenant_id: uuid.UUID, limit: int = 100):
+        _ = (tenant_id, limit)
         return []
 
 
 class DummyAnalysisStore:
-    def list_analyses(self, *, atlas_tenant_id=None, workset_euid=None, limit=200):  # pragma: no cover - not used
-        _ = (atlas_tenant_id, workset_euid, limit)
+    def list_analyses(
+        self, *, tenant_id=None, workset_euid=None, limit=200
+    ):  # pragma: no cover - not used
+        _ = (tenant_id, workset_euid, limit)
         return []
 
 
@@ -151,10 +155,23 @@ def _settings() -> Settings:
     )
 
 
+def _actor(
+    *, user_id: str = USER_ID, tenant_id: uuid.UUID = TENANT_ID, roles: list[str] | None = None
+) -> CurrentUser:
+    return CurrentUser(
+        sub=user_id,
+        email="user@example.test",
+        name="User One",
+        tenant_id=tenant_id,
+        roles=list(roles or [Role.ADMIN.value]),
+        auth_source="cognito",
+    )
+
+
 def test_user_token_service_create_validate_revoke_and_usage_flow() -> None:
     backend = MemoryBackend()
-    service = UserTokenService(backend=backend, identity_client=DummyIdentityClient())
-    actor = DummyIdentityClient().resolve_access_token("atlas-token")
+    service = UserTokenService(backend=backend)
+    actor = _actor()
 
     record, plaintext = service.create_token(
         actor=actor,
@@ -167,7 +184,8 @@ def test_user_token_service_create_validate_revoke_and_usage_flow() -> None:
     assert service.list_tokens(actor=actor)[0].token_euid == record.token_euid
 
     validated = service.validate_token(plaintext)
-    assert validated.actor.user_id == "user-1"
+    assert validated.actor.user_id == actor.user_id
+    assert validated.actor.tenant_id == TENANT_ID
     assert validated.token.scope == "internal_rw"
 
     service.log_usage(
@@ -189,11 +207,61 @@ def test_user_token_service_create_validate_revoke_and_usage_flow() -> None:
         service.validate_token(plaintext)
 
 
+def test_user_token_service_rejects_snapshotless_legacy_tokens() -> None:
+    backend = MemoryBackend()
+    service = UserTokenService(backend=backend)
+    plaintext = service.generate_plaintext_token()
+    token_hash = service.hash_token(plaintext)
+
+    with backend.session_scope(commit=True) as session:
+        token = backend.create_instance(
+            session,
+            "integration/auth/user-token/1.0/",
+            "legacy token",
+            json_addl={
+                "owner_user_id": USER_ID,
+                "tenant_id": str(TENANT_ID),
+                "token_name": "legacy token",
+                "token_prefix": service.display_prefix(plaintext),
+                "scope": "internal_rw",
+                "created_by": USER_ID,
+                "created_at": "2026-03-25T00:00:00Z",
+                "updated_at": "2026-03-25T00:00:00Z",
+            },
+            bstatus="ACTIVE",
+            tenant_id=TENANT_ID,
+        )
+        revision = backend.create_instance(
+            session,
+            "integration/auth/user-token-revision/1.0/",
+            "revision:legacy:1",
+            json_addl={
+                "token_euid": token.euid,
+                "token_hash": token_hash,
+                "revision_no": 1,
+                "status": "ACTIVE",
+                "expires_at": "2099-03-25T00:00:00Z",
+                "created_by": USER_ID,
+                "created_at": "2026-03-25T00:00:00Z",
+            },
+            bstatus="ACTIVE",
+            tenant_id=TENANT_ID,
+        )
+        backend.create_lineage(
+            session,
+            parent=token,
+            child=revision,
+            relationship_type="revision",
+        )
+
+    with pytest.raises(AuthError, match="snapshot missing; reissue required"):
+        service.validate_token(plaintext)
+
+
 def test_user_routes_reject_shared_api_key_and_accept_ursa_bearer_tokens() -> None:
     backend = MemoryBackend()
-    identity = DummyIdentityClient()
-    service = UserTokenService(backend=backend, identity_client=identity)
-    actor = identity.resolve_access_token("atlas-token")
+    actor = _actor()
+    service = UserTokenService(backend=backend)
     token_record, plaintext = service.create_token(
         actor=actor,
         owner_user_id=actor.user_id,
@@ -204,7 +272,6 @@ def test_user_routes_reject_shared_api_key_and_accept_ursa_bearer_tokens() -> No
     app = create_app(
         DummyAnalysisStore(),
         bloom_client=object(),
-        identity_client=identity,
         resource_store=DummyResourceStore(),
         token_service=service,
         settings=_settings(),
@@ -215,7 +282,65 @@ def test_user_routes_reject_shared_api_key_and_accept_ursa_bearer_tokens() -> No
         accepted = client.get("/api/v1/worksets", headers={"Authorization": f"Bearer {plaintext}"})
 
     assert rejected.status_code == 401
-    assert "not allowed" in rejected.json()["detail"]
+    assert "authorization or authenticated session is required" in rejected.json()["detail"]
     assert accepted.status_code == 200
     usage = service.list_usage(actor=actor, token_euid=token_record.token_euid)
     assert usage[0].response_status == 200
+
+
+def test_user_token_routes_list_usage_and_revoke() -> None:
+    backend = MemoryBackend()
+    actor = _actor()
+    service = UserTokenService(backend=backend)
+    _auth_record, auth_plaintext = service.create_token(
+        actor=actor,
+        owner_user_id=actor.user_id,
+        token_name="auth token",
+        scope="internal_rw",
+    )
+    target_record, _target_plaintext = service.create_token(
+        actor=actor,
+        owner_user_id=actor.user_id,
+        token_name="target token",
+        scope="internal_rw",
+    )
+    service.log_usage(
+        token_euid=target_record.token_euid,
+        actor_user_id=actor.user_id,
+        endpoint="/api/v1/worksets",
+        http_method="GET",
+        response_status=200,
+        ip_address="127.0.0.1",
+        user_agent="pytest",
+        request_metadata={"request_id": "usage-1"},
+    )
+
+    app = create_app(
+        DummyAnalysisStore(),
+        bloom_client=object(),
+        resource_store=DummyResourceStore(),
+        token_service=service,
+        settings=_settings(),
+    )
+
+    with TestClient(app) as client:
+        listed = client.get(
+            "/api/v1/user-tokens",
+            headers={"Authorization": f"Bearer {auth_plaintext}"},
+        )
+        usage = client.get(
+            f"/api/v1/user-tokens/{target_record.token_euid}/usage",
+            headers={"Authorization": f"Bearer {auth_plaintext}"},
+        )
+        revoked = client.post(
+            f"/api/v1/user-tokens/{target_record.token_euid}/revoke",
+            headers={"Authorization": f"Bearer {auth_plaintext}"},
+            json={"note": "cleanup"},
+        )
+
+    assert listed.status_code == 200, listed.text
+    assert {item["token_name"] for item in listed.json()} >= {"auth token", "target token"}
+    assert usage.status_code == 200, usage.text
+    assert usage.json()[0]["endpoint"] == "/api/v1/worksets"
+    assert revoked.status_code == 200, revoked.text
+    assert revoked.json()["status"] == "REVOKED"

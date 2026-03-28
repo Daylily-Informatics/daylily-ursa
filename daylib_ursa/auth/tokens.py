@@ -5,11 +5,10 @@ import hmac
 import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any, Literal
+from typing import Any
+from collections.abc import Callable
 
-import httpx
-
-from daylib_ursa.resource_store import ResourceStore
+from daylib_ursa.auth.dependencies import AuthError, CurrentUser
 from daylib_ursa.tapdb_graph import TapDBBackend, from_json_addl, utc_now_iso
 
 USER_TOKEN_TEMPLATE = "integration/auth/user-token/1.0/"
@@ -19,30 +18,6 @@ USER_TOKEN_USAGE_TEMPLATE = "integration/auth/user-token-usage/1.0/"
 USER_TOKEN_PREFIX = "urs_"
 TOKEN_STATUS_ACTIVE = "ACTIVE"
 TOKEN_STATUS_REVOKED = "REVOKED"
-
-
-class AuthError(RuntimeError):
-    """Raised when Ursa auth or token operations fail."""
-
-
-@dataclass(frozen=True)
-class ActorContext:
-    user_id: str
-    atlas_tenant_id: str
-    roles: tuple[str, ...]
-    email: str | None = None
-    display_name: str | None = None
-    organization: str | None = None
-    site: str | None = None
-    auth_source: Literal["atlas_bearer", "ursa_token"] = "atlas_bearer"
-    token_euid: str | None = None
-    token_scope: str | None = None
-    client_registration_euid: str | None = None
-
-    @property
-    def is_admin(self) -> bool:
-        admin_markers = {"admin", "atlas_admin", "ursa_admin", "tenant_admin", "org_admin"}
-        return any(role in admin_markers or role.endswith(":admin") for role in self.roles)
 
 
 @dataclass(frozen=True)
@@ -79,206 +54,42 @@ class UserTokenUsageRecord:
 
 @dataclass(frozen=True)
 class TokenValidationResult:
-    actor: ActorContext
+    actor: CurrentUser
     token: UserTokenRecord
-
-
-@dataclass(frozen=True)
-class AtlasUserDirectoryEntry:
-    user_id: str
-    atlas_tenant_id: str
-    organization_id: str
-    organization_name: str | None
-    site_id: str | None
-    site_name: str | None
-    roles: tuple[str, ...]
-    email: str | None
-    display_name: str | None
-    is_active: bool
 
 
 def _iso_now() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
-def _normalize_roles(raw_roles: Any) -> tuple[str, ...]:
-    if isinstance(raw_roles, str):
-        items = [raw_roles]
-    elif isinstance(raw_roles, list):
-        items = [str(item) for item in raw_roles]
-    else:
-        items = []
-    normalized = []
-    seen: set[str] = set()
-    for item in items:
-        value = str(item or "").strip().lower()
-        if not value or value in seen:
-            continue
-        seen.add(value)
-        normalized.append(value)
-    if not normalized:
-        normalized.append("internal_ro")
-    return tuple(normalized)
+def _current_user_snapshot(current_user: CurrentUser) -> dict[str, Any]:
+    return {
+        "sub": current_user.sub,
+        "email": current_user.email,
+        "name": current_user.name,
+        "tenant_id": str(current_user.tenant_id),
+        "roles": list(current_user.roles),
+    }
 
 
-def _coerce_actor(body: dict[str, Any], *, auth_source: Literal["atlas_bearer", "ursa_token"]) -> ActorContext:
-    user_id = str(body.get("user_id") or body.get("subject") or body.get("sub") or "").strip()
-    atlas_tenant_id = str(body.get("atlas_tenant_id") or body.get("tenant_id") or "").strip()
-    if not user_id:
-        raise AuthError("Atlas identity response missing user_id")
-    if not atlas_tenant_id:
-        raise AuthError("Atlas identity response missing atlas_tenant_id")
-    return ActorContext(
-        user_id=user_id,
-        atlas_tenant_id=atlas_tenant_id,
-        roles=_normalize_roles(body.get("roles")),
-        email=str(body.get("email") or "").strip() or None,
-        display_name=str(body.get("display_name") or body.get("name") or "").strip() or None,
-        organization=(
-            str(
-                body.get("organization_name")
-                or body.get("organization")
-                or body.get("org")
-                or ""
-            ).strip()
-            or None
-        ),
-        site=str(body.get("site_name") or body.get("site") or "").strip() or None,
-        auth_source=auth_source,
+def _normalize_snapshot(snapshot: dict[str, Any]) -> CurrentUser:
+    from uuid import UUID
+
+    sub = str(snapshot.get("sub") or "").strip()
+    tenant_value = str(snapshot.get("tenant_id") or "").strip()
+    if not sub or not tenant_value:
+        raise AuthError("Token snapshot is incomplete; reissue required")
+    try:
+        tenant_uuid = UUID(tenant_value)
+    except ValueError as exc:
+        raise AuthError("Token snapshot has invalid tenant_id; reissue required") from exc
+    return CurrentUser(
+        sub=sub,
+        email=str(snapshot.get("email") or "").strip(),
+        name=str(snapshot.get("name") or "").strip() or None,
+        tenant_id=tenant_uuid,
+        roles=[str(item) for item in list(snapshot.get("roles") or [])],
     )
-
-
-class AtlasIdentityClient:
-    def __init__(
-        self,
-        *,
-        base_url: str,
-        internal_api_key: str | None = None,
-        verify_ssl: bool = True,
-        timeout_seconds: float = 10.0,
-        client: httpx.Client | None = None,
-    ) -> None:
-        self.base_url = str(base_url or "").strip().rstrip("/")
-        self.internal_api_key = str(internal_api_key or "").strip()
-        self.verify_ssl = verify_ssl
-        self.timeout_seconds = timeout_seconds
-        self.client = client
-
-    def _http_client(self) -> tuple[httpx.Client, bool]:
-        if self.client is not None:
-            return self.client, False
-        return (
-            httpx.Client(timeout=self.timeout_seconds, verify=self.verify_ssl),
-            True,
-        )
-
-    def resolve_access_token(self, access_token: str) -> ActorContext:
-        token = str(access_token or "").strip()
-        if not token:
-            raise AuthError("Bearer token is required")
-        client, close_client = self._http_client()
-        try:
-            response = client.get(
-                f"{self.base_url}/auth/me",
-                headers={
-                    "Accept": "application/json",
-                    "Authorization": f"Bearer {token}",
-                },
-            )
-        except httpx.HTTPError as exc:
-            raise AuthError(f"Atlas identity lookup failed: {exc}") from exc
-        finally:
-            if close_client:
-                client.close()
-        if response.status_code >= 400:
-            raise AuthError(f"Atlas identity lookup returned {response.status_code}: {response.text}")
-        return _coerce_actor(dict(response.json()), auth_source="atlas_bearer")
-
-    def resolve_user(self, user_id: str) -> ActorContext:
-        if not self.internal_api_key:
-            raise AuthError("ATLAS_INTERNAL_API_KEY is required for Ursa token validation")
-        target = str(user_id or "").strip()
-        if not target:
-            raise AuthError("user_id is required")
-        client, close_client = self._http_client()
-        try:
-            response = client.get(
-                f"{self.base_url}/internal/users/{target}/context",
-                headers={
-                    "Accept": "application/json",
-                    "X-API-Key": self.internal_api_key,
-                },
-            )
-        except httpx.HTTPError as exc:
-            raise AuthError(f"Atlas user lookup failed: {exc}") from exc
-        finally:
-            if close_client:
-                client.close()
-        if response.status_code >= 400:
-            raise AuthError(f"Atlas user lookup returned {response.status_code}: {response.text}")
-        return _coerce_actor(dict(response.json()), auth_source="ursa_token")
-
-    def list_users(
-        self,
-        *,
-        tenant_id: str | None = None,
-        search: str | None = None,
-        active_only: bool = True,
-        limit: int = 50,
-        skip: int = 0,
-    ) -> list[AtlasUserDirectoryEntry]:
-        if not self.internal_api_key:
-            raise AuthError("ATLAS_INTERNAL_API_KEY is required for Atlas admin user search")
-        params: dict[str, Any] = {
-            "active_only": "true" if active_only else "false",
-            "limit": max(1, min(int(limit or 50), 200)),
-            "skip": max(0, int(skip or 0)),
-        }
-        if str(tenant_id or "").strip():
-            params["tenant_id"] = str(tenant_id).strip()
-        if str(search or "").strip():
-            params["search"] = str(search).strip()
-
-        client, close_client = self._http_client()
-        try:
-            response = client.get(
-                f"{self.base_url}/internal/users",
-                headers={
-                    "Accept": "application/json",
-                    "X-API-Key": self.internal_api_key,
-                },
-                params=params,
-            )
-        except httpx.HTTPError as exc:
-            raise AuthError(f"Atlas user search failed: {exc}") from exc
-        finally:
-            if close_client:
-                client.close()
-        if response.status_code >= 400:
-            raise AuthError(f"Atlas user search returned {response.status_code}: {response.text}")
-        body = dict(response.json())
-        items = body.get("items")
-        if not isinstance(items, list):
-            raise AuthError("Atlas user search response missing items")
-        results: list[AtlasUserDirectoryEntry] = []
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            results.append(
-                AtlasUserDirectoryEntry(
-                    user_id=str(item.get("user_id") or "").strip(),
-                    atlas_tenant_id=str(item.get("tenant_id") or "").strip(),
-                    organization_id=str(item.get("organization_id") or "").strip(),
-                    organization_name=str(item.get("organization_name") or "").strip() or None,
-                    site_id=str(item.get("site_id") or "").strip() or None,
-                    site_name=str(item.get("site_name") or "").strip() or None,
-                    roles=_normalize_roles(item.get("roles")),
-                    email=str(item.get("email") or "").strip() or None,
-                    display_name=str(item.get("display_name") or "").strip() or None,
-                    is_active=bool(item.get("is_active", True)),
-                )
-            )
-        return results
 
 
 class UserTokenService:
@@ -286,12 +97,10 @@ class UserTokenService:
         self,
         *,
         backend: TapDBBackend,
-        identity_client: AtlasIdentityClient,
-        resource_store: ResourceStore | None = None,
+        user_lookup: Callable[[str], CurrentUser | None] | None = None,
     ) -> None:
         self.backend = backend
-        self.identity_client = identity_client
-        self.resource_store = resource_store
+        self.user_lookup = user_lookup
 
     @staticmethod
     def generate_plaintext_token() -> str:
@@ -336,18 +145,38 @@ class UserTokenService:
             status=str(revision_payload.get("status") or TOKEN_STATUS_ACTIVE),
             expires_at=str(revision_payload.get("expires_at") or ""),
             created_at=str(token_payload.get("created_at") or utc_now_iso()),
-            updated_at=str(revision_payload.get("created_at") or token_payload.get("updated_at") or utc_now_iso()),
+            updated_at=str(
+                revision_payload.get("created_at")
+                or token_payload.get("updated_at")
+                or utc_now_iso()
+            ),
             created_by=str(token_payload.get("created_by") or "").strip() or None,
             last_used_at=str(revision_payload.get("last_used_at") or "").strip() or None,
             revoked_at=str(revision_payload.get("revoked_at") or "").strip() or None,
             note=str(revision_payload.get("note") or "").strip() or None,
-            client_registration_euid=str(token_payload.get("client_registration_euid") or "").strip() or None,
+            client_registration_euid=str(
+                token_payload.get("client_registration_euid") or ""
+            ).strip()
+            or None,
         )
+
+    def _resolve_owner_snapshot(self, *, actor: CurrentUser, owner_user_id: str) -> CurrentUser:
+        owner = str(owner_user_id or "").strip()
+        if owner == actor.sub:
+            return actor
+        if not actor.is_admin:
+            raise AuthError("Cannot create tokens for another user")
+        if self.user_lookup is None:
+            raise AuthError("User lookup is required to create tokens for another user")
+        resolved = self.user_lookup(owner)
+        if resolved is None:
+            raise AuthError(f"User not found for token creation: {owner}")
+        return resolved
 
     def create_token(
         self,
         *,
-        actor: ActorContext,
+        actor: CurrentUser,
         owner_user_id: str,
         token_name: str,
         scope: str,
@@ -358,13 +187,14 @@ class UserTokenService:
         owner = str(owner_user_id or "").strip()
         if not owner:
             raise AuthError("owner_user_id is required")
-        if owner != actor.user_id and not actor.is_admin:
-            raise AuthError("Cannot create tokens for another user")
         if client_registration_euid and not actor.is_admin:
             raise AuthError("Client-bound tokens require admin privileges")
+        owner_user = self._resolve_owner_snapshot(actor=actor, owner_user_id=owner)
         expires_at = (
-            datetime.now(UTC) + timedelta(days=max(1, min(int(expires_in_days or 30), 3650)))
-        ).isoformat().replace("+00:00", "Z")
+            (datetime.now(UTC) + timedelta(days=max(1, min(int(expires_in_days or 30), 3650))))
+            .isoformat()
+            .replace("+00:00", "Z")
+        )
         plaintext = self.generate_plaintext_token()
         token_hash = self.hash_token(plaintext)
         token_prefix = self.display_prefix(plaintext)
@@ -376,16 +206,19 @@ class UserTokenService:
                 USER_TOKEN_TEMPLATE,
                 token_name.strip(),
                 json_addl={
-                    "owner_user_id": owner,
+                    "owner_user_id": owner_user.sub,
+                    "tenant_id": str(owner_user.tenant_id),
+                    "user_snapshot": _current_user_snapshot(owner_user),
                     "token_name": token_name.strip(),
                     "token_prefix": token_prefix,
                     "scope": str(scope or "internal_ro").strip().lower() or "internal_ro",
-                    "created_by": actor.user_id,
+                    "created_by": actor.sub,
                     "created_at": created_at,
                     "updated_at": created_at,
                     "client_registration_euid": str(client_registration_euid or "").strip() or None,
                 },
                 bstatus=TOKEN_STATUS_ACTIVE,
+                tenant_id=owner_user.tenant_id,
             )
             revision = self.backend.create_instance(
                 session,
@@ -400,10 +233,11 @@ class UserTokenService:
                     "last_used_at": None,
                     "revoked_at": None,
                     "note": note,
-                    "created_by": actor.user_id,
+                    "created_by": actor.sub,
                     "created_at": created_at,
                 },
                 bstatus=TOKEN_STATUS_ACTIVE,
+                tenant_id=owner_user.tenant_id,
             )
             self.backend.create_lineage(
                 session,
@@ -413,11 +247,13 @@ class UserTokenService:
             )
             return self._token_record(session, token), plaintext
 
-    def list_tokens(self, *, actor: ActorContext, owner_user_id: str | None = None) -> list[UserTokenRecord]:
+    def list_tokens(
+        self, *, actor: CurrentUser, owner_user_id: str | None = None
+    ) -> list[UserTokenRecord]:
         target_owner = None if owner_user_id is None else str(owner_user_id).strip()
         if target_owner is None:
-            target_owner = actor.user_id
-        if target_owner != actor.user_id and not actor.is_admin:
+            target_owner = actor.sub
+        if target_owner != actor.sub and not actor.is_admin:
             raise AuthError("Cannot list another user's tokens")
         with self.backend.session_scope(commit=False) as session:
             if actor.is_admin and target_owner == "*":
@@ -436,7 +272,9 @@ class UserTokenService:
                 )
             return [self._token_record(session, token) for token in tokens]
 
-    def revoke_token(self, *, actor: ActorContext, token_euid: str, note: str | None = None) -> UserTokenRecord:
+    def revoke_token(
+        self, *, actor: CurrentUser, token_euid: str, note: str | None = None
+    ) -> UserTokenRecord:
         with self.backend.session_scope(commit=True) as session:
             token = self.backend.find_instance_by_euid(
                 session,
@@ -448,7 +286,7 @@ class UserTokenService:
                 raise KeyError(f"token not found: {token_euid}")
             token_payload = from_json_addl(token)
             owner_user_id = str(token_payload.get("owner_user_id") or "")
-            if owner_user_id != actor.user_id and not actor.is_admin:
+            if owner_user_id != actor.sub and not actor.is_admin:
                 raise AuthError("Cannot revoke another user's token")
             latest = self._latest_revision(session, token)
             if latest is None:
@@ -471,10 +309,11 @@ class UserTokenService:
                     "last_used_at": str(latest_payload.get("last_used_at") or "").strip() or None,
                     "revoked_at": created_at,
                     "note": note or "revoked",
-                    "created_by": actor.user_id,
+                    "created_by": actor.sub,
                     "created_at": created_at,
                 },
                 bstatus=TOKEN_STATUS_REVOKED,
+                tenant_id=token.tenant_id,
             )
             self.backend.create_lineage(
                 session,
@@ -507,6 +346,7 @@ class UserTokenService:
                 raise AuthError("Token parent not found")
             token = parents[0]
             record = self._token_record(session, token)
+            snapshot = from_json_addl(token).get("user_snapshot")
         if not hmac.compare_digest(self.hash_token(token_value), token_hash):
             raise AuthError("Token hash mismatch")
         if record.status == TOKEN_STATUS_REVOKED:
@@ -516,20 +356,9 @@ class UserTokenService:
             expires_dt = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
             if expires_dt <= datetime.now(UTC):
                 raise AuthError("Token is expired")
-        actor = self.identity_client.resolve_user(record.owner_user_id)
-        actor = ActorContext(
-            user_id=actor.user_id,
-            atlas_tenant_id=actor.atlas_tenant_id,
-            roles=actor.roles,
-            email=actor.email,
-            display_name=actor.display_name,
-            organization=actor.organization,
-            site=actor.site,
-            auth_source="ursa_token",
-            token_euid=record.token_euid,
-            token_scope=record.scope,
-            client_registration_euid=record.client_registration_euid,
-        )
+        if not isinstance(snapshot, dict):
+            raise AuthError("Token snapshot missing; reissue required")
+        actor = _normalize_snapshot(snapshot)
         return TokenValidationResult(actor=actor, token=record)
 
     def log_usage(
@@ -575,6 +404,7 @@ class UserTokenService:
                         "created_at": created_at,
                     },
                     bstatus=str(latest_payload.get("status") or TOKEN_STATUS_ACTIVE),
+                    tenant_id=token.tenant_id,
                 )
                 self.backend.create_lineage(
                     session,
@@ -598,6 +428,7 @@ class UserTokenService:
                     "created_at": utc_now_iso(),
                 },
                 bstatus="LOGGED",
+                tenant_id=token.tenant_id,
             )
             self.backend.create_lineage(
                 session,
@@ -606,7 +437,7 @@ class UserTokenService:
                 relationship_type="usage",
             )
 
-    def list_usage(self, *, actor: ActorContext, token_euid: str) -> list[UserTokenUsageRecord]:
+    def list_usage(self, *, actor: CurrentUser, token_euid: str) -> list[UserTokenUsageRecord]:
         with self.backend.session_scope(commit=False) as session:
             token = self.backend.find_instance_by_euid(
                 session,
@@ -616,7 +447,7 @@ class UserTokenService:
             if token is None:
                 raise KeyError(f"token not found: {token_euid}")
             record = self._token_record(session, token)
-            if record.owner_user_id != actor.user_id and not actor.is_admin:
+            if record.owner_user_id != actor.sub and not actor.is_admin:
                 raise AuthError("Cannot inspect another user's token usage")
             usages = self.backend.list_children(
                 session,

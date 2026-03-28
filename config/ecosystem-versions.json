@@ -1,10 +1,10 @@
 {
   "schema_version": "1",
-  "last_updated": "2026-03-24",
+  "last_updated": "2026-03-27",
   "components": {
     "daylily-ursa": {
       "repo": "Daylily-Informatics/daylily-ursa",
-      "current": "0.2.5"
+      "current": "3.0.2"
     },
     "daylily-ephemeral-cluster": {
       "repo": "Daylily-Informatics/daylily-ephemeral-cluster",
@@ -16,7 +16,7 @@
     },
     "daylily-cognito": {
       "repo": "Daylily-Informatics/daylily-cognito",
-      "current": "0.1.24"
+      "current": "0.1.28"
     },
     "daylily-tapdb": {
       "repo": "Daylily-Informatics/daylily-tapdb",
@@ -74,9 +74,9 @@
       "ephemeral_cluster": "0.7.601",
       "omics_analysis": "0.7.602",
       "cognito": "0.1.24",
-      "tapdb": "0.2.5",
+      "tapdb": "3.0.2",
       "omics_references": "0.3.1",
-      "notes": "Promoted TapDB baseline to 0.2.5 for user-writable namespaced socket directories"
+      "notes": "Pinned TapDB baseline to 3.0.2"
     }
   ]
 }

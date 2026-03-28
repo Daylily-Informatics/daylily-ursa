@@ -1,14 +1,19 @@
 from __future__ import annotations
 
+import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import io
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
+from daylib_ursa.analysis_store import AnalysisRecord, AnalysisState, ReviewState
 from daylib_ursa.auth import (
-    ActorContext,
     AtlasUserDirectoryEntry,
+    CurrentUser,
+    Role,
     UserTokenService,
 )
 from daylib_ursa.config import Settings
@@ -17,8 +22,14 @@ from daylib_ursa.resource_store import (
     ClusterJobEventRecord,
     ClusterJobRecord,
     LinkedBucketRecord,
+    ManifestRecord,
+    WorksetRecord,
 )
 from daylib_ursa.workset_api import create_app
+
+TENANT_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
+ADMIN_USER_ID = "00000000-0000-0000-0000-000000000101"
+SECONDARY_USER_ID = "00000000-0000-0000-0000-000000000202"
 
 
 @dataclass
@@ -31,6 +42,7 @@ class _Instance:
     template_code: str
     created_dt: datetime
     modified_dt: datetime
+    tenant_id: uuid.UUID | None = None
     polymorphic_discriminator: str = "generic_instance"
 
 
@@ -45,7 +57,17 @@ class MemoryBackend:
         _ = commit
         yield object()
 
-    def create_instance(self, session, template_code: str, name: str, *, json_addl, bstatus, singleton=False):
+    def create_instance(
+        self,
+        session,
+        template_code: str,
+        name: str,
+        *,
+        json_addl,
+        bstatus,
+        tenant_id: uuid.UUID | None = None,
+        singleton: bool = False,
+    ):
         _ = (session, singleton)
         self._uid += 1
         prefix = {
@@ -63,6 +85,7 @@ class MemoryBackend:
             template_code=template_code,
             created_dt=now,
             modified_dt=now,
+            tenant_id=tenant_id,
         )
         self.instances.append(instance)
         return instance
@@ -87,7 +110,9 @@ class MemoryBackend:
             if target is child and (relationship_type is None or rel == relationship_type)
         ]
 
-    def find_instance_by_euid(self, session, *, template_code: str, value: str, for_update: bool = False):
+    def find_instance_by_euid(
+        self, session, *, template_code: str, value: str, for_update: bool = False
+    ):
         _ = (session, for_update)
         for instance in self.instances:
             if instance.template_code == template_code and instance.euid == value:
@@ -103,12 +128,15 @@ class MemoryBackend:
                 return instance
         return None
 
-    def list_instances_by_property(self, session, *, template_code: str, key: str, value: str, limit: int = 200):
+    def list_instances_by_property(
+        self, session, *, template_code: str, key: str, value: str, limit: int = 200
+    ):
         _ = session
         rows = [
             instance
             for instance in self.instances
-            if instance.template_code == template_code and str(instance.json_addl.get(key) or "") == value
+            if instance.template_code == template_code
+            and str(instance.json_addl.get(key) or "") == value
         ]
         return list(reversed(rows))[:limit]
 
@@ -118,173 +146,199 @@ class MemoryBackend:
         return list(reversed(rows))[:limit]
 
 
-class DummyIdentityClient:
+class DummyAuthProvider:
     def __init__(self, *, admin: bool = True) -> None:
         self.admin = admin
 
-    def resolve_access_token(self, access_token: str) -> ActorContext:
+    def resolve_access_token(self, access_token: str) -> CurrentUser:
         assert access_token == "atlas-token"
-        return ActorContext(
-            user_id="user-1",
-            atlas_tenant_id="TEN-1",
-            roles=("admin",) if self.admin else ("internal_ro",),
+        return CurrentUser(
+            sub=ADMIN_USER_ID,
             email="alice@example.com",
-            display_name="Alice Example",
+            name="Alice Example",
+            tenant_id=TENANT_ID,
+            roles=[Role.ADMIN.value] if self.admin else [Role.READ_ONLY.value],
             organization="Atlas Org",
             site="Seattle",
-            auth_source="atlas_bearer",
+            auth_source="cognito",
         )
 
-    def resolve_user(self, user_id: str) -> ActorContext:
-        return ActorContext(
-            user_id=user_id,
-            atlas_tenant_id="TEN-1",
-            roles=("admin",) if self.admin else ("internal_ro",),
-            email="alice@example.com",
-            display_name="Alice Example",
-            organization="Atlas Org",
-            site="Seattle",
-            auth_source="ursa_token",
-        )
 
+class DummyUserDirectory:
     def list_users(self, **_kwargs):
         return [
             AtlasUserDirectoryEntry(
-                user_id="user-2",
-                atlas_tenant_id="TEN-1",
+                user_id=SECONDARY_USER_ID,
+                tenant_id=TENANT_ID,
                 organization_id="ORG-1",
                 organization_name="Atlas Org",
                 site_id="SITE-1",
                 site_name="Seattle",
-                roles=("external_user",),
+                roles=(Role.EXTERNAL_USER.value,),
                 email="bob@example.com",
                 display_name="Bob Example",
                 is_active=True,
             )
         ]
 
+    def get_user(self, user_id: str) -> CurrentUser | None:
+        if user_id != SECONDARY_USER_ID:
+            return None
+        return CurrentUser(
+            sub=SECONDARY_USER_ID,
+            email="bob@example.com",
+            name="Bob Example",
+            tenant_id=TENANT_ID,
+            roles=[Role.EXTERNAL_USER.value],
+            auth_source="cognito",
+            organization="Atlas Org",
+            site="Seattle",
+        )
+
 
 class DummyAnalysisStore:
-    def list_analyses(self, *, atlas_tenant_id=None, workset_euid=None, limit=200):  # pragma: no cover
-        _ = (atlas_tenant_id, workset_euid, limit)
-        return []
+    def __init__(self) -> None:
+        self.record = AnalysisRecord(
+            analysis_euid="AN-1",
+            workset_euid="WS-1",
+            run_euid="RUN-1",
+            flowcell_id="FLOW-1",
+            lane="1",
+            library_barcode="LIB-1",
+            sequenced_library_assignment_euid="SQA-1",
+            tenant_id=TENANT_ID,
+            atlas_trf_euid="TRF-1",
+            atlas_test_euid="TST-1",
+            atlas_test_fulfillment_item_euid="TPC-1",
+            analysis_type="somatic",
+            state=AnalysisState.REVIEW_PENDING.value,
+            review_state=ReviewState.PENDING.value,
+            result_status="PENDING",
+            run_folder="s3://ursa-internal/RUN-1/",
+            internal_bucket="ursa-internal",
+            input_references=[],
+            result_payload={},
+            metadata={},
+            created_at="2026-03-25T00:00:00Z",
+            updated_at="2026-03-25T00:00:00Z",
+            atlas_return={},
+            artifacts=[],
+        )
+
+    def list_analyses(self, *, tenant_id=None, workset_euid=None, limit=200):
+        _ = limit
+        if tenant_id is not None and tenant_id != self.record.tenant_id:
+            return []
+        if workset_euid is not None and workset_euid != self.record.workset_euid:
+            return []
+        return [self.record]
+
+    def get_analysis(self, analysis_euid: str):
+        return self.record if analysis_euid == self.record.analysis_euid else None
 
 
 class MemoryResourceStore:
     def __init__(self) -> None:
+        self.worksets: dict[str, WorksetRecord] = {
+            "WS-1": WorksetRecord(
+                workset_euid="WS-1",
+                name="Tumor Batch",
+                tenant_id=TENANT_ID,
+                owner_user_id=ADMIN_USER_ID,
+                state="ACTIVE",
+                artifact_set_euids=["AS-1"],
+                metadata={},
+                created_at="2026-03-25T00:00:00Z",
+                updated_at="2026-03-25T00:00:00Z",
+                manifests=[],
+                analysis_euids=["AN-1"],
+            )
+        }
+        self.manifests: dict[str, ManifestRecord] = {
+            "MF-1": ManifestRecord(
+                manifest_euid="MF-1",
+                name="Manifest One",
+                workset_euid="WS-1",
+                tenant_id=TENANT_ID,
+                owner_user_id=ADMIN_USER_ID,
+                artifact_set_euid="AS-1",
+                artifact_euids=["AT-1"],
+                input_references=[{"reference_type": "artifact_set_euid", "value": "AS-1"}],
+                metadata={"editor_manifest_tsv": "sample\tartifact\nS1\tAT-1\n"},
+                created_at="2026-03-25T00:05:00Z",
+                updated_at="2026-03-25T00:05:00Z",
+                state="ACTIVE",
+            )
+        }
+        self.buckets: dict[str, LinkedBucketRecord] = {
+            "BK-1": LinkedBucketRecord(
+                bucket_id="BK-1",
+                bucket_name="omics-inputs",
+                tenant_id=TENANT_ID,
+                owner_user_id=ADMIN_USER_ID,
+                display_name="Primary Inputs",
+                metadata={},
+                created_at="2026-03-25T00:10:00Z",
+                updated_at="2026-03-25T00:10:00Z",
+                state="ACTIVE",
+                bucket_type="secondary",
+                description=None,
+                prefix_restriction="incoming/",
+                read_only=False,
+                region="us-west-2",
+                is_validated=True,
+                can_read=True,
+                can_write=True,
+                can_list=True,
+                remediation_steps=[],
+            )
+        }
         self.client_registrations: dict[str, ClientRegistrationRecord] = {}
         self.cluster_jobs: dict[str, ClusterJobRecord] = {}
-        self.buckets: dict[str, LinkedBucketRecord] = {}
         self._client_seq = 0
         self._job_seq = 0
-        self._bucket_seq = 0
-
-    def list_worksets(self, *, atlas_tenant_id: str, limit: int = 100):
-        _ = (atlas_tenant_id, limit)
-        return []
-
-    def list_manifests(self, *, atlas_tenant_id: str, limit: int = 200):
-        _ = (atlas_tenant_id, limit)
-        return []
-
-    def list_linked_buckets(self, *, atlas_tenant_id: str, limit: int = 200):
-        _ = limit
-        return [item for item in self.buckets.values() if item.atlas_tenant_id == atlas_tenant_id and item.state != "DELETED"]
-
-    def create_linked_bucket(
-        self,
-        *,
-        bucket_name: str,
-        atlas_tenant_id: str,
-        owner_user_id: str,
-        display_name=None,
-        bucket_type="secondary",
-        description=None,
-        prefix_restriction=None,
-        read_only=False,
-        region=None,
-        is_validated=False,
-        can_read=False,
-        can_write=False,
-        can_list=False,
-        remediation_steps=None,
-        metadata=None,
-    ):
-        self._bucket_seq += 1
-        record = LinkedBucketRecord(
-            bucket_id=f"BK-{self._bucket_seq}",
-            bucket_name=bucket_name,
-            atlas_tenant_id=atlas_tenant_id,
-            owner_user_id=owner_user_id,
-            display_name=display_name,
-            metadata=dict(metadata or {}),
-            created_at="2026-03-25T00:00:00Z",
-            updated_at="2026-03-25T00:00:00Z",
+        self.worksets["WS-1"] = WorksetRecord(
+            workset_euid="WS-1",
+            name="Tumor Batch",
+            tenant_id=TENANT_ID,
+            owner_user_id=ADMIN_USER_ID,
             state="ACTIVE",
-            bucket_type=bucket_type,
-            description=description,
-            prefix_restriction=prefix_restriction,
-            read_only=read_only,
-            region=region,
-            is_validated=is_validated,
-            can_read=can_read,
-            can_write=can_write,
-            can_list=can_list,
-            remediation_steps=list(remediation_steps or []),
+            artifact_set_euids=["AS-1"],
+            metadata={},
+            created_at="2026-03-25T00:00:00Z",
+            updated_at="2026-03-25T00:05:00Z",
+            manifests=[self.manifests["MF-1"]],
+            analysis_euids=["AN-1"],
         )
-        self.buckets[record.bucket_id] = record
-        return record
+
+    def list_worksets(self, *, tenant_id: uuid.UUID, limit: int = 100):
+        _ = limit
+        return [item for item in self.worksets.values() if item.tenant_id == tenant_id]
+
+    def get_workset(self, workset_euid: str):
+        return self.worksets.get(workset_euid)
+
+    def list_manifests(self, *, tenant_id: uuid.UUID, limit: int = 200):
+        _ = limit
+        return [item for item in self.manifests.values() if item.tenant_id == tenant_id]
+
+    def get_manifest(self, manifest_euid: str):
+        return self.manifests.get(manifest_euid)
+
+    def list_linked_buckets(self, *, tenant_id: uuid.UUID, limit: int = 200):
+        _ = limit
+        return [
+            item
+            for item in self.buckets.values()
+            if item.tenant_id == tenant_id and item.state != "DELETED"
+        ]
 
     def get_linked_bucket(self, bucket_id: str):
         return self.buckets.get(bucket_id)
 
-    def update_linked_bucket(self, *, bucket_id: str, **updates):
-        record = self.buckets.get(bucket_id)
-        if record is None:
-            return None
-        updated = LinkedBucketRecord(
-            bucket_id=record.bucket_id,
-            bucket_name=record.bucket_name,
-            atlas_tenant_id=record.atlas_tenant_id,
-            owner_user_id=record.owner_user_id,
-            display_name=updates.get("display_name", record.display_name),
-            metadata=updates.get("metadata", record.metadata),
-            created_at=record.created_at,
-            updated_at="2026-03-25T00:00:30Z",
-            state=record.state,
-            bucket_type=updates.get("bucket_type", record.bucket_type),
-            description=updates.get("description", record.description),
-            prefix_restriction=updates.get("prefix_restriction", record.prefix_restriction),
-            read_only=record.read_only if updates.get("read_only") is None else updates.get("read_only"),
-            region=updates.get("region", record.region),
-            is_validated=record.is_validated if updates.get("is_validated") is None else updates.get("is_validated"),
-            can_read=record.can_read if updates.get("can_read") is None else updates.get("can_read"),
-            can_write=record.can_write if updates.get("can_write") is None else updates.get("can_write"),
-            can_list=record.can_list if updates.get("can_list") is None else updates.get("can_list"),
-            remediation_steps=updates.get("remediation_steps", record.remediation_steps),
-        )
-        self.buckets[bucket_id] = updated
-        return updated
-
-    def delete_linked_bucket(self, *, bucket_id: str):
-        record = self.buckets.get(bucket_id)
-        if record is None:
-            return None
-        deleted = LinkedBucketRecord(
-            bucket_id=record.bucket_id,
-            bucket_name=record.bucket_name,
-            atlas_tenant_id=record.atlas_tenant_id,
-            owner_user_id=record.owner_user_id,
-            display_name=record.display_name,
-            metadata=record.metadata,
-            created_at=record.created_at,
-            updated_at="2026-03-25T00:01:00Z",
-            state="DELETED",
-        )
-        self.buckets[bucket_id] = deleted
-        return deleted
-
-    def create_client_registration(self, *, client_name: str, owner_user_id: str, sponsor_user_id: str, scopes, metadata):
+    def create_client_registration(
+        self, *, client_name: str, owner_user_id: str, sponsor_user_id: str, scopes, metadata
+    ):
         self._client_seq += 1
         record = ClientRegistrationRecord(
             client_registration_euid=f"UC-{self._client_seq}",
@@ -310,7 +364,9 @@ class MemoryResourceStore:
             values = [item for item in values if item.owner_user_id == owner_user_id]
         return values
 
-    def add_cluster_job(self, *, cluster_name: str, owner_user_id: str, sponsor_user_id: str) -> ClusterJobRecord:
+    def add_cluster_job(
+        self, *, cluster_name: str, owner_user_id: str, sponsor_user_id: str
+    ) -> ClusterJobRecord:
         self._job_seq += 1
         record = ClusterJobRecord(
             job_euid=f"CJ-{self._job_seq}",
@@ -318,7 +374,7 @@ class MemoryResourceStore:
             cluster_name=cluster_name,
             region="us-west-2",
             region_az="us-west-2d",
-            atlas_tenant_id="TEN-1",
+            tenant_id=TENANT_ID,
             owner_user_id=owner_user_id,
             sponsor_user_id=sponsor_user_id,
             state="QUEUED",
@@ -347,8 +403,8 @@ class MemoryResourceStore:
         self.cluster_jobs[record.job_euid] = record
         return record
 
-    def list_cluster_jobs(self, *, atlas_tenant_id: str | None = None, limit: int = 200):
-        _ = (atlas_tenant_id, limit)
+    def list_cluster_jobs(self, *, tenant_id: uuid.UUID | None = None, limit: int = 200):
+        _ = (tenant_id, limit)
         return list(self.cluster_jobs.values())
 
     def get_cluster_job(self, job_euid: str):
@@ -356,7 +412,9 @@ class MemoryResourceStore:
 
 
 class DummyClusterInfo:
-    def __init__(self, cluster_name: str, region: str, cluster_status: str = "CREATE_COMPLETE") -> None:
+    def __init__(
+        self, cluster_name: str, region: str, cluster_status: str = "CREATE_COMPLETE"
+    ) -> None:
         self.cluster_name = cluster_name
         self.region = region
         self.cluster_status = cluster_status
@@ -373,7 +431,9 @@ class DummyClusterInfo:
 
 
 class DummyClusterService:
-    def get_all_clusters_with_status(self, *, force_refresh: bool = False, fetch_ssh_status: bool = False):
+    def get_all_clusters_with_status(
+        self, *, force_refresh: bool = False, fetch_ssh_status: bool = False
+    ):
         _ = (force_refresh, fetch_ssh_status)
         return [DummyClusterInfo("cluster-1", "us-west-2")]
 
@@ -402,7 +462,9 @@ class DummyClusterJobManager:
     def __init__(self, resource_store: MemoryResourceStore) -> None:
         self.resource_store = resource_store
 
-    def start_create_job(self, *, cluster_name: str, owner_user_id: str, sponsor_user_id: str, **_kwargs):
+    def start_create_job(
+        self, *, cluster_name: str, owner_user_id: str, sponsor_user_id: str, **_kwargs
+    ):
         return self.resource_store.add_cluster_job(
             cluster_name=cluster_name,
             owner_user_id=owner_user_id,
@@ -410,8 +472,28 @@ class DummyClusterJobManager:
         )
 
 
+class DummyS3Client:
+    def list_objects_v2(self, Bucket: str, **kwargs):  # noqa: N803
+        _ = (Bucket, kwargs)
+        return {
+            "Contents": [
+                {
+                    "Key": "incoming/data.txt",
+                    "Size": 5,
+                    "LastModified": datetime(2026, 3, 25, tzinfo=timezone.utc),
+                }
+            ],
+            "CommonPrefixes": [{"Prefix": "incoming/subdir/"}],
+        }
+
+    def get_object(self, Bucket: str, Key: str, **kwargs):  # noqa: N803
+        _ = (Bucket, Key, kwargs)
+        return {"Body": io.BytesIO(b"alpha\nbeta\n")}
+
+
 def _settings() -> Settings:
     return Settings(
+        aws_profile="",
         cors_origins="*",
         ursa_internal_api_key="ursa-test-key",
         bloom_base_url="https://bloom.example",
@@ -421,21 +503,29 @@ def _settings() -> Settings:
     )
 
 
-def test_admin_routes_cover_me_user_search_client_tokens_and_clusters() -> None:
+def _create_test_app(*, admin: bool = True):
     backend = MemoryBackend()
-    identity = DummyIdentityClient(admin=True)
-    token_service = UserTokenService(backend=backend, identity_client=identity)
+    auth_provider = DummyAuthProvider(admin=admin)
+    user_directory = DummyUserDirectory()
     resources = MemoryResourceStore()
-    app = create_app(
-        DummyAnalysisStore(),
-        bloom_client=object(),
-        identity_client=identity,
-        resource_store=resources,
-        token_service=token_service,
-        settings=_settings(),
-    )
+    with patch("daylib_ursa.workset_api.RegionAwareS3Client", return_value=object()):
+        app = create_app(
+            DummyAnalysisStore(),
+            bloom_client=object(),
+            auth_provider=auth_provider,
+            user_directory=user_directory,
+            resource_store=resources,
+            token_service=UserTokenService(backend=backend, user_lookup=user_directory.get_user),
+            settings=_settings(),
+        )
     app.state.cluster_service = DummyClusterService()
     app.state.cluster_job_manager = DummyClusterJobManager(resources)
+    app.state.s3_client = DummyS3Client()
+    return app, resources
+
+
+def test_admin_routes_cover_me_user_search_client_tokens_and_clusters() -> None:
+    app, resources = _create_test_app(admin=True)
 
     with TestClient(app) as client:
         me = client.get("/api/v1/me", headers={"Authorization": "Bearer atlas-token"})
@@ -445,12 +535,16 @@ def test_admin_routes_cover_me_user_search_client_tokens_and_clusters() -> None:
             headers={"Authorization": "Bearer atlas-token"},
             json={
                 "client_name": "dewey-client",
-                "owner_user_id": "user-2",
+                "owner_user_id": SECONDARY_USER_ID,
                 "scopes": ["internal_rw"],
                 "metadata": {"purpose": "integration"},
             },
         )
         registration_euid = registration.json()["client_registration_euid"]
+        registration_list = client.get(
+            "/api/v1/admin/client-registrations",
+            headers={"Authorization": "Bearer atlas-token"},
+        )
         registration_detail = client.get(
             f"/api/v1/admin/client-registrations/{registration_euid}",
             headers={"Authorization": "Bearer atlas-token"},
@@ -464,6 +558,20 @@ def test_admin_routes_cover_me_user_search_client_tokens_and_clusters() -> None:
                 "expires_in_days": 30,
             },
         )
+        admin_token = client.post(
+            "/api/v1/admin/user-tokens",
+            headers={"Authorization": "Bearer atlas-token"},
+            json={
+                "owner_user_id": SECONDARY_USER_ID,
+                "token_name": "secondary user token",
+                "scope": "internal_rw",
+                "expires_in_days": 30,
+            },
+        )
+        admin_token_list = client.get(
+            "/api/v1/admin/user-tokens",
+            headers={"Authorization": "Bearer atlas-token"},
+        )
         token_list = client.get(
             f"/api/v1/admin/client-registrations/{registration_euid}/tokens",
             headers={"Authorization": "Bearer atlas-token"},
@@ -473,7 +581,9 @@ def test_admin_routes_cover_me_user_search_client_tokens_and_clusters() -> None:
             headers={"Authorization": "Bearer atlas-token"},
             json={"note": "revoked in test"},
         )
-        cluster_list = client.get("/api/v1/clusters", headers={"Authorization": "Bearer atlas-token"})
+        cluster_list = client.get(
+            "/api/v1/clusters", headers={"Authorization": "Bearer atlas-token"}
+        )
         cluster_job = client.post(
             "/api/v1/clusters",
             headers={"Authorization": "Bearer atlas-token"},
@@ -484,7 +594,17 @@ def test_admin_routes_cover_me_user_search_client_tokens_and_clusters() -> None:
                 "s3_bucket_name": "ursa-bucket",
             },
         )
-        cluster_jobs = client.get("/api/v1/clusters/jobs", headers={"Authorization": "Bearer atlas-token"})
+        cluster_jobs = client.get(
+            "/api/v1/clusters/jobs", headers={"Authorization": "Bearer atlas-token"}
+        )
+        cluster_job_detail = client.get(
+            f"/api/v1/clusters/jobs/{cluster_job.json()['job_euid']}",
+            headers={"Authorization": "Bearer atlas-token"},
+        )
+        cluster_create_options = client.get(
+            "/api/v1/clusters/create-options?region=us-west-2",
+            headers={"Authorization": "Bearer atlas-token"},
+        )
         cluster_detail = client.get(
             "/api/v1/clusters/cluster-1?region=us-west-2",
             headers={"Authorization": "Bearer atlas-token"},
@@ -496,12 +616,19 @@ def test_admin_routes_cover_me_user_search_client_tokens_and_clusters() -> None:
 
     assert me.status_code == 200
     assert me.json()["organization"] == "Atlas Org"
+    assert me.json()["tenant_id"] == str(TENANT_ID)
     assert users.status_code == 200
-    assert users.json()[0]["user_id"] == "user-2"
+    assert users.json()[0]["user_id"] == SECONDARY_USER_ID
+    assert users.json()[0]["tenant_id"] == str(TENANT_ID)
     assert registration.status_code == 201
+    assert registration_list.status_code == 200
+    assert registration_list.json()[0]["client_registration_euid"] == registration_euid
     assert registration_detail.status_code == 200
     assert issued_token.status_code == 201
     assert issued_token.json()["plaintext_token"].startswith("urs_")
+    assert admin_token.status_code == 201
+    assert admin_token_list.status_code == 200
+    assert any(item["token_name"] == "secondary user token" for item in admin_token_list.json())
     assert token_list.status_code == 200
     assert token_list.json()[0]["client_registration_euid"] == registration_euid
     assert revoked_token.status_code == 200
@@ -511,25 +638,107 @@ def test_admin_routes_cover_me_user_search_client_tokens_and_clusters() -> None:
     assert cluster_job.status_code == 202
     assert cluster_jobs.status_code == 200
     assert cluster_jobs.json()[0]["cluster_name"] == "cluster-2"
+    assert cluster_jobs.json()[0]["tenant_id"] == str(TENANT_ID)
+    assert cluster_job_detail.status_code == 200
+    assert cluster_job_detail.json()["job_euid"] == cluster_job.json()["job_euid"]
+    assert cluster_create_options.status_code == 200
+    assert sorted(cluster_create_options.json().keys()) == ["buckets", "keypairs"]
     assert cluster_detail.status_code == 200
     assert cluster_delete.status_code == 200
     assert cluster_delete.json()["result"]["status"] == "DELETE_IN_PROGRESS"
+    assert resources.get_cluster_job(cluster_job.json()["job_euid"]) is not None
+
+
+def test_gui_routes_cover_remaining_pages_and_logout() -> None:
+    app, _resources = _create_test_app(admin=True)
+
+    with TestClient(app) as client:
+        client.post(
+            "/login",
+            data={"access_token": "atlas-token", "next_path": "/"},
+            follow_redirects=False,
+        )
+        user_token = client.post(
+            "/api/v1/user-tokens",
+            json={"token_name": "session token", "scope": "internal_rw", "expires_in_days": 30},
+        )
+        registration = client.post(
+            "/api/v1/admin/client-registrations",
+            headers={"Authorization": "Bearer atlas-token"},
+            json={
+                "client_name": "dewey-client",
+                "owner_user_id": SECONDARY_USER_ID,
+                "scopes": ["internal_rw"],
+                "metadata": {"purpose": "integration"},
+            },
+        )
+        cluster_job = client.post(
+            "/api/v1/clusters",
+            json={
+                "cluster_name": "cluster-2",
+                "region_az": "us-west-2d",
+                "ssh_key_name": "omics-key",
+                "s3_bucket_name": "ursa-bucket",
+            },
+        )
+        worksets_page = client.get("/worksets")
+        worksets_new_page = client.get("/worksets/new")
+        workset_detail_page = client.get("/worksets/WS-1")
+        manifests_page = client.get("/manifests")
+        manifest_detail_page = client.get("/manifests/MF-1")
+        bucket_detail_page = client.get("/buckets/BK-1")
+        analyses_page = client.get("/analyses")
+        analysis_detail_page = client.get("/analyses/AN-1")
+        artifacts_page = client.get("/artifacts")
+        tokens_page = client.get("/tokens")
+        token_detail_page = client.get(f"/tokens/{user_token.json()['token_euid']}")
+        clusters_page = client.get("/clusters")
+        cluster_detail_page = client.get("/clusters/cluster-1")
+        cluster_job_page = client.get(f"/clusters/jobs/{cluster_job.json()['job_euid']}")
+        admin_clients_page = client.get("/admin/clients")
+        admin_client_detail_page = client.get(
+            f"/admin/clients/{registration.json()['client_registration_euid']}"
+        )
+        logout = client.get("/logout", follow_redirects=False)
+
+    assert worksets_page.status_code == 200
+    assert "Tumor Batch" in worksets_page.text
+    assert worksets_new_page.status_code == 200
+    assert "Create Workset" in worksets_new_page.text
+    assert workset_detail_page.status_code == 200
+    assert "Workset Tumor Batch" in workset_detail_page.text
+    assert manifests_page.status_code == 200
+    assert "Manifest One" in manifests_page.text
+    assert manifest_detail_page.status_code == 200
+    assert "Manifest Manifest One" in manifest_detail_page.text
+    assert bucket_detail_page.status_code == 200
+    assert "Browse Bucket" in bucket_detail_page.text
+    assert analyses_page.status_code == 200
+    assert "AN-1" in analyses_page.text
+    assert analysis_detail_page.status_code == 200
+    assert "Analysis AN-1" in analysis_detail_page.text
+    assert artifacts_page.status_code == 200
+    assert "Artifact Tools" in artifacts_page.text
+    assert tokens_page.status_code == 200
+    assert "session token" in tokens_page.text
+    assert token_detail_page.status_code == 200
+    assert "session token" in token_detail_page.text
+    assert clusters_page.status_code == 200
+    assert "cluster-1" in clusters_page.text
+    assert cluster_detail_page.status_code == 200
+    assert "Cluster cluster-1" in cluster_detail_page.text
+    assert cluster_job_page.status_code == 200
+    assert "Cluster Job" in cluster_job_page.text
+    assert admin_clients_page.status_code == 200
+    assert "dewey-client" in admin_clients_page.text
+    assert admin_client_detail_page.status_code == 200
+    assert "Client dewey-client" in admin_client_detail_page.text
+    assert logout.status_code == 303
+    assert logout.headers["location"] == "/login"
 
 
 def test_gui_routes_use_session_auth_and_gate_admin_pages() -> None:
-    backend = MemoryBackend()
-    identity = DummyIdentityClient(admin=True)
-    resources = MemoryResourceStore()
-    app = create_app(
-        DummyAnalysisStore(),
-        bloom_client=object(),
-        identity_client=identity,
-        resource_store=resources,
-        token_service=UserTokenService(backend=backend, identity_client=identity),
-        settings=_settings(),
-    )
-    app.state.cluster_service = DummyClusterService()
-    app.state.cluster_job_manager = DummyClusterJobManager(resources)
+    app, _resources = _create_test_app(admin=True)
 
     with TestClient(app) as client:
         redirect = client.get("/", follow_redirects=False)
@@ -573,7 +782,7 @@ def test_gui_routes_use_session_auth_and_gate_admin_pages() -> None:
     assert user_token.status_code == 201
     assert cluster_job.status_code == 202
     assert session_me.status_code == 200
-    assert session_me.json()["user_id"] == "user-1"
+    assert session_me.json()["user_id"] == ADMIN_USER_ID
     assert token_detail_page.status_code == 200
     assert "session token" in token_detail_page.text
     assert cluster_job_page.status_code == 200
@@ -582,14 +791,7 @@ def test_gui_routes_use_session_auth_and_gate_admin_pages() -> None:
 
 
 def test_gui_admin_pages_reject_non_admin_sessions() -> None:
-    app = create_app(
-        DummyAnalysisStore(),
-        bloom_client=object(),
-        identity_client=DummyIdentityClient(admin=False),
-        resource_store=MemoryResourceStore(),
-        token_service=UserTokenService(backend=MemoryBackend(), identity_client=DummyIdentityClient(admin=False)),
-        settings=_settings(),
-    )
+    app, _resources = _create_test_app(admin=False)
 
     with TestClient(app) as client:
         client.post("/login", data={"access_token": "atlas-token", "next_path": "/"})

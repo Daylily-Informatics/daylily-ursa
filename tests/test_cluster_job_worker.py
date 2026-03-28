@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import os
+import uuid
 from dataclasses import replace
 from pathlib import Path
 
 from daylib_ursa.cluster_jobs import ClusterJobManager, run_cluster_create_job
 from daylib_ursa.cluster_service import ClusterService
 from daylib_ursa.resource_store import ClusterJobEventRecord, ClusterJobRecord
+
+TENANT_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
 
 
 class MemoryResourceStore:
@@ -21,7 +24,7 @@ class MemoryResourceStore:
         cluster_name: str,
         region: str,
         region_az: str,
-        atlas_tenant_id: str,
+        tenant_id: uuid.UUID,
         owner_user_id: str,
         sponsor_user_id: str,
         request: dict | None = None,
@@ -33,7 +36,7 @@ class MemoryResourceStore:
             cluster_name=cluster_name,
             region=region,
             region_az=region_az,
-            atlas_tenant_id=atlas_tenant_id,
+            tenant_id=tenant_id,
             owner_user_id=owner_user_id,
             sponsor_user_id=sponsor_user_id,
             state="QUEUED",
@@ -140,7 +143,7 @@ def test_cluster_job_manager_spawns_dedicated_worker_process(monkeypatch, tmp_pa
         region_az="us-west-2d",
         ssh_key_name="omics-key",
         s3_bucket_name="ursa-bucket",
-        atlas_tenant_id="TEN-1",
+        tenant_id=TENANT_ID,
         owner_user_id="user-1",
         sponsor_user_id="user-2",
         aws_profile="ursa",
@@ -211,7 +214,7 @@ JSON
         cluster_name="cluster-1",
         region="us-west-2",
         region_az="us-west-2d",
-        atlas_tenant_id="TEN-1",
+        tenant_id=TENANT_ID,
         owner_user_id="user-1",
         sponsor_user_id="user-2",
         request={

@@ -7,7 +7,7 @@
 # It will:
 #   1. Build the URSA conda environment from config/ursa_env.yaml if it doesn't exist
 #   2. Activate the URSA conda environment
-#   3. Install the local Ursa checkout in editable mode
+#   3. Expose the repo-local commands and Python package path
 #   4. Validate the required CLI tools from the canonical Conda environment
 
 RED='\033[0;31m'
@@ -54,19 +54,20 @@ require_tool() {
     fi
 }
 
-find_local_tapdb_repo() {
-    command -v git >/dev/null 2>&1 || return 1
+require_python_import() {
+    module_name="$1"
+    package_hint="$2"
+    if ! python - "${module_name}" >/dev/null 2>&1 <<'PY'
+import importlib
+import sys
 
-    for candidate in "${SCRIPT_DIR}/../daylily-tapdb" "${SCRIPT_DIR}/repos/daylily-tapdb"; do
-        if [ -f "${candidate}/pyproject.toml" ] \
-            && [ -d "${candidate}/.git" ] \
-            && git -C "${candidate}" rev-parse -q --verify refs/tags/0.2.5 >/dev/null 2>&1; then
-            (cd "${candidate}" 2>/dev/null && pwd)
-            return 0
-        fi
-    done
-
-    return 1
+importlib.import_module(sys.argv[1])
+PY
+    then
+        fail_activate "Required Python package '${package_hint}' is missing from the ${CONDA_ENV_NAME} environment"
+        printf "   Rebuild with: ${CYAN}conda env create -n ${CONDA_ENV_NAME} -f ${ENV_FILE}${NC}\n"
+        return 1
+    fi
 }
 
 if [ -n "${BASH_VERSION:-}" ] && [ "${BASH_SOURCE[0]}" = "$0" ]; then
@@ -131,7 +132,7 @@ ursa_activate_main() {
     else
         log_info "Environment '${CONDA_ENV_NAME}' not found. Building from ${ENV_FILE}..."
         log_info "This may take a few minutes..."
-        if ! conda env create -n "$CONDA_ENV_NAME" -f "$ENV_FILE"; then
+        if ! (cd "${SCRIPT_DIR}" && conda env create -n "$CONDA_ENV_NAME" -f "$ENV_FILE"); then
             fail_activate "Failed to create conda environment '${CONDA_ENV_NAME}'"
             return 1
         fi
@@ -197,22 +198,6 @@ ursa_activate_main() {
             ;;
     esac
 
-    TAPDB_LOCAL_REPO="$(find_local_tapdb_repo 2>/dev/null || true)"
-    if [ -n "${TAPDB_LOCAL_REPO}" ]; then
-        log_info "Installing local TapDB 0.2.5 from ${TAPDB_LOCAL_REPO}"
-        if ! python -m pip install "daylily-tapdb @ git+file://${TAPDB_LOCAL_REPO}@0.2.5" -q; then
-            fail_activate "Failed to install local TapDB 0.2.5 from ${TAPDB_LOCAL_REPO}"
-            return 1
-        fi
-    fi
-
-    log_info "Installing Ursa in editable mode..."
-    if ! python -m pip install -e "${SCRIPT_DIR}" -q; then
-        fail_activate "Failed to install Ursa in editable mode"
-        return 1
-    fi
-    log_success "Package installed in development mode"
-
     export URSA_ROOT="${SCRIPT_DIR}"
     export TAPDB_ENV="${TAPDB_ENV:-dev}"
     export TAPDB_CLIENT_ID="${TAPDB_CLIENT_ID:-local}"
@@ -234,6 +219,11 @@ ursa_activate_main() {
     require_tool "conda env" "psql" || return 1
     require_tool "conda env" "node" || return 1
     require_tool "conda env" "ipython" || return 1
+    require_python_import "daylily_tapdb" "daylily-tapdb==3.0.2" || return 1
+    require_python_import "daylily_cognito" "daylily-cognito>=0.1.28" || return 1
+    require_python_import "cli_core_yo" "../cli-core-yo" || return 1
+    require_python_import "fastapi" "fastapi" || return 1
+    require_python_import "pydantic_settings" "pydantic-settings" || return 1
 
     URSA_CONFIG_FILE="${HOME}/.config/ursa/ursa-config.yaml"
     URSA_CONFIG_LEGACY="${HOME}/.ursa/ursa-config.yaml"

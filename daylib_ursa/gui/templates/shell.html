@@ -36,7 +36,7 @@
                 <div class="actor-card">
                     <div>
                         <strong>{{ actor.display_name or actor.email or actor.user_id }}</strong>
-                        <p>{{ actor.organization or actor.atlas_tenant_id }}</p>
+                        <p>{{ actor.organization or actor.tenant_id }}</p>
                     </div>
                     <a class="button ghost" href="/logout">Log Out</a>
                 </div>
@@ -45,7 +45,7 @@
             <section class="summary-strip">
                 <div class="summary-card">
                     <span class="label">Tenant</span>
-                    <strong>{{ actor.atlas_tenant_id }}</strong>
+                    <strong>{{ actor.tenant_id }}</strong>
                 </div>
                 <div class="summary-card">
                     <span class="label">Roles</span>

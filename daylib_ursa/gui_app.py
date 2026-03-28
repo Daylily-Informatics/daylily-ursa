@@ -9,7 +9,14 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from daylib_ursa.auth import ActorContext, AuthError, USER_TOKEN_TEMPLATE
+from daylib_ursa.auth import (
+    AuthError,
+    CurrentUser,
+    USER_TOKEN_TEMPLATE,
+    clear_session_user,
+    get_current_user,
+    persist_session_user,
+)
 
 
 def mount_gui(app: FastAPI) -> None:
@@ -31,16 +38,10 @@ def mount_gui(app: FastAPI) -> None:
         value = str(raw_value or "").strip()
         return value if value.startswith("/") else "/"
 
-    def _session_actor(request: Request) -> ActorContext | None:
-        if not hasattr(request, "session"):
-            return None
-        token = str(request.session.get("atlas_access_token") or "").strip()
-        if not token:
-            return None
+    def _session_actor(request: Request) -> CurrentUser | None:
         try:
-            return app.state.identity_client.resolve_access_token(token)
-        except AuthError:
-            request.session.clear()
+            return get_current_user(request)
+        except HTTPException:
             return None
 
     def _resource_store():
@@ -55,7 +56,7 @@ def mount_gui(app: FastAPI) -> None:
             raise HTTPException(status_code=503, detail="Token service is not configured")
         return service
 
-    def _list_all_tokens_for_admin(actor: ActorContext) -> list[Any]:
+    def _list_all_tokens_for_admin(actor: CurrentUser) -> list[Any]:
         service = _token_service()
         try:
             return service.list_tokens(actor=actor, owner_user_id="*")
@@ -88,13 +89,17 @@ def mount_gui(app: FastAPI) -> None:
     ) -> HTMLResponse | RedirectResponse:
         actor = _session_actor(request)
         if actor is None:
-            return RedirectResponse(url=f"/login?next={request.url.path}", status_code=status.HTTP_303_SEE_OTHER)
+            return RedirectResponse(
+                url=f"/login?next={request.url.path}", status_code=status.HTTP_303_SEE_OTHER
+            )
         if admin_only and not actor.is_admin:
             raise HTTPException(status_code=403, detail="Admin privileges are required")
+
         def _json_default(value: Any):
             if hasattr(value, "__dict__"):
                 return value.__dict__
             return str(value)
+
         template_context = {
             "request": request,
             "actor": actor,
@@ -112,21 +117,22 @@ def mount_gui(app: FastAPI) -> None:
             if hasattr(inner, "__dict__"):
                 return inner.__dict__
             return str(inner)
+
         return json.dumps(value, indent=2, default=_json_default)
 
-    def _list_worksets(actor: ActorContext) -> list[Any]:
-        return _resource_store().list_worksets(atlas_tenant_id=actor.atlas_tenant_id)
+    def _list_worksets(actor: CurrentUser) -> list[Any]:
+        return _resource_store().list_worksets(tenant_id=actor.tenant_id)
 
-    def _list_manifests(actor: ActorContext) -> list[Any]:
-        return _resource_store().list_manifests(atlas_tenant_id=actor.atlas_tenant_id)
+    def _list_manifests(actor: CurrentUser) -> list[Any]:
+        return _resource_store().list_manifests(tenant_id=actor.tenant_id)
 
-    def _list_analyses(actor: ActorContext) -> list[Any]:
+    def _list_analyses(actor: CurrentUser) -> list[Any]:
         return app.state.store.list_analyses(
-            atlas_tenant_id=None if actor.is_admin else actor.atlas_tenant_id,
+            tenant_id=None if actor.is_admin else actor.tenant_id,
         )
 
-    def _list_buckets(actor: ActorContext) -> list[Any]:
-        return _resource_store().list_linked_buckets(atlas_tenant_id=actor.atlas_tenant_id)
+    def _list_buckets(actor: CurrentUser) -> list[Any]:
+        return _resource_store().list_linked_buckets(tenant_id=actor.tenant_id)
 
     def _allowed_regions() -> list[str]:
         settings = getattr(app.state, "settings", None)
@@ -140,7 +146,9 @@ def mount_gui(app: FastAPI) -> None:
         analysis_euids = list(getattr(workset, "analysis_euids", []) or [])
         sample_count = int(metadata.get("sample_count") or 0)
         if sample_count <= 0:
-            sample_count = sum(len(getattr(manifest, "artifact_euids", []) or []) for manifest in manifests)
+            sample_count = sum(
+                len(getattr(manifest, "artifact_euids", []) or []) for manifest in manifests
+            )
         if sample_count <= 0:
             sample_count = len(getattr(workset, "artifact_set_euids", []) or [])
         return {
@@ -152,19 +160,27 @@ def mount_gui(app: FastAPI) -> None:
             "workset_type": str(metadata.get("workset_type") or "ruo"),
             "pipeline_type": str(metadata.get("pipeline_type") or "germline"),
             "reference_genome": str(metadata.get("reference_genome") or ""),
-            "customer_id": getattr(workset, "atlas_tenant_id", ""),
+            "customer_id": str(getattr(workset, "tenant_id", "") or ""),
             "s3_status": str(metadata.get("s3_status") or "unknown"),
-            "execution_cluster_name": str(metadata.get("preferred_cluster") or metadata.get("cluster_name") or ""),
+            "execution_cluster_name": str(
+                metadata.get("preferred_cluster") or metadata.get("cluster_name") or ""
+            ),
             "execution_cluster_region": str(metadata.get("cluster_region") or ""),
             "progress": int(metadata.get("progress") or 0),
-            "progress_step": str(metadata.get("progress_step") or metadata.get("current_step") or ""),
-            "started_at": str(metadata.get("started_at") or metadata.get("execution_started_at") or ""),
+            "progress_step": str(
+                metadata.get("progress_step") or metadata.get("current_step") or ""
+            ),
+            "started_at": str(
+                metadata.get("started_at") or metadata.get("execution_started_at") or ""
+            ),
             "updated_at": getattr(workset, "updated_at", ""),
             "created_at": getattr(workset, "created_at", ""),
             "compute_cost": float(metadata.get("compute_cost") or 0.0),
             "storage_bytes": int(metadata.get("storage_bytes") or 0),
             "storage_human": str(metadata.get("storage_human") or "—"),
-            "storage_available": bool(metadata.get("storage_available") or metadata.get("storage_bytes")),
+            "storage_available": bool(
+                metadata.get("storage_available") or metadata.get("storage_bytes")
+            ),
             "sample_count": sample_count,
             "manifests": manifests,
             "analysis_euids": analysis_euids,
@@ -180,9 +196,17 @@ def mount_gui(app: FastAPI) -> None:
         filter_sort = str(request.query_params.get("sort") or "created_desc").strip().lower()
         filtered = items
         if filter_status:
-            filtered = [item for item in filtered if str(item.get("state") or "").strip().lower() == filter_status]
+            filtered = [
+                item
+                for item in filtered
+                if str(item.get("state") or "").strip().lower() == filter_status
+            ]
         if filter_type:
-            filtered = [item for item in filtered if str(item.get("workset_type") or "").strip().lower() == filter_type]
+            filtered = [
+                item
+                for item in filtered
+                if str(item.get("workset_type") or "").strip().lower() == filter_type
+            ]
         if filter_search:
             filtered = [
                 item
@@ -193,7 +217,10 @@ def mount_gui(app: FastAPI) -> None:
         if filter_sort == "created_asc":
             filtered.sort(key=lambda item: str(item.get("created_at") or ""))
         elif filter_sort == "status":
-            filtered.sort(key=lambda item: (str(item.get("state") or ""), str(item.get("created_at") or "")), reverse=True)
+            filtered.sort(
+                key=lambda item: (str(item.get("state") or ""), str(item.get("created_at") or "")),
+                reverse=True,
+            )
         else:
             filtered.sort(key=lambda item: str(item.get("created_at") or ""), reverse=True)
         return {
@@ -240,18 +267,26 @@ def mount_gui(app: FastAPI) -> None:
                 return label
         return None
 
-    def _bucket_browse_context(actor: ActorContext, bucket_id: str, prefix: str = "") -> dict[str, Any]:
+    def _bucket_browse_context(
+        actor: CurrentUser, bucket_id: str, prefix: str = ""
+    ) -> dict[str, Any]:
         bucket = _resource_store().get_linked_bucket(bucket_id)
         if bucket is None or str(bucket.state or "").upper() == "DELETED":
             raise HTTPException(status_code=404, detail="Bucket not found")
-        if not actor.is_admin and bucket.atlas_tenant_id != actor.atlas_tenant_id:
+        if not actor.is_admin and bucket.tenant_id != actor.tenant_id:
             raise HTTPException(status_code=403, detail="Bucket is outside the caller tenant")
         normalized_prefix = str(prefix or "").lstrip("/")
         restricted_prefix = str(getattr(bucket, "prefix_restriction", "") or "").strip().lstrip("/")
         if restricted_prefix:
             restricted_prefix = restricted_prefix.rstrip("/") + "/"
-        if restricted_prefix and normalized_prefix and not normalized_prefix.startswith(restricted_prefix):
-            raise HTTPException(status_code=403, detail="Prefix is outside the linked bucket restriction")
+        if (
+            restricted_prefix
+            and normalized_prefix
+            and not normalized_prefix.startswith(restricted_prefix)
+        ):
+            raise HTTPException(
+                status_code=403, detail="Prefix is outside the linked bucket restriction"
+            )
         current_prefix = normalized_prefix or restricted_prefix
         response = app.state.s3_client.list_objects_v2(
             Bucket=bucket.bucket_name,
@@ -291,7 +326,9 @@ def mount_gui(app: FastAPI) -> None:
                     "key": key,
                     "size_bytes": size_bytes,
                     "size_human": _format_file_size(size_bytes),
-                    "last_modified": last_modified.isoformat() if hasattr(last_modified, "isoformat") else None,
+                    "last_modified": last_modified.isoformat()
+                    if hasattr(last_modified, "isoformat")
+                    else None,
                     "file_format": _detect_file_format(name),
                     "is_registered": False,
                 }
@@ -299,7 +336,11 @@ def mount_gui(app: FastAPI) -> None:
         breadcrumbs = [{"name": "/", "prefix": restricted_prefix or ""}]
         if current_prefix:
             root_prefix = restricted_prefix or ""
-            suffix = current_prefix[len(root_prefix):] if root_prefix and current_prefix.startswith(root_prefix) else current_prefix
+            suffix = (
+                current_prefix[len(root_prefix) :]
+                if root_prefix and current_prefix.startswith(root_prefix)
+                else current_prefix
+            )
             running_prefix = root_prefix
             for part in [segment for segment in suffix.rstrip("/").split("/") if segment]:
                 running_prefix = f"{running_prefix}{part}/"
@@ -308,8 +349,14 @@ def mount_gui(app: FastAPI) -> None:
             parent_prefix = None
         else:
             parent_parts = current_prefix.rstrip("/").split("/")[:-1]
-            parent_prefix = "/".join(parent_parts) + "/" if parent_parts else (restricted_prefix or "")
-            if restricted_prefix and parent_prefix and not parent_prefix.startswith(restricted_prefix):
+            parent_prefix = (
+                "/".join(parent_parts) + "/" if parent_parts else (restricted_prefix or "")
+            )
+            if (
+                restricted_prefix
+                and parent_prefix
+                and not parent_prefix.startswith(restricted_prefix)
+            ):
                 parent_prefix = restricted_prefix
         return {
             "bucket": bucket,
@@ -319,7 +366,7 @@ def mount_gui(app: FastAPI) -> None:
             "parent_prefix": parent_prefix,
         }
 
-    def _dashboard_context(actor: ActorContext) -> dict[str, Any]:
+    def _dashboard_context(actor: CurrentUser) -> dict[str, Any]:
         worksets = _list_worksets(actor)
         manifests = _list_manifests(actor)
         analyses = _list_analyses(actor)
@@ -331,13 +378,25 @@ def mount_gui(app: FastAPI) -> None:
             "analyses": len(analyses),
             "tokens": len(tokens),
             "buckets": len(buckets),
-            "active_worksets": len([item for item in worksets if str(item.state).upper() not in {"COMPLETE", "COMPLETED", "ERROR"}]),
-            "completed_worksets": len([item for item in worksets if str(item.state).upper() in {"COMPLETE", "COMPLETED"}]),
-            "errored_worksets": len([item for item in worksets if str(item.state).upper() == "ERROR"]),
+            "active_worksets": len(
+                [
+                    item
+                    for item in worksets
+                    if str(item.state).upper() not in {"COMPLETE", "COMPLETED", "ERROR"}
+                ]
+            ),
+            "completed_worksets": len(
+                [item for item in worksets if str(item.state).upper() in {"COMPLETE", "COMPLETED"}]
+            ),
+            "errored_worksets": len(
+                [item for item in worksets if str(item.state).upper() == "ERROR"]
+            ),
         }
         if actor.is_admin:
-            cluster_items = _cluster_service().get_all_clusters_with_status(force_refresh=False, fetch_ssh_status=False)
-            cluster_jobs = _resource_store().list_cluster_jobs(atlas_tenant_id=None)
+            cluster_items = _cluster_service().get_all_clusters_with_status(
+                force_refresh=False, fetch_ssh_status=False
+            )
+            cluster_jobs = _resource_store().list_cluster_jobs(tenant_id=None)
             stats["clusters"] = len(cluster_items)
             stats["cluster_jobs"] = len(cluster_jobs)
         return {
@@ -347,7 +406,7 @@ def mount_gui(app: FastAPI) -> None:
             "recent_analyses": analyses[:5],
         }
 
-    def _usage_context(actor: ActorContext) -> dict[str, Any]:
+    def _usage_context(actor: CurrentUser) -> dict[str, Any]:
         worksets = _list_worksets(actor)
         manifests = _list_manifests(actor)
         analyses = _list_analyses(actor)
@@ -356,8 +415,20 @@ def mount_gui(app: FastAPI) -> None:
         return {
             "usage": {
                 "worksets_total": len(worksets),
-                "active_worksets": len([item for item in worksets if str(item.state).upper() not in {"COMPLETE", "COMPLETED", "ERROR"}]),
-                "completed_worksets": len([item for item in worksets if str(item.state).upper() in {"COMPLETE", "COMPLETED"}]),
+                "active_worksets": len(
+                    [
+                        item
+                        for item in worksets
+                        if str(item.state).upper() not in {"COMPLETE", "COMPLETED", "ERROR"}
+                    ]
+                ),
+                "completed_worksets": len(
+                    [
+                        item
+                        for item in worksets
+                        if str(item.state).upper() in {"COMPLETE", "COMPLETED"}
+                    ]
+                ),
                 "manifests_total": len(manifests),
                 "analysis_total": len(analyses),
                 "linked_buckets": len(buckets),
@@ -407,7 +478,10 @@ def mount_gui(app: FastAPI) -> None:
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
         try:
-            app.state.identity_client.resolve_access_token(token)
+            auth_provider = getattr(app.state, "auth_provider", None)
+            if auth_provider is None:
+                raise AuthError("Authentication provider is not configured")
+            actor = auth_provider.resolve_access_token(token)
         except AuthError as exc:
             return templates.TemplateResponse(
                 request,
@@ -420,24 +494,27 @@ def mount_gui(app: FastAPI) -> None:
                 },
                 status_code=status.HTTP_401_UNAUTHORIZED,
             )
-        request.session["atlas_access_token"] = token
+        persist_session_user(request, actor)
         return RedirectResponse(url=_next_path(next_path), status_code=status.HTTP_303_SEE_OTHER)
 
     @app.get("/favicon.ico", include_in_schema=False)
     async def favicon_redirect() -> RedirectResponse:
-        return RedirectResponse(url="/ui/static/favicon.svg", status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+        return RedirectResponse(
+            url="/ui/static/favicon.svg", status_code=status.HTTP_307_TEMPORARY_REDIRECT
+        )
 
     @app.get("/logout")
     async def logout(request: Request):
-        if hasattr(request, "session"):
-            request.session.clear()
+        clear_session_user(request)
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
 
     @app.get("/", response_class=HTMLResponse)
     async def dashboard_page(request: Request):
         actor = _session_actor(request)
         if actor is None:
-            return RedirectResponse(url=f"/login?next={request.url.path}", status_code=status.HTTP_303_SEE_OTHER)
+            return RedirectResponse(
+                url=f"/login?next={request.url.path}", status_code=status.HTTP_303_SEE_OTHER
+            )
         return _render_page(
             request,
             template_name="dashboard.html",
@@ -450,7 +527,9 @@ def mount_gui(app: FastAPI) -> None:
     async def usage_page(request: Request):
         actor = _session_actor(request)
         if actor is None:
-            return RedirectResponse(url=f"/login?next={request.url.path}", status_code=status.HTTP_303_SEE_OTHER)
+            return RedirectResponse(
+                url=f"/login?next={request.url.path}", status_code=status.HTTP_303_SEE_OTHER
+            )
         return _render_page(
             request,
             template_name="usage.html",
@@ -463,7 +542,9 @@ def mount_gui(app: FastAPI) -> None:
     async def worksets_page(request: Request):
         actor = _session_actor(request)
         if actor is None:
-            return RedirectResponse(url=f"/login?next={request.url.path}", status_code=status.HTTP_303_SEE_OTHER)
+            return RedirectResponse(
+                url=f"/login?next={request.url.path}", status_code=status.HTTP_303_SEE_OTHER
+            )
         return _render_page(
             request,
             template_name="worksets/list.html",
@@ -476,10 +557,17 @@ def mount_gui(app: FastAPI) -> None:
     async def worksets_new_page(request: Request):
         actor = _session_actor(request)
         if actor is None:
-            return RedirectResponse(url=f"/login?next={request.url.path}", status_code=status.HTTP_303_SEE_OTHER)
+            return RedirectResponse(
+                url=f"/login?next={request.url.path}", status_code=status.HTTP_303_SEE_OTHER
+            )
         manifests = _list_manifests(actor)
         clusters = (
-            [item.to_dict(include_sensitive=False) for item in _cluster_service().get_all_clusters_with_status(force_refresh=False, fetch_ssh_status=False)]
+            [
+                item.to_dict(include_sensitive=False)
+                for item in _cluster_service().get_all_clusters_with_status(
+                    force_refresh=False, fetch_ssh_status=False
+                )
+            ]
             if actor.is_admin
             else []
         )
@@ -501,26 +589,38 @@ def mount_gui(app: FastAPI) -> None:
     async def workset_detail_page(request: Request, workset_euid: str):
         actor = _session_actor(request)
         if actor is None:
-            return RedirectResponse(url=f"/login?next={request.url.path}", status_code=status.HTTP_303_SEE_OTHER)
+            return RedirectResponse(
+                url=f"/login?next={request.url.path}", status_code=status.HTTP_303_SEE_OTHER
+            )
         workset = _resource_store().get_workset(workset_euid)
         if workset is None:
             raise HTTPException(status_code=404, detail="Workset not found")
-        if not actor.is_admin and workset.atlas_tenant_id != actor.atlas_tenant_id:
+        if not actor.is_admin and workset.tenant_id != actor.tenant_id:
             raise HTTPException(status_code=403, detail="Workset is outside the caller tenant")
-        analyses = [item for item in _list_analyses(actor) if str(getattr(item, "workset_euid", "") or "") == workset_euid]
+        analyses = [
+            item
+            for item in _list_analyses(actor)
+            if str(getattr(item, "workset_euid", "") or "") == workset_euid
+        ]
         return _render_page(
             request,
             template_name="worksets/detail.html",
             page_title=f"Workset {workset.name}",
             active_page="worksets",
-            context={"workset": workset, "analyses": analyses, "workset_payload_json": _json_text(workset)},
+            context={
+                "workset": workset,
+                "analyses": analyses,
+                "workset_payload_json": _json_text(workset),
+            },
         )
 
     @app.get("/manifests", response_class=HTMLResponse)
     async def manifests_page(request: Request):
         actor = _session_actor(request)
         if actor is None:
-            return RedirectResponse(url=f"/login?next={request.url.path}", status_code=status.HTTP_303_SEE_OTHER)
+            return RedirectResponse(
+                url=f"/login?next={request.url.path}", status_code=status.HTTP_303_SEE_OTHER
+            )
         return _render_page(
             request,
             template_name="manifests/index.html",
@@ -537,11 +637,13 @@ def mount_gui(app: FastAPI) -> None:
     async def manifest_detail_page(request: Request, manifest_euid: str):
         actor = _session_actor(request)
         if actor is None:
-            return RedirectResponse(url=f"/login?next={request.url.path}", status_code=status.HTTP_303_SEE_OTHER)
+            return RedirectResponse(
+                url=f"/login?next={request.url.path}", status_code=status.HTTP_303_SEE_OTHER
+            )
         manifest = _resource_store().get_manifest(manifest_euid)
         if manifest is None:
             raise HTTPException(status_code=404, detail="Manifest not found")
-        if not actor.is_admin and manifest.atlas_tenant_id != actor.atlas_tenant_id:
+        if not actor.is_admin and manifest.tenant_id != actor.tenant_id:
             raise HTTPException(status_code=403, detail="Manifest is outside the caller tenant")
         return _render_page(
             request,
@@ -555,7 +657,9 @@ def mount_gui(app: FastAPI) -> None:
     async def buckets_page(request: Request):
         actor = _session_actor(request)
         if actor is None:
-            return RedirectResponse(url=f"/login?next={request.url.path}", status_code=status.HTTP_303_SEE_OTHER)
+            return RedirectResponse(
+                url=f"/login?next={request.url.path}", status_code=status.HTTP_303_SEE_OTHER
+            )
         return _render_page(
             request,
             template_name="buckets.html",
@@ -568,7 +672,9 @@ def mount_gui(app: FastAPI) -> None:
     async def bucket_browse_page(request: Request, bucket_id: str, prefix: str = ""):
         actor = _session_actor(request)
         if actor is None:
-            return RedirectResponse(url=f"/login?next={request.url.path}", status_code=status.HTTP_303_SEE_OTHER)
+            return RedirectResponse(
+                url=f"/login?next={request.url.path}", status_code=status.HTTP_303_SEE_OTHER
+            )
         return _render_page(
             request,
             template_name="buckets_browse.html",
@@ -581,7 +687,9 @@ def mount_gui(app: FastAPI) -> None:
     async def analyses_page(request: Request):
         actor = _session_actor(request)
         if actor is None:
-            return RedirectResponse(url=f"/login?next={request.url.path}", status_code=status.HTTP_303_SEE_OTHER)
+            return RedirectResponse(
+                url=f"/login?next={request.url.path}", status_code=status.HTTP_303_SEE_OTHER
+            )
         return _render_page(
             request,
             template_name="analyses/list.html",
@@ -595,11 +703,13 @@ def mount_gui(app: FastAPI) -> None:
     async def analysis_detail_page(request: Request, analysis_euid: str):
         actor = _session_actor(request)
         if actor is None:
-            return RedirectResponse(url=f"/login?next={request.url.path}", status_code=status.HTTP_303_SEE_OTHER)
+            return RedirectResponse(
+                url=f"/login?next={request.url.path}", status_code=status.HTTP_303_SEE_OTHER
+            )
         analysis = app.state.store.get_analysis(analysis_euid)
         if analysis is None:
             raise HTTPException(status_code=404, detail="Analysis not found")
-        if not actor.is_admin and analysis.atlas_tenant_id != actor.atlas_tenant_id:
+        if not actor.is_admin and analysis.tenant_id != actor.tenant_id:
             raise HTTPException(status_code=403, detail="Analysis is outside the caller tenant")
         return _render_page(
             request,
@@ -624,7 +734,9 @@ def mount_gui(app: FastAPI) -> None:
     async def tokens_page(request: Request):
         actor = _session_actor(request)
         if actor is None:
-            return RedirectResponse(url=f"/login?next={request.url.path}", status_code=status.HTTP_303_SEE_OTHER)
+            return RedirectResponse(
+                url=f"/login?next={request.url.path}", status_code=status.HTTP_303_SEE_OTHER
+            )
         return _render_page(
             request,
             template_name="tokens/list.html",
@@ -638,7 +750,9 @@ def mount_gui(app: FastAPI) -> None:
     async def token_detail_page(request: Request, token_euid: str):
         actor = _session_actor(request)
         if actor is None:
-            return RedirectResponse(url=f"/login?next={request.url.path}", status_code=status.HTTP_303_SEE_OTHER)
+            return RedirectResponse(
+                url=f"/login?next={request.url.path}", status_code=status.HTTP_303_SEE_OTHER
+            )
         service = _token_service()
         tokens = service.list_tokens(actor=actor)
         token = next((item for item in tokens if item.token_euid == token_euid), None)
@@ -658,9 +772,15 @@ def mount_gui(app: FastAPI) -> None:
     async def clusters_page(request: Request):
         actor = _session_actor(request)
         if actor is None:
-            return RedirectResponse(url=f"/login?next={request.url.path}", status_code=status.HTTP_303_SEE_OTHER)
-        clusters = _cluster_service().get_all_clusters_with_status(force_refresh=False, fetch_ssh_status=False)
-        jobs = _resource_store().list_cluster_jobs(atlas_tenant_id=None if actor.is_admin else actor.atlas_tenant_id)
+            return RedirectResponse(
+                url=f"/login?next={request.url.path}", status_code=status.HTTP_303_SEE_OTHER
+            )
+        clusters = _cluster_service().get_all_clusters_with_status(
+            force_refresh=False, fetch_ssh_status=False
+        )
+        jobs = _resource_store().list_cluster_jobs(
+            tenant_id=None if actor.is_admin else actor.tenant_id
+        )
         return _render_page(
             request,
             template_name="clusters.html",
@@ -681,7 +801,9 @@ def mount_gui(app: FastAPI) -> None:
     async def cluster_detail_page(request: Request, cluster_name: str, region: str | None = None):
         actor = _session_actor(request)
         if actor is None:
-            return RedirectResponse(url=f"/login?next={request.url.path}", status_code=status.HTTP_303_SEE_OTHER)
+            return RedirectResponse(
+                url=f"/login?next={request.url.path}", status_code=status.HTTP_303_SEE_OTHER
+            )
         service = _cluster_service()
         resolved_region = str(region or service.get_region_for_cluster(cluster_name) or "").strip()
         if not resolved_region:
@@ -692,7 +814,7 @@ def mount_gui(app: FastAPI) -> None:
         cluster = service.describe_cluster(cluster_name, resolved_region)
         jobs = [
             item
-            for item in _resource_store().list_cluster_jobs(atlas_tenant_id=None)
+            for item in _resource_store().list_cluster_jobs(tenant_id=None)
             if item.cluster_name == cluster_name
         ]
         return _render_page(
@@ -701,14 +823,20 @@ def mount_gui(app: FastAPI) -> None:
             page_title=f"Cluster {cluster_name}",
             active_page="clusters",
             admin_only=True,
-            context={"cluster": cluster.to_dict(include_sensitive=False), "jobs": jobs, "cluster_payload_json": _json_text(cluster.to_dict(include_sensitive=False))},
+            context={
+                "cluster": cluster.to_dict(include_sensitive=False),
+                "jobs": jobs,
+                "cluster_payload_json": _json_text(cluster.to_dict(include_sensitive=False)),
+            },
         )
 
     @app.get("/clusters/jobs/{job_euid}", response_class=HTMLResponse)
     async def cluster_job_detail_page(request: Request, job_euid: str):
         actor = _session_actor(request)
         if actor is None:
-            return RedirectResponse(url=f"/login?next={request.url.path}", status_code=status.HTTP_303_SEE_OTHER)
+            return RedirectResponse(
+                url=f"/login?next={request.url.path}", status_code=status.HTTP_303_SEE_OTHER
+            )
         job = _resource_store().get_cluster_job(job_euid)
         if job is None:
             raise HTTPException(status_code=404, detail="Cluster job not found")
@@ -725,7 +853,9 @@ def mount_gui(app: FastAPI) -> None:
     async def admin_tokens_page(request: Request):
         actor = _session_actor(request)
         if actor is None:
-            return RedirectResponse(url=f"/login?next={request.url.path}", status_code=status.HTTP_303_SEE_OTHER)
+            return RedirectResponse(
+                url=f"/login?next={request.url.path}", status_code=status.HTTP_303_SEE_OTHER
+            )
         return _render_page(
             request,
             template_name="admin_tokens.html",
@@ -740,7 +870,9 @@ def mount_gui(app: FastAPI) -> None:
     async def admin_clients_page(request: Request):
         actor = _session_actor(request)
         if actor is None:
-            return RedirectResponse(url=f"/login?next={request.url.path}", status_code=status.HTTP_303_SEE_OTHER)
+            return RedirectResponse(
+                url=f"/login?next={request.url.path}", status_code=status.HTTP_303_SEE_OTHER
+            )
         return _render_page(
             request,
             template_name="admin_clients.html",
@@ -755,7 +887,9 @@ def mount_gui(app: FastAPI) -> None:
     async def admin_client_detail_page(request: Request, client_registration_euid: str):
         actor = _session_actor(request)
         if actor is None:
-            return RedirectResponse(url=f"/login?next={request.url.path}", status_code=status.HTTP_303_SEE_OTHER)
+            return RedirectResponse(
+                url=f"/login?next={request.url.path}", status_code=status.HTTP_303_SEE_OTHER
+            )
         resources = _resource_store()
         client = resources.get_client_registration(client_registration_euid)
         if client is None:
@@ -772,5 +906,9 @@ def mount_gui(app: FastAPI) -> None:
             active_page="tools",
             secondary_page="admin_clients",
             admin_only=True,
-            context={"client_registration": client, "tokens": tokens, "client_payload_json": _json_text(client)},
+            context={
+                "client_registration": client,
+                "tokens": tokens,
+                "client_payload_json": _json_text(client),
+            },
         )

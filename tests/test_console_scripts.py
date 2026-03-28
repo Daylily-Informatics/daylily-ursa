@@ -3,8 +3,10 @@ from __future__ import annotations
 import importlib
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 from typer.testing import CliRunner
+
 
 def _read_project_scripts(pyproject: Path) -> dict[str, str]:
     """Parse the [project.scripts] table from pyproject.toml.
@@ -70,9 +72,25 @@ def test_ursa_server_start_uses_packaged_entrypoint(monkeypatch):
     monkeypatch.setattr(server_mod, "_ensure_dir", lambda: None)
     monkeypatch.setattr(server_mod, "_get_pid", lambda: None)
     monkeypatch.setattr(server_mod, "source_env_file", lambda _path: False)
-    monkeypatch.setattr(server_mod, "_resolve_https_cert_paths", lambda host: ("/tmp/cert.pem", "/tmp/key.pem"))
+    monkeypatch.setattr(
+        server_mod, "_resolve_https_cert_paths", lambda host: ("/tmp/cert.pem", "/tmp/key.pem")
+    )
     monkeypatch.setattr(server_mod, "_require_auth_dependencies", lambda: None)
     monkeypatch.setattr(server_mod, "_run_cognito_uri_check", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        server_mod,
+        "get_settings",
+        lambda: SimpleNamespace(
+            database_backend="tapdb",
+            database_target="local",
+            tapdb_client_id="ursa",
+            tapdb_database_name="daylily-ursa",
+            tapdb_env="dev",
+        ),
+    )
+    monkeypatch.setattr(
+        server_mod, "export_database_url_for_target", lambda **_kwargs: "postgresql://test-db"
+    )
 
     captured: dict[str, object] = {}
 
@@ -80,6 +98,7 @@ def test_ursa_server_start_uses_packaged_entrypoint(monkeypatch):
         captured["cmd"] = cmd
         captured["cwd"] = cwd
         captured["kwargs"] = kwargs
+
         class _DummyCompletedProcess:
             def __init__(self, returncode: int):
                 self.returncode = returncode
@@ -104,7 +123,14 @@ def test_ursa_server_start_uses_packaged_entrypoint(monkeypatch):
 
     kwargs = captured.get("kwargs")
     assert isinstance(kwargs, dict)
-    assert isinstance(kwargs.get("env"), dict)
+    env = kwargs.get("env")
+    assert isinstance(env, dict)
+    assert env["DATABASE_BACKEND"] == "tapdb"
+    assert env["DATABASE_TARGET"] == "local"
+    assert env["TAPDB_CLIENT_ID"] == "ursa"
+    assert env["TAPDB_DATABASE_NAME"] == "daylily-ursa"
+    assert env["TAPDB_ENV"] == "dev"
+    assert env["DATABASE_URL"] == "postgresql://test-db"
 
 
 def test_ursa_server_start_allows_ambient_credentials(monkeypatch):
@@ -129,9 +155,25 @@ def test_ursa_server_start_allows_ambient_credentials(monkeypatch):
     monkeypatch.setattr(server_mod, "_ensure_dir", lambda: None)
     monkeypatch.setattr(server_mod, "_get_pid", lambda: None)
     monkeypatch.setattr(server_mod, "source_env_file", lambda _path: False)
-    monkeypatch.setattr(server_mod, "_resolve_https_cert_paths", lambda host: ("/tmp/cert.pem", "/tmp/key.pem"))
+    monkeypatch.setattr(
+        server_mod, "_resolve_https_cert_paths", lambda host: ("/tmp/cert.pem", "/tmp/key.pem")
+    )
     monkeypatch.setattr(server_mod, "_require_auth_dependencies", lambda: None)
     monkeypatch.setattr(server_mod, "_run_cognito_uri_check", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        server_mod,
+        "get_settings",
+        lambda: SimpleNamespace(
+            database_backend="tapdb",
+            database_target="local",
+            tapdb_client_id="ursa",
+            tapdb_database_name="daylily-ursa",
+            tapdb_env="dev",
+        ),
+    )
+    monkeypatch.setattr(
+        server_mod, "export_database_url_for_target", lambda **_kwargs: "postgresql://test-db"
+    )
 
     captured: dict[str, object] = {}
 
@@ -165,6 +207,7 @@ def test_ursa_server_start_allows_ambient_credentials(monkeypatch):
     env = kwargs.get("env")
     assert isinstance(env, dict)
     assert "AWS_PROFILE" not in env
+    assert env["DATABASE_URL"] == "postgresql://test-db"
 
 
 def test_ursa_cli_exposes_standardized_groups():
@@ -174,8 +217,25 @@ def test_ursa_cli_exposes_standardized_groups():
     result = runner.invoke(app, ["--help"])
 
     assert result.exit_code == 0
+    assert "version" in result.output
+    assert "info" in result.output
     assert "server" in result.output
     assert "config" in result.output
+    assert "env" in result.output
     assert "quality" in result.output
-    assert "doctor" in result.output
-    assert "logs" in result.output
+    assert "integrations" in result.output
+    assert "monitor" in result.output
+    assert "doctor" not in result.output
+    assert "logs" not in result.output
+
+
+def test_ursa_cli_exposes_dewey_integration_group():
+    from daylib_ursa.cli import app
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["integrations", "dewey", "--help"])
+
+    assert result.exit_code == 0
+    assert "resolve-artifact" in result.output
+    assert "resolve-artifact-set" in result.output
+    assert "import-artifact" in result.output

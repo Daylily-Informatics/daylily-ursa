@@ -11,7 +11,6 @@ import uvicorn
 
 from daylib_ursa.analysis_store import AnalysisStore
 from daylib_ursa.atlas_result_client import AtlasResultClient
-from daylib_ursa.auth import AtlasIdentityClient
 from daylib_ursa.bloom_resolver_client import BloomResolverClient
 from daylib_ursa.config import get_settings
 from daylib_ursa.dewey_client import DeweyClient
@@ -64,7 +63,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         raise ValueError("BLOOM_API_TOKEN is required for authenticated Ursa->Bloom integration")
     atlas_api_key = str(settings.atlas_internal_api_key or "").strip()
     if not atlas_api_key:
-        raise ValueError("ATLAS_INTERNAL_API_KEY is required for authenticated Ursa->Atlas integration")
+        raise ValueError(
+            "ATLAS_INTERNAL_API_KEY is required for authenticated Ursa->Atlas integration"
+        )
 
     LOGGER.info("Initializing Ursa beta analysis store")
     store = AnalysisStore()
@@ -82,11 +83,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         api_key=atlas_api_key,
         verify_ssl=settings.atlas_verify_ssl,
     )
-    identity_client = AtlasIdentityClient(
-        base_url=str(getattr(settings, "atlas_identity_base_url", "") or settings.atlas_base_url),
-        internal_api_key=atlas_api_key,
-        verify_ssl=settings.atlas_verify_ssl,
-    )
     dewey_client = None
     if bool(getattr(settings, "dewey_enabled", False)):
         dewey_client = DeweyClient(
@@ -100,7 +96,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         bloom_client=bloom_client,
         atlas_client=atlas_client,
         dewey_client=dewey_client,
-        identity_client=identity_client,
         settings=settings,
     )
 

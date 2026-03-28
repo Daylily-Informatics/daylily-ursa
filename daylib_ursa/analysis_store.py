@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
+import uuid
 
 try:
     from daylib_ursa.tapdb_graph import TapDBBackend, from_json_addl, utc_now_iso
@@ -50,7 +51,7 @@ class RunResolution:
     lane: str
     library_barcode: str
     sequenced_library_assignment_euid: str
-    atlas_tenant_id: str
+    tenant_id: uuid.UUID
     atlas_trf_euid: str
     atlas_test_euid: str
     atlas_test_fulfillment_item_euid: str
@@ -78,7 +79,7 @@ class AnalysisRecord:
     lane: str
     library_barcode: str
     sequenced_library_assignment_euid: str
-    atlas_tenant_id: str
+    tenant_id: uuid.UUID
     atlas_trf_euid: str
     atlas_test_euid: str
     atlas_test_fulfillment_item_euid: str
@@ -107,6 +108,10 @@ class AnalysisStore:
         with self.backend.session_scope(commit=True) as session:
             self.backend.ensure_templates(session)
 
+    @staticmethod
+    def _parse_tenant_uuid(value: Any) -> uuid.UUID:
+        return uuid.UUID(str(value or "").strip())
+
     def _find_analysis(
         self,
         session,
@@ -121,7 +126,9 @@ class AnalysisStore:
             for_update=for_update,
         )
 
-    def _find_analysis_by_ingest_key(self, session, idempotency_key: str) -> generic_instance | None:
+    def _find_analysis_by_ingest_key(
+        self, session, idempotency_key: str
+    ) -> generic_instance | None:
         return self.backend.find_instance_by_external_id(
             session,
             template_code=ANALYSIS_TEMPLATE,
@@ -142,7 +149,9 @@ class AnalysisStore:
             filename=str(payload.get("filename") or ""),
             mime_type=str(payload.get("mime_type") or "") or None,
             checksum_sha256=str(payload.get("checksum_sha256") or "") or None,
-            size_bytes=int(payload["size_bytes"]) if payload.get("size_bytes") is not None else None,
+            size_bytes=int(payload["size_bytes"])
+            if payload.get("size_bytes") is not None
+            else None,
             created_at=str(payload.get("created_at") or utc_now_iso()),
             metadata=dict(payload.get("metadata") or {}),
         )
@@ -208,7 +217,7 @@ class AnalysisStore:
             sequenced_library_assignment_euid=str(
                 context.get("sequenced_library_assignment_euid") or ""
             ),
-            atlas_tenant_id=str(context.get("atlas_tenant_id") or ""),
+            tenant_id=self._parse_tenant_uuid(context.get("tenant_id")),
             atlas_trf_euid=str(context.get("atlas_trf_euid") or ""),
             atlas_test_euid=str(context.get("atlas_test_euid") or ""),
             atlas_test_fulfillment_item_euid=str(
@@ -239,7 +248,7 @@ class AnalysisStore:
     def list_analyses(
         self,
         *,
-        atlas_tenant_id: str | None = None,
+        tenant_id: uuid.UUID | None = None,
         workset_euid: str | None = None,
         limit: int = 200,
     ) -> list[AnalysisRecord]:
@@ -251,8 +260,10 @@ class AnalysisStore:
             )
             records: list[AnalysisRecord] = []
             for analysis in rows:
-                record = self._record_from_instance(session, analysis, self._artifacts(session, analysis))
-                if atlas_tenant_id and record.atlas_tenant_id != atlas_tenant_id:
+                record = self._record_from_instance(
+                    session, analysis, self._artifacts(session, analysis)
+                )
+                if tenant_id and record.tenant_id != tenant_id:
                     continue
                 if workset_euid and record.workset_euid != workset_euid:
                     continue
@@ -272,7 +283,9 @@ class AnalysisStore:
         with self.backend.session_scope(commit=True) as session:
             existing = self._find_analysis_by_ingest_key(session, idempotency_key)
             if existing is not None:
-                return self._record_from_instance(session, existing, self._artifacts(session, existing))
+                return self._record_from_instance(
+                    session, existing, self._artifacts(session, existing)
+                )
 
             now = utc_now_iso()
             analysis = self.backend.create_instance(
@@ -301,6 +314,7 @@ class AnalysisStore:
                     ],
                 },
                 bstatus=AnalysisState.INGESTED.value,
+                tenant_id=resolution.tenant_id,
             )
             context = self.backend.create_instance(
                 session,
@@ -312,13 +326,14 @@ class AnalysisStore:
                     "lane": resolution.lane,
                     "library_barcode": resolution.library_barcode,
                     "sequenced_library_assignment_euid": resolution.sequenced_library_assignment_euid,
-                    "atlas_tenant_id": resolution.atlas_tenant_id,
+                    "tenant_id": str(resolution.tenant_id),
                     "atlas_trf_euid": resolution.atlas_trf_euid,
                     "atlas_test_euid": resolution.atlas_test_euid,
                     "atlas_test_fulfillment_item_euid": resolution.atlas_test_fulfillment_item_euid,
                     "created_at": now,
                 },
                 bstatus="active",
+                tenant_id=resolution.tenant_id,
             )
             self.backend.create_lineage(
                 session,
@@ -501,7 +516,10 @@ class AnalysisStore:
             if analysis is None:
                 raise KeyError(f"analysis not found: {analysis_euid}")
             payload = self._payload(analysis)
-            if str(payload.get("review_state") or ReviewState.PENDING.value) != ReviewState.APPROVED.value:
+            if (
+                str(payload.get("review_state") or ReviewState.PENDING.value)
+                != ReviewState.APPROVED.value
+            ):
                 raise ValueError("Analysis cannot be returned before manual approval")
 
             for event in self.backend.list_children(
@@ -511,7 +529,9 @@ class AnalysisStore:
             ):
                 event_payload = dict(event.json_addl or {})
                 if str(event_payload.get("idempotency_key") or "") == idempotency_key:
-                    return self._record_from_instance(session, analysis, self._artifacts(session, analysis))
+                    return self._record_from_instance(
+                        session, analysis, self._artifacts(session, analysis)
+                    )
 
             returned_at = utc_now_iso()
             payload["state"] = AnalysisState.RETURNED.value

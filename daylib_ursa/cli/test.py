@@ -1,11 +1,18 @@
 """Testing and code quality commands for Ursa CLI."""
 
+from __future__ import annotations
+
 import subprocess
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import typer
 from rich.console import Console
+
+if TYPE_CHECKING:
+    from cli_core_yo.registry import CommandRegistry
+    from cli_core_yo.spec import CliSpec
 
 test_app = typer.Typer(help="Testing and code quality commands")
 console = Console()
@@ -139,3 +146,9 @@ def all_checks():
         raise typer.Exit(1)
     else:
         console.print("\n[green]✓[/green]  All checks passed")
+
+
+def register(registry: CommandRegistry, spec: CliSpec) -> None:
+    """cli-core-yo plugin: register test command group."""
+    _ = spec
+    registry.add_typer_app(None, test_app, "test", "Testing and code quality")
