@@ -7,8 +7,10 @@ import uuid
 
 try:
     from daylib_ursa.tapdb_graph import TapDBBackend, from_json_addl, utc_now_iso
+    from daylib_ursa.tapdb_templates import seed_ursa_templates
 except ImportError:  # pragma: no cover - import-time compatibility for reduced test envs
     TapDBBackend = Any  # type: ignore[assignment]
+    seed_ursa_templates = None  # type: ignore[assignment]
 
     def from_json_addl(instance) -> dict[str, Any]:
         return dict(getattr(instance, "json_addl", {}) or {})
@@ -146,6 +148,8 @@ class ResourceStore:
 
     def bootstrap(self) -> None:
         with self.backend.session_scope(commit=True) as session:
+            if callable(seed_ursa_templates):
+                seed_ursa_templates(session)
             self.backend.ensure_templates(session)
 
     @staticmethod

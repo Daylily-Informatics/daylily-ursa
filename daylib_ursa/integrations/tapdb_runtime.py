@@ -14,7 +14,7 @@ from urllib.parse import quote
 
 from daylily_tapdb import InstanceFactory, TAPDBConnection, TemplateManager
 
-TAPDB_REQUIRED_VERSION = "3.0.3"
+TAPDB_REQUIRED_VERSION = "3.0.6"
 DEFAULT_AWS_PROFILE = "lsmc"
 DEFAULT_AWS_REGION = "us-west-2"
 DEFAULT_TAPDB_CLIENT_ID = "local"

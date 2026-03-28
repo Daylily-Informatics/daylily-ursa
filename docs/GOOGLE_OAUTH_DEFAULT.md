@@ -16,6 +16,9 @@ source ../daylily-cognito/activate
 ./scripts/setup_cognito_google_default.sh
 ```
 
+Use `daycog` for the shared Cognito pool/app lifecycle itself. This helper only
+applies the Ursa-specific default wiring on top of the `daycog` workflow.
+
 ## Overriding defaults
 
 ```bash

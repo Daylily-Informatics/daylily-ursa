@@ -97,8 +97,9 @@ Cross-system integrations are authenticated and should run over HTTPS.
 ## Local Development
 
 ```bash
-pip install -e .[dev]
-daylily-workset-api --port 8914 --reload
+source ./activate
+ursa config init
+ursa server start --port 8913
 ```
 
 Validation:
@@ -113,6 +114,15 @@ pytest -q
 - [Ursa-Atlas return contract](docs/ursa_atlas_return_contract.md)
 
 Legacy workset-monitor notes remain in `docs/`, but they are no longer the primary repo contract.
+
+Ursa delegates shared infrastructure ownership:
+
+- use `tapdb` for shared DB/runtime lifecycle
+- use `daycog` for shared Cognito lifecycle
+- use `ursa` only for Ursa-specific runtime/bootstrap behavior
+
+Ursa template definitions are authored as JSON packs under
+`config/tapdb_templates/` and loaded through TapDB before runtime use.
 
 <!-- release-sweep: 2026-03-10 -->
  

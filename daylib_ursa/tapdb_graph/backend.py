@@ -148,9 +148,9 @@ class TapDBBackend:
             if self._tm.get_template(session, spec.template_code) is None:
                 missing.append(spec.template_code)
         if missing:
-            _log.warning(
-                "Missing Ursa templates (seed with 'tapdb db data seed'): %s",
-                missing,
+            raise RuntimeError(
+                "Missing Ursa templates. Seed the Ursa TapDB JSON pack before "
+                f"running the service: {', '.join(missing)}"
             )
 
     def create_instance(

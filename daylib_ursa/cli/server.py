@@ -343,6 +343,9 @@ def start(
 
     # Set up environment
     env = os.environ.copy()
+    for key in list(env):
+        if key.startswith("TAPDB_"):
+            env.pop(key, None)
     env["PYTHONUNBUFFERED"] = "1"
     env["ENABLE_AUTH"] = "true"
 

@@ -12,7 +12,7 @@ from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from daylily_cognito.jwks import JWKSCache
-from daylily_cognito.tokens import verify_jwt_claims
+from daylily_cognito.tokens import decode_jwt_unverified, verify_jwt_claims
 
 from daylib_ursa.auth.rbac import Permission, Role, can_write, has_permission, has_role
 
@@ -146,7 +146,11 @@ def _claims_to_current_user(claims: dict[str, Any]) -> CurrentUser:
         raise AuthError("Authentication token missing subject")
 
     email = str(claims.get("email") or "").strip()
-    tenant_value = claims.get("tenant_id") or claims.get("custom:tenant_id")
+    tenant_value = (
+        claims.get("tenant_id")
+        or claims.get("custom:tenant_id")
+        or claims.get("custom:customer_id")
+    )
     name = str(claims.get("name") or claims.get("display_name") or "").strip() or None
     raw_roles = claims.get("roles") or claims.get("custom:roles") or claims.get("cognito:groups")
     return CurrentUser(
@@ -226,6 +230,45 @@ class CognitoAuthProvider:
     def configured(self) -> bool:
         return bool(self.user_pool_id and self.app_client_id and self.region)
 
+    def _verify_id_token_claims(self, token: str) -> dict[str, Any]:
+        try:
+            from jose import JWTError, jwt
+        except ImportError as exc:  # pragma: no cover - environment issue
+            raise AuthError(
+                "python-jose is required for JWT verification. Install with: pip install 'python-jose[cryptography]'"
+            ) from exc
+
+        if self._jwks_cache is None:
+            raise AuthError("Cognito authentication is not configured")
+
+        header = jwt.get_unverified_header(token)
+        kid = str(header.get("kid") or "").strip()
+        if not kid:
+            raise AuthError("Invalid authentication token")
+
+        issuer = f"https://cognito-idp.{self.region}.amazonaws.com/{self.user_pool_id}"
+        try:
+            key = self._jwks_cache.get_key(kid)
+            claims: dict[str, Any] = jwt.decode(
+                token,
+                key=key,
+                algorithms=["RS256"],
+                options={
+                    "verify_signature": True,
+                    "verify_exp": True,
+                    "verify_iss": True,
+                    "verify_aud": False,
+                },
+                issuer=issuer,
+            )
+        except JWTError as exc:
+            raise AuthError("Invalid authentication token") from exc
+
+        audience = str(claims.get("aud") or claims.get("client_id") or "").strip()
+        if audience != self.app_client_id:
+            raise AuthError("Invalid token audience")
+        return claims
+
     def resolve_access_token(self, access_token: str) -> CurrentUser:
         token = str(access_token or "").strip()
         if not token:
@@ -233,13 +276,19 @@ class CognitoAuthProvider:
         if not self.configured:
             raise AuthError("Cognito authentication is not configured")
         try:
-            claims = verify_jwt_claims(
-                token,
-                expected_client_id=self.app_client_id,
-                region=self.region,
-                user_pool_id=self.user_pool_id,
-                cache=self._jwks_cache,
-            )
+            unverified_claims = decode_jwt_unverified(token)
+            if str(unverified_claims.get("token_use") or "").strip().lower() == "id":
+                claims = self._verify_id_token_claims(token)
+            else:
+                claims = verify_jwt_claims(
+                    token,
+                    expected_client_id=self.app_client_id,
+                    region=self.region,
+                    user_pool_id=self.user_pool_id,
+                    cache=self._jwks_cache,
+                )
+        except AuthError:
+            raise
         except HTTPException as exc:
             raise AuthError(str(exc.detail)) from exc
         except Exception as exc:  # pragma: no cover - best effort bridge to AuthError
@@ -293,7 +342,9 @@ class CognitoUserDirectoryService:
         attrs = self._attrs_to_dict(item)
         user_id = str(attrs.get("sub") or "").strip() or str(item.get("Username") or "").strip()
         tenant_id = _parse_uuid(
-            attrs.get("custom:tenant_id") or attrs.get("tenant_id"),
+            attrs.get("custom:tenant_id")
+            or attrs.get("tenant_id")
+            or attrs.get("custom:customer_id"),
             label="tenant_id",
         )
         roles = tuple(

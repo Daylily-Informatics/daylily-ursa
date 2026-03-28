@@ -472,7 +472,7 @@ def mount_gui(app: FastAPI) -> None:
                 {
                     "request": request,
                     "next_path": _next_path(next_path),
-                    "error": "Atlas access token is required",
+                    "error": "Authentication token is required",
                     "deployment": _deployment_context(),
                 },
                 status_code=status.HTTP_400_BAD_REQUEST,
