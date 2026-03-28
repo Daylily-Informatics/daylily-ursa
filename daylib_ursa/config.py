@@ -30,6 +30,10 @@ def _yaml_seed_from_ursa_config() -> dict[str, object]:
 
     return {
         "aws_profile": cfg.aws_profile,
+        "ursa_internal_output_bucket": cfg.ursa_internal_output_bucket,
+        "tapdb_client_id": cfg.tapdb_client_id,
+        "tapdb_database_name": cfg.tapdb_database_name,
+        "tapdb_env": cfg.tapdb_env,
         "cognito_user_pool_id": cfg.cognito_user_pool_id,
         "cognito_app_client_id": cfg.cognito_app_client_id,
         "cognito_app_client_secret": cfg.cognito_app_client_secret,
@@ -37,6 +41,15 @@ def _yaml_seed_from_ursa_config() -> dict[str, object]:
         "cognito_region": cfg.cognito_region,
         "cognito_callback_url": cfg.cognito_callback_url,
         "cognito_logout_url": cfg.cognito_logout_url,
+        "api_host": cfg.api_host,
+        "api_port": cfg.api_port,
+        "bloom_base_url": cfg.bloom_base_url,
+        "bloom_verify_ssl": cfg.bloom_verify_ssl,
+        "atlas_base_url": cfg.atlas_base_url,
+        "atlas_verify_ssl": cfg.atlas_verify_ssl,
+        "dewey_enabled": cfg.dewey_enabled,
+        "dewey_base_url": cfg.dewey_base_url,
+        "dewey_verify_ssl": cfg.dewey_verify_ssl,
         "deployment_name": cfg.deployment_name,
         "deployment_color": cfg.deployment_color,
         "deployment_is_production": cfg.deployment_is_production,
@@ -127,11 +140,11 @@ class Settings(BaseSettings):
         description="TapDB database target to resolve (local or aurora)",
     )
     tapdb_client_id: str = Field(
-        default="ursa",
+        default="local",
         description="TapDB client identifier",
     )
     tapdb_database_name: str = Field(
-        default="daylily-ursa",
+        default="ursa",
         description="TapDB namespace / database name",
     )
     tapdb_env: str = Field(

@@ -7,7 +7,7 @@
 #
 # This file defines:
 # - AWS regions to scan for ParallelCluster instances
-# - AWS profile and Cognito settings
+# - AWS profile, TapDB runtime, peer service URLs, and Cognito settings
 #
 # NOTE: S3 buckets are discovered from cluster tags (aws-parallelcluster-monitor-bucket)
 # rather than being configured here. Each cluster's bucket is set during cluster creation.
@@ -28,20 +28,31 @@ regions:
 
 
 # =============================================================================
-# TapDB (Strict Namespace)
+# TapDB Runtime
 # =============================================================================
-# Ursa uses TapDB graph persistence (Postgres). TapDB is configured via TAPDB
-# namespace env vars and the TapDB CLI, not via this file.
-#
-# Recommended:
-#   export TAPDB_STRICT_NAMESPACE=1
-#   export TAPDB_CLIENT_ID=local
-#   export TAPDB_DATABASE_NAME=ursa
-#   export TAPDB_ENV=dev
-#
-# Bootstrap (preferred):
-#   tapdb config init --client-id local --database-name ursa --env dev
-#   tapdb bootstrap local
+# Ursa reads its TapDB namespace/runtime from this YAML file.
+# Bootstrap the matching namespace with:
+#   tapdb --client-id local --database-name ursa config init --env dev --db-port dev=5541 --ui-port dev=8916
+#   tapdb --client-id local --database-name ursa bootstrap local
+tapdb_client_id: local
+tapdb_database_name: ursa
+tapdb_env: dev
+
+# Required runtime storage bucket
+ursa_internal_output_bucket: your-ursa-output-bucket
+
+# API/UI bind settings
+api_host: 0.0.0.0
+api_port: 8914
+
+# Peer service URLs
+bloom_base_url: https://localhost:8912
+bloom_verify_ssl: true
+atlas_base_url: https://localhost:8915
+atlas_verify_ssl: true
+dewey_enabled: false
+dewey_base_url: ""
+dewey_verify_ssl: true
 
 # Cognito configuration is read from this YAML file.
 # cognito_user_pool_id: us-west-2_xxxxxxxx

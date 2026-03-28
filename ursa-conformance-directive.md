@@ -194,7 +194,7 @@ spec = CliSpec(
     env=EnvSpec(
         active_env_var="URSA_ACTIVE",
         project_root_env_var="URSA_PROJECT_ROOT",
-        activate_script_name="ursa_activate",
+        activate_script_name="activate",
         deactivate_script_name="ursa_deactivate",
     ),
     plugins=PluginSpec(

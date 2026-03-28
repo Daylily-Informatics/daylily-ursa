@@ -66,6 +66,14 @@ def _ursa_info_hook() -> list[tuple[str, str]]:
     )
     rows.append(
         (
+            "TapDB Client",
+            os.environ.get("TAPDB_CLIENT_ID")
+            or getattr(settings, "tapdb_client_id", None)
+            or "local",
+        )
+    )
+    rows.append(
+        (
             "TapDB Namespace",
             os.environ.get("TAPDB_DATABASE_NAME")
             or getattr(settings, "tapdb_database_name", None)
@@ -131,7 +139,7 @@ spec = CliSpec(
     env=EnvSpec(
         active_env_var="URSA_ACTIVE",
         project_root_env_var="URSA_PROJECT_ROOT",
-        activate_script_name="ursa_activate",
+        activate_script_name="activate",
         deactivate_script_name="ursa_deactivate",
     ),
     plugins=PluginSpec(

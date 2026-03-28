@@ -92,14 +92,48 @@ class TapDBBackend:
     def __init__(
         self,
         *,
-        app_username: str = DEFAULT_TAPDB_CLIENT_ID,
+        app_username: str | None = None,
+        client_id: str | None = None,
+        namespace: str | None = None,
+        tapdb_env: str | None = None,
         bundle: TapdbClientBundle | None = None,
     ) -> None:
         ensure_tapdb_version()
+        if app_username is None or client_id is None or namespace is None or tapdb_env is None:
+            try:
+                from daylib_ursa.config import get_settings
+
+                settings = get_settings()
+            except Exception:
+                settings = None
+        else:
+            settings = None
+
+        resolved_client_id = (
+            client_id
+            or str(getattr(settings, "tapdb_client_id", "") or "").strip()
+            or DEFAULT_TAPDB_CLIENT_ID
+        )
+        resolved_namespace = (
+            namespace
+            or str(getattr(settings, "tapdb_database_name", "") or "").strip()
+            or DEFAULT_TAPDB_DATABASE_NAME
+        )
+        resolved_tapdb_env = (
+            tapdb_env
+            or str(getattr(settings, "tapdb_env", "") or "").strip()
+            or None
+        )
+        resolved_app_username = (
+            app_username
+            or str(getattr(settings, "tapdb_client_id", "") or "").strip()
+            or resolved_client_id
+        )
         self.bundle = bundle or get_tapdb_bundle(
-            client_id=DEFAULT_TAPDB_CLIENT_ID,
-            namespace=DEFAULT_TAPDB_DATABASE_NAME,
-            app_username=app_username,
+            client_id=resolved_client_id,
+            namespace=resolved_namespace,
+            tapdb_env=resolved_tapdb_env,
+            app_username=resolved_app_username,
         )
         self._conn = self.bundle.connection
         self._tm = self.bundle.template_manager

@@ -44,6 +44,31 @@ DEFAULT_SSL_KEY_FILE = CERT_DIR / "key.pem"
 REQUIRED_COGNITO_APP_CLIENT_NAME = "ursa"
 
 
+def _resolved_server_host_port(
+    *,
+    port: int | None = None,
+    host: str | None = None,
+) -> tuple[str, int]:
+    settings = get_settings()
+    resolved_port = int(
+        port
+        if port is not None
+        else os.environ.get(
+            "URSA_RUNTIME__PORT",
+            os.environ.get("URSA_PORT", getattr(settings, "api_port", 8914)),
+        )
+    )
+    resolved_host = str(
+        host
+        if host is not None
+        else os.environ.get(
+            "URSA_RUNTIME__HOST",
+            os.environ.get("URSA_HOST", getattr(settings, "api_host", "0.0.0.0")),
+        )
+    )
+    return resolved_host, resolved_port
+
+
 def _require_auth_dependencies() -> None:
     """Fail fast if auth is requested but optional auth deps aren't installed."""
 
@@ -231,8 +256,8 @@ def _run_cognito_uri_check(
 
 @server_app.command("start")
 def start(
-    port: int = typer.Option(8914, "--port", "-p", help="Port to run the server on"),
-    host: str = typer.Option("0.0.0.0", "--host", "-h", help="Host to bind to"),
+    port: int | None = typer.Option(None, "--port", "-p", help="Port to run the server on"),
+    host: str | None = typer.Option(None, "--host", "-h", help="Host to bind to"),
     reload: bool = typer.Option(False, "--reload", "-r", help="Enable auto-reload (foreground)"),
     background: bool = typer.Option(
         True, "--background/--foreground", "-b/-f", help="Run in background"
@@ -250,9 +275,8 @@ def start(
     if source_env_file(Path.cwd() / ".env"):
         console.print("[dim]Loaded .env file[/dim]")
 
-    # Override with env vars if set
-    port = int(os.environ.get("URSA_RUNTIME__PORT", os.environ.get("URSA_PORT", port)))
-    host = os.environ.get("URSA_RUNTIME__HOST", os.environ.get("URSA_HOST", host))
+    settings = get_settings()
+    host, port = _resolved_server_host_port(port=port, host=host)
 
     # Check if already running
     pid = _get_pid()
@@ -322,12 +346,8 @@ def start(
     env["PYTHONUNBUFFERED"] = "1"
     env["ENABLE_AUTH"] = "true"
 
-    settings = get_settings()
     env["DATABASE_BACKEND"] = settings.database_backend
     env["DATABASE_TARGET"] = settings.database_target
-    env["TAPDB_CLIENT_ID"] = settings.tapdb_client_id
-    env["TAPDB_DATABASE_NAME"] = settings.tapdb_database_name
-    env["TAPDB_ENV"] = settings.tapdb_env
     if settings.database_backend == "tapdb":
         env["DATABASE_URL"] = export_database_url_for_target(
             target=settings.database_target,
@@ -403,8 +423,7 @@ def status():
     """Check the status of the Ursa beta analysis API server."""
     pid = _get_pid()
     if pid:
-        port = os.environ.get("URSA_RUNTIME__PORT", os.environ.get("URSA_PORT", "8914"))
-        host = os.environ.get("URSA_RUNTIME__HOST", os.environ.get("URSA_HOST", "0.0.0.0"))
+        host, port = _resolved_server_host_port()
         log_file = latest_log(LOG_DIR)
         dh = display_host(host)
         console.print(f"[green]●[/green]  Server is [green]running[/green] (PID {pid})")
@@ -446,8 +465,8 @@ def logs(
 
 @server_app.command("restart")
 def restart(
-    port: int = typer.Option(8914, "--port", "-p", help="Port to run the server on"),
-    host: str = typer.Option("0.0.0.0", "--host", "-h", help="Host to bind to"),
+    port: int | None = typer.Option(None, "--port", "-p", help="Port to run the server on"),
+    host: str | None = typer.Option(None, "--host", "-h", help="Host to bind to"),
 ):
     """Restart the Ursa API server."""
     stop()
