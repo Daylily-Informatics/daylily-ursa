@@ -11,7 +11,6 @@ import uvicorn
 
 from daylib_ursa.analysis_store import AnalysisStore
 from daylib_ursa.atlas_result_client import AtlasResultClient
-from daylib_ursa.auth import AtlasIdentityClient
 from daylib_ursa.bloom_resolver_client import BloomResolverClient
 from daylib_ursa.config import get_settings
 from daylib_ursa.dewey_client import DeweyClient
@@ -82,11 +81,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         api_key=atlas_api_key,
         verify_ssl=settings.atlas_verify_ssl,
     )
-    identity_client = AtlasIdentityClient(
-        base_url=str(getattr(settings, "atlas_identity_base_url", "") or settings.atlas_base_url),
-        internal_api_key=atlas_api_key,
-        verify_ssl=settings.atlas_verify_ssl,
-    )
     dewey_client = None
     if bool(getattr(settings, "dewey_enabled", False)):
         dewey_client = DeweyClient(
@@ -100,7 +94,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         bloom_client=bloom_client,
         atlas_client=atlas_client,
         dewey_client=dewey_client,
-        identity_client=identity_client,
         settings=settings,
     )
 

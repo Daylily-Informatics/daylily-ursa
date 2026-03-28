@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import uuid
+from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
 
 from daylib_ursa.analysis_store import AnalysisArtifact, AnalysisRecord, AnalysisState, ReviewState
-from daylib_ursa.auth import ActorContext
+from daylib_ursa.auth import CurrentUser, Role
 from daylib_ursa.atlas_result_client import AtlasResultArtifact, AtlasResultClient, AtlasResultClientError
 from daylib_ursa.config import Settings
 from daylib_ursa.workset_api import create_app
+
+TENANT_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
 
 
 class DummyStore:
@@ -22,7 +26,7 @@ class DummyStore:
             lane="1",
             library_barcode="LIB-1",
             sequenced_library_assignment_euid="SQA-1",
-            atlas_tenant_id="TEN-1",
+            tenant_id=TENANT_ID,
             atlas_trf_euid="TRF-1",
             atlas_test_euid="TST-1",
             atlas_test_fulfillment_item_euid="TPC-1",
@@ -102,27 +106,22 @@ class DummyAtlasClient:
         }
 
 
-class DummyIdentityClient:
-    def resolve_access_token(self, access_token: str) -> ActorContext:
+class DummyAuthProvider:
+    def resolve_access_token(self, access_token: str) -> CurrentUser:
         assert access_token == "atlas-token"
-        return ActorContext(
-            user_id="user-1",
-            atlas_tenant_id="TEN-1",
-            roles=("admin",),
-            auth_source="atlas_bearer",
-        )
-
-    def resolve_user(self, user_id: str) -> ActorContext:  # pragma: no cover - not used here
-        return ActorContext(
-            user_id=user_id,
-            atlas_tenant_id="TEN-1",
-            roles=("admin",),
-            auth_source="ursa_token",
+        return CurrentUser(
+            sub="00000000-0000-0000-0000-000000000101",
+            email="user@example.test",
+            name="User One",
+            tenant_id=TENANT_ID,
+            roles=[Role.ADMIN.value],
+            auth_source="cognito",
         )
 
 
 def _settings() -> Settings:
     return Settings(
+        aws_profile="",
         cors_origins="*",
         ursa_internal_api_key="ursa-test-key",
         bloom_base_url="https://bloom.example",
@@ -130,6 +129,11 @@ def _settings() -> Settings:
         ursa_internal_output_bucket="analysis-bucket",
         ursa_tapdb_mount_enabled=False,
     )
+
+
+def _create_test_app(*args, **kwargs):
+    with patch("daylib_ursa.workset_api.RegionAwareS3Client", return_value=object()):
+        return create_app(*args, **kwargs)
 
 
 def test_return_analysis_result_calls_atlas_and_marks_returned():
@@ -140,11 +144,11 @@ def test_return_analysis_result_calls_atlas_and_marks_returned():
         state=AnalysisState.REVIEWED.value,
     )
     atlas = DummyAtlasClient()
-    app = create_app(
+    app = _create_test_app(
         store,
         bloom_client=DummyBloomClient(),
         atlas_client=atlas,
-        identity_client=DummyIdentityClient(),
+        auth_provider=DummyAuthProvider(),
         settings=_settings(),
     )
 
@@ -165,18 +169,20 @@ def test_return_analysis_result_calls_atlas_and_marks_returned():
     body = response.json()
     assert body["state"] == "RETURNED"
     assert body["atlas_return"]["fulfillment_run_euid"] == "ASR-1"
+    assert body["tenant_id"] == str(TENANT_ID)
     assert atlas.calls[0]["atlas_test_fulfillment_item_euid"] == "TPC-1"
+    assert atlas.calls[0]["atlas_tenant_id"] == str(TENANT_ID)
     assert store.mark_returned_calls[0]["idempotency_key"] == "return-1"
 
 
 def test_return_analysis_result_requires_manual_approval():
     store = DummyStore()
     atlas = DummyAtlasClient()
-    app = create_app(
+    app = _create_test_app(
         store,
         bloom_client=DummyBloomClient(),
         atlas_client=atlas,
-        identity_client=DummyIdentityClient(),
+        auth_provider=DummyAuthProvider(),
         settings=_settings(),
     )
 
@@ -201,11 +207,11 @@ def test_return_analysis_result_requires_manual_approval():
 def test_review_analysis_updates_review_state():
     store = DummyStore()
     atlas = DummyAtlasClient()
-    app = create_app(
+    app = _create_test_app(
         store,
         bloom_client=DummyBloomClient(),
         atlas_client=atlas,
-        identity_client=DummyIdentityClient(),
+        auth_provider=DummyAuthProvider(),
         settings=_settings(),
     )
 
@@ -237,7 +243,7 @@ def test_atlas_result_client_rejects_non_https_base_url():
 
     with pytest.raises(AtlasResultClientError, match="absolute https:// URL"):
         client.return_analysis_result(
-            atlas_tenant_id="TEN-1",
+            atlas_tenant_id=str(TENANT_ID),
             atlas_trf_euid="TRF-1",
             atlas_test_euid="TST-1",
             atlas_test_fulfillment_item_euid="TPC-1",
@@ -258,7 +264,7 @@ def test_atlas_result_client_rejects_non_https_base_url():
 
 def test_create_app_rejects_no_auth_write_mode():
     with pytest.raises(ValueError, match="cannot be disabled"):
-        create_app(
+        _create_test_app(
             DummyStore(),
             bloom_client=DummyBloomClient(),
             atlas_client=DummyAtlasClient(),

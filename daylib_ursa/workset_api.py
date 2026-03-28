@@ -8,6 +8,7 @@ import io
 import logging
 import secrets
 import tarfile
+import uuid
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -36,11 +37,13 @@ from daylib_ursa.atlas_result_client import (
     AtlasResultClientError,
 )
 from daylib_ursa.auth import (
-    ActorContext,
     AtlasUserDirectoryEntry,
-    AtlasIdentityClient,
     AuthError,
-    USER_TOKEN_PREFIX,
+    CognitoAuthProvider,
+    CognitoUserDirectoryService,
+    CurrentUser,
+    RequireAdmin,
+    RequireAuth,
     UserTokenRecord,
     UserTokenService,
     UserTokenUsageRecord,
@@ -324,7 +327,7 @@ class AnalysisResponse(BaseModel):
     lane: str
     library_barcode: str
     sequenced_library_assignment_euid: str
-    atlas_tenant_id: str
+    tenant_id: uuid.UUID
     atlas_trf_euid: str
     atlas_test_euid: str
     atlas_test_fulfillment_item_euid: str
@@ -347,7 +350,7 @@ class ManifestResponse(BaseModel):
     manifest_euid: str
     name: str
     workset_euid: str
-    atlas_tenant_id: str
+    tenant_id: uuid.UUID
     owner_user_id: str
     artifact_set_euid: str | None
     artifact_euids: list[str]
@@ -361,7 +364,7 @@ class ManifestResponse(BaseModel):
 class WorksetResponse(BaseModel):
     workset_euid: str
     name: str
-    atlas_tenant_id: str
+    tenant_id: uuid.UUID
     owner_user_id: str
     state: str
     artifact_set_euids: list[str]
@@ -385,7 +388,7 @@ class ArtifactImportResponse(BaseModel):
 class LinkedBucketResponse(BaseModel):
     bucket_id: str
     bucket_name: str
-    atlas_tenant_id: str
+    tenant_id: uuid.UUID
     owner_user_id: str
     display_name: str | None
     metadata: dict[str, Any]
@@ -449,7 +452,7 @@ class ClientRegistrationResponse(BaseModel):
 
 class MeResponse(BaseModel):
     user_id: str
-    atlas_tenant_id: str
+    tenant_id: uuid.UUID
     roles: list[str]
     email: str | None
     display_name: str | None
@@ -463,7 +466,7 @@ class MeResponse(BaseModel):
 
 class AtlasUserDirectoryResponse(BaseModel):
     user_id: str
-    atlas_tenant_id: str
+    tenant_id: uuid.UUID
     organization_id: str
     organization_name: str | None
     site_id: str | None
@@ -491,7 +494,7 @@ class ClusterJobResponse(BaseModel):
     cluster_name: str
     region: str
     region_az: str
-    atlas_tenant_id: str
+    tenant_id: uuid.UUID
     owner_user_id: str
     sponsor_user_id: str
     state: str
@@ -530,7 +533,7 @@ def _analysis_response(record: AnalysisRecord) -> AnalysisResponse:
         lane=record.lane,
         library_barcode=record.library_barcode,
         sequenced_library_assignment_euid=record.sequenced_library_assignment_euid,
-        atlas_tenant_id=record.atlas_tenant_id,
+        tenant_id=record.tenant_id,
         atlas_trf_euid=record.atlas_trf_euid,
         atlas_test_euid=record.atlas_test_euid,
         atlas_test_fulfillment_item_euid=record.atlas_test_fulfillment_item_euid,
@@ -558,7 +561,7 @@ def _workset_response(record: WorksetRecord) -> WorksetResponse:
     return WorksetResponse(
         workset_euid=record.workset_euid,
         name=record.name,
-        atlas_tenant_id=record.atlas_tenant_id,
+        tenant_id=record.tenant_id,
         owner_user_id=record.owner_user_id,
         state=record.state,
         artifact_set_euids=record.artifact_set_euids,
@@ -606,10 +609,10 @@ def _linked_bucket_response(record: LinkedBucketRecord) -> LinkedBucketResponse:
     return LinkedBucketResponse(**record.__dict__)
 
 
-def _me_response(actor: ActorContext) -> MeResponse:
+def _me_response(actor: CurrentUser) -> MeResponse:
     return MeResponse(
         user_id=actor.user_id,
-        atlas_tenant_id=actor.atlas_tenant_id,
+        tenant_id=actor.tenant_id,
         roles=list(actor.roles),
         email=actor.email,
         display_name=actor.display_name,
@@ -625,7 +628,7 @@ def _me_response(actor: ActorContext) -> MeResponse:
 def _atlas_user_directory_response(entry: AtlasUserDirectoryEntry) -> AtlasUserDirectoryResponse:
     return AtlasUserDirectoryResponse(
         user_id=entry.user_id,
-        atlas_tenant_id=entry.atlas_tenant_id,
+        tenant_id=entry.tenant_id,
         organization_id=entry.organization_id,
         organization_name=entry.organization_name,
         site_id=entry.site_id,
@@ -648,7 +651,7 @@ def _cluster_job_response(record: ClusterJobRecord) -> ClusterJobResponse:
         cluster_name=record.cluster_name,
         region=record.region,
         region_az=record.region_az,
-        atlas_tenant_id=record.atlas_tenant_id,
+        tenant_id=record.tenant_id,
         owner_user_id=record.owner_user_id,
         sponsor_user_id=record.sponsor_user_id,
         state=record.state,
@@ -970,9 +973,10 @@ def create_app(
     bloom_client: BloomResolverClient,
     atlas_client: AtlasResultClient | None = None,
     dewey_client: DeweyClient | None = None,
-    identity_client: AtlasIdentityClient | None = None,
     resource_store: ResourceStore | None = None,
     token_service: UserTokenService | None = None,
+    auth_provider: CognitoAuthProvider | None = None,
+    user_directory: CognitoUserDirectoryService | None = None,
     settings: Settings | None = None,
     require_api_key: bool | None = None,
 ) -> FastAPI:
@@ -1004,16 +1008,25 @@ def create_app(
     app.state.require_api_key = True
     app.state.api_key = settings.ursa_internal_api_key
 
-    if identity_client is None:
-        identity_client = AtlasIdentityClient(
-            base_url=str(
-                getattr(settings, "atlas_identity_base_url", "")
-                or getattr(settings, "atlas_base_url", "")
-            ),
-            internal_api_key=str(getattr(settings, "atlas_internal_api_key", "") or "").strip(),
-            verify_ssl=bool(getattr(settings, "atlas_verify_ssl", True)),
+    if auth_provider is None:
+        auth_provider = CognitoAuthProvider(
+            user_pool_id=str(getattr(settings, "cognito_user_pool_id", "") or "").strip(),
+            app_client_id=str(getattr(settings, "cognito_app_client_id", "") or "").strip(),
+            region=str(getattr(settings, "cognito_region", "") or settings.get_effective_region()).strip(),
         )
-    app.state.identity_client = identity_client
+    app.state.auth_provider = auth_provider
+
+    if (
+        user_directory is None
+        and str(getattr(settings, "cognito_user_pool_id", "") or "").strip()
+        and str(getattr(settings, "cognito_region", "") or "").strip()
+    ):
+        user_directory = CognitoUserDirectoryService(
+            user_pool_id=str(settings.cognito_user_pool_id or "").strip(),
+            region=str(settings.cognito_region or "").strip(),
+            profile=settings.aws_profile,
+        )
+    app.state.user_directory = user_directory
 
     if resource_store is None and hasattr(store, "backend"):
         resource_store = ResourceStore(backend=store.backend)
@@ -1028,13 +1041,11 @@ def create_app(
     if (
         token_service is None
         and resource_store is not None
-        and identity_client is not None
         and hasattr(resource_store, "backend")
     ):
         token_service = UserTokenService(
             backend=resource_store.backend,
-            identity_client=identity_client,
-            resource_store=resource_store,
+            user_lookup=user_directory.get_user if user_directory is not None else None,
         )
     app.state.token_service = token_service
     app.state.cluster_job_manager = (
@@ -1145,11 +1156,11 @@ def create_app(
             raise HTTPException(status_code=503, detail="User token service is not configured")
         return service
 
-    def require_identity_client() -> AtlasIdentityClient:
-        client = getattr(app.state, "identity_client", None)
-        if client is None:
-            raise HTTPException(status_code=503, detail="Atlas identity client is not configured")
-        return client
+    def require_user_directory() -> CognitoUserDirectoryService:
+        directory = getattr(app.state, "user_directory", None)
+        if directory is None:
+            raise HTTPException(status_code=503, detail="User directory is not configured")
+        return directory
 
     def require_cluster_service() -> ClusterService:
         service = getattr(app.state, "cluster_service", None)
@@ -1249,7 +1260,7 @@ def create_app(
 
     def resolve_manifest_input_references(
         *,
-        actor: ActorContext,
+        actor: CurrentUser,
         resources: ResourceStore,
         request: ManifestCreateRequest,
     ) -> tuple[str | None, list[str], list[dict[str, Any]], dict[str, Any]]:
@@ -1320,7 +1331,7 @@ def create_app(
                     metadata={
                         "producer_system": "ursa-manifest",
                         "actor_user_id": actor.user_id,
-                        "atlas_tenant_id": actor.atlas_tenant_id,
+                        "tenant_id": str(actor.tenant_id),
                         "workset_euid": request.workset_euid,
                     },
                     idempotency_key=f"manifest:{actor.user_id}:{raw_value}",
@@ -1357,58 +1368,16 @@ def create_app(
         ]
         return canonical_set_euid, canonical_artifact_euids, input_references, manifest_metadata
 
-    def require_user_actor(
-        request: Request,
-        authorization: Annotated[str | None, Header(alias="Authorization")] = None,
-        x_api_key: Annotated[str | None, Header(alias="X-API-Key")] = None,
-        identity: AtlasIdentityClient = Depends(require_identity_client),
-    ) -> ActorContext:
-        if str(x_api_key or "").strip():
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Shared X-API-Key auth is not allowed on user-scoped APIs",
-            )
-        header = str(authorization or "").strip()
-        token = ""
-        if header.lower().startswith("bearer "):
-            token = header.split(" ", 1)[1].strip()
-        elif hasattr(request, "session"):
-            token = str(request.session.get("atlas_access_token") or "").strip()
-        if not token:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Bearer authorization or authenticated session is required",
-            )
-        try:
-            if token.startswith(USER_TOKEN_PREFIX):
-                service = getattr(app.state, "token_service", None)
-                if service is None:
-                    raise AuthError("User token service is not configured")
-                validated = service.validate_token(token)
-                request.state.user_token_usage = {
-                    "token_euid": validated.token.token_euid,
-                    "actor_user_id": validated.actor.user_id,
-                }
-                return validated.actor
-            return identity.resolve_access_token(token)
-        except AuthError as exc:
-            raise HTTPException(status_code=401, detail=str(exc)) from exc
-
-    def require_admin_actor(actor: ActorContext = Depends(require_user_actor)) -> ActorContext:
-        if not actor.is_admin:
-            raise HTTPException(status_code=403, detail="Admin privileges are required")
-        return actor
-
     def require_linked_bucket_record(
         *,
         bucket_id: str,
-        actor: ActorContext,
+        actor: CurrentUser,
         resources: ResourceStore,
     ) -> LinkedBucketRecord:
         record = resources.get_linked_bucket(bucket_id)
         if record is None or record.state == "DELETED":
             raise HTTPException(status_code=404, detail="Bucket not found")
-        if not actor.is_admin and record.atlas_tenant_id != actor.atlas_tenant_id:
+        if not actor.is_admin and record.tenant_id != actor.tenant_id:
             raise HTTPException(status_code=403, detail="Bucket is outside the caller tenant")
         return record
 
@@ -1533,16 +1502,16 @@ def create_app(
         }
 
     @app.get("/api/v1/me", response_model=MeResponse)
-    async def get_me(actor: ActorContext = Depends(require_user_actor)) -> MeResponse:
+    async def get_me(actor: RequireAuth) -> MeResponse:
         return _me_response(actor)
 
     @app.get("/api/v1/analyses", response_model=list[AnalysisResponse])
     async def list_analyses(
-        actor: ActorContext = Depends(require_user_actor),
+        actor: RequireAuth,
         workset_euid: str | None = Query(default=None),
     ) -> list[AnalysisResponse]:
         records = app.state.store.list_analyses(
-            atlas_tenant_id=None if actor.is_admin else actor.atlas_tenant_id,
+            tenant_id=None if actor.is_admin else actor.tenant_id,
             workset_euid=workset_euid,
         )
         return [_analysis_response(record) for record in records]
@@ -1644,12 +1613,12 @@ def create_app(
     @app.get("/api/v1/analyses/{analysis_euid}", response_model=AnalysisResponse)
     async def get_analysis(
         analysis_euid: str,
-        actor: ActorContext = Depends(require_user_actor),
+        actor: RequireAuth,
     ) -> AnalysisResponse:
         record = app.state.store.get_analysis(analysis_euid)
         if record is None:
             raise HTTPException(status_code=404, detail="Analysis not found")
-        if not actor.is_admin and record.atlas_tenant_id != actor.atlas_tenant_id:
+        if not actor.is_admin and record.tenant_id != actor.tenant_id:
             raise HTTPException(status_code=403, detail="Analysis is outside the caller tenant")
         return _analysis_response(record)
 
@@ -1728,12 +1697,12 @@ def create_app(
     async def review_analysis(
         analysis_euid: str,
         request: AnalysisReviewRequest,
-        actor: ActorContext = Depends(require_user_actor),
+        actor: RequireAuth,
     ) -> AnalysisResponse:
         existing = app.state.store.get_analysis(analysis_euid)
         if existing is None:
             raise HTTPException(status_code=404, detail="Analysis not found")
-        if not actor.is_admin and existing.atlas_tenant_id != actor.atlas_tenant_id:
+        if not actor.is_admin and existing.tenant_id != actor.tenant_id:
             raise HTTPException(status_code=403, detail="Analysis is outside the caller tenant")
         try:
             record = app.state.store.set_review_state(
@@ -1750,7 +1719,7 @@ def create_app(
     async def return_analysis_result(
         analysis_euid: str,
         request: AnalysisReturnRequest,
-        actor: ActorContext = Depends(require_user_actor),
+        actor: RequireAuth,
         idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
     ) -> AnalysisResponse:
         if not str(idempotency_key or "").strip():
@@ -1758,7 +1727,7 @@ def create_app(
         record = app.state.store.get_analysis(analysis_euid)
         if record is None:
             raise HTTPException(status_code=404, detail="Analysis not found")
-        if not actor.is_admin and record.atlas_tenant_id != actor.atlas_tenant_id:
+        if not actor.is_admin and record.tenant_id != actor.tenant_id:
             raise HTTPException(status_code=403, detail="Analysis is outside the caller tenant")
         if app.state.atlas_client is None:
             raise HTTPException(status_code=503, detail="Atlas result return client is not configured")
@@ -1797,7 +1766,7 @@ def create_app(
                 )
 
             atlas_response = app.state.atlas_client.return_analysis_result(
-                atlas_tenant_id=record.atlas_tenant_id,
+                atlas_tenant_id=str(record.tenant_id),
                 atlas_trf_euid=record.atlas_trf_euid,
                 atlas_test_euid=record.atlas_test_euid,
                 atlas_test_fulfillment_item_euid=record.atlas_test_fulfillment_item_euid,
@@ -1830,24 +1799,24 @@ def create_app(
 
     @app.get("/api/v1/worksets", response_model=list[WorksetResponse])
     async def list_worksets(
-        actor: ActorContext = Depends(require_user_actor),
+        actor: RequireAuth,
         resources: ResourceStore = Depends(require_resource_store),
     ) -> list[WorksetResponse]:
         items = resources.list_worksets(
-            atlas_tenant_id=actor.atlas_tenant_id,
+            tenant_id=actor.tenant_id,
         )
         return [_workset_response(item) for item in items]
 
     @app.post("/api/v1/worksets", response_model=WorksetResponse, status_code=status.HTTP_201_CREATED)
     async def create_workset(
         request: WorksetCreateRequest,
-        actor: ActorContext = Depends(require_user_actor),
+        actor: RequireAuth,
         resources: ResourceStore = Depends(require_resource_store),
     ) -> WorksetResponse:
         artifact_set_euids = validate_workset_artifact_sets(request.artifact_set_euids)
         record = resources.create_workset(
             name=request.name,
-            atlas_tenant_id=actor.atlas_tenant_id,
+            tenant_id=actor.tenant_id,
             owner_user_id=actor.user_id,
             artifact_set_euids=artifact_set_euids,
             metadata=request.metadata,
@@ -1857,34 +1826,34 @@ def create_app(
     @app.get("/api/v1/worksets/{workset_euid}", response_model=WorksetResponse)
     async def get_workset(
         workset_euid: str,
-        actor: ActorContext = Depends(require_user_actor),
+        actor: RequireAuth,
         resources: ResourceStore = Depends(require_resource_store),
     ) -> WorksetResponse:
         record = resources.get_workset(workset_euid)
         if record is None:
             raise HTTPException(status_code=404, detail="Workset not found")
-        if not actor.is_admin and record.atlas_tenant_id != actor.atlas_tenant_id:
+        if not actor.is_admin and record.tenant_id != actor.tenant_id:
             raise HTTPException(status_code=403, detail="Workset is outside the caller tenant")
         return _workset_response(record)
 
     @app.get("/api/v1/manifests", response_model=list[ManifestResponse])
     async def list_manifests(
-        actor: ActorContext = Depends(require_user_actor),
+        actor: RequireAuth,
         resources: ResourceStore = Depends(require_resource_store),
     ) -> list[ManifestResponse]:
-        records = resources.list_manifests(atlas_tenant_id=actor.atlas_tenant_id)
+        records = resources.list_manifests(tenant_id=actor.tenant_id)
         return [_manifest_response(item) for item in records]
 
     @app.post("/api/v1/manifests", response_model=ManifestResponse, status_code=status.HTTP_201_CREATED)
     async def create_manifest(
         request: ManifestCreateRequest,
-        actor: ActorContext = Depends(require_user_actor),
+        actor: RequireAuth,
         resources: ResourceStore = Depends(require_resource_store),
     ) -> ManifestResponse:
         workset = resources.get_workset(request.workset_euid)
         if workset is None:
             raise HTTPException(status_code=404, detail="Workset not found")
-        if not actor.is_admin and workset.atlas_tenant_id != actor.atlas_tenant_id:
+        if not actor.is_admin and workset.tenant_id != actor.tenant_id:
             raise HTTPException(status_code=403, detail="Workset is outside the caller tenant")
         artifact_set_euid, artifact_euids, input_references, metadata = resolve_manifest_input_references(
             actor=actor,
@@ -1904,26 +1873,26 @@ def create_app(
     @app.get("/api/v1/manifests/{manifest_euid}", response_model=ManifestResponse)
     async def get_manifest(
         manifest_euid: str,
-        actor: ActorContext = Depends(require_user_actor),
+        actor: RequireAuth,
         resources: ResourceStore = Depends(require_resource_store),
     ) -> ManifestResponse:
         record = resources.get_manifest(manifest_euid)
         if record is None:
             raise HTTPException(status_code=404, detail="Manifest not found")
-        if not actor.is_admin and record.atlas_tenant_id != actor.atlas_tenant_id:
+        if not actor.is_admin and record.tenant_id != actor.tenant_id:
             raise HTTPException(status_code=403, detail="Manifest is outside the caller tenant")
         return _manifest_response(record)
 
     @app.get("/api/v1/manifests/{manifest_euid}/download")
     async def download_manifest(
         manifest_euid: str,
-        actor: ActorContext = Depends(require_user_actor),
+        actor: RequireAuth,
         resources: ResourceStore = Depends(require_resource_store),
     ) -> PlainTextResponse:
         record = resources.get_manifest(manifest_euid)
         if record is None:
             raise HTTPException(status_code=404, detail="Manifest not found")
-        if not actor.is_admin and record.atlas_tenant_id != actor.atlas_tenant_id:
+        if not actor.is_admin and record.tenant_id != actor.tenant_id:
             raise HTTPException(status_code=403, detail="Manifest is outside the caller tenant")
         metadata = dict(record.metadata or {})
         tsv_content = str(metadata.get("editor_manifest_tsv") or "").strip()
@@ -1942,7 +1911,7 @@ def create_app(
     @app.post("/api/v1/artifacts/import", response_model=ArtifactImportResponse, status_code=status.HTTP_201_CREATED)
     async def import_artifact_to_dewey(
         request: ArtifactImportRequest,
-        actor: ActorContext = Depends(require_user_actor),
+        actor: RequireAuth,
         resources: ResourceStore = Depends(require_resource_store),
     ) -> ArtifactImportResponse:
         if app.state.dewey_client is None:
@@ -1959,7 +1928,7 @@ def create_app(
                     **dict(request.metadata or {}),
                     "producer_system": "ursa",
                     "actor_user_id": actor.user_id,
-                    "atlas_tenant_id": actor.atlas_tenant_id,
+                    "tenant_id": str(actor.tenant_id),
                 },
                 idempotency_key=f"{actor.user_id}:{request.storage_uri}",
             )
@@ -1977,7 +1946,7 @@ def create_app(
     @app.post("/api/v1/artifacts/resolve")
     async def resolve_artifact(
         request: ArtifactResolveRequest,
-        actor: ActorContext = Depends(require_user_actor),
+        actor: RequireAuth,
     ) -> dict[str, Any]:
         _ = actor
         if app.state.dewey_client is None:
@@ -1991,16 +1960,16 @@ def create_app(
 
     @app.get("/api/v1/buckets", response_model=list[LinkedBucketResponse])
     async def list_linked_buckets(
-        actor: ActorContext = Depends(require_user_actor),
+        actor: RequireAuth,
         resources: ResourceStore = Depends(require_resource_store),
     ) -> list[LinkedBucketResponse]:
-        records = resources.list_linked_buckets(atlas_tenant_id=actor.atlas_tenant_id)
+        records = resources.list_linked_buckets(tenant_id=actor.tenant_id)
         return [_linked_bucket_response(item) for item in records]
 
     @app.post("/api/v1/buckets/validate", response_model=LinkedBucketValidationResponse)
     async def validate_linked_bucket(
         request: LinkedBucketCreateRequest,
-        actor: ActorContext = Depends(require_user_actor),
+        actor: RequireAuth,
     ) -> LinkedBucketValidationResponse:
         _ = actor
         try:
@@ -2016,7 +1985,7 @@ def create_app(
     @app.post("/api/v1/buckets", response_model=LinkedBucketResponse, status_code=status.HTTP_201_CREATED)
     async def create_linked_bucket(
         request: LinkedBucketCreateRequest,
-        actor: ActorContext = Depends(require_user_actor),
+        actor: RequireAuth,
         resources: ResourceStore = Depends(require_resource_store),
     ) -> LinkedBucketResponse:
         try:
@@ -2028,7 +1997,7 @@ def create_app(
             )
             record = resources.create_linked_bucket(
                 bucket_name=validation.bucket_name,
-                atlas_tenant_id=actor.atlas_tenant_id,
+                tenant_id=actor.tenant_id,
                 owner_user_id=actor.user_id,
                 display_name=request.display_name,
                 bucket_type=request.bucket_type,
@@ -2050,7 +2019,7 @@ def create_app(
     @app.get("/api/v1/buckets/{bucket_id}", response_model=LinkedBucketResponse)
     async def get_linked_bucket(
         bucket_id: str,
-        actor: ActorContext = Depends(require_user_actor),
+        actor: RequireAuth,
         resources: ResourceStore = Depends(require_resource_store),
     ) -> LinkedBucketResponse:
         record = require_linked_bucket_record(bucket_id=bucket_id, actor=actor, resources=resources)
@@ -2060,7 +2029,7 @@ def create_app(
     async def update_linked_bucket(
         bucket_id: str,
         request: LinkedBucketUpdateRequest,
-        actor: ActorContext = Depends(require_user_actor),
+        actor: RequireAuth,
         resources: ResourceStore = Depends(require_resource_store),
     ) -> LinkedBucketResponse:
         existing = require_linked_bucket_record(bucket_id=bucket_id, actor=actor, resources=resources)
@@ -2092,7 +2061,7 @@ def create_app(
     @app.post("/api/v1/buckets/{bucket_id}/revalidate", response_model=LinkedBucketResponse)
     async def revalidate_linked_bucket(
         bucket_id: str,
-        actor: ActorContext = Depends(require_user_actor),
+        actor: RequireAuth,
         resources: ResourceStore = Depends(require_resource_store),
     ) -> LinkedBucketResponse:
         existing = require_linked_bucket_record(bucket_id=bucket_id, actor=actor, resources=resources)
@@ -2118,12 +2087,12 @@ def create_app(
     @app.delete("/api/v1/buckets/{bucket_id}", response_model=LinkedBucketDeleteResponse)
     async def delete_linked_bucket(
         bucket_id: str,
-        actor: ActorContext = Depends(require_user_actor),
+        actor: RequireAuth,
         resources: ResourceStore = Depends(require_resource_store),
     ) -> LinkedBucketDeleteResponse:
         existing = {
             item.bucket_id: item
-            for item in resources.list_linked_buckets(atlas_tenant_id=actor.atlas_tenant_id)
+            for item in resources.list_linked_buckets(tenant_id=actor.tenant_id)
         }.get(bucket_id)
         if existing is None:
             raise HTTPException(status_code=404, detail="Bucket not found")
@@ -2135,9 +2104,9 @@ def create_app(
     @app.get("/api/v1/buckets/{bucket_id}/objects")
     async def list_bucket_objects(
         bucket_id: str,
+        actor: RequireAuth,
         prefix: str = Query(default=""),
         max_keys: int = Query(default=500, ge=1, le=1000),
-        actor: ActorContext = Depends(require_user_actor),
         resources: ResourceStore = Depends(require_resource_store),
     ) -> dict[str, Any]:
         record = require_linked_bucket_record(bucket_id=bucket_id, actor=actor, resources=resources)
@@ -2147,8 +2116,8 @@ def create_app(
     async def create_bucket_folder(
         bucket_id: str,
         request: BucketFolderCreateRequest,
+        actor: RequireAuth,
         prefix: str = Query(default=""),
-        actor: ActorContext = Depends(require_user_actor),
         resources: ResourceStore = Depends(require_resource_store),
     ) -> dict[str, Any]:
         record = require_linked_bucket_record(bucket_id=bucket_id, actor=actor, resources=resources)
@@ -2180,9 +2149,9 @@ def create_app(
     @app.post("/api/v1/buckets/{bucket_id}/upload")
     async def upload_bucket_file(
         bucket_id: str,
+        actor: RequireAuth,
         file: UploadFile = File(...),
         prefix: str = Form(""),
-        actor: ActorContext = Depends(require_user_actor),
         resources: ResourceStore = Depends(require_resource_store),
     ) -> dict[str, Any]:
         record = require_linked_bucket_record(bucket_id=bucket_id, actor=actor, resources=resources)
@@ -2205,8 +2174,8 @@ def create_app(
     @app.get("/api/v1/buckets/{bucket_id}/objects/download-url")
     async def get_bucket_object_download_url(
         bucket_id: str,
+        actor: RequireAuth,
         key: str = Query(...),
-        actor: ActorContext = Depends(require_user_actor),
         resources: ResourceStore = Depends(require_resource_store),
     ) -> dict[str, str]:
         record = require_linked_bucket_record(bucket_id=bucket_id, actor=actor, resources=resources)
@@ -2226,9 +2195,9 @@ def create_app(
     @app.get("/api/v1/buckets/{bucket_id}/objects/preview")
     async def preview_bucket_object(
         bucket_id: str,
+        actor: RequireAuth,
         key: str = Query(...),
         lines: int = Query(default=20, ge=1, le=200),
-        actor: ActorContext = Depends(require_user_actor),
         resources: ResourceStore = Depends(require_resource_store),
     ) -> dict[str, Any]:
         record = require_linked_bucket_record(bucket_id=bucket_id, actor=actor, resources=resources)
@@ -2248,8 +2217,8 @@ def create_app(
     @app.delete("/api/v1/buckets/{bucket_id}/objects")
     async def delete_bucket_object(
         bucket_id: str,
+        actor: RequireAuth,
         key: str = Query(...),
-        actor: ActorContext = Depends(require_user_actor),
         resources: ResourceStore = Depends(require_resource_store),
     ) -> dict[str, Any]:
         record = require_linked_bucket_record(bucket_id=bucket_id, actor=actor, resources=resources)
@@ -2283,40 +2252,40 @@ def create_app(
 
     @app.get("/api/v1/clusters/jobs", response_model=list[ClusterJobResponse])
     async def list_cluster_jobs(
-        actor: ActorContext = Depends(require_admin_actor),
+        actor: RequireAdmin,
         resources: ResourceStore = Depends(require_resource_store),
     ) -> list[ClusterJobResponse]:
         records = resources.list_cluster_jobs(
-            atlas_tenant_id=None if actor.is_admin else actor.atlas_tenant_id
+            tenant_id=None if actor.is_admin else actor.tenant_id
         )
         return [_cluster_job_response(item) for item in records]
 
     @app.get("/api/v1/clusters/jobs/{job_euid}", response_model=ClusterJobResponse)
     async def get_cluster_job(
         job_euid: str,
-        actor: ActorContext = Depends(require_admin_actor),
+        actor: RequireAdmin,
         resources: ResourceStore = Depends(require_resource_store),
     ) -> ClusterJobResponse:
         record = resources.get_cluster_job(job_euid)
         if record is None:
             raise HTTPException(status_code=404, detail="Cluster job not found")
-        if not actor.is_admin and record.atlas_tenant_id != actor.atlas_tenant_id:
+        if not actor.is_admin and record.tenant_id != actor.tenant_id:
             raise HTTPException(status_code=403, detail="Cluster job is outside the caller tenant")
         return _cluster_job_response(record)
 
     @app.get("/api/v1/clusters/create-options")
     async def get_cluster_create_options(
+        actor: RequireAdmin,
         region: str = Query(...),
-        actor: ActorContext = Depends(require_admin_actor),
     ) -> dict[str, list[str]]:
         _ = actor
         return load_cluster_create_options(region)
 
     @app.get("/api/v1/clusters")
     async def list_clusters(
+        actor: RequireAdmin,
         refresh: bool = Query(default=False),
         fetch_ssh_status: bool = Query(default=False),
-        actor: ActorContext = Depends(require_admin_actor),
         service: ClusterService = Depends(require_cluster_service),
     ) -> dict[str, list[dict[str, Any]]]:
         _ = actor
@@ -2333,7 +2302,7 @@ def create_app(
     )
     async def create_cluster(
         request: ClusterCreateRequest,
-        actor: ActorContext = Depends(require_admin_actor),
+        actor: RequireAdmin,
         manager: ClusterJobManager = Depends(require_cluster_job_manager),
     ) -> ClusterJobResponse:
         owner_user_id = str(request.owner_user_id or actor.user_id).strip()
@@ -2353,7 +2322,7 @@ def create_app(
             region_az=region_az,
             ssh_key_name=ssh_key_name,
             s3_bucket_name=s3_bucket_name,
-            atlas_tenant_id=actor.atlas_tenant_id,
+            tenant_id=actor.tenant_id,
             owner_user_id=owner_user_id,
             sponsor_user_id=actor.user_id,
             aws_profile=app.state.settings.aws_profile,
@@ -2366,10 +2335,10 @@ def create_app(
     @app.get("/api/v1/clusters/{cluster_name}")
     async def get_cluster(
         cluster_name: str,
+        actor: RequireAdmin,
         region: str | None = Query(default=None),
         refresh: bool = Query(default=False),
         fetch_ssh_status: bool = Query(default=False),
-        actor: ActorContext = Depends(require_admin_actor),
         service: ClusterService = Depends(require_cluster_service),
     ) -> dict[str, Any]:
         _ = actor
@@ -2387,8 +2356,8 @@ def create_app(
     @app.delete("/api/v1/clusters/{cluster_name}")
     async def delete_cluster(
         cluster_name: str,
+        actor: RequireAdmin,
         region: str | None = Query(default=None),
-        actor: ActorContext = Depends(require_admin_actor),
         service: ClusterService = Depends(require_cluster_service),
     ) -> dict[str, Any]:
         _ = actor
@@ -2402,7 +2371,7 @@ def create_app(
 
     @app.get("/api/v1/user-tokens", response_model=list[UserTokenResponse])
     async def list_user_tokens(
-        actor: ActorContext = Depends(require_user_actor),
+        actor: RequireAuth,
         service: UserTokenService = Depends(require_token_service),
     ) -> list[UserTokenResponse]:
         return [_token_response(item) for item in service.list_tokens(actor=actor)]
@@ -2410,7 +2379,7 @@ def create_app(
     @app.post("/api/v1/user-tokens", response_model=UserTokenResponse, status_code=status.HTTP_201_CREATED)
     async def create_user_token(
         request: UserTokenCreateRequest,
-        actor: ActorContext = Depends(require_user_actor),
+        actor: RequireAuth,
         service: UserTokenService = Depends(require_token_service),
     ) -> UserTokenResponse:
         record, plaintext = service.create_token(
@@ -2427,7 +2396,7 @@ def create_app(
     async def revoke_user_token(
         token_euid: str,
         request: TokenRevokeRequest,
-        actor: ActorContext = Depends(require_user_actor),
+        actor: RequireAuth,
         service: UserTokenService = Depends(require_token_service),
     ) -> UserTokenResponse:
         try:
@@ -2441,7 +2410,7 @@ def create_app(
     @app.get("/api/v1/user-tokens/{token_euid}/usage", response_model=list[TokenUsageResponse])
     async def list_user_token_usage(
         token_euid: str,
-        actor: ActorContext = Depends(require_user_actor),
+        actor: RequireAuth,
         service: UserTokenService = Depends(require_token_service),
     ) -> list[TokenUsageResponse]:
         try:
@@ -2454,8 +2423,8 @@ def create_app(
 
     @app.get("/api/v1/admin/user-tokens", response_model=list[UserTokenResponse])
     async def admin_list_user_tokens(
+        actor: RequireAdmin,
         owner_user_id: str = Query(default="*"),
-        actor: ActorContext = Depends(require_admin_actor),
         service: UserTokenService = Depends(require_token_service),
     ) -> list[UserTokenResponse]:
         return [
@@ -2466,7 +2435,7 @@ def create_app(
     @app.post("/api/v1/admin/user-tokens", response_model=UserTokenResponse, status_code=status.HTTP_201_CREATED)
     async def admin_create_user_token(
         request: AdminUserTokenCreateRequest,
-        actor: ActorContext = Depends(require_admin_actor),
+        actor: RequireAdmin,
         service: UserTokenService = Depends(require_token_service),
     ) -> UserTokenResponse:
         record, plaintext = service.create_token(
@@ -2484,7 +2453,7 @@ def create_app(
     async def admin_revoke_user_token(
         token_euid: str,
         request: TokenRevokeRequest,
-        actor: ActorContext = Depends(require_admin_actor),
+        actor: RequireAdmin,
         service: UserTokenService = Depends(require_token_service),
     ) -> UserTokenResponse:
         try:
@@ -2495,17 +2464,17 @@ def create_app(
 
     @app.get("/api/v1/admin/users", response_model=list[AtlasUserDirectoryResponse])
     async def admin_list_atlas_users(
-        tenant_id: str | None = Query(default=None),
+        actor: RequireAdmin,
+        tenant_id: uuid.UUID | None = Query(default=None),
         search: str | None = Query(default=None),
         active_only: bool = Query(default=True),
         limit: int = Query(default=50, ge=1, le=200),
         skip: int = Query(default=0, ge=0),
-        actor: ActorContext = Depends(require_admin_actor),
-        identity: AtlasIdentityClient = Depends(require_identity_client),
+        directory: CognitoUserDirectoryService = Depends(require_user_directory),
     ) -> list[AtlasUserDirectoryResponse]:
         _ = actor
         try:
-            results = identity.list_users(
+            results = directory.list_users(
                 tenant_id=tenant_id,
                 search=search,
                 active_only=active_only,
@@ -2518,8 +2487,8 @@ def create_app(
 
     @app.get("/api/v1/admin/client-registrations", response_model=list[ClientRegistrationResponse])
     async def admin_list_client_registrations(
+        actor: RequireAdmin,
         owner_user_id: str | None = Query(default=None),
-        actor: ActorContext = Depends(require_admin_actor),
         resources: ResourceStore = Depends(require_resource_store),
     ) -> list[ClientRegistrationResponse]:
         _ = actor
@@ -2532,7 +2501,7 @@ def create_app(
     )
     async def admin_get_client_registration(
         client_registration_euid: str,
-        actor: ActorContext = Depends(require_admin_actor),
+        actor: RequireAdmin,
         resources: ResourceStore = Depends(require_resource_store),
     ) -> ClientRegistrationResponse:
         _ = actor
@@ -2548,7 +2517,7 @@ def create_app(
     )
     async def admin_create_client_registration(
         request: ClientRegistrationCreateRequest,
-        actor: ActorContext = Depends(require_admin_actor),
+        actor: RequireAdmin,
         resources: ResourceStore = Depends(require_resource_store),
     ) -> ClientRegistrationResponse:
         record = resources.create_client_registration(
@@ -2566,7 +2535,7 @@ def create_app(
     )
     async def admin_list_client_registration_tokens(
         client_registration_euid: str,
-        actor: ActorContext = Depends(require_admin_actor),
+        actor: RequireAdmin,
         resources: ResourceStore = Depends(require_resource_store),
         service: UserTokenService = Depends(require_token_service),
     ) -> list[UserTokenResponse]:
@@ -2589,7 +2558,7 @@ def create_app(
     async def admin_create_client_registration_token(
         client_registration_euid: str,
         request: UserTokenCreateRequest,
-        actor: ActorContext = Depends(require_admin_actor),
+        actor: RequireAdmin,
         resources: ResourceStore = Depends(require_resource_store),
         service: UserTokenService = Depends(require_token_service),
     ) -> UserTokenResponse:

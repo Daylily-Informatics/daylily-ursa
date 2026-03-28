@@ -1,0 +1,17 @@
+#!/usr/bin/env python3
+"""Repo-local wrapper for the Ursa CLI."""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from daylib_ursa.cli import main
+
+
+if __name__ == "__main__":
+    sys.exit(main())

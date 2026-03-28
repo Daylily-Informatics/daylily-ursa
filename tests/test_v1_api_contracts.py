@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import ast
+import re
+from pathlib import Path
+from unittest.mock import patch
+
 from daylib_ursa.config import Settings
 from daylib_ursa.workset_api import create_app
 
@@ -26,8 +31,13 @@ def _settings() -> Settings:
     )
 
 
+def _create_test_app():
+    with patch("daylib_ursa.workset_api.RegionAwareS3Client", return_value=object()):
+        return create_app(DummyStore(), bloom_client=DummyBloomClient(), settings=_settings())
+
+
 def test_public_routes_are_versioned_and_legacy_customer_routes_are_absent() -> None:
-    app = create_app(DummyStore(), bloom_client=DummyBloomClient(), settings=_settings())
+    app = _create_test_app()
     paths = {
         getattr(route, "path", "")
         for route in app.routes
@@ -40,7 +50,7 @@ def test_public_routes_are_versioned_and_legacy_customer_routes_are_absent() -> 
 
 
 def test_phase_one_route_families_exist() -> None:
-    app = create_app(DummyStore(), bloom_client=DummyBloomClient(), settings=_settings())
+    app = _create_test_app()
     paths = {
         getattr(route, "path", "")
         for route in app.routes
@@ -64,3 +74,75 @@ def test_phase_one_route_families_exist() -> None:
         "/api/v1/admin/client-registrations/{client_registration_euid}/tokens",
     }
     assert expected.issubset(paths)
+
+
+def test_all_decorated_routes_have_direct_request_coverage() -> None:
+    def iter_routes(module_path: str) -> set[tuple[str, str]]:
+        tree = ast.parse(Path(module_path).read_text())
+        routes: set[tuple[str, str]] = set()
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for decorator in node.decorator_list:
+                if not isinstance(decorator, ast.Call) or not isinstance(decorator.func, ast.Attribute):
+                    continue
+                method = decorator.func.attr.upper()
+                if method not in {"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"}:
+                    continue
+                if not decorator.args or not isinstance(decorator.args[0], ast.Constant):
+                    continue
+                if not isinstance(decorator.args[0].value, str):
+                    continue
+                routes.add((method, decorator.args[0].value))
+        return routes
+
+    def sample_path(expr: ast.AST) -> str | None:
+        if isinstance(expr, ast.Constant) and isinstance(expr.value, str):
+            return expr.value.split("?", 1)[0]
+        if isinstance(expr, ast.JoinedStr):
+            parts: list[str] = []
+            for value in expr.values:
+                if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                    parts.append(value.value)
+                elif isinstance(value, ast.FormattedValue):
+                    parts.append("SEGMENT")
+                else:
+                    return None
+            return "".join(parts).split("?", 1)[0]
+        return None
+
+    def iter_direct_request_samples() -> set[tuple[str, str]]:
+        samples: set[tuple[str, str]] = set()
+        for path in Path("tests").glob("test_*.py"):
+            tree = ast.parse(path.read_text())
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+                    continue
+                method = node.func.attr.upper()
+                if method not in {"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"}:
+                    continue
+                if not node.args:
+                    continue
+                sample = sample_path(node.args[0])
+                if sample is None:
+                    continue
+                samples.add((method, sample))
+        return samples
+
+    def route_matches(route: str, sample: str) -> bool:
+        pattern = re.escape(route)
+        pattern = re.sub(r"\\\{[^{}]+\\\}", r"[^/]+", pattern)
+        return re.fullmatch(pattern, sample) is not None
+
+    decorated_routes = (
+        iter_routes("daylib_ursa/workset_api.py")
+        | iter_routes("daylib_ursa/gui_app.py")
+    )
+    request_samples = iter_direct_request_samples()
+    missing = sorted(
+        (method, route)
+        for method, route in decorated_routes
+        if not any(method == sample_method and route_matches(route, sample_route) for sample_method, sample_route in request_samples)
+    )
+
+    assert missing == []

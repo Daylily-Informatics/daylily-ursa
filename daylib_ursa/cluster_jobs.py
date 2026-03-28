@@ -4,6 +4,7 @@ import logging
 import os
 import subprocess
 import sys
+import uuid
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
@@ -233,7 +234,7 @@ class ClusterJobManager:
         region_az: str,
         ssh_key_name: str,
         s3_bucket_name: str,
-        atlas_tenant_id: str,
+        tenant_id: uuid.UUID,
         owner_user_id: str,
         sponsor_user_id: str,
         aws_profile: str | None,
@@ -257,7 +258,7 @@ class ClusterJobManager:
             cluster_name=cluster_name,
             region=region,
             region_az=region_az,
-            atlas_tenant_id=atlas_tenant_id,
+            tenant_id=tenant_id,
             owner_user_id=owner_user_id,
             sponsor_user_id=sponsor_user_id,
             request=request_payload,

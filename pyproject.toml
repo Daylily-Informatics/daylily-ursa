@@ -16,10 +16,11 @@ dependencies = [
     "boto3>=1.26.0",
     "pyyaml>=6.0",
     "sqlalchemy>=2.0.0",
+    "cli-core-yo>=0.3.0",
     # Cognito auth library
     "daylily-cognito>=0.1.28",
     # TapDB graph persistence
-    "daylily-tapdb==3.0.1",
+    "daylily-tapdb==3.0.2",
     "fastapi>=0.104.0",
     "uvicorn[standard]>=0.24.0",
     "pydantic>=2.0.0",

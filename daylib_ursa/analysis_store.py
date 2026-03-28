@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
+import uuid
 
 try:
     from daylib_ursa.tapdb_graph import TapDBBackend, from_json_addl, utc_now_iso
@@ -50,7 +51,7 @@ class RunResolution:
     lane: str
     library_barcode: str
     sequenced_library_assignment_euid: str
-    atlas_tenant_id: str
+    tenant_id: uuid.UUID
     atlas_trf_euid: str
     atlas_test_euid: str
     atlas_test_fulfillment_item_euid: str
@@ -78,7 +79,7 @@ class AnalysisRecord:
     lane: str
     library_barcode: str
     sequenced_library_assignment_euid: str
-    atlas_tenant_id: str
+    tenant_id: uuid.UUID
     atlas_trf_euid: str
     atlas_test_euid: str
     atlas_test_fulfillment_item_euid: str
@@ -106,6 +107,10 @@ class AnalysisStore:
     def bootstrap(self) -> None:
         with self.backend.session_scope(commit=True) as session:
             self.backend.ensure_templates(session)
+
+    @staticmethod
+    def _parse_tenant_uuid(value: Any) -> uuid.UUID:
+        return uuid.UUID(str(value or "").strip())
 
     def _find_analysis(
         self,
@@ -208,7 +213,7 @@ class AnalysisStore:
             sequenced_library_assignment_euid=str(
                 context.get("sequenced_library_assignment_euid") or ""
             ),
-            atlas_tenant_id=str(context.get("atlas_tenant_id") or ""),
+            tenant_id=self._parse_tenant_uuid(context.get("tenant_id")),
             atlas_trf_euid=str(context.get("atlas_trf_euid") or ""),
             atlas_test_euid=str(context.get("atlas_test_euid") or ""),
             atlas_test_fulfillment_item_euid=str(
@@ -239,7 +244,7 @@ class AnalysisStore:
     def list_analyses(
         self,
         *,
-        atlas_tenant_id: str | None = None,
+        tenant_id: uuid.UUID | None = None,
         workset_euid: str | None = None,
         limit: int = 200,
     ) -> list[AnalysisRecord]:
@@ -252,7 +257,7 @@ class AnalysisStore:
             records: list[AnalysisRecord] = []
             for analysis in rows:
                 record = self._record_from_instance(session, analysis, self._artifacts(session, analysis))
-                if atlas_tenant_id and record.atlas_tenant_id != atlas_tenant_id:
+                if tenant_id and record.tenant_id != tenant_id:
                     continue
                 if workset_euid and record.workset_euid != workset_euid:
                     continue
@@ -301,6 +306,7 @@ class AnalysisStore:
                     ],
                 },
                 bstatus=AnalysisState.INGESTED.value,
+                tenant_id=resolution.tenant_id,
             )
             context = self.backend.create_instance(
                 session,
@@ -312,13 +318,14 @@ class AnalysisStore:
                     "lane": resolution.lane,
                     "library_barcode": resolution.library_barcode,
                     "sequenced_library_assignment_euid": resolution.sequenced_library_assignment_euid,
-                    "atlas_tenant_id": resolution.atlas_tenant_id,
+                    "tenant_id": str(resolution.tenant_id),
                     "atlas_trf_euid": resolution.atlas_trf_euid,
                     "atlas_test_euid": resolution.atlas_test_euid,
                     "atlas_test_fulfillment_item_euid": resolution.atlas_test_fulfillment_item_euid,
                     "created_at": now,
                 },
                 bstatus="active",
+                tenant_id=resolution.tenant_id,
             )
             self.backend.create_lineage(
                 session,

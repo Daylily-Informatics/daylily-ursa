@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
+import uuid
 
 try:
     from daylib_ursa.tapdb_graph import TapDBBackend, from_json_addl, utc_now_iso
@@ -30,7 +31,7 @@ class ManifestRecord:
     manifest_euid: str
     name: str
     workset_euid: str
-    atlas_tenant_id: str
+    tenant_id: uuid.UUID
     owner_user_id: str
     artifact_set_euid: str | None
     artifact_euids: list[str]
@@ -45,7 +46,7 @@ class ManifestRecord:
 class WorksetRecord:
     workset_euid: str
     name: str
-    atlas_tenant_id: str
+    tenant_id: uuid.UUID
     owner_user_id: str
     state: str
     artifact_set_euids: list[str]
@@ -99,7 +100,7 @@ class ClusterJobRecord:
     cluster_name: str
     region: str
     region_az: str
-    atlas_tenant_id: str
+    tenant_id: uuid.UUID
     owner_user_id: str
     sponsor_user_id: str
     state: str
@@ -119,7 +120,7 @@ class ClusterJobRecord:
 class LinkedBucketRecord:
     bucket_id: str
     bucket_name: str
-    atlas_tenant_id: str
+    tenant_id: uuid.UUID
     owner_user_id: str
     display_name: str | None
     metadata: dict[str, Any]
@@ -147,13 +148,17 @@ class ResourceStore:
             self.backend.ensure_templates(session)
 
     @staticmethod
+    def _parse_tenant_uuid(value: Any) -> uuid.UUID:
+        return uuid.UUID(str(value or "").strip())
+
+    @staticmethod
     def _manifest_from_instance(instance, *, workset_euid: str) -> ManifestRecord:
         payload = from_json_addl(instance)
         return ManifestRecord(
             manifest_euid=str(instance.euid),
             name=str(instance.name or payload.get("name") or ""),
             workset_euid=workset_euid,
-            atlas_tenant_id=str(payload.get("atlas_tenant_id") or ""),
+            tenant_id=ResourceStore._parse_tenant_uuid(payload.get("tenant_id")),
             owner_user_id=str(payload.get("owner_user_id") or ""),
             artifact_set_euid=str(payload.get("artifact_set_euid") or "").strip() or None,
             artifact_euids=[str(item) for item in list(payload.get("artifact_euids") or [])],
@@ -191,7 +196,7 @@ class ResourceStore:
         return WorksetRecord(
             workset_euid=str(instance.euid),
             name=str(instance.name or payload.get("name") or ""),
-            atlas_tenant_id=str(payload.get("atlas_tenant_id") or ""),
+            tenant_id=ResourceStore._parse_tenant_uuid(payload.get("tenant_id")),
             owner_user_id=str(payload.get("owner_user_id") or ""),
             state=str(payload.get("state") or instance.bstatus),
             artifact_set_euids=[str(item) for item in list(payload.get("artifact_set_euids") or [])],
@@ -257,7 +262,7 @@ class ResourceStore:
             cluster_name=str(payload.get("cluster_name") or ""),
             region=str(payload.get("region") or ""),
             region_az=str(payload.get("region_az") or ""),
-            atlas_tenant_id=str(payload.get("atlas_tenant_id") or ""),
+            tenant_id=ResourceStore._parse_tenant_uuid(payload.get("tenant_id")),
             owner_user_id=str(payload.get("owner_user_id") or ""),
             sponsor_user_id=str(payload.get("sponsor_user_id") or ""),
             state=state,
@@ -278,13 +283,13 @@ class ResourceStore:
             events=events,
         )
 
-    def list_worksets(self, *, atlas_tenant_id: str, limit: int = 100) -> list[WorksetRecord]:
+    def list_worksets(self, *, tenant_id: uuid.UUID, limit: int = 100) -> list[WorksetRecord]:
         with self.backend.session_scope(commit=False) as session:
             rows = self.backend.list_instances_by_property(
                 session,
                 template_code=WORKSET_TEMPLATE,
-                key="atlas_tenant_id",
-                value=atlas_tenant_id,
+                key="tenant_id",
+                value=str(tenant_id),
                 limit=limit,
             )
             return [self._workset_from_instance(session, item) for item in rows]
@@ -304,7 +309,7 @@ class ResourceStore:
         self,
         *,
         name: str,
-        atlas_tenant_id: str,
+        tenant_id: uuid.UUID,
         owner_user_id: str,
         artifact_set_euids: list[str] | None = None,
         metadata: dict[str, Any] | None = None,
@@ -316,7 +321,7 @@ class ResourceStore:
                 WORKSET_TEMPLATE,
                 name,
                 json_addl={
-                    "atlas_tenant_id": atlas_tenant_id,
+                    "tenant_id": str(tenant_id),
                     "owner_user_id": owner_user_id,
                     "artifact_set_euids": list(artifact_set_euids or []),
                     "metadata": dict(metadata or {}),
@@ -325,6 +330,7 @@ class ResourceStore:
                     "state": "ACTIVE",
                 },
                 bstatus="ACTIVE",
+                tenant_id=tenant_id,
             )
             return self._workset_from_instance(session, workset)
 
@@ -355,7 +361,7 @@ class ResourceStore:
                 name,
                 json_addl={
                     "workset_euid": workset_euid,
-                    "atlas_tenant_id": str(workset_payload.get("atlas_tenant_id") or ""),
+                    "tenant_id": str(workset_payload.get("tenant_id") or ""),
                     "owner_user_id": str(workset_payload.get("owner_user_id") or ""),
                     "artifact_set_euid": artifact_set_euid,
                     "artifact_euids": list(artifact_euids or []),
@@ -366,6 +372,7 @@ class ResourceStore:
                     "state": "ACTIVE",
                 },
                 bstatus="ACTIVE",
+                tenant_id=self._parse_tenant_uuid(workset_payload.get("tenant_id")),
             )
             self.backend.create_lineage(
                 session,
@@ -378,13 +385,13 @@ class ResourceStore:
             workset.json_addl = payload
             return self._manifest_from_instance(manifest, workset_euid=workset_euid)
 
-    def list_manifests(self, *, atlas_tenant_id: str, limit: int = 200) -> list[ManifestRecord]:
+    def list_manifests(self, *, tenant_id: uuid.UUID, limit: int = 200) -> list[ManifestRecord]:
         with self.backend.session_scope(commit=False) as session:
             rows = self.backend.list_instances_by_property(
                 session,
                 template_code=MANIFEST_TEMPLATE,
-                key="atlas_tenant_id",
-                value=atlas_tenant_id,
+                key="tenant_id",
+                value=str(tenant_id),
                 limit=limit,
             )
             return [
@@ -415,7 +422,7 @@ class ResourceStore:
         return LinkedBucketRecord(
             bucket_id=str(instance.euid),
             bucket_name=str(payload.get("bucket_name") or instance.name or ""),
-            atlas_tenant_id=str(payload.get("atlas_tenant_id") or ""),
+            tenant_id=ResourceStore._parse_tenant_uuid(payload.get("tenant_id")),
             owner_user_id=str(payload.get("owner_user_id") or ""),
             display_name=str(payload.get("display_name") or "").strip() or None,
             metadata=dict(payload.get("metadata") or {}),
@@ -438,13 +445,13 @@ class ResourceStore:
             ],
         )
 
-    def list_linked_buckets(self, *, atlas_tenant_id: str, limit: int = 200) -> list[LinkedBucketRecord]:
+    def list_linked_buckets(self, *, tenant_id: uuid.UUID, limit: int = 200) -> list[LinkedBucketRecord]:
         with self.backend.session_scope(commit=False) as session:
             rows = self.backend.list_instances_by_property(
                 session,
                 template_code=LINKED_BUCKET_TEMPLATE,
-                key="atlas_tenant_id",
-                value=atlas_tenant_id,
+                key="tenant_id",
+                value=str(tenant_id),
                 limit=limit,
             )
             return [
@@ -468,7 +475,7 @@ class ResourceStore:
         self,
         *,
         bucket_name: str,
-        atlas_tenant_id: str,
+        tenant_id: uuid.UUID,
         owner_user_id: str,
         display_name: str | None = None,
         bucket_type: str = "secondary",
@@ -497,7 +504,7 @@ class ResourceStore:
             if existing is not None:
                 payload = from_json_addl(existing)
                 if (
-                    str(payload.get("atlas_tenant_id") or "") == atlas_tenant_id
+                    str(payload.get("tenant_id") or "") == str(tenant_id)
                     and str(payload.get("state") or existing.bstatus) != "DELETED"
                 ):
                     raise ValueError(f"Bucket already linked: {normalized_bucket}")
@@ -507,7 +514,7 @@ class ResourceStore:
                 normalized_bucket,
                 json_addl={
                     "bucket_name": normalized_bucket,
-                    "atlas_tenant_id": atlas_tenant_id,
+                    "tenant_id": str(tenant_id),
                     "owner_user_id": owner_user_id,
                     "display_name": str(display_name or "").strip() or None,
                     "bucket_type": str(bucket_type or "secondary").strip() or "secondary",
@@ -530,6 +537,7 @@ class ResourceStore:
                     "state": "ACTIVE",
                 },
                 bstatus="ACTIVE",
+                tenant_id=tenant_id,
             )
             return self._linked_bucket_from_instance(bucket)
 
@@ -766,7 +774,7 @@ class ResourceStore:
         cluster_name: str,
         region: str,
         region_az: str,
-        atlas_tenant_id: str,
+        tenant_id: uuid.UUID,
         owner_user_id: str,
         sponsor_user_id: str,
         request: dict[str, Any] | None = None,
@@ -781,7 +789,7 @@ class ResourceStore:
                     "cluster_name": cluster_name,
                     "region": region,
                     "region_az": region_az,
-                    "atlas_tenant_id": atlas_tenant_id,
+                    "tenant_id": str(tenant_id),
                     "owner_user_id": owner_user_id,
                     "sponsor_user_id": sponsor_user_id,
                     "request": dict(request or {}),
@@ -790,6 +798,7 @@ class ResourceStore:
                     "state": "QUEUED",
                 },
                 bstatus="QUEUED",
+                tenant_id=tenant_id,
             )
             revision = self.backend.create_instance(
                 session,
@@ -946,16 +955,16 @@ class ResourceStore:
     def list_cluster_jobs(
         self,
         *,
-        atlas_tenant_id: str | None = None,
+        tenant_id: uuid.UUID | None = None,
         limit: int = 200,
     ) -> list[ClusterJobRecord]:
         with self.backend.session_scope(commit=False) as session:
-            if atlas_tenant_id:
+            if tenant_id:
                 jobs = self.backend.list_instances_by_property(
                     session,
                     template_code=CLUSTER_JOB_TEMPLATE,
-                    key="atlas_tenant_id",
-                    value=atlas_tenant_id,
+                    key="tenant_id",
+                    value=str(tenant_id),
                     limit=limit,
                 )
             else:

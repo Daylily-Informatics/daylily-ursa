@@ -1,5 +1,7 @@
 """Monitor management commands for Ursa CLI."""
 
+from __future__ import annotations
+
 import os
 import signal
 import subprocess
@@ -7,22 +9,26 @@ import sys
 import time
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 import typer
 from rich.console import Console
+
+if TYPE_CHECKING:
+    from cli_core_yo.registry import CommandRegistry
+    from cli_core_yo.spec import CliSpec
 
 monitor_app = typer.Typer(help="Workset monitor management commands")
 console = Console()
 
 # PID and log file locations
-CONFIG_DIR = Path.home() / ".ursa"
+CONFIG_DIR = Path.home() / ".config" / "ursa"
 LOG_DIR = CONFIG_DIR / "logs"
 PID_FILE = CONFIG_DIR / "monitor.pid"
 
 
 def _ensure_dir():
-    """Ensure .ursa directories exist."""
+    """Ensure XDG-style Ursa monitor directories exist."""
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     LOG_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -105,7 +111,7 @@ def start(
         console.print(
             "   Provide one with: [cyan]ursa monitor start --config path/to/config.yaml[/cyan]"
         )
-        console.print("   Or create: [cyan]~/.ursa/monitor-config.yaml[/cyan]")
+        console.print("   Or create: [cyan]~/.config/ursa/monitor-config.yaml[/cyan]")
         console.print("   Or create: [cyan]./config/workset-monitor-config.yaml[/cyan]")
         raise typer.Exit(1)
 
@@ -304,3 +310,9 @@ def grep_logs(
 
     if result.returncode == 1:
         console.print(f"\n[yellow]⚠[/yellow]  No matches found for '{pattern}'")
+
+
+def register(registry: CommandRegistry, spec: CliSpec) -> None:
+    """cli-core-yo plugin: register monitor command group."""
+    _ = spec
+    registry.add_typer_app(None, monitor_app, "monitor", "Workset monitor management")

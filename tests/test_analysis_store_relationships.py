@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from types import SimpleNamespace
+import uuid
 
 from daylib_ursa.analysis_store import AnalysisStore, RunResolution
+
+TENANT_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
 
 
 class _FakeBackend:
@@ -23,7 +26,7 @@ class _FakeBackend:
         _ = (session, template_code, key, value)
         return None
 
-    def create_instance(self, session, template_code, name, *, json_addl, bstatus):
+    def create_instance(self, session, template_code, name, *, json_addl, bstatus, tenant_id=None):
         _ = session
         instance = SimpleNamespace(
             euid=f"{template_code}:{len(self.created) + 1}",
@@ -32,6 +35,7 @@ class _FakeBackend:
             bstatus=bstatus,
             created_dt=None,
             modified_dt=None,
+            tenant_id=tenant_id,
         )
         self.created.append((template_code, name, instance))
         return instance
@@ -56,7 +60,7 @@ def test_ingest_analysis_keeps_relationship_truth_on_context_reference():
             lane="1",
             library_barcode="LIB-1",
             sequenced_library_assignment_euid="SQA-1",
-            atlas_tenant_id="TEN-1",
+            tenant_id=TENANT_ID,
             atlas_trf_euid="TRF-1",
             atlas_test_euid="TST-1",
             atlas_test_fulfillment_item_euid="TPC-1",
@@ -96,4 +100,5 @@ def test_ingest_analysis_keeps_relationship_truth_on_context_reference():
 
     assert store.backend.lineages[0][2] == "resolved_context"
     assert record.run_euid == "RUN-1"
+    assert record.tenant_id == TENANT_ID
     assert record.atlas_test_fulfillment_item_euid == "TPC-1"

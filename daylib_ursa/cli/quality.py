@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import typer
+
+if TYPE_CHECKING:
+    from cli_core_yo.registry import CommandRegistry
+    from cli_core_yo.spec import CliSpec
 
 quality_app = typer.Typer(help="Code quality commands")
 
@@ -41,3 +47,9 @@ def check():
     from daylib_ursa.cli import test as test_cmds
 
     test_cmds.all_checks()
+
+
+def register(registry: CommandRegistry, spec: CliSpec) -> None:
+    """cli-core-yo plugin: register quality command group."""
+    _ = spec
+    registry.add_typer_app(None, quality_app, "quality", "Code quality commands")

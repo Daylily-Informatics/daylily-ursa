@@ -146,7 +146,7 @@ async function renderDashboard() {
   }
 
   controlsEl.innerHTML = cardGrid([
-    miniCard("User", me.display_name || me.email || me.user_id, me.organization || me.atlas_tenant_id),
+    miniCard("User", me.display_name || me.email || me.user_id, me.organization || me.tenant_id),
     miniCard("Worksets", String(worksets.length), "GUI-facing orchestration units"),
     miniCard("Analyses", String(analyses.length), "Versioned analysis API surface"),
     miniCard("User Tokens", String(tokens.length), "Self-service bearer credentials"),
@@ -708,7 +708,7 @@ async function renderAdminTokens(createdToken = null) {
         (item) => `
           <tr>
             <td>${escapeHtml(item.email || item.user_id)}</td>
-            <td>${escapeHtml(item.atlas_tenant_id)}</td>
+            <td>${escapeHtml(item.tenant_id)}</td>
             <td>${escapeHtml((item.roles || []).join(", "))}</td>
             <td><button class="button ghost" data-select-owner="${escapeHtml(item.user_id)}">Use</button></td>
           </tr>
