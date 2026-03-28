@@ -18,7 +18,6 @@ from cli_core_yo.server import (
     latest_log,
     list_logs,
     new_log_path,
-    read_pid,
     source_env_file,
     stop_pid,
     write_pid,

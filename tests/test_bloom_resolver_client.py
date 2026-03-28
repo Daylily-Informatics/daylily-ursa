@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import httpx
 import pytest
+import uuid
 
 from daylib_ursa.bloom_resolver_client import BloomResolverClient, BloomResolverError
 
@@ -21,7 +22,7 @@ def test_resolve_run_assignment_returns_resolution():
                 "lane": "1",
                 "library_barcode": "LIB-1",
                 "sequenced_library_assignment_euid": "SQA-1",
-                "atlas_tenant_id": "TEN-1",
+                "atlas_tenant_id": str(uuid.UUID("00000000-0000-0000-0000-000000000001")),
                 "atlas_trf_euid": "TRF-1",
                 "atlas_test_euid": "TST-1",
                 "atlas_test_fulfillment_item_euid": "TPC-1",
@@ -59,7 +60,7 @@ def test_resolve_run_assignment_raises_for_missing_fields():
             json={
                 "run_euid": "RUN-1",
                 "flowcell_id": "FLOW-1",
-                "atlas_tenant_id": "TEN-1",
+                "atlas_tenant_id": str(uuid.UUID("00000000-0000-0000-0000-000000000001")),
             },
         )
 

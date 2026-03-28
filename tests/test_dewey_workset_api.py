@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 
-import pytest
 from fastapi.testclient import TestClient
 
 from daylib_ursa.analysis_store import AnalysisArtifact

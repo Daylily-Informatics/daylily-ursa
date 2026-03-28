@@ -14,7 +14,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from daylily_cognito.jwks import JWKSCache
 from daylily_cognito.tokens import verify_jwt_claims
 
-from daylib_ursa.auth.rbac import Permission, Role, can_write, has_permission, has_role, is_read_only
+from daylib_ursa.auth.rbac import Permission, Role, can_write, has_permission, has_role
 
 security = HTTPBearer(auto_error=False)
 
