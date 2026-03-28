@@ -20,7 +20,7 @@
     },
     "daylily-tapdb": {
       "repo": "Daylily-Informatics/daylily-tapdb",
-      "current": "0.2.5"
+      "current": "3.0.3"
     },
     "daylily-omics-references": {
       "repo": "Daylily-Informatics/daylily-omics-references",
@@ -77,6 +77,16 @@
       "tapdb": "3.0.2",
       "omics_references": "0.3.1",
       "notes": "Pinned TapDB baseline to 3.0.2"
+    },
+    {
+      "date": "2026-03-27",
+      "ursa": "0.2.12",
+      "ephemeral_cluster": "0.7.601",
+      "omics_analysis": "0.7.602",
+      "cognito": "0.1.28",
+      "tapdb": "3.0.3",
+      "omics_references": "0.3.1",
+      "notes": "Pinned TapDB baseline to 3.0.3"
     }
   ]
 }
