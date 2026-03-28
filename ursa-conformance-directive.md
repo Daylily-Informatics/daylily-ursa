@@ -27,7 +27,7 @@ Ursa is a **peer service** to Atlas and Bloom. It MUST NOT invent its own patter
 1. **Delete** the `UrsaTapdbRepository` import and its fallback stub entirely.
 2. **Delete** `_MINIMUM_TAPDB_VERSION`, `_MAXIMUM_TAPDB_MAJOR`, `_validate_tapdb_version()`.
 3. **Model after Atlas's `app/integrations/tapdb_runtime.py`:**
-   - Pin `TAPDB_REQUIRED_VERSION = "3.0.2"` (or current 3.x release).
+   - Pin `TAPDB_REQUIRED_VERSION = "3.0.3"` (or current 3.x release).
    - Use `ensure_tapdb_version()` with the same semver + local-override logic Atlas uses.
    - Import from `daylily_tapdb` 3.x surface: `TAPDBConnection`, `TemplateManager`, `InstanceFactory`.
    - Implement a `TapdbClientBundle` dataclass holding `connection`, `template_manager`, `instance_factory`.
@@ -43,7 +43,7 @@ Ursa is a **peer service** to Atlas and Bloom. It MUST NOT invent its own patter
 
 ```python
 # app/integrations/tapdb_runtime.py — Atlas reference
-TAPDB_REQUIRED_VERSION = "3.0.2"
+TAPDB_REQUIRED_VERSION = "3.0.3"
 DEFAULT_TAPDB_CLIENT_ID = "atlas"        # Ursa: "ursa"
 DEFAULT_TAPDB_DATABASE_NAME = "lsmc-atlas"  # Ursa: "daylily-ursa"
 

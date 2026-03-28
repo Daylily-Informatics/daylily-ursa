@@ -89,7 +89,7 @@ def test_tapdb_env_for_target_uses_explicit_defaults(monkeypatch) -> None:
 
 
 def test_export_database_url_for_target_sets_runtime_environment(monkeypatch) -> None:
-    monkeypatch.setattr(tapdb_runtime, "ensure_tapdb_version", lambda *_args, **_kwargs: "3.0.2")
+    monkeypatch.setattr(tapdb_runtime, "ensure_tapdb_version", lambda *_args, **_kwargs: "3.0.3")
     monkeypatch.setattr(
         tapdb_runtime,
         "_get_tapdb_db_config_for_env",

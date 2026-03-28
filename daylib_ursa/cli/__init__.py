@@ -103,7 +103,7 @@ def _ensure_tapdb_dependency() -> None:
     except TapDBRuntimeError as exc:
         raise SystemExit(
             "Ursa CLI startup failed. "
-            "Install daylily-tapdb==3.0.2 or use the supported local editable override. "
+            "Install daylily-tapdb==3.0.3 or use the supported local editable override. "
             f"Details: {exc}"
         ) from exc
 
