@@ -152,22 +152,12 @@ def generate(
 URSA_ALLOWED_REGIONS=us-west-2
 
 # ========== Server Configuration ==========
-URSA_HOST=0.0.0.0
-URSA_PORT=8914
+# Host/port and TapDB namespace should normally be configured in
+# ~/.config/ursa/ursa-config.yaml, not here.
 # HTTPS is required for GUI/API startup.
 # If unset, `ursa server start` auto-generates localhost certs with mkcert.
 # URSA_SSL_CERT_FILE=/absolute/path/to/cert.pem
 # URSA_SSL_KEY_FILE=/absolute/path/to/key.pem
-
-# ========== TapDB (Strict Namespace) ==========
-# Ursa uses TapDB graph persistence in strict namespace mode.
-# Bootstrap (preferred):
-#   tapdb config init --client-id local --database-name ursa --env dev
-#   tapdb bootstrap local
-TAPDB_STRICT_NAMESPACE=1
-TAPDB_CLIENT_ID=local
-TAPDB_DATABASE_NAME=ursa
-TAPDB_ENV=dev
 
 # ========== Authentication ==========
 # Set to 'true' to enable Cognito authentication
@@ -181,8 +171,9 @@ ENABLE_AUTH=true
 # COGNITO_DOMAIN=your-domain-prefix.auth.us-west-2.amazoncognito.com
 
 # ========== S3 Configuration ==========
-# Default S3 bucket for workset data
-# S3_BUCKET=your-bucket-name
+# Secrets and one-off overrides may live here.
+# Example:
+# URSA_INTERNAL_OUTPUT_BUCKET=your-bucket-name
 
 # ========== Optional ==========
 # Whitelist domains for user registration (comma-separated)

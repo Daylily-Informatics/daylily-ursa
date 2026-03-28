@@ -58,6 +58,10 @@ LEGACY_CONFIG_PATHS = [
 VALID_FIELDS = {
     "regions": (list, "List of AWS regions to scan"),
     "aws_profile": (str, "AWS profile name"),
+    "ursa_internal_output_bucket": (str, "Ursa-managed internal S3 bucket"),
+    "tapdb_client_id": (str, "TapDB client identifier"),
+    "tapdb_database_name": (str, "TapDB namespace / database name"),
+    "tapdb_env": (str, "TapDB environment selector"),
     "cognito_region": (str, "AWS region for Cognito"),
     "cognito_user_pool_id": (str, "Cognito User Pool ID"),
     "cognito_app_client_id": (str, "Cognito App Client ID"),
@@ -65,6 +69,15 @@ VALID_FIELDS = {
     "cognito_domain": (str, "Cognito Hosted UI domain"),
     "cognito_callback_url": (str, "Cognito Hosted UI callback URL"),
     "cognito_logout_url": (str, "Cognito Hosted UI logout redirect URL"),
+    "api_host": (str, "API bind host"),
+    "api_port": (int, "API bind port"),
+    "bloom_base_url": (str, "Bloom base URL"),
+    "bloom_verify_ssl": (bool, "Verify Bloom TLS certificates"),
+    "atlas_base_url": (str, "Atlas base URL"),
+    "atlas_verify_ssl": (bool, "Verify Atlas TLS certificates"),
+    "dewey_enabled": (bool, "Enable Dewey integration"),
+    "dewey_base_url": (str, "Dewey base URL"),
+    "dewey_verify_ssl": (bool, "Verify Dewey TLS certificates"),
     "whitelist_domains": (str, "Allowed email domains for registration/login"),
     "deployment": (dict, "Deployment metadata for non-production UI chrome"),
 }
@@ -144,6 +157,10 @@ def validate_config_file(path: Path) -> Tuple[bool, List[str], List[str]]:
     # Validate string fields
     for field_name in [
         "aws_profile",
+        "ursa_internal_output_bucket",
+        "tapdb_client_id",
+        "tapdb_database_name",
+        "tapdb_env",
         "cognito_region",
         "cognito_user_pool_id",
         "cognito_app_client_id",
@@ -151,12 +168,30 @@ def validate_config_file(path: Path) -> Tuple[bool, List[str], List[str]]:
         "cognito_domain",
         "cognito_callback_url",
         "cognito_logout_url",
+        "api_host",
+        "bloom_base_url",
+        "atlas_base_url",
+        "dewey_base_url",
         "whitelist_domains",
     ]:
         if field_name in data and data[field_name] is not None:
             if not isinstance(data[field_name], str):
                 errors.append(
                     f"'{field_name}' must be a string, got {type(data[field_name]).__name__}"
+                )
+
+    for field_name in ["api_port"]:
+        if field_name in data and data[field_name] is not None:
+            if not isinstance(data[field_name], int):
+                errors.append(
+                    f"'{field_name}' must be an integer, got {type(data[field_name]).__name__}"
+                )
+
+    for field_name in ["bloom_verify_ssl", "atlas_verify_ssl", "dewey_enabled", "dewey_verify_ssl"]:
+        if field_name in data and data[field_name] is not None:
+            if not isinstance(data[field_name], bool):
+                errors.append(
+                    f"'{field_name}' must be a boolean, got {type(data[field_name]).__name__}"
                 )
 
     is_valid = len(errors) == 0
@@ -180,6 +215,18 @@ class UrsaConfig:
     aws_profile: Optional[str] = None
     """AWS profile to use (AWS_PROFILE may still override this)."""
 
+    ursa_internal_output_bucket: Optional[str] = None
+    """Ursa-managed internal output bucket read from YAML config."""
+
+    tapdb_client_id: Optional[str] = None
+    """TapDB client identifier read from YAML config."""
+
+    tapdb_database_name: Optional[str] = None
+    """TapDB namespace / database name read from YAML config."""
+
+    tapdb_env: Optional[str] = None
+    """TapDB environment selector read from YAML config."""
+
     cognito_user_pool_id: Optional[str] = None
     """Cognito User Pool ID read from YAML config."""
 
@@ -200,6 +247,33 @@ class UrsaConfig:
 
     cognito_logout_url: Optional[str] = None
     """Cognito Hosted UI logout redirect URL, read from YAML config."""
+
+    api_host: Optional[str] = None
+    """API bind host read from YAML config."""
+
+    api_port: Optional[int] = None
+    """API bind port read from YAML config."""
+
+    bloom_base_url: Optional[str] = None
+    """Bloom base URL read from YAML config."""
+
+    bloom_verify_ssl: Optional[bool] = None
+    """Bloom TLS verification flag read from YAML config."""
+
+    atlas_base_url: Optional[str] = None
+    """Atlas base URL read from YAML config."""
+
+    atlas_verify_ssl: Optional[bool] = None
+    """Atlas TLS verification flag read from YAML config."""
+
+    dewey_enabled: Optional[bool] = None
+    """Whether Dewey integration is enabled in YAML config."""
+
+    dewey_base_url: Optional[str] = None
+    """Dewey base URL read from YAML config."""
+
+    dewey_verify_ssl: Optional[bool] = None
+    """Dewey TLS verification flag read from YAML config."""
 
     whitelist_domains: Optional[str] = None
     """Allowed registration/login email domains (overridden by WHITELIST_DOMAINS env var)."""
@@ -324,6 +398,10 @@ class UrsaConfig:
 
         # Environment variables take precedence only for non-Cognito runtime knobs.
         aws_profile = os.environ.get("AWS_PROFILE") or data.get("aws_profile")
+        ursa_internal_output_bucket = data.get("ursa_internal_output_bucket")
+        tapdb_client_id = data.get("tapdb_client_id")
+        tapdb_database_name = data.get("tapdb_database_name")
+        tapdb_env = data.get("tapdb_env")
         cognito_user_pool_id = data.get("cognito_user_pool_id")
         cognito_app_client_id = data.get("cognito_app_client_id")
         cognito_app_client_secret = data.get("cognito_app_client_secret")
@@ -331,11 +409,24 @@ class UrsaConfig:
         cognito_region = data.get("cognito_region")
         cognito_callback_url = data.get("cognito_callback_url")
         cognito_logout_url = data.get("cognito_logout_url")
+        api_host = data.get("api_host")
+        api_port = data.get("api_port")
+        bloom_base_url = data.get("bloom_base_url")
+        bloom_verify_ssl = data.get("bloom_verify_ssl")
+        atlas_base_url = data.get("atlas_base_url")
+        atlas_verify_ssl = data.get("atlas_verify_ssl")
+        dewey_enabled = data.get("dewey_enabled")
+        dewey_base_url = data.get("dewey_base_url")
+        dewey_verify_ssl = data.get("dewey_verify_ssl")
         whitelist_domains = os.environ.get("WHITELIST_DOMAINS") or data.get("whitelist_domains")
 
         config = cls(
             regions=region_configs,
             aws_profile=aws_profile,
+            ursa_internal_output_bucket=ursa_internal_output_bucket,
+            tapdb_client_id=tapdb_client_id,
+            tapdb_database_name=tapdb_database_name,
+            tapdb_env=tapdb_env,
             cognito_user_pool_id=cognito_user_pool_id,
             cognito_app_client_id=cognito_app_client_id,
             cognito_app_client_secret=cognito_app_client_secret,
@@ -343,6 +434,15 @@ class UrsaConfig:
             cognito_region=cognito_region,
             cognito_callback_url=cognito_callback_url,
             cognito_logout_url=cognito_logout_url,
+            api_host=api_host,
+            api_port=api_port,
+            bloom_base_url=bloom_base_url,
+            bloom_verify_ssl=bloom_verify_ssl,
+            atlas_base_url=atlas_base_url,
+            atlas_verify_ssl=atlas_verify_ssl,
+            dewey_enabled=dewey_enabled,
+            dewey_base_url=dewey_base_url,
+            dewey_verify_ssl=dewey_verify_ssl,
             whitelist_domains=whitelist_domains,
             deployment_name=str(deployment.get("name") or ""),
             deployment_color=str(deployment.get("color") or "#0f766e"),

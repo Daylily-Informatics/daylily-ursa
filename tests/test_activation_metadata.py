@@ -15,8 +15,8 @@ def test_pyproject_relies_on_conda_env_yaml_for_tool_union() -> None:
     assert "\ntools = [" not in pyproject_text
 
 
-def test_ursa_activate_uses_conda_only_bootstrap() -> None:
-    activate_script = (Path(__file__).resolve().parents[1] / "ursa_activate").read_text(
+def test_activate_uses_conda_only_bootstrap() -> None:
+    activate_script = (Path(__file__).resolve().parents[1] / "activate").read_text(
         encoding="utf-8"
     )
 

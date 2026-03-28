@@ -17,8 +17,8 @@ from daylily_tapdb import InstanceFactory, TAPDBConnection, TemplateManager
 TAPDB_REQUIRED_VERSION = "3.0.3"
 DEFAULT_AWS_PROFILE = "lsmc"
 DEFAULT_AWS_REGION = "us-west-2"
-DEFAULT_TAPDB_CLIENT_ID = "ursa"
-DEFAULT_TAPDB_DATABASE_NAME = "daylily-ursa"
+DEFAULT_TAPDB_CLIENT_ID = "local"
+DEFAULT_TAPDB_DATABASE_NAME = "ursa"
 
 _TARGET_TO_TAPDB_ENV = {
     "local": "dev",
@@ -59,14 +59,35 @@ def _is_local_tapdb_override_install() -> bool:
     module_path = Path(module_file).resolve()
 
     base = Path.cwd().resolve()
-    candidates = [
-        (base / "../../daylily/daylily-tapdb").resolve(),
-        (base / "../../daylily_repos/daylily-tapdb").resolve(),
-        (base / "../daylily-tapdb").resolve(),
-    ]
+    candidates = _local_tapdb_repo_candidates(base)
     return any(
         candidate.exists() and module_path.is_relative_to(candidate) for candidate in candidates
     )
+
+
+def _local_tapdb_repo_candidates(base: Path) -> list[Path]:
+    """Return preferred local TapDB repo candidates for the current workspace."""
+    repo_root = Path(__file__).resolve().parents[2]
+    bases = [base, repo_root]
+    seen: set[Path] = set()
+    candidates: list[Path] = []
+    for candidate_base in bases:
+        for candidate in (
+            (candidate_base / "../../daylily/daylily-tapdb").resolve(),
+            (candidate_base / "../../daylily/lims_repos/daylily-tapdb").resolve(),
+            (candidate_base / "../daylily-tapdb").resolve(),
+        ):
+            if candidate in seen:
+                continue
+            seen.add(candidate)
+            candidates.append(candidate)
+    git_repos = [candidate for candidate in candidates if (candidate / ".git").exists()]
+    other_repos = [
+        candidate
+        for candidate in candidates
+        if candidate.exists() and candidate not in git_repos
+    ]
+    return [*git_repos, *other_repos]
 
 
 def ensure_tapdb_version(required_version: str = TAPDB_REQUIRED_VERSION) -> str:
@@ -188,6 +209,26 @@ def _build_sqlalchemy_url(cfg: Mapping[str, str]) -> str:
     return f"postgresql+psycopg2://{auth}{host}:{port}/{database}"
 
 
+def _resolved_default_identity() -> tuple[str, str, str]:
+    try:
+        from daylib_ursa.config import get_settings
+
+        settings = get_settings()
+        client_id = str(getattr(settings, "tapdb_client_id", "") or "").strip()
+        namespace = str(getattr(settings, "tapdb_database_name", "") or "").strip()
+        tapdb_env = str(getattr(settings, "tapdb_env", "") or "").strip().lower()
+    except Exception:
+        client_id = ""
+        namespace = ""
+        tapdb_env = ""
+
+    return (
+        client_id or DEFAULT_TAPDB_CLIENT_ID,
+        namespace or DEFAULT_TAPDB_DATABASE_NAME,
+        tapdb_env or "",
+    )
+
+
 def _resolve_runtime_env(
     *,
     target: str,
@@ -197,16 +238,19 @@ def _resolve_runtime_env(
     namespace: str = DEFAULT_TAPDB_DATABASE_NAME,
     tapdb_env: str | None = None,
 ) -> dict[str, str]:
-    resolved_env = (tapdb_env or tapdb_env_for_target(target)).strip().lower()
+    default_client_id, default_namespace, default_tapdb_env = _resolved_default_identity()
+    resolved_env = (
+        tapdb_env
+        or default_tapdb_env
+        or tapdb_env_for_target(target)
+    ).strip().lower()
     env = os.environ.copy()
     env["AWS_PROFILE"] = (profile or DEFAULT_AWS_PROFILE).strip() or DEFAULT_AWS_PROFILE
     env["AWS_REGION"] = (region or DEFAULT_AWS_REGION).strip() or DEFAULT_AWS_REGION
-    env["TAPDB_CLIENT_ID"] = (
-        client_id or DEFAULT_TAPDB_CLIENT_ID
-    ).strip() or DEFAULT_TAPDB_CLIENT_ID
+    env["TAPDB_CLIENT_ID"] = (client_id or default_client_id).strip() or default_client_id
     env["TAPDB_DATABASE_NAME"] = (
-        namespace or DEFAULT_TAPDB_DATABASE_NAME
-    ).strip() or DEFAULT_TAPDB_DATABASE_NAME
+        namespace or default_namespace
+    ).strip() or default_namespace
     env["TAPDB_ENV"] = resolved_env
     env["TAPDB_STRICT_NAMESPACE"] = "1"
     resolved_cfg_path = _resolve_tapdb_config_path(
@@ -223,15 +267,9 @@ def _resolve_tapdb_config_path(*, namespace: str, client_id: str) -> str | None:
     if explicit:
         return explicit
 
-    normalized_namespace = (
-        namespace or DEFAULT_TAPDB_DATABASE_NAME
-    ).strip() or DEFAULT_TAPDB_DATABASE_NAME
-    normalized_client_id = (client_id or DEFAULT_TAPDB_CLIENT_ID).strip() or DEFAULT_TAPDB_CLIENT_ID
-
-    repo_root = Path(__file__).resolve().parents[2]
-    repo_scoped = repo_root / "config" / f"tapdb-config-{normalized_namespace}.yaml"
-    if repo_scoped.exists():
-        return str(repo_scoped)
+    default_client_id, default_namespace, _default_tapdb_env = _resolved_default_identity()
+    normalized_namespace = (namespace or default_namespace).strip() or default_namespace
+    normalized_client_id = (client_id or default_client_id).strip() or default_client_id
 
     user_scoped = (
         Path.home()
@@ -243,12 +281,6 @@ def _resolve_tapdb_config_path(*, namespace: str, client_id: str) -> str | None:
     )
     if user_scoped.exists():
         return str(user_scoped)
-
-    user_legacy_scoped = (
-        Path.home() / ".config" / "tapdb" / f"tapdb-config-{normalized_namespace}.yaml"
-    )
-    if user_legacy_scoped.exists():
-        return str(user_legacy_scoped)
     return None
 
 
@@ -260,11 +292,7 @@ def resolve_tapdb_cli_cwd(cwd: Path | None = None) -> Path | None:
             return override_path
 
     base = cwd.resolve() if cwd else Path.cwd().resolve()
-    candidates = [
-        (base / "../../daylily/daylily-tapdb").resolve(),
-        (base / "../../daylily_repos/daylily-tapdb").resolve(),
-        (base / "../daylily-tapdb").resolve(),
-    ]
+    candidates = _local_tapdb_repo_candidates(base)
     for candidate in candidates:
         schema_file = candidate / "schema" / "tapdb_schema.sql"
         if candidate.exists() and schema_file.exists():

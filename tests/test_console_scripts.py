@@ -83,9 +83,11 @@ def test_ursa_server_start_uses_packaged_entrypoint(monkeypatch):
         lambda: SimpleNamespace(
             database_backend="tapdb",
             database_target="local",
-            tapdb_client_id="ursa",
-            tapdb_database_name="daylily-ursa",
+            tapdb_client_id="local",
+            tapdb_database_name="ursa",
             tapdb_env="dev",
+            api_host="0.0.0.0",
+            api_port=8913,
         ),
     )
     monkeypatch.setattr(
@@ -127,10 +129,10 @@ def test_ursa_server_start_uses_packaged_entrypoint(monkeypatch):
     assert isinstance(env, dict)
     assert env["DATABASE_BACKEND"] == "tapdb"
     assert env["DATABASE_TARGET"] == "local"
-    assert env["TAPDB_CLIENT_ID"] == "ursa"
-    assert env["TAPDB_DATABASE_NAME"] == "daylily-ursa"
-    assert env["TAPDB_ENV"] == "dev"
     assert env["DATABASE_URL"] == "postgresql://test-db"
+    assert "TAPDB_CLIENT_ID" not in env
+    assert "TAPDB_DATABASE_NAME" not in env
+    assert "TAPDB_ENV" not in env
 
 
 def test_ursa_server_start_allows_ambient_credentials(monkeypatch):
@@ -166,9 +168,11 @@ def test_ursa_server_start_allows_ambient_credentials(monkeypatch):
         lambda: SimpleNamespace(
             database_backend="tapdb",
             database_target="local",
-            tapdb_client_id="ursa",
-            tapdb_database_name="daylily-ursa",
+            tapdb_client_id="local",
+            tapdb_database_name="ursa",
             tapdb_env="dev",
+            api_host="0.0.0.0",
+            api_port=8913,
         ),
     )
     monkeypatch.setattr(
@@ -208,6 +212,9 @@ def test_ursa_server_start_allows_ambient_credentials(monkeypatch):
     assert isinstance(env, dict)
     assert "AWS_PROFILE" not in env
     assert env["DATABASE_URL"] == "postgresql://test-db"
+    assert "TAPDB_CLIENT_ID" not in env
+    assert "TAPDB_DATABASE_NAME" not in env
+    assert "TAPDB_ENV" not in env
 
 
 def test_ursa_cli_exposes_standardized_groups():

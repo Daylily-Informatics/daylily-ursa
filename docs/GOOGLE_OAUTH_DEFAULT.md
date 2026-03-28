@@ -12,7 +12,7 @@ Ursa defaults to Google-enabled Cognito setup using:
 ## One-command setup
 
 ```bash
-source ../daylily-cognito/daycog_activate
+source ../daylily-cognito/activate
 ./scripts/setup_cognito_google_default.sh
 ```
 

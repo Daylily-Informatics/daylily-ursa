@@ -105,17 +105,17 @@ def test_export_database_url_for_target_sets_runtime_environment(monkeypatch) ->
 
     db_url = tapdb_runtime.export_database_url_for_target(
         target="local",
-        client_id="ursa",
+        client_id="local",
         profile="test-profile",
         region="us-west-2",
-        namespace="daylily-ursa",
+        namespace="ursa",
         tapdb_env="dev",
     )
 
     assert db_url == "postgresql+psycopg2://ursa_user:secret@db.example.test:5432/daylily_ursa"
     assert tapdb_runtime.os.environ["AWS_PROFILE"] == "test-profile"
     assert tapdb_runtime.os.environ["AWS_REGION"] == "us-west-2"
-    assert tapdb_runtime.os.environ["TAPDB_CLIENT_ID"] == "ursa"
-    assert tapdb_runtime.os.environ["TAPDB_DATABASE_NAME"] == "daylily-ursa"
+    assert tapdb_runtime.os.environ["TAPDB_CLIENT_ID"] == "local"
+    assert tapdb_runtime.os.environ["TAPDB_DATABASE_NAME"] == "ursa"
     assert tapdb_runtime.os.environ["TAPDB_ENV"] == "dev"
     assert tapdb_runtime.os.environ["DATABASE_URL"] == db_url
