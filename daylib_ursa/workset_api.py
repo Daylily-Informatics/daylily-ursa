@@ -1010,6 +1010,7 @@ def create_app(
     user_directory: CognitoUserDirectoryService | None = None,
     settings: Settings | None = None,
     require_api_key: bool | None = None,
+    s3_client: Any | None = None,
 ) -> FastAPI:
     if settings is None:
         settings = get_settings()
@@ -1031,7 +1032,7 @@ def create_app(
     app.state.atlas_client = atlas_client
     app.state.dewey_client = dewey_client
     app.state.settings = settings
-    app.state.s3_client = RegionAwareS3Client(
+    app.state.s3_client = s3_client or RegionAwareS3Client(
         default_region=settings.get_effective_region(),
         profile=settings.aws_profile,
     )

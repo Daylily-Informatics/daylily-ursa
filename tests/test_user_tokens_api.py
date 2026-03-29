@@ -144,6 +144,10 @@ class DummyAnalysisStore:
         return []
 
 
+class DummyS3Client:
+    pass
+
+
 def _settings() -> Settings:
     return Settings(
         cors_origins="*",
@@ -275,6 +279,7 @@ def test_user_routes_reject_shared_api_key_and_accept_ursa_bearer_tokens() -> No
         resource_store=DummyResourceStore(),
         token_service=service,
         settings=_settings(),
+        s3_client=DummyS3Client(),
     )
 
     with TestClient(app) as client:
@@ -321,6 +326,7 @@ def test_user_token_routes_list_usage_and_revoke() -> None:
         resource_store=DummyResourceStore(),
         token_service=service,
         settings=_settings(),
+        s3_client=DummyS3Client(),
     )
 
     with TestClient(app) as client:

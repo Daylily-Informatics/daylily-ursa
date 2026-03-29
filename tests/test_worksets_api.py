@@ -376,6 +376,7 @@ def _create_test_app(
         resource_store=resource_store or MemoryResourceStore(),
         dewey_client=dewey_client,
         settings=_settings(),
+        s3_client=DummyS3Client(),
     )
     app.state.cluster_service = DummyClusterService()
     return app
