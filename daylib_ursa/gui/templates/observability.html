@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="page-header">
+    <div class="container">
+        <h1>Observability</h1>
+        <p>Local health, API, endpoint, database, and auth rollups for this Ursa instance.</p>
+    </div>
+</section>
+
+<section class="section">
+    <div class="container">
+        <div class="card">
+            <h2>Health</h2>
+            <pre>{{ health_payload | tojson(indent=2) }}</pre>
+        </div>
+    </div>
+</section>
+
+<section class="section">
+    <div class="container">
+        <div class="card">
+            <h2>Capability Discovery</h2>
+            <pre>{{ obs_services_payload | tojson(indent=2) }}</pre>
+        </div>
+    </div>
+</section>
+
+<section class="section">
+    <div class="container">
+        <div class="card">
+            <h2>API Health</h2>
+            <pre>{{ api_health_payload | tojson(indent=2) }}</pre>
+        </div>
+    </div>
+</section>
+
+<section class="section">
+    <div class="container">
+        <div class="card">
+            <h2>Endpoint Health</h2>
+            <pre>{{ endpoint_health_payload | tojson(indent=2) }}</pre>
+        </div>
+    </div>
+</section>
+
+<section class="section">
+    <div class="container">
+        <div class="card">
+            <h2>Database Health</h2>
+            <pre>{{ db_health_payload | tojson(indent=2) }}</pre>
+        </div>
+    </div>
+</section>
+
+<section class="section">
+    <div class="container">
+        <div class="card">
+            <h2>Auth Health</h2>
+            <pre>{{ auth_health_payload | tojson(indent=2) }}</pre>
+        </div>
+    </div>
+</section>
+{% endblock %}

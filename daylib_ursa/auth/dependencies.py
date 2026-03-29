@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hmac
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -87,6 +88,32 @@ class CurrentUser:
     @property
     def can_write(self) -> bool:
         return can_write(self.roles)
+
+
+def _observability_store(request: Request):
+    return getattr(request.app.state, "observability", None)
+
+
+def _record_auth_event(
+    request: Request,
+    *,
+    status: str,
+    mode: str,
+    detail: str,
+    service_principal: bool,
+) -> None:
+    store = _observability_store(request)
+    if store is None:
+        return
+    try:
+        store.record_auth_event(
+            status=status,
+            mode=mode,
+            detail=detail,
+            service_principal=service_principal,
+        )
+    except Exception:
+        return
 
 
 @dataclass(frozen=True)
@@ -537,10 +564,24 @@ def get_current_user(
 ) -> CurrentUser:
     user = _get_current_user_from_session(request)
     if user:
+        _record_auth_event(
+            request,
+            status="ok",
+            mode="session",
+            detail="session",
+            service_principal=False,
+        )
         return user
 
     bearer = str(getattr(credentials, "credentials", "") or "").strip()
     if not bearer:
+        _record_auth_event(
+            request,
+            status="denied",
+            mode="anonymous",
+            detail="session_or_bearer_required",
+            service_principal=False,
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Bearer authorization or authenticated session is required",
@@ -552,10 +593,24 @@ def get_current_user(
             raise HTTPException(status_code=401, detail="Invalid Ursa token prefix")
         service = getattr(request.app.state, "token_service", None)
         if service is None:
+            _record_auth_event(
+                request,
+                status="error",
+                mode="ursa_token",
+                detail="token_service_unavailable",
+                service_principal=False,
+            )
             raise HTTPException(status_code=503, detail="User token service is not configured")
         try:
             validated = service.validate_token(bearer)
         except AuthError as exc:
+            _record_auth_event(
+                request,
+                status="denied",
+                mode="ursa_token",
+                detail=str(exc),
+                service_principal=False,
+            )
             raise HTTPException(status_code=401, detail=str(exc)) from exc
         request.state.user_token_usage = {
             "token_euid": validated.token.token_euid,
@@ -565,12 +620,82 @@ def get_current_user(
         validated.actor.token_euid = validated.token.token_euid
         validated.actor.token_scope = validated.token.scope
         validated.actor.client_registration_euid = validated.token.client_registration_euid
+        _record_auth_event(
+            request,
+            status="ok",
+            mode="ursa_token",
+            detail="validated",
+            service_principal=False,
+        )
         return validated.actor
 
     try:
-        return _get_auth_provider(request).resolve_access_token(bearer)
+        user = _get_auth_provider(request).resolve_access_token(bearer)
     except AuthError as exc:
+        _record_auth_event(
+            request,
+            status="denied",
+            mode="cognito",
+            detail=str(exc),
+            service_principal=False,
+        )
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
+    _record_auth_event(
+        request,
+        status="ok",
+        mode="cognito",
+        detail="validated",
+        service_principal=False,
+    )
+    return user
+
+
+def _service_token_user(request: Request, bearer: str) -> CurrentUser | None:
+    candidate = str(bearer or "").strip()
+    expected = str(getattr(request.app.state, "api_key", "") or "").strip()
+    if not candidate or not expected or not hmac.compare_digest(candidate, expected):
+        return None
+    return CurrentUser(
+        sub="service:ursa",
+        email="",
+        name="Ursa Service Token",
+        tenant_id=uuid.UUID(int=0),
+        roles=[Role.INTERNAL_USER.value],
+        auth_source="service_token",
+    )
+
+
+def get_observability_user(
+    request: Request,
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security)] = None,
+) -> CurrentUser:
+    bearer = str(getattr(credentials, "credentials", "") or "").strip()
+    service_user = _service_token_user(request, bearer)
+    if service_user is not None:
+        _record_auth_event(
+            request,
+            status="ok",
+            mode="service_token",
+            detail="validated",
+            service_principal=True,
+        )
+        return service_user
+
+    current_user = get_current_user(request, credentials)
+    if current_user.is_internal:
+        return current_user
+
+    _record_auth_event(
+        request,
+        status="denied",
+        mode=current_user.auth_source,
+        detail="internal_or_admin_required",
+        service_principal=False,
+    )
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Internal or admin privileges are required",
+    )
 
 
 async def get_current_user_web(
@@ -625,3 +750,4 @@ RequireAuth = Annotated[CurrentUser, Depends(get_current_user)]
 RequireAuthWeb = Annotated[CurrentUser, Depends(get_current_user_web)]
 RequireInternal = Annotated[CurrentUser, Depends(require_role(Role.INTERNAL_USER, Role.ADMIN))]
 RequireAdmin = Annotated[CurrentUser, Depends(require_role(Role.ADMIN))]
+RequireObservability = Annotated[CurrentUser, Depends(get_observability_user)]

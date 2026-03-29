@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from unittest.mock import patch
 
 import pytest
 from fastapi import FastAPI
@@ -64,7 +65,8 @@ def test_mounted_route_exists_and_key_can_access(monkeypatch, tmp_path):
     monkeypatch.setattr("daylib_ursa.tapdb_mount._load_tapdb_admin_app", lambda: _fake_tapdb_app())
 
     settings = _settings(mount_enabled=True)
-    app = create_app(DummyStore(), bloom_client=DummyBloomClient(), settings=settings)
+    with patch("daylib_ursa.workset_api.RegionAwareS3Client", return_value=object()):
+        app = create_app(DummyStore(), bloom_client=DummyBloomClient(), settings=settings)
 
     assert any(getattr(route, "path", None) == "/admin/tapdb" for route in app.routes)
 
@@ -79,7 +81,12 @@ def test_mounted_route_denies_missing_api_key(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr("daylib_ursa.tapdb_mount._load_tapdb_admin_app", lambda: _fake_tapdb_app())
 
-    app = create_app(DummyStore(), bloom_client=DummyBloomClient(), settings=_settings(mount_enabled=True))
+    with patch("daylib_ursa.workset_api.RegionAwareS3Client", return_value=object()):
+        app = create_app(
+            DummyStore(),
+            bloom_client=DummyBloomClient(),
+            settings=_settings(mount_enabled=True),
+        )
 
     with TestClient(app) as client:
         response = client.get("/admin/tapdb/")
@@ -92,7 +99,12 @@ def test_mounted_route_denies_wrong_api_key(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr("daylib_ursa.tapdb_mount._load_tapdb_admin_app", lambda: _fake_tapdb_app())
 
-    app = create_app(DummyStore(), bloom_client=DummyBloomClient(), settings=_settings(mount_enabled=True))
+    with patch("daylib_ursa.workset_api.RegionAwareS3Client", return_value=object()):
+        app = create_app(
+            DummyStore(),
+            bloom_client=DummyBloomClient(),
+            settings=_settings(mount_enabled=True),
+        )
 
     with TestClient(app) as client:
         response = client.get("/admin/tapdb/", headers={"X-API-Key": "wrong-key"})
@@ -113,7 +125,12 @@ def test_mounted_mode_forces_tapdb_local_auth_bypass(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr("daylib_ursa.tapdb_mount._load_tapdb_admin_app", _loader)
 
-    app = create_app(DummyStore(), bloom_client=DummyBloomClient(), settings=_settings(mount_enabled=True))
+    with patch("daylib_ursa.workset_api.RegionAwareS3Client", return_value=object()):
+        app = create_app(
+            DummyStore(),
+            bloom_client=DummyBloomClient(),
+            settings=_settings(mount_enabled=True),
+        )
 
     with TestClient(app) as client:
         response = client.get("/admin/tapdb/", headers={"X-API-Key": "test-key"})
@@ -134,8 +151,13 @@ def test_mount_enabled_fails_fast_when_tapdb_import_fails(monkeypatch, tmp_path)
 
     monkeypatch.setattr("daylib_ursa.tapdb_mount._load_tapdb_admin_app", _boom)
 
-    with pytest.raises(RuntimeError, match="Failed to import TapDB admin app"):
-        create_app(DummyStore(), bloom_client=DummyBloomClient(), settings=_settings(mount_enabled=True))
+    with patch("daylib_ursa.workset_api.RegionAwareS3Client", return_value=object()):
+        with pytest.raises(RuntimeError, match="Failed to import TapDB admin app"):
+            create_app(
+                DummyStore(),
+                bloom_client=DummyBloomClient(),
+                settings=_settings(mount_enabled=True),
+            )
 
 
 def test_mount_disabled_skips_tapdb_import(monkeypatch, tmp_path):
@@ -145,5 +167,10 @@ def test_mount_disabled_skips_tapdb_import(monkeypatch, tmp_path):
         raise ModuleNotFoundError("admin.main")
 
     monkeypatch.setattr("daylib_ursa.tapdb_mount._load_tapdb_admin_app", _boom)
-    app = create_app(DummyStore(), bloom_client=DummyBloomClient(), settings=_settings(mount_enabled=False))
+    with patch("daylib_ursa.workset_api.RegionAwareS3Client", return_value=object()):
+        app = create_app(
+            DummyStore(),
+            bloom_client=DummyBloomClient(),
+            settings=_settings(mount_enabled=False),
+        )
     assert all(getattr(route, "path", None) != "/admin/tapdb" for route in app.routes)

@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import gzip
+import hashlib
 import hmac
 import io
 import logging
 import secrets
 import tarfile
+import time
 import uuid
 import zipfile
 from datetime import datetime, timezone
@@ -35,6 +37,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
+from daylib_ursa import __version__
 from daylib_ursa.analysis_store import (
     AnalysisArtifact,
     AnalysisRecord,
@@ -55,6 +58,7 @@ from daylib_ursa.auth import (
     CurrentUser,
     RequireAdmin,
     RequireAuth,
+    RequireObservability,
     UserTokenRecord,
     UserTokenService,
     UserTokenUsageRecord,
@@ -70,6 +74,17 @@ from daylib_ursa.domain_access import (
     is_allowed_origin,
 )
 from daylib_ursa.gui_app import mount_gui
+from daylib_ursa.observability import (
+    UrsaObservabilityStore,
+    build_api_health_payload,
+    build_auth_health_payload,
+    build_db_health_payload,
+    build_endpoint_health_payload,
+    build_health_payload,
+    build_my_health_payload,
+    build_obs_services_payload,
+    install_sqlalchemy_observability,
+)
 from daylib_ursa.resource_store import (
     ClientRegistrationRecord,
     ClusterJobEventRecord,
@@ -1022,6 +1037,10 @@ def create_app(
     app.state.internal_bucket = internal_bucket
     app.state.require_api_key = True
     app.state.api_key = settings.ursa_internal_api_key
+    app.state.observability = UrsaObservabilityStore(
+        settings=settings,
+        app_version=__version__,
+    )
 
     if auth_provider is None:
         auth_provider = CognitoAuthProvider(
@@ -1070,6 +1089,103 @@ def create_app(
         if resource_store is not None
         else None
     )
+    app.state.observability_cleanup = []
+
+    def _extract_sqlalchemy_engine(candidate: Any) -> Any | None:
+        backend = getattr(candidate, "backend", None)
+        if backend is None:
+            return None
+        for engine_candidate in (
+            getattr(backend, "engine", None),
+            getattr(getattr(backend, "bundle", None), "connection", None),
+            getattr(getattr(backend, "_conn", None), "engine", None),
+        ):
+            engine = getattr(engine_candidate, "engine", None) if engine_candidate is not None else None
+            if engine is not None:
+                return engine
+            if engine_candidate is not None and hasattr(engine_candidate, "connect"):
+                return engine_candidate
+        return None
+
+    def _install_observability_hooks() -> None:
+        seen_engines: set[int] = set()
+        cleanup_callbacks: list[Any] = []
+        for candidate in (app.state.store, app.state.resource_store, app.state.token_service):
+            engine = _extract_sqlalchemy_engine(candidate)
+            if engine is None:
+                continue
+            engine_id = id(engine)
+            if engine_id in seen_engines:
+                continue
+            seen_engines.add(engine_id)
+            cleanup_callbacks.append(
+                install_sqlalchemy_observability(app.state.observability, engine)
+            )
+        app.state.observability_cleanup = cleanup_callbacks
+
+    def _correlation_id(source: str) -> str:
+        return hashlib.sha1(source.encode("utf-8")).hexdigest()[:12]
+
+    def _route_template_for_request(request: Request) -> str:
+        route = request.scope.get("route")
+        template = getattr(route, "path", None)
+        if template:
+            return str(template)
+        return "/__unmatched__"
+
+    def _database_probe() -> dict[str, Any]:
+        observed_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        engine = _extract_sqlalchemy_engine(app.state.store) or _extract_sqlalchemy_engine(
+            app.state.resource_store
+        )
+        if engine is None:
+            payload = {
+                "status": "unknown",
+                "latency_ms": None,
+                "detail": "sqlalchemy_engine_unavailable",
+                "observed_at": observed_at,
+            }
+            app.state.observability.record_db_probe(
+                status="unknown",
+                latency_ms=0.0,
+                detail="sqlalchemy_engine_unavailable",
+            )
+            return payload
+
+        started_at = time.monotonic()
+        try:
+            with engine.connect() as connection:
+                connection.exec_driver_sql("SELECT 1")
+            latency_ms = (time.monotonic() - started_at) * 1000
+            payload = {
+                "status": "ok",
+                "latency_ms": round(latency_ms, 3),
+                "detail": "select_1_ok",
+                "observed_at": observed_at,
+            }
+            app.state.observability.record_db_probe(
+                status="ok",
+                latency_ms=latency_ms,
+                detail="select_1_ok",
+            )
+            return payload
+        except Exception as exc:
+            latency_ms = (time.monotonic() - started_at) * 1000
+            detail = f"select_1_failed:{type(exc).__name__}"
+            payload = {
+                "status": "error",
+                "latency_ms": round(latency_ms, 3),
+                "detail": detail,
+                "observed_at": observed_at,
+            }
+            app.state.observability.record_db_probe(
+                status="error",
+                latency_ms=latency_ms,
+                detail=detail,
+            )
+            return payload
+
+    _install_observability_hooks()
 
     logging.basicConfig(
         level=getattr(logging, settings.log_level.upper(), logging.INFO),
@@ -1109,6 +1225,27 @@ def create_app(
         request.state.request_id = request_id
         response = await call_next(request)
         response.headers["X-Request-ID"] = request_id
+        return response
+
+    @app.middleware("http")
+    async def record_observability(request: Request, call_next):
+        request_id = str(getattr(request.state, "request_id", "") or secrets.token_hex(4))
+        correlation_source = (
+            request.headers.get("X-Correlation-ID")
+            or request.headers.get("X-Request-ID")
+            or request_id
+        )
+        request.state.correlation_id = _correlation_id(str(correlation_source))
+        started_at = time.monotonic()
+        response = await call_next(request)
+        route_template = _route_template_for_request(request)
+        app.state.observability.record_http_request(
+            method=request.method,
+            route_template=route_template,
+            status_code=response.status_code,
+            duration_ms=(time.monotonic() - started_at) * 1000,
+        )
+        response.headers["X-Correlation-ID"] = request.state.correlation_id
         return response
 
     @app.middleware("http")
@@ -1540,10 +1677,121 @@ def create_app(
     @app.get("/healthz", tags=["health"])
     async def healthz() -> dict[str, str]:
         return {
-            "status": "healthy",
-            "service": "daylily-ursa",
+            "status": "ok",
+            "service": "ursa",
             "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         }
+
+    @app.get("/readyz", tags=["health"])
+    async def readyz() -> JSONResponse:
+        database = _database_probe()
+        status_code = 200 if database["status"] in {"ok", "unknown"} else 503
+        return JSONResponse(
+            status_code=status_code,
+            content={
+                "status": "ok" if status_code == 200 else "degraded",
+                "service": "ursa",
+                "database": database,
+                "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            },
+        )
+
+    @app.get("/health", tags=["observability"])
+    async def health(actor: RequireObservability, request: Request) -> dict[str, Any]:
+        _ = actor
+        snapshot = app.state.observability.health_snapshot()
+        observed_at = (
+            snapshot.get("checks", {}).get("database", {}).get("observed_at")
+            or snapshot.get("checks", {}).get("auth", {}).get("observed_at")
+        )
+        projection = app.state.observability.projection(observed_at=observed_at)
+        return build_health_payload(
+            request,
+            settings=settings,
+            app_version=__version__,
+            projection=projection,
+            health_snapshot=snapshot,
+        )
+
+    @app.get("/obs_services", tags=["observability"])
+    async def obs_services(actor: RequireObservability, request: Request) -> dict[str, Any]:
+        _ = actor
+        projection, snapshot = app.state.observability.obs_services_snapshot()
+        return build_obs_services_payload(
+            request,
+            settings=settings,
+            app_version=__version__,
+            projection=projection,
+            snapshot=snapshot,
+        )
+
+    @app.get("/api_health", tags=["observability"])
+    async def api_health(actor: RequireObservability, request: Request) -> dict[str, Any]:
+        _ = actor
+        projection, families = app.state.observability.api_health()
+        return build_api_health_payload(
+            request,
+            settings=settings,
+            app_version=__version__,
+            projection=projection,
+            families=families,
+        )
+
+    @app.get("/endpoint_health", tags=["observability"])
+    async def endpoint_health(
+        actor: RequireObservability,
+        request: Request,
+        offset: int = Query(default=0, ge=0),
+        limit: int = Query(default=50, ge=1, le=200),
+    ) -> dict[str, Any]:
+        _ = actor
+        projection, page = app.state.observability.endpoint_health(offset=offset, limit=limit)
+        return build_endpoint_health_payload(
+            request,
+            settings=settings,
+            app_version=__version__,
+            projection=projection,
+            total=int(page["total"]),
+            offset=int(page["offset"]),
+            limit=int(page["limit"]),
+            items=list(page["items"]),
+        )
+
+    @app.get("/db_health", tags=["observability"])
+    async def db_health(actor: RequireObservability, request: Request) -> dict[str, Any]:
+        _ = actor
+        _database_probe()
+        projection, rollup = app.state.observability.db_health()
+        return build_db_health_payload(
+            request,
+            settings=settings,
+            app_version=__version__,
+            projection=projection,
+            db_health=rollup,
+        )
+
+    @app.get("/my_health", tags=["observability"])
+    async def my_health(actor: RequireAuth, request: Request) -> dict[str, Any]:
+        if actor.auth_source == "service_token":
+            raise HTTPException(status_code=401, detail="Service tokens cannot access /my_health")
+        return build_my_health_payload(
+            request,
+            settings=settings,
+            app_version=__version__,
+            user=actor,
+        )
+
+    @app.get("/auth_health", tags=["observability"])
+    async def auth_health(actor: RequireObservability, request: Request) -> dict[str, Any]:
+        _ = actor
+        projection, rollup = app.state.observability.auth_health()
+        return build_auth_health_payload(
+            request,
+            settings=settings,
+            app_version=__version__,
+            projection=projection,
+            auth_rollup=rollup,
+        )
 
     @app.get("/api/v1/me", response_model=MeResponse)
     async def get_me(actor: RequireAuth) -> MeResponse:
