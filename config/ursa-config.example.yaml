@@ -52,6 +52,7 @@ atlas_base_url: https://localhost:8915
 atlas_verify_ssl: true
 dewey_enabled: false
 dewey_base_url: ""
+dewey_api_token: ""
 dewey_verify_ssl: true
 
 # Cognito configuration is read from this YAML file.

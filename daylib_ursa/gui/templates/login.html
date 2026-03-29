@@ -29,16 +29,14 @@
                 <div>{{ error }}</div>
             </div>
             {% endif %}
-            <form method="post" action="/login">
-                <input type="hidden" name="next_path" value="{{ next_path }}">
-                <div class="form-group">
-                    <label for="access_token" class="form-label">Authentication Token</label>
-                    <input id="access_token" name="access_token" class="form-control" required autofocus>
-                </div>
-                <div class="toolbar">
-                    <button class="btn btn-primary" type="submit"><i class="fa-solid fa-right-to-bracket"></i> Sign In</button>
-                </div>
-            </form>
+            <p class="page-subtitle" style="margin-bottom: 1.5rem;">
+                Sign in through Cognito Hosted UI to access the Ursa operator portal.
+            </p>
+            <div class="toolbar">
+                <a class="btn btn-primary" href="{{ cognito_login_url }}">
+                    <i class="fa-solid fa-right-to-bracket"></i> Sign In with Cognito
+                </a>
+            </div>
         </section>
     </main>
 </body>

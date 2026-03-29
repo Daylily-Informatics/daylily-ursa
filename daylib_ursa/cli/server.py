@@ -33,6 +33,7 @@ if TYPE_CHECKING:
 
 server_app = typer.Typer(help="API server management commands")
 console = Console()
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 # PID and log file locations (XDG Base Directory: ~/.config/ursa/)
 CONFIG_DIR = Path.home() / ".config" / "ursa"
@@ -55,7 +56,7 @@ def _resolved_server_host_port(
         if port is not None
         else os.environ.get(
             "URSA_RUNTIME__PORT",
-            os.environ.get("URSA_PORT", getattr(settings, "api_port", 8914)),
+            getattr(settings, "api_port", os.environ.get("URSA_PORT", 8914)),
         )
     )
     resolved_host = str(
@@ -63,7 +64,7 @@ def _resolved_server_host_port(
         if host is not None
         else os.environ.get(
             "URSA_RUNTIME__HOST",
-            os.environ.get("URSA_HOST", getattr(settings, "api_host", "0.0.0.0")),
+            getattr(settings, "api_host", os.environ.get("URSA_HOST", "0.0.0.0")),
         )
     )
     return resolved_host, resolved_port
@@ -272,7 +273,7 @@ def start(
     _ensure_dir()
 
     # Source .env file
-    if source_env_file(Path.cwd() / ".env"):
+    if source_env_file(PROJECT_ROOT / ".env"):
         console.print("[dim]Loaded .env file[/dim]")
 
     settings = get_settings()
@@ -375,7 +376,7 @@ def start(
             stdout=log_f,
             stderr=subprocess.STDOUT,
             start_new_session=True,
-            cwd=Path.cwd(),
+            cwd=PROJECT_ROOT,
             env=env,
         )
 
@@ -401,7 +402,7 @@ def start(
         console.print(f"[green]✓[/green]  Starting server on [cyan]https://{host}:{port}[/cyan]")
         console.print("   Press Ctrl+C to stop\n")
         try:
-            result = subprocess.run(cmd, cwd=Path.cwd(), env=env)
+            result = subprocess.run(cmd, cwd=PROJECT_ROOT, env=env)
             if result.returncode != 0:
                 raise typer.Exit(result.returncode)
         except KeyboardInterrupt:

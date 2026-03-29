@@ -77,6 +77,7 @@ VALID_FIELDS = {
     "atlas_verify_ssl": (bool, "Verify Atlas TLS certificates"),
     "dewey_enabled": (bool, "Enable Dewey integration"),
     "dewey_base_url": (str, "Dewey base URL"),
+    "dewey_api_token": (str, "Dewey API bearer token"),
     "dewey_verify_ssl": (bool, "Verify Dewey TLS certificates"),
     "whitelist_domains": (str, "Allowed email domains for registration/login"),
     "deployment": (dict, "Deployment metadata for non-production UI chrome"),
@@ -272,6 +273,9 @@ class UrsaConfig:
     dewey_base_url: Optional[str] = None
     """Dewey base URL read from YAML config."""
 
+    dewey_api_token: Optional[str] = None
+    """Dewey API bearer token read from YAML config."""
+
     dewey_verify_ssl: Optional[bool] = None
     """Dewey TLS verification flag read from YAML config."""
 
@@ -417,6 +421,7 @@ class UrsaConfig:
         atlas_verify_ssl = data.get("atlas_verify_ssl")
         dewey_enabled = data.get("dewey_enabled")
         dewey_base_url = data.get("dewey_base_url")
+        dewey_api_token = data.get("dewey_api_token")
         dewey_verify_ssl = data.get("dewey_verify_ssl")
         whitelist_domains = os.environ.get("WHITELIST_DOMAINS") or data.get("whitelist_domains")
 
@@ -442,6 +447,7 @@ class UrsaConfig:
             atlas_verify_ssl=atlas_verify_ssl,
             dewey_enabled=dewey_enabled,
             dewey_base_url=dewey_base_url,
+            dewey_api_token=dewey_api_token,
             dewey_verify_ssl=dewey_verify_ssl,
             whitelist_domains=whitelist_domains,
             deployment_name=str(deployment.get("name") or ""),

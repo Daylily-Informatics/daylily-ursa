@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import uuid
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
+from daylib_ursa.auth import CurrentUser
 from daylib_ursa.config import clear_settings_cache, get_settings, get_settings_for_testing
+from daylib_ursa import gui_app
 from daylib_ursa.gui_app import mount_gui
 
 
@@ -14,6 +17,19 @@ def test_get_settings_reads_cognito_and_deployment_from_yaml_not_env(tmp_path, m
         """
 aws_profile: lsmc
 ursa_internal_output_bucket: ursa-internal
+tapdb_client_id: ursa
+tapdb_database_name: daylily-ursa
+tapdb_env: dev
+api_host: 127.0.0.1
+api_port: 8913
+bloom_base_url: https://localhost:8912
+bloom_verify_ssl: true
+atlas_base_url: https://localhost:8915
+atlas_verify_ssl: true
+dewey_enabled: false
+dewey_base_url: https://localhost:8914
+dewey_api_token: dewey-dev-token
+dewey_verify_ssl: true
 cognito_user_pool_id: yaml-pool
 cognito_app_client_id: yaml-client
 cognito_app_client_secret: yaml-secret
@@ -48,6 +64,7 @@ deployment:
     assert settings.cognito_region == "us-west-2"
     assert settings.cognito_callback_url == "https://localhost:8914/auth/callback"
     assert settings.cognito_logout_url == "https://localhost:8914/login"
+    assert settings.dewey_api_token == "dewey-dev-token"
     assert settings.deployment == {
         "name": "staging",
         "color": "#124e78",
@@ -63,6 +80,15 @@ def _app_with_gui(settings):
     app.add_middleware(SessionMiddleware, secret_key="test-secret")
     app.state.settings = settings
     app.state.identity_client = SimpleNamespace(resolve_access_token=lambda _token: None)
+    app.state.auth_provider = SimpleNamespace(
+        resolve_access_token=lambda _token: CurrentUser(
+            sub="user-123",
+            email="user@example.com",
+            name="Ursa User",
+            tenant_id=uuid.UUID("11111111-1111-1111-1111-111111111111"),
+            roles=["ADMIN"],
+        )
+    )
     mount_gui(app)
     return app
 
@@ -73,6 +99,10 @@ def test_login_page_renders_banner_and_favicon():
         deployment_name="staging",
         deployment_color="#124e78",
         deployment_is_production=False,
+        cognito_domain="ursa.auth.us-west-2.amazoncognito.com",
+        cognito_app_client_id="client-123",
+        cognito_callback_url="https://localhost:8913/auth/callback",
+        cognito_logout_url="https://localhost:8913/login",
     )
     client = TestClient(_app_with_gui(settings))
 
@@ -82,6 +112,49 @@ def test_login_page_renders_banner_and_favicon():
     assert "STAGING" in response.text
     assert "#124e78" in response.text
     assert "/ui/static/favicon.svg" in response.text
+    assert "Sign In with Cognito" in response.text
+    assert "/auth/login?next=/" in response.text
+
+
+def test_auth_login_redirects_to_cognito(monkeypatch):
+    settings = get_settings_for_testing(
+        ursa_internal_output_bucket="ursa-internal",
+        cognito_domain="ursa.auth.us-west-2.amazoncognito.com",
+        cognito_app_client_id="client-123",
+        cognito_callback_url="https://localhost:8913/auth/callback",
+        cognito_logout_url="https://localhost:8913/login",
+    )
+    client = TestClient(_app_with_gui(settings))
+
+    monkeypatch.setattr(gui_app.secrets, "token_urlsafe", lambda _n: "state-123")
+    monkeypatch.setattr(gui_app, "build_authorization_url", lambda **_kwargs: "https://example.auth/login")
+    response = client.get("/auth/login?next=/usage", follow_redirects=False)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "https://example.auth/login"
+
+
+def test_auth_callback_persists_session_and_redirects(monkeypatch):
+    settings = get_settings_for_testing(
+        ursa_internal_output_bucket="ursa-internal",
+        cognito_domain="ursa.auth.us-west-2.amazoncognito.com",
+        cognito_app_client_id="client-123",
+        cognito_callback_url="https://localhost:8913/auth/callback",
+        cognito_logout_url="https://localhost:8913/login",
+    )
+    client = TestClient(_app_with_gui(settings))
+    monkeypatch.setattr(gui_app.secrets, "token_urlsafe", lambda _n: "state-123")
+    monkeypatch.setattr(gui_app, "build_authorization_url", lambda **_kwargs: "https://example.auth/login")
+    client.get("/auth/login?next=/usage", follow_redirects=False)
+    monkeypatch.setattr(gui_app, "exchange_authorization_code", lambda **_kwargs: {"id_token": "token-123"})
+    response = client.get("/auth/callback?code=auth-code&state=state-123", follow_redirects=False)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/usage"
+
+    login_page = client.get("/login?next=/usage", follow_redirects=False)
+    assert login_page.status_code == 303
+    assert login_page.headers["location"] == "/usage"
 
 
 def test_favicon_route_redirects_to_svg():

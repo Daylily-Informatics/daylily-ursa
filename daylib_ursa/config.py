@@ -49,6 +49,7 @@ def _yaml_seed_from_ursa_config() -> dict[str, object]:
         "atlas_verify_ssl": cfg.atlas_verify_ssl,
         "dewey_enabled": cfg.dewey_enabled,
         "dewey_base_url": cfg.dewey_base_url,
+        "dewey_api_token": cfg.dewey_api_token,
         "dewey_verify_ssl": cfg.dewey_verify_ssl,
         "deployment_name": cfg.deployment_name,
         "deployment_color": cfg.deployment_color,

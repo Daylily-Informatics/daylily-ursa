@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import json
+import secrets
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlencode
 
+from daylily_cognito import build_authorization_url, exchange_authorization_code
 from fastapi import FastAPI, Form, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -37,6 +40,64 @@ def mount_gui(app: FastAPI) -> None:
     def _next_path(raw_value: str | None) -> str:
         value = str(raw_value or "").strip()
         return value if value.startswith("/") else "/"
+
+    def _cognito_login_path(next_path: str) -> str:
+        return f"/auth/login?next={_next_path(next_path)}"
+
+    def _oauth_state() -> str:
+        return secrets.token_urlsafe(24)
+
+    def _cognito_settings() -> dict[str, str]:
+        settings = getattr(app.state, "settings", None)
+        values = {
+            "domain": str(getattr(settings, "cognito_domain", "") or "").strip().rstrip("/"),
+            "client_id": str(getattr(settings, "cognito_app_client_id", "") or "").strip(),
+            "client_secret": str(getattr(settings, "cognito_app_client_secret", "") or "").strip(),
+            "callback_url": str(getattr(settings, "cognito_callback_url", "") or "").strip(),
+            "logout_url": str(getattr(settings, "cognito_logout_url", "") or "").strip(),
+        }
+        if values["domain"].startswith("https://"):
+            values["domain"] = values["domain"][len("https://") :]
+        missing = [key for key in ("domain", "client_id", "callback_url", "logout_url") if not values[key]]
+        if missing:
+            raise HTTPException(
+                status_code=503,
+                detail=f"Cognito authentication is not configured: missing {', '.join(missing)}",
+            )
+        return values
+
+    def _build_cognito_login_url(*, state: str) -> str:
+        cognito = _cognito_settings()
+        return build_authorization_url(
+            domain=cognito["domain"],
+            client_id=cognito["client_id"],
+            redirect_uri=cognito["callback_url"],
+            state=state,
+        )
+
+    def _build_cognito_logout_url(*, state: str | None = None) -> str:
+        cognito = _cognito_settings()
+        query = {
+            "client_id": cognito["client_id"],
+            "redirect_uri": cognito["logout_url"],
+            "response_type": "code",
+        }
+        if state:
+            query["state"] = state
+        return f"https://{cognito['domain']}/logout?{urlencode(query)}"
+
+    def _exchange_auth_code(code: str) -> dict[str, Any]:
+        cognito = _cognito_settings()
+        try:
+            return exchange_authorization_code(
+                domain=cognito["domain"],
+                client_id=cognito["client_id"],
+                code=code,
+                redirect_uri=cognito["callback_url"],
+                client_secret=cognito["client_secret"] or None,
+            )
+        except RuntimeError as exc:
+            raise AuthError(str(exc)) from exc
 
     def _session_actor(request: Request) -> CurrentUser | None:
         try:
@@ -453,10 +514,58 @@ def mount_gui(app: FastAPI) -> None:
             {
                 "request": request,
                 "next_path": _next_path(next),
+                "cognito_login_url": _cognito_login_path(next),
                 "error": None,
                 "deployment": _deployment_context(),
             },
         )
+
+    @app.get("/auth/login", include_in_schema=False)
+    async def auth_login(request: Request, next: str = "/"):
+        state = _oauth_state()
+        request.session["ursa_oauth_state"] = state
+        request.session["ursa_post_auth_redirect"] = _next_path(next)
+        return RedirectResponse(
+            url=_build_cognito_login_url(state=state),
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+
+    @app.get("/auth/callback", include_in_schema=False)
+    async def auth_callback(request: Request, code: str = "", state: str = ""):
+        expected_state = str(request.session.get("ursa_oauth_state") or "").strip()
+        if not code.strip():
+            raise HTTPException(status_code=400, detail="Missing authorization code")
+        if not state.strip() or state.strip() != expected_state:
+            raise HTTPException(status_code=400, detail="Invalid oauth state")
+        try:
+            token_payload = _exchange_auth_code(code.strip())
+            token = str(token_payload.get("id_token") or token_payload.get("access_token") or "").strip()
+            if not token:
+                raise AuthError("Cognito token response missing id_token or access_token")
+            auth_provider = getattr(app.state, "auth_provider", None)
+            if auth_provider is None:
+                raise AuthError("Authentication provider is not configured")
+            actor = auth_provider.resolve_access_token(token)
+        except AuthError as exc:
+            request.session.pop("ursa_oauth_state", None)
+            request.session.pop("ursa_post_auth_redirect", None)
+            return templates.TemplateResponse(
+                request,
+                "login.html",
+                {
+                    "request": request,
+                    "next_path": _next_path(request.query_params.get("next") or "/"),
+                    "cognito_login_url": _cognito_login_path(request.query_params.get("next") or "/"),
+                    "error": str(exc),
+                    "deployment": _deployment_context(),
+                },
+                status_code=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        persist_session_user(request, actor)
+        redirect_to = _next_path(request.session.pop("ursa_post_auth_redirect", "/"))
+        request.session.pop("ursa_oauth_state", None)
+        return RedirectResponse(url=redirect_to, status_code=status.HTTP_303_SEE_OTHER)
 
     @app.post("/login", response_class=HTMLResponse)
     async def login_submit(
@@ -472,6 +581,7 @@ def mount_gui(app: FastAPI) -> None:
                 {
                     "request": request,
                     "next_path": _next_path(next_path),
+                    "cognito_login_url": _cognito_login_path(next_path),
                     "error": "Authentication token is required",
                     "deployment": _deployment_context(),
                 },
@@ -489,6 +599,7 @@ def mount_gui(app: FastAPI) -> None:
                 {
                     "request": request,
                     "next_path": _next_path(next_path),
+                    "cognito_login_url": _cognito_login_path(next_path),
                     "error": str(exc),
                     "deployment": _deployment_context(),
                 },
@@ -506,7 +617,15 @@ def mount_gui(app: FastAPI) -> None:
     @app.get("/logout")
     async def logout(request: Request):
         clear_session_user(request)
-        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+        try:
+            state = _oauth_state()
+            request.session["ursa_oauth_state"] = state
+            return RedirectResponse(
+                url=_build_cognito_logout_url(state=state),
+                status_code=status.HTTP_303_SEE_OTHER,
+            )
+        except HTTPException:
+            return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
 
     @app.get("/", response_class=HTMLResponse)
     async def dashboard_page(request: Request):

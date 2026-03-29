@@ -253,6 +253,42 @@ def test_source_env_file_reads_key_values(
     assert os.environ["Y"] == "two"
 
 
+def test_server_start_sources_repo_root_env_file(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: dict[str, Path] = {}
+
+    monkeypatch.setattr(server_cli, "_ensure_dir", lambda: None)
+    monkeypatch.setattr(server_cli, "get_settings", lambda: SimpleNamespace())
+    monkeypatch.setattr(server_cli, "_resolved_server_host_port", lambda **_kwargs: ("0.0.0.0", 8913))
+    monkeypatch.setattr(server_cli, "_get_pid", lambda: 12345)
+
+    def _fake_source_env_file(path: Path) -> bool:
+        seen["path"] = path
+        return False
+
+    monkeypatch.setattr(server_cli, "source_env_file", _fake_source_env_file)
+
+    server_cli.start()
+
+    assert seen["path"] == server_cli.PROJECT_ROOT / ".env"
+
+
+def test_resolved_server_host_port_prefers_settings_over_legacy_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("URSA_PORT", "8914")
+    monkeypatch.setenv("URSA_HOST", "127.0.0.1")
+    monkeypatch.delenv("URSA_RUNTIME__PORT", raising=False)
+    monkeypatch.delenv("URSA_RUNTIME__HOST", raising=False)
+    monkeypatch.setattr(
+        server_cli,
+        "get_settings",
+        lambda: SimpleNamespace(api_port=8913, api_host="0.0.0.0"),
+    )
+
+    host, port = server_cli._resolved_server_host_port()
+
+    assert host == "0.0.0.0"
+    assert port == 8913
+
+
 def test_stop_handles_missing_pid(monkeypatch: pytest.MonkeyPatch) -> None:
     # stop() delegates to stop_pid imported into server_cli namespace
     monkeypatch.setattr(server_cli, "stop_pid", lambda _pf: (False, "No PID file"))
