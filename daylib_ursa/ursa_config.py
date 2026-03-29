@@ -58,6 +58,8 @@ LEGACY_CONFIG_PATHS = [
 VALID_FIELDS = {
     "regions": (list, "List of AWS regions to scan"),
     "aws_profile": (str, "AWS profile name"),
+    "ursa_portal_default_customer_id": (str, "Fallback customer ID used by the lightweight portal surface"),
+    "cognito_group_role_map": (dict, "Canonical Cognito group-to-role mapping"),
     "ursa_internal_output_bucket": (str, "Ursa-managed internal S3 bucket"),
     "tapdb_client_id": (str, "TapDB client identifier"),
     "tapdb_database_name": (str, "TapDB namespace / database name"),
@@ -215,6 +217,12 @@ class UrsaConfig:
 
     aws_profile: Optional[str] = None
     """AWS profile to use (AWS_PROFILE may still override this)."""
+
+    ursa_portal_default_customer_id: Optional[str] = None
+    """Fallback customer ID used by the lightweight portal surface."""
+
+    cognito_group_role_map: Optional[Dict[str, str]] = None
+    """Optional Cognito group-to-role mapping override loaded from YAML config."""
 
     ursa_internal_output_bucket: Optional[str] = None
     """Ursa-managed internal output bucket read from YAML config."""
@@ -402,6 +410,8 @@ class UrsaConfig:
 
         # Environment variables take precedence only for non-Cognito runtime knobs.
         aws_profile = os.environ.get("AWS_PROFILE") or data.get("aws_profile")
+        ursa_portal_default_customer_id = data.get("ursa_portal_default_customer_id")
+        cognito_group_role_map = data.get("cognito_group_role_map")
         ursa_internal_output_bucket = data.get("ursa_internal_output_bucket")
         tapdb_client_id = data.get("tapdb_client_id")
         tapdb_database_name = data.get("tapdb_database_name")
@@ -428,6 +438,8 @@ class UrsaConfig:
         config = cls(
             regions=region_configs,
             aws_profile=aws_profile,
+            ursa_portal_default_customer_id=ursa_portal_default_customer_id,
+            cognito_group_role_map=cognito_group_role_map,
             ursa_internal_output_bucket=ursa_internal_output_bucket,
             tapdb_client_id=tapdb_client_id,
             tapdb_database_name=tapdb_database_name,

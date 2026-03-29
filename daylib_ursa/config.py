@@ -6,6 +6,7 @@ Configuration is loaded once at startup and injected via dependency.
 
 from __future__ import annotations
 
+import json
 import os
 from functools import lru_cache
 from typing import List, Optional
@@ -30,6 +31,8 @@ def _yaml_seed_from_ursa_config() -> dict[str, object]:
 
     return {
         "aws_profile": cfg.aws_profile,
+        "ursa_portal_default_customer_id": cfg.ursa_portal_default_customer_id,
+        "cognito_group_role_map": cfg.cognito_group_role_map,
         "ursa_internal_output_bucket": cfg.ursa_internal_output_bucket,
         "tapdb_client_id": cfg.tapdb_client_id,
         "tapdb_database_name": cfg.tapdb_database_name,
@@ -221,6 +224,18 @@ class Settings(BaseSettings):
     cognito_logout_url: Optional[str] = Field(
         default=None,
         description="Explicit HTTPS logout redirect URL registered for Cognito Hosted UI",
+    )
+    cognito_group_role_map: dict[str, str] = Field(
+        default_factory=lambda: {
+            "platform-admin": "ADMIN",
+            "ursa-admin": "ADMIN",
+            "ursa-internal": "INTERNAL_USER",
+            "ursa-external-admin": "EXTERNAL_USER_ADMIN",
+            "ursa-external": "EXTERNAL_USER",
+            "ursa-readwrite": "READ_WRITE",
+            "ursa-readonly": "READ_ONLY",
+        },
+        description="Mapping from Cognito group names to Ursa auth roles",
     )
     enable_auth: bool = Field(
         default=True,
@@ -506,6 +521,38 @@ class Settings(BaseSettings):
             return None
         return _validate_optional_https_url(v, field_name=str(info.field_name))
 
+    @field_validator("cognito_group_role_map", mode="before")
+    @classmethod
+    def validate_cognito_group_role_map(cls, value: object) -> dict[str, str]:
+        from daylib_ursa.auth.rbac import Role
+
+        if value is None:
+            return {
+                "platform-admin": "ADMIN",
+                "ursa-admin": "ADMIN",
+                "ursa-internal": "INTERNAL_USER",
+                "ursa-external-admin": "EXTERNAL_USER_ADMIN",
+                "ursa-external": "EXTERNAL_USER",
+                "ursa-readwrite": "READ_WRITE",
+                "ursa-readonly": "READ_ONLY",
+            }
+        if isinstance(value, str):
+            value = json.loads(value)
+        if not isinstance(value, dict):
+            raise ValueError("cognito_group_role_map must be a mapping")
+
+        allowed_roles = {role.value for role in Role}
+        normalized: dict[str, str] = {}
+        for group_name, role_name in value.items():
+            group = str(group_name or "").strip()
+            role = str(role_name or "").strip().upper()
+            if not group:
+                raise ValueError("cognito_group_role_map contains an empty group name")
+            if role not in allowed_roles:
+                raise ValueError(f"Unsupported Ursa role in cognito_group_role_map: {role_name!r}")
+            normalized[group] = role
+        return normalized
+
     @model_validator(mode="after")
     def validate_dewey_integration(self) -> "Settings":
         if self.dewey_enabled:
@@ -710,4 +757,6 @@ def get_settings_for_testing(**overrides) -> Settings:
     """
     payload = _yaml_seed_from_ursa_config()
     payload.update(overrides)
+    if payload.get("ursa_portal_default_customer_id") is None:
+        payload.pop("ursa_portal_default_customer_id", None)
     return Settings(**payload)

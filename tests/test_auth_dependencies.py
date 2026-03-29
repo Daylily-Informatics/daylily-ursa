@@ -8,13 +8,13 @@ from daylib_ursa.auth import AuthError
 from daylib_ursa.auth import dependencies as auth_dependencies
 
 
-def test_claims_to_current_user_accepts_customer_id_and_groups() -> None:
+def test_claims_to_current_user_maps_canonical_cognito_groups() -> None:
     user = auth_dependencies._claims_to_current_user(
         {
             "sub": "user-123",
             "email": "ursa@example.com",
             "custom:customer_id": "00000000-0000-0000-0000-000000000001",
-            "cognito:groups": ["admin"],
+            "cognito:groups": ["platform-admin"],
         }
     )
 
@@ -39,7 +39,7 @@ def test_cognito_auth_provider_accepts_id_token_claims(monkeypatch) -> None:
             "email": "ursa@example.com",
             "aud": "client-123",
             "custom:customer_id": "00000000-0000-0000-0000-000000000001",
-            "cognito:groups": ["admin"],
+            "cognito:groups": ["ursa-admin"],
         },
     )
 
@@ -53,6 +53,19 @@ def test_cognito_auth_provider_accepts_id_token_claims(monkeypatch) -> None:
 
     assert user.tenant_id == uuid.UUID("00000000-0000-0000-0000-000000000001")
     assert user.roles == ["ADMIN"]
+
+
+def test_claims_to_current_user_maps_external_admin_group() -> None:
+    user = auth_dependencies._claims_to_current_user(
+        {
+            "sub": "user-123",
+            "email": "ursa@example.com",
+            "custom:customer_id": "00000000-0000-0000-0000-000000000001",
+            "cognito:groups": ["ursa-external-admin"],
+        }
+    )
+
+    assert user.roles == ["EXTERNAL_USER_ADMIN"]
 
 
 def test_cognito_auth_provider_rejects_id_token_with_wrong_audience(monkeypatch) -> None:
@@ -75,3 +88,41 @@ def test_cognito_auth_provider_rejects_id_token_with_wrong_audience(monkeypatch)
 
     with pytest.raises(AuthError, match="Invalid token audience"):
         provider.resolve_access_token("token-value")
+
+
+def test_user_directory_uses_cognito_groups_as_role_source() -> None:
+    class _Client:
+        def list_users(self, **_kwargs):
+            return {
+                "Users": [
+                    {
+                        "Username": "user-123",
+                        "Enabled": True,
+                        "UserStatus": "CONFIRMED",
+                        "Attributes": [
+                            {"Name": "sub", "Value": "user-123"},
+                            {"Name": "email", "Value": "ursa@example.com"},
+                            {"Name": "custom:customer_id", "Value": "00000000-0000-0000-0000-000000000001"},
+                            {"Name": "custom:roles", "Value": "READ_ONLY"},
+                        ],
+                    }
+                ]
+            }
+
+        def admin_list_groups_for_user(self, **_kwargs):
+            return {
+                "Groups": [
+                    {"GroupName": "platform-admin"},
+                ]
+            }
+
+    directory = auth_dependencies.CognitoUserDirectoryService(
+        user_pool_id="pool-123",
+        region="us-west-2",
+    )
+    directory._client = _Client()
+
+    users = directory.list_users(active_only=False, limit=10)
+
+    assert len(users) == 1
+    assert users[0].roles == ("ADMIN",)

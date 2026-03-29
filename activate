@@ -286,7 +286,7 @@ activate_main() {
     require_tool "conda env" "psql" || return 1
     require_tool "conda env" "node" || return 1
     require_tool "conda env" "ipython" || return 1
-    require_python_import "daylily_tapdb" "daylily-tapdb==3.0.7" || return 1
+    require_python_import "daylily_tapdb" "daylily-tapdb==3.0.9" || return 1
     require_python_import "daylily_cognito" "daylily-cognito==0.1.30" || return 1
     require_python_import "cli_core_yo" "../cli-core-yo" || return 1
     require_python_import "fastapi" "fastapi" || return 1

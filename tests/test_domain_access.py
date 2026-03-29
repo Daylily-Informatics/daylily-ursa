@@ -80,10 +80,10 @@ def test_ursa_rejects_disallowed_origin() -> None:
     assert response.text == "Origin not allowed"
 
 
-def test_ursa_rejects_disallowed_host() -> None:
+def test_ursa_allows_arbitrary_host_when_host_filtering_is_delegated_upstream() -> None:
     app = create_app(DummyStore(), bloom_client=DummyBloomClient(), settings=_settings())
 
     with TestClient(app) as client:
         response = client.get("/healthz", headers={"host": "evil.example.com"})
 
-    assert response.status_code == 400
+    assert response.status_code == 200

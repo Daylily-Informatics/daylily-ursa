@@ -22,6 +22,7 @@ tapdb_database_name: daylily-ursa
 tapdb_env: dev
 api_host: 127.0.0.1
 api_port: 8913
+ursa_portal_default_customer_id: 77777777-7777-7777-7777-777777777777
 bloom_base_url: https://localhost:8912
 bloom_verify_ssl: true
 atlas_base_url: https://localhost:8915
@@ -65,6 +66,7 @@ deployment:
     assert settings.cognito_callback_url == "https://localhost:8914/auth/callback"
     assert settings.cognito_logout_url == "https://localhost:8914/login"
     assert settings.dewey_api_token == "dewey-dev-token"
+    assert settings.ursa_portal_default_customer_id == "77777777-7777-7777-7777-777777777777"
     assert settings.deployment == {
         "name": "staging",
         "color": "#124e78",
