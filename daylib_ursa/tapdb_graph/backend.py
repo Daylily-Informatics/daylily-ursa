@@ -44,6 +44,7 @@ URSA_TEMPLATE_DEFINITIONS: list[TemplateSpec] = [
     TemplateSpec("workflow/cluster/ephemeral-job/1.0/"),
     TemplateSpec("action/cluster/ephemeral-job-revision/1.0/"),
     TemplateSpec("action/cluster/ephemeral-job-event/1.0/"),
+    TemplateSpec("ops/anomaly/local-record/1.0/"),
 ]
 
 TEMPLATE_DEFINITIONS = URSA_TEMPLATE_DEFINITIONS

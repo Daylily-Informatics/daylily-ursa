@@ -45,6 +45,7 @@ from daylib_ursa.analysis_store import (
     AnalysisStore,
     ReviewState,
 )
+from daylib_ursa.anomalies import open_anomaly_repository
 from daylib_ursa.atlas_result_client import (
     AtlasResultArtifact,
     AtlasResultClient,
@@ -1091,6 +1092,18 @@ def create_app(
     )
     app.state.observability_cleanup = []
 
+    def _anomaly_repository():
+        resource_store = getattr(app.state, "resource_store", None)
+        token_service = getattr(app.state, "token_service", None)
+        backend = getattr(resource_store, "backend", None) or getattr(token_service, "backend", None)
+        if resource_store is None or backend is None:
+            raise HTTPException(status_code=503, detail="Anomaly repository is not configured")
+        return open_anomaly_repository(
+            resource_store=resource_store,
+            settings=settings,
+            backend=backend,
+        )
+
     def _extract_sqlalchemy_engine(candidate: Any) -> Any | None:
         backend = getattr(candidate, "backend", None)
         if backend is None:
@@ -1762,6 +1775,12 @@ def create_app(
         _ = actor
         _database_probe()
         projection, rollup = app.state.observability.db_health()
+        if str(rollup.get("status") or "") == "error":
+            latest_probe = dict(rollup.get("latest") or {})
+            _anomaly_repository().record_db_probe_failure(
+                detail=str(latest_probe.get("detail") or "database probe failed"),
+                latency_ms=float(latest_probe.get("latency_ms") or 0.0),
+            )
         return build_db_health_payload(
             request,
             settings=settings,
@@ -1769,6 +1788,36 @@ def create_app(
             projection=projection,
             db_health=rollup,
         )
+
+    @app.get("/api/anomalies", tags=["anomalies"])
+    async def list_anomalies(actor: RequireObservability) -> dict[str, Any]:
+        _ = actor
+        items = [item.__dict__ for item in _anomaly_repository().list()]
+        observed_at = str(items[0].get("last_seen_at") or "") if items else ""
+        projection = app.state.observability.projection(observed_at=observed_at or None)
+        return {
+            "service": "ursa",
+            "contract_version": "v3",
+            "observed_at": projection.observed_at,
+            "projection": projection.model_dump(),
+            "count": len(items),
+            "items": items,
+        }
+
+    @app.get("/api/anomalies/{anomaly_id}", tags=["anomalies"])
+    async def get_anomaly(anomaly_id: str, actor: RequireObservability) -> dict[str, Any]:
+        _ = actor
+        item = _anomaly_repository().get(anomaly_id)
+        if item is None:
+            raise HTTPException(status_code=404, detail="Anomaly not found")
+        projection = app.state.observability.projection(observed_at=item.last_seen_at)
+        return {
+            "service": "ursa",
+            "contract_version": "v3",
+            "observed_at": projection.observed_at,
+            "projection": projection.model_dump(),
+            "item": item.__dict__,
+        }
 
     @app.get("/my_health", tags=["observability"])
     async def my_health(actor: RequireAuth, request: Request) -> dict[str, Any]:

@@ -121,6 +121,11 @@ def test_obs_services_advertises_canonical_capabilities() -> None:
         "/api_health": {"auth": "operator_or_service_token", "kind": "api_rollup"},
         "/endpoint_health": {"auth": "operator_or_service_token", "kind": "endpoint_rollup"},
         "/db_health": {"auth": "operator_or_service_token", "kind": "database"},
+        "/api/anomalies": {"auth": "operator_or_service_token", "kind": "anomaly_list"},
+        "/api/anomalies/{anomaly_id}": {
+            "auth": "operator_or_service_token",
+            "kind": "anomaly_detail",
+        },
         "/my_health": {"auth": "authenticated_self", "kind": "self"},
         "/auth_health": {"auth": "operator_or_service_token", "kind": "auth"},
     }

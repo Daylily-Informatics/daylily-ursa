@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="page-header">
+    <div class="container">
+        <h1>Anomalies</h1>
+        <p>Redacted local anomaly records persisted by this Ursa instance.</p>
+    </div>
+</section>
+
+<section class="section">
+    <div class="container">
+        <div class="card">
+            <h2>Recorded Anomalies</h2>
+            {% if anomalies %}
+            <ul>
+                {% for item in anomalies %}
+                <li>
+                    <a href="/admin/anomalies/{{ item.id }}">{{ item.summary }}</a>
+                    <span>({{ item.category }} / {{ item.severity }} / {{ item.environment }})</span>
+                </li>
+                {% endfor %}
+            </ul>
+            {% else %}
+            <p>No anomalies recorded.</p>
+            {% endif %}
+        </div>
+    </div>
+</section>
+
+{% if anomaly %}
+<section class="section">
+    <div class="container">
+        <div class="card">
+            <h2>Anomaly Detail</h2>
+            <p><strong>{{ anomaly.summary }}</strong></p>
+            <pre>{{ anomaly.__dict__ | tojson(indent=2) }}</pre>
+        </div>
+    </div>
+</section>
+{% endif %}
+{% endblock %}

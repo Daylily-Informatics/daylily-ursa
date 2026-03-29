@@ -208,6 +208,19 @@
       "bstatus": "active",
       "is_singleton": false,
       "json_addl": {}
+    },
+    {
+      "name": "Ursa Local Anomaly Record",
+      "polymorphic_discriminator": "generic_template",
+      "category": "ops",
+      "type": "anomaly",
+      "subtype": "local-record",
+      "version": "1.0",
+      "instance_prefix": "ANM",
+      "instance_polymorphic_identity": "generic_instance",
+      "bstatus": "active",
+      "is_singleton": false,
+      "json_addl": {}
     }
   ]
 }
