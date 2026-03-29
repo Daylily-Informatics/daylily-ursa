@@ -130,6 +130,54 @@ def _normalize_roles(raw_roles: Any) -> list[str]:
     return normalized
 
 
+def _normalize_groups(raw_groups: Any) -> list[str]:
+    if isinstance(raw_groups, str):
+        values = [item for item in raw_groups.split(",") if item.strip()]
+    elif isinstance(raw_groups, (list, tuple, set)):
+        values = [str(item) for item in raw_groups]
+    else:
+        values = []
+
+    groups: list[str] = []
+    seen: set[str] = set()
+    for item in values:
+        clean = str(item or "").strip()
+        if not clean or clean in seen:
+            continue
+        seen.add(clean)
+        groups.append(clean)
+    return groups
+
+
+def _map_cognito_groups_to_roles(raw_groups: Any) -> list[str]:
+    try:
+        from daylib_ursa.config import get_settings
+
+        mapping = get_settings().cognito_group_role_map
+    except Exception:
+        mapping = {
+            "platform-admin": "ADMIN",
+            "ursa-admin": "ADMIN",
+            "ursa-internal": "INTERNAL_USER",
+            "ursa-external-admin": "EXTERNAL_USER_ADMIN",
+            "ursa-external": "EXTERNAL_USER",
+            "ursa-readwrite": "READ_WRITE",
+            "ursa-readonly": "READ_ONLY",
+        }
+
+    roles: list[str] = []
+    seen: set[str] = set()
+    for group in _normalize_groups(raw_groups):
+        role = str(mapping.get(group) or "").strip().upper()
+        if not role or role in seen:
+            continue
+        seen.add(role)
+        roles.append(role)
+    if not roles:
+        roles.append(Role.READ_ONLY.value)
+    return roles
+
+
 def _parse_uuid(value: Any, *, label: str) -> uuid.UUID:
     raw = str(value or "").strip()
     if not raw:
@@ -152,13 +200,13 @@ def _claims_to_current_user(claims: dict[str, Any]) -> CurrentUser:
         or claims.get("custom:customer_id")
     )
     name = str(claims.get("name") or claims.get("display_name") or "").strip() or None
-    raw_roles = claims.get("roles") or claims.get("custom:roles") or claims.get("cognito:groups")
+    raw_roles = claims.get("cognito:groups")
     return CurrentUser(
         sub=sub,
         email=email,
         name=name,
         tenant_id=_parse_uuid(tenant_value, label="tenant_id"),
-        roles=_normalize_roles(raw_roles),
+        roles=_map_cognito_groups_to_roles(raw_roles),
     )
 
 
@@ -338,7 +386,34 @@ class CognitoUserDirectoryService:
                 mapped[name] = value
         return mapped
 
-    def _entry_from_user(self, item: dict[str, Any]) -> AtlasUserDirectoryEntry:
+    def _list_group_names_for_user(self, username: str) -> list[str]:
+        clean_username = str(username or "").strip()
+        if not clean_username:
+            return []
+        next_token: str | None = None
+        groups: list[str] = []
+        while True:
+            kwargs: dict[str, Any] = {
+                "UserPoolId": self.user_pool_id,
+                "Username": clean_username,
+                "Limit": 60,
+            }
+            if next_token:
+                kwargs["NextToken"] = next_token
+            try:
+                response = self._get_client().admin_list_groups_for_user(**kwargs)
+            except ClientError as exc:
+                raise AuthError(f"Cognito user group lookup failed for {clean_username}: {exc}") from exc
+            for item in response.get("Groups") or []:
+                name = str(item.get("GroupName") or "").strip()
+                if name and name not in groups:
+                    groups.append(name)
+            next_token = str(response.get("NextToken") or "").strip() or None
+            if not next_token:
+                break
+        return groups
+
+    def _entry_from_user(self, item: dict[str, Any], group_names: list[str]) -> AtlasUserDirectoryEntry:
         attrs = self._attrs_to_dict(item)
         user_id = str(attrs.get("sub") or "").strip() or str(item.get("Username") or "").strip()
         tenant_id = _parse_uuid(
@@ -347,11 +422,7 @@ class CognitoUserDirectoryService:
             or attrs.get("custom:customer_id"),
             label="tenant_id",
         )
-        roles = tuple(
-            _normalize_roles(
-                attrs.get("custom:roles") or attrs.get("roles") or attrs.get("custom:role") or ""
-            )
-        )
+        roles = tuple(_map_cognito_groups_to_roles(group_names))
         display_name = (
             str(attrs.get("name") or "").strip()
             or str(attrs.get("preferred_username") or "").strip()
@@ -406,7 +477,8 @@ class CognitoUserDirectoryService:
             if not users:
                 break
             for item in users:
-                entry = self._entry_from_user(item)
+                group_names = self._list_group_names_for_user(str(item.get("Username") or ""))
+                entry = self._entry_from_user(item, group_names)
                 if active_only and not entry.is_active:
                     continue
                 if wanted_tenant and entry.tenant_id != wanted_tenant:

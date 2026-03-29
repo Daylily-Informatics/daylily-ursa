@@ -48,6 +48,7 @@ def _fake_tapdb_app() -> FastAPI:
 def _settings(*, mount_enabled: bool = True) -> Settings:
     return Settings(
         cors_origins="*",
+        aws_profile=None,
         ursa_internal_api_key="test-key",
         bloom_base_url="https://bloom.example",
         atlas_base_url="https://atlas.example",

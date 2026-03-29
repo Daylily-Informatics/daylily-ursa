@@ -27,7 +27,7 @@ dependencies:
       - connexion==2.13.1
       - -e ../../cli-core-yo
       - daylily-cognito==0.1.30
-      - daylily-tapdb==3.0.7
+      - daylily-tapdb==3.0.9
       - flask==2.2.5
       - httpx
       - itsdangerous>=2.2.0
