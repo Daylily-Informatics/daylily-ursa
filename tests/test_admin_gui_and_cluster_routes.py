@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 from daylib_ursa.analysis_store import AnalysisRecord, AnalysisState, ReviewState
 from daylib_ursa.auth import (
     AtlasUserDirectoryEntry,
+    AuthError,
     CurrentUser,
     Role,
     UserTokenService,
@@ -151,7 +152,8 @@ class DummyAuthProvider:
         self.admin = admin
 
     def resolve_access_token(self, access_token: str) -> CurrentUser:
-        assert access_token == "atlas-token"
+        if access_token != "atlas-token":
+            raise AuthError("Invalid authentication token")
         return CurrentUser(
             sub=ADMIN_USER_ID,
             email="alice@example.com",

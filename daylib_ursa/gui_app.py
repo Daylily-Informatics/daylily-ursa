@@ -12,6 +12,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from daylib_ursa import __version__
 from daylib_ursa.auth import (
     AuthError,
     CurrentUser,
@@ -19,6 +20,14 @@ from daylib_ursa.auth import (
     clear_session_user,
     get_current_user,
     persist_session_user,
+)
+from daylib_ursa.observability import (
+    build_api_health_payload,
+    build_auth_health_payload,
+    build_db_health_payload,
+    build_endpoint_health_payload,
+    build_health_payload,
+    build_obs_services_payload,
 )
 
 
@@ -137,6 +146,12 @@ def mount_gui(app: FastAPI) -> None:
         if service is None:
             raise HTTPException(status_code=503, detail="Cluster service is not configured")
         return service
+
+    def _observability_store():
+        store = getattr(app.state, "observability", None)
+        if store is None:
+            raise HTTPException(status_code=503, detail="Observability store is not configured")
+        return store
 
     def _render_page(
         request: Request,
@@ -1030,4 +1045,80 @@ def mount_gui(app: FastAPI) -> None:
                 "tokens": tokens,
                 "client_payload_json": _json_text(client),
             },
+        )
+
+    @app.get("/admin/observability", response_class=HTMLResponse)
+    async def admin_observability_page(request: Request):
+        actor = _session_actor(request)
+        if actor is None:
+            return RedirectResponse(
+                url=f"/login?next={request.url.path}", status_code=status.HTTP_303_SEE_OTHER
+            )
+        store = _observability_store()
+        projection, service_catalog = store.obs_services_snapshot()
+        health_snapshot = store.health_snapshot()
+        api_projection, families = store.api_health()
+        endpoint_projection, endpoint_page = store.endpoint_health(offset=0, limit=25)
+        db_projection, db_rollup = store.db_health()
+        auth_projection, auth_rollup = store.auth_health()
+        context = {
+            "health_payload": build_health_payload(
+                request,
+                settings=app.state.settings,
+                app_version=__version__,
+                projection=store.projection(
+                    observed_at=(
+                        health_snapshot.get("checks", {}).get("database", {}).get("observed_at")
+                        or health_snapshot.get("checks", {}).get("auth", {}).get("observed_at")
+                    )
+                ),
+                health_snapshot=health_snapshot,
+            ),
+            "obs_services_payload": build_obs_services_payload(
+                request,
+                settings=app.state.settings,
+                app_version=__version__,
+                projection=projection,
+                snapshot=service_catalog,
+            ),
+            "api_health_payload": build_api_health_payload(
+                request,
+                settings=app.state.settings,
+                app_version=__version__,
+                projection=api_projection,
+                families=families,
+            ),
+            "endpoint_health_payload": build_endpoint_health_payload(
+                request,
+                settings=app.state.settings,
+                app_version=__version__,
+                projection=endpoint_projection,
+                total=int(endpoint_page["total"]),
+                offset=int(endpoint_page["offset"]),
+                limit=int(endpoint_page["limit"]),
+                items=list(endpoint_page["items"]),
+            ),
+            "db_health_payload": build_db_health_payload(
+                request,
+                settings=app.state.settings,
+                app_version=__version__,
+                projection=db_projection,
+                db_health=db_rollup,
+            ),
+            "auth_health_payload": build_auth_health_payload(
+                request,
+                settings=app.state.settings,
+                app_version=__version__,
+                projection=auth_projection,
+                auth_rollup=auth_rollup,
+            ),
+        }
+        return _render_page(
+            request,
+            template_name="observability.html",
+            page_title="Observability",
+            active_page="tools",
+            secondary_page="admin_observability",
+            admin_only=True,
+            context=context,
         )

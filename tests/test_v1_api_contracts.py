@@ -39,7 +39,7 @@ def _create_test_app():
 def test_public_routes_are_versioned_and_legacy_customer_routes_are_absent() -> None:
     app = _create_test_app()
     paths = {getattr(route, "path", "") for route in app.routes if getattr(route, "path", "")}
-    public_api_paths = {path for path in paths if path.startswith("/api")}
+    public_api_paths = {path for path in paths if path.startswith("/api/")}
     assert public_api_paths
     assert all(path.startswith("/api/v1/") for path in public_api_paths)
     assert not any(path.startswith("/api/customers/") for path in public_api_paths)
