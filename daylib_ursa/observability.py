@@ -201,11 +201,18 @@ class UrsaObservabilityStore:
                 {"path": "/api_health", "auth": "operator_or_service_token", "kind": "api_rollup"},
                 {"path": "/endpoint_health", "auth": "operator_or_service_token", "kind": "endpoint_rollup"},
                 {"path": "/db_health", "auth": "operator_or_service_token", "kind": "database"},
+                {"path": "/api/anomalies", "auth": "operator_or_service_token", "kind": "anomaly_list"},
+                {
+                    "path": "/api/anomalies/{anomaly_id}",
+                    "auth": "operator_or_service_token",
+                    "kind": "anomaly_detail",
+                },
                 {"path": "/my_health", "auth": "authenticated_self", "kind": "self"},
                 {"path": "/auth_health", "auth": "operator_or_service_token", "kind": "auth"},
             ],
             "extensions": [
                 "ursa.admin_observability_ui",
+                "ursa.anomalies_v1",
             ],
             "observed_at": self._started_at,
         }

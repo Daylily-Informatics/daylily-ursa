@@ -13,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from daylib_ursa import __version__
+from daylib_ursa.anomalies import open_anomaly_repository
 from daylib_ursa.auth import (
     AuthError,
     CurrentUser,
@@ -152,6 +153,18 @@ def mount_gui(app: FastAPI) -> None:
         if store is None:
             raise HTTPException(status_code=503, detail="Observability store is not configured")
         return store
+
+    def _anomaly_repository():
+        resources = _resource_store()
+        token_service = _token_service()
+        backend = getattr(resources, "backend", None) or getattr(token_service, "backend", None)
+        if backend is None:
+            raise HTTPException(status_code=503, detail="Anomaly repository is not configured")
+        return open_anomaly_repository(
+            resource_store=resources,
+            settings=app.state.settings,
+            backend=backend,
+        )
 
     def _render_page(
         request: Request,
@@ -1121,4 +1134,40 @@ def mount_gui(app: FastAPI) -> None:
             secondary_page="admin_observability",
             admin_only=True,
             context=context,
+        )
+
+    @app.get("/admin/anomalies", response_class=HTMLResponse)
+    async def admin_anomalies_page(request: Request):
+        repository = _anomaly_repository()
+        anomalies = repository.list()
+        return _render_page(
+            request,
+            template_name="admin_anomalies.html",
+            page_title="Anomalies",
+            active_page="tools",
+            secondary_page="admin_anomalies",
+            admin_only=True,
+            context={
+                "anomalies": anomalies,
+                "anomaly": None,
+            },
+        )
+
+    @app.get("/admin/anomalies/{anomaly_id}", response_class=HTMLResponse)
+    async def admin_anomaly_detail_page(anomaly_id: str, request: Request):
+        repository = _anomaly_repository()
+        anomaly = repository.get(anomaly_id)
+        if anomaly is None:
+            raise HTTPException(status_code=404, detail="Anomaly not found")
+        return _render_page(
+            request,
+            template_name="admin_anomalies.html",
+            page_title="Anomalies",
+            active_page="tools",
+            secondary_page="admin_anomalies",
+            admin_only=True,
+            context={
+                "anomalies": repository.list(limit=25),
+                "anomaly": anomaly,
+            },
         )
