@@ -24,6 +24,6 @@ def test_activate_uses_conda_only_bootstrap() -> None:
     assert 'ENV_FILE="${SCRIPT_DIR}/config/ursa_env.yaml"' in activate_script
     assert 'conda env create -n "$CONDA_ENV_NAME" -f "$ENV_FILE"' in activate_script
     assert 'conda activate "$CONDA_ENV_NAME"' in activate_script
-    assert 'require_python_import "daylily_tapdb" "daylily-tapdb==3.0.6"' in activate_script
+    assert 'require_python_import "daylily_tapdb" "daylily-tapdb==3.0.7"' in activate_script
     assert ".venv" not in activate_script
     assert "[auth,cluster,dev,tools]" not in activate_script
