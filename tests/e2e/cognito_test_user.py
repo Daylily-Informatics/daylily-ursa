@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -48,12 +47,11 @@ def _get_user(client, *, pool_id: str, email: str) -> dict[str, Any]:
 
 def _ensure_group(client, *, pool_id: str, group_name: str) -> None:
     try:
-        _call_with_retries(client.get_group, UserPoolId=pool_id, GroupName=group_name)
+        client.get_group(UserPoolId=pool_id, GroupName=group_name)
     except ClientError as exc:
         if exc.response["Error"]["Code"] != "ResourceNotFoundException":
             raise
-        _call_with_retries(
-            client.create_group,
+        client.create_group(
             UserPoolId=pool_id,
             GroupName=group_name,
             Description=f"E2E auto-created group {group_name}",
@@ -62,8 +60,7 @@ def _ensure_group(client, *, pool_id: str, group_name: str) -> None:
 
 def _ensure_membership(client, *, pool_id: str, email: str, group_name: str) -> None:
     try:
-        _call_with_retries(
-            client.admin_add_user_to_group,
+        client.admin_add_user_to_group(
             UserPoolId=pool_id,
             Username=email,
             GroupName=group_name,
@@ -72,24 +69,11 @@ def _ensure_membership(client, *, pool_id: str, email: str, group_name: str) -> 
         if exc.response["Error"]["Code"] != "ResourceNotFoundException":
             raise
         _ensure_group(client, pool_id=pool_id, group_name=group_name)
-        _call_with_retries(
-            client.admin_add_user_to_group,
+        client.admin_add_user_to_group(
             UserPoolId=pool_id,
             Username=email,
             GroupName=group_name,
         )
-
-
-def _call_with_retries(func, /, **kwargs):
-    delay_seconds = 1.0
-    for attempt in range(5):
-        try:
-            return func(**kwargs)
-        except ClientError as exc:
-            if exc.response["Error"]["Code"] != "TooManyRequestsException" or attempt == 4:
-                raise
-            time.sleep(delay_seconds)
-            delay_seconds *= 2
 
 
 def ensure_test_user() -> E2ECredentials:
@@ -109,8 +93,7 @@ def ensure_test_user() -> E2ECredentials:
     except ClientError as exc:
         if exc.response["Error"]["Code"] != "UserNotFoundException":
             raise
-        _call_with_retries(
-            client.admin_create_user,
+        client.admin_create_user(
             UserPoolId=pool_id,
             Username=email,
             TemporaryPassword=password,
@@ -123,8 +106,7 @@ def ensure_test_user() -> E2ECredentials:
         )
         user_payload = _get_user(client, pool_id=pool_id, email=email)
 
-    _call_with_retries(
-        client.admin_update_user_attributes,
+    client.admin_update_user_attributes(
         UserPoolId=pool_id,
         Username=email,
         UserAttributes=[
@@ -133,8 +115,7 @@ def ensure_test_user() -> E2ECredentials:
             {"Name": "name", "Value": DEFAULT_NAME},
         ],
     )
-    _call_with_retries(
-        client.admin_set_user_password,
+    client.admin_set_user_password(
         UserPoolId=pool_id,
         Username=email,
         Password=password,

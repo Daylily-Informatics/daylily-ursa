@@ -11,15 +11,12 @@ def perform_login(page: Page, *, base_url: str, email: str, password: str) -> No
     page.locator("a:has-text('Sign In with Cognito')").click()
     _complete_identity_provider_login(page, email=email, password=password)
     page.wait_for_url(f"{base_url}/**", timeout=30000)
-    if "/auth/callback" in page.url:
-        page.goto(f"{base_url}/")
-        page.wait_for_url(f"{base_url}/**", timeout=30000)
     assert_authenticated_page(page)
 
 
 def perform_logout(page: Page, *, base_url: str) -> None:
     page.goto(f"{base_url}/logout")
-    page.wait_for_load_state("domcontentloaded")
+    page.wait_for_url(f"{base_url}/**", timeout=30000)
 
 
 def assert_authenticated_page(page: Page) -> None:

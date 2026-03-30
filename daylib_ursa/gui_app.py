@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import logging
 import secrets
 from pathlib import Path
 from typing import Any
@@ -31,8 +30,6 @@ from daylib_ursa.observability import (
     build_health_payload,
     build_obs_services_payload,
 )
-
-LOGGER = logging.getLogger(__name__)
 
 
 def mount_gui(app: FastAPI) -> None:
@@ -92,7 +89,8 @@ def mount_gui(app: FastAPI) -> None:
         cognito = _cognito_settings()
         query = {
             "client_id": cognito["client_id"],
-            "logout_uri": cognito["logout_url"],
+            "redirect_uri": cognito["logout_url"],
+            "response_type": "code",
         }
         if state:
             query["state"] = state
@@ -571,7 +569,7 @@ def mount_gui(app: FastAPI) -> None:
             token_payload = _exchange_auth_code(code.strip())
             id_token = str(token_payload.get("id_token") or "").strip()
             access_token = str(token_payload.get("access_token") or "").strip()
-            token = access_token or id_token
+            token = id_token or access_token
             if not token:
                 raise AuthError("Cognito token response missing access_token or id_token")
             auth_provider = getattr(app.state, "auth_provider", None)
@@ -579,10 +577,9 @@ def mount_gui(app: FastAPI) -> None:
                 raise AuthError("Authentication provider is not configured")
             actor = auth_provider.resolve_access_token(
                 token,
-                paired_access_token=id_token if token == access_token else access_token or None,
+                paired_access_token=access_token if token == id_token else id_token or None,
             )
         except AuthError as exc:
-            LOGGER.warning("Ursa Cognito callback failed: %s", exc)
             request.session.pop("ursa_oauth_state", None)
             request.session.pop("ursa_post_auth_redirect", None)
             return templates.TemplateResponse(
