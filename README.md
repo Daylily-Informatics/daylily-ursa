@@ -1,100 +1,44 @@
+[![Release](https://img.shields.io/github/v/release/Daylily-Informatics/daylily-ursa?display_name=release&style=flat-square)](https://github.com/Daylily-Informatics/daylily-ursa/releases)
+[![Tag](https://img.shields.io/github/v/tag/Daylily-Informatics/daylily-ursa?style=flat-square&label=tag)](https://github.com/Daylily-Informatics/daylily-ursa/tags)
+[![CI](https://github.com/Daylily-Informatics/daylily-ursa/actions/workflows/ci.yml/badge.svg)](https://github.com/Daylily-Informatics/daylily-ursa/actions/workflows/ci.yml)
+
 # daylily-ursa
 
-Daylily Ursa is the analysis execution, review, artifact-linking, and Atlas result-return service.
+Daylily Ursa is the analysis execution, review, artifact-linking, and result-return service. It sits downstream of wet-lab execution and upstream of customer-visible delivery, coordinating analysis ingest, review state, Dewey artifact linkage, and Atlas return.
 
-## Authority Boundary
-
-Ursa is analysis-only.
-
-It owns:
-
+Ursa owns:
 - analysis ingest records linked to sequencing context
-- TapDB-backed analysis state and review state
-- Bloom resolver calls for canonical run context
-- Dewey resolve/register flows for analysis inputs and outputs
+- analysis and review state
+- Dewey artifact-link and registration flows for analysis inputs and outputs
 - Atlas result return after approval
 
-It does not own:
-
+Ursa does not own:
 - customer portal routes
-- onboarding or bucket-ownership flows
-- file/file-set authority
-- release visibility policy
+- storage policy authority
+- file or file-set identity
+- generic shared DB or auth lifecycle
 
-## Runtime Shape
+## Component View
 
-Primary package: `daylib_ursa`
-
-Primary entrypoints:
-
-- app factory: `daylib_ursa.workset_api:create_app`
-- CLI command: `daylily-workset-api`
-- package exports: analysis store, Bloom client, Dewey client, app factory
-
-## API Surface
-
-Current service routes:
-
-- `GET /healthz`
-- `POST /api/analyses/ingest`
-- `GET /api/analyses/{analysis_euid}`
-- `POST /api/analyses/{analysis_euid}/status`
-- `POST /api/analyses/{analysis_euid}/artifacts`
-- `POST /api/analyses/{analysis_euid}/review`
-- `POST /api/analyses/{analysis_euid}/return`
-
-Auth rules:
-
-- analysis write routes require `X-API-Key`
-- ingest and return also require `Idempotency-Key`
-
-## Integration Contracts
-
-Ursa expects three external service seams:
-
-- Bloom for run resolution
-- Dewey for artifact resolution and registration
-- Atlas for result return and target resolution
-
-Supported ingest input references:
-
-- `{"reference_type":"s3_uri","value":"s3://..."}`
-- `{"reference_type":"artifact_euid","value":"AT-..."}`
-- `{"reference_type":"artifact_set_euid","value":"AS-..."}`
-
-Artifact add requires exactly one of:
-
-- `artifact_euid`
-- `storage_uri` plus `artifact_type`
-
-Result return requires:
-
-- review state `APPROVED`
-- Dewey-linked artifacts for all returned outputs
-
-## Required Environment
-
-```bash
-URSA_INTERNAL_API_KEY=...
-URSA_INTERNAL_OUTPUT_BUCKET=...
-
-BLOOM_BASE_URL=https://...
-BLOOM_API_TOKEN=...
-BLOOM_VERIFY_SSL=true
-
-ATLAS_BASE_URL=https://...
-ATLAS_INTERNAL_API_KEY=...
-ATLAS_VERIFY_SSL=true
-
-DEWEY_ENABLED=true
-DEWEY_BASE_URL=https://...
-DEWEY_API_TOKEN=...
-DEWEY_VERIFY_SSL=true
+```mermaid
+flowchart LR
+    Ingest["analysis ingest"] --> Ursa["Ursa API and review service"]
+    Bloom["Bloom run context"] --> Ursa
+    Ursa --> Dewey["artifact resolution and registration"]
+    Ursa --> Atlas["approved result return"]
+    Ursa --> TapDB["TapDB persistence"]
 ```
 
-Cross-system integrations are authenticated and should run over HTTPS.
+## Prerequisites
 
-## Local Development
+- Python 3.10+
+- local PostgreSQL/TapDB-compatible runtime
+- API keys and base URLs if you want live Bloom, Dewey, or Atlas integration
+- optional Playwright/test dependencies for E2E flows
+
+## Getting Started
+
+### Quickstart
 
 ```bash
 source ./activate
@@ -108,24 +52,75 @@ Validation:
 pytest -q
 ```
 
+## Architecture
+
+### Technology
+
+- FastAPI + Jinja2-facing service/UI pieces
+- Typer-based `ursa` CLI
+- TapDB for persistence
+- HTTP integration clients for Bloom, Dewey, and Atlas
+
+### Core Object Model
+
+Ursa centers on:
+
+- analyses and ingest payloads
+- review state and approval
+- input references to storage URIs or Dewey artifacts
+- output artifacts registered or resolved through Dewey
+- result-return requests back into Atlas
+
+### Runtime Shape
+
+- app factory: `daylib_ursa.workset_api:create_app`
+- CLI: `ursa`
+- alternate entrypoint: `daylily-workset-api`
+
+### Request Lifecycle
+
+1. ingest analysis input and sequencing context
+2. resolve upstream run context as needed
+3. attach outputs and artifact links
+4. review and approve
+5. return approved results to Atlas
+
+## Cost Estimates
+
+Approximate only.
+
+- Local development: workstation plus local database.
+- Shared sandbox: usually a service-level slice of the wider Dayhoff environment.
+- Production-like use grows with retained analysis metadata, integration traffic, and uptime requirements rather than unusual Ursa-specific infrastructure.
+
+## Development Notes
+
+- Canonical local entry path: `source ./activate`
+- Use `ursa ...` for Ursa-owned runtime operations
+- Use `tapdb ...` only where Ursa explicitly delegates shared DB/runtime lifecycle
+- Use `daycog ...` only where Ursa explicitly delegates shared auth lifecycle
+
+Useful checks:
+
+```bash
+source ./activate
+ursa --help
+pytest -q
+```
+
+## Sandboxing
+
+- Safe: docs work, tests, `ursa --help`, and local-only runtime work
+- Local-stateful: config init and local DB bootstrap paths
+- Requires extra care: live Atlas/Bloom/Dewey integrations and any deployed environment changes
+
 ## Current Docs
 
 - [Docs index](docs/README.md)
 - [Ursa-Atlas return contract](docs/ursa_atlas_return_contract.md)
 
-Legacy workset-monitor notes remain in `docs/`, but they are no longer the primary repo contract.
+## References
 
-Ursa delegates shared infrastructure ownership:
-
-- use `tapdb` for shared DB/runtime lifecycle
-- use `daycog` for shared Cognito lifecycle
-- use `ursa` only for Ursa-specific runtime/bootstrap behavior
-
-Ursa template definitions are authored as JSON packs under
-`config/tapdb_templates/` and loaded through TapDB before runtime use.
-
-<!-- release-sweep: 2026-03-10 -->
- 
- 
- 
- 
+- [FastAPI](https://fastapi.tiangolo.com/)
+- [TapDB](https://github.com/Daylily-Informatics/daylily-tapdb)
+- [Dewey](https://github.com/Daylily-Informatics/dewey)
