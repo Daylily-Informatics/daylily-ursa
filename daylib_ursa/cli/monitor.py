@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Optional
 
 import typer
 from rich.console import Console
+from daylib_ursa.ursa_config import get_config_dir, _resolve_deployment_code
 
 if TYPE_CHECKING:
     from cli_core_yo.registry import CommandRegistry
@@ -21,48 +22,59 @@ if TYPE_CHECKING:
 monitor_app = typer.Typer(help="Workset monitor management commands")
 console = Console()
 
-# PID and log file locations
-CONFIG_DIR = Path.home() / ".config" / "ursa"
-LOG_DIR = CONFIG_DIR / "logs"
-PID_FILE = CONFIG_DIR / "monitor.pid"
+def _config_dir() -> Path:
+    return get_config_dir()
+
+
+def _log_dir() -> Path:
+    return _config_dir() / "logs"
+
+
+def _pid_file() -> Path:
+    return _config_dir() / "monitor.pid"
+
+
+def _default_monitor_config_path() -> Path:
+    return _config_dir() / f"monitor-config-{_resolve_deployment_code()}.yaml"
 
 
 def _ensure_dir():
     """Ensure XDG-style Ursa monitor directories exist."""
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    _config_dir().mkdir(parents=True, exist_ok=True)
+    _log_dir().mkdir(parents=True, exist_ok=True)
 
 
 def _get_log_file() -> Path:
     """Get timestamped log file path."""
     ts = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
-    return LOG_DIR / f"monitor_{ts}.log"
+    return _log_dir() / f"monitor_{ts}.log"
 
 
 def _get_latest_log() -> Optional[Path]:
     """Get the most recent log file."""
-    logs = sorted(LOG_DIR.glob("monitor_*.log"), reverse=True)
+    logs = sorted(_log_dir().glob("monitor_*.log"), reverse=True)
     return logs[0] if logs else None
 
 
 def _get_pid() -> Optional[int]:
     """Get the running monitor PID if exists."""
-    if PID_FILE.exists():
+    pid_file = _pid_file()
+    if pid_file.exists():
         try:
-            pid = int(PID_FILE.read_text().strip())
+            pid = int(pid_file.read_text().strip())
             os.kill(pid, 0)
             return pid
         except (ValueError, ProcessLookupError, PermissionError):
-            PID_FILE.unlink(missing_ok=True)
+            pid_file.unlink(missing_ok=True)
     return None
 
 
 def _find_default_config() -> Optional[Path]:
     """Find default monitor config file."""
     search_paths = [
+        _default_monitor_config_path(),
         Path.cwd() / "config" / "workset-monitor-config.yaml",
         Path.cwd() / "config" / "daylily-workset-monitor.yaml",
-        CONFIG_DIR / "monitor-config.yaml",
     ]
     for p in search_paths:
         if p.exists():
@@ -109,20 +121,22 @@ def start(
     if config is None or not config.exists():
         console.print("[red]✗[/red]  No monitor config file found")
         console.print(
-            "   Provide one with: [cyan]ursa monitor start --config path/to/config.yaml[/cyan]"
+            "   Provide one with: [cyan]ursa monitor start --config path/to/monitor-config.yaml[/cyan]"
         )
-        console.print("   Or create: [cyan]~/.config/ursa/monitor-config.yaml[/cyan]")
-        console.print("   Or create: [cyan]./config/workset-monitor-config.yaml[/cyan]")
+        console.print(
+            f"   Or create: [cyan]{_default_monitor_config_path()}[/cyan]"
+        )
         raise typer.Exit(1)
 
-    # Check ursa-config.yaml for region configuration
-    from daylib_ursa.ursa_config import get_ursa_config, DEFAULT_CONFIG_PATH
+    # Check deployment-scoped Ursa config for region configuration
+    from daylib_ursa.ursa_config import get_config_file_path, get_ursa_config
 
     ursa_config = get_ursa_config()
     if not ursa_config.is_configured:
-        console.print(f"[yellow]⚠[/yellow]  No regions configured in {DEFAULT_CONFIG_PATH}")
+        config_file_path = get_config_file_path()
+        console.print(f"[yellow]⚠[/yellow]  No regions configured in {config_file_path}")
         console.print("   Cluster discovery requires region definitions.")
-        console.print(f"   Create [cyan]{DEFAULT_CONFIG_PATH}[/cyan] with:")
+        console.print(f"   Create [cyan]{config_file_path}[/cyan] with:")
         console.print("")
         console.print("[dim]   regions:")
         console.print("     - us-west-2")

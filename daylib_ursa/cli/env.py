@@ -22,9 +22,9 @@ console = Console()
 @env_app.command("validate")
 def validate():
     """Validate Ursa configuration file and report issues."""
-    from daylib_ursa.ursa_config import DEFAULT_CONFIG_PATH, validate_config_file
+    from daylib_ursa.ursa_config import get_config_file_path, validate_config_file
 
-    config_path = DEFAULT_CONFIG_PATH
+    config_path = get_config_file_path()
     if not config_path.exists():
         console.print(f"[yellow]⚠[/yellow]  Config file not found: {config_path}")
         console.print("   Create one with: [cyan]ursa config generate[/cyan]")
@@ -142,10 +142,10 @@ def generate(
     template = """# Ursa Configuration
 # ==================
 # This file is loaded by 'ursa server start' and other commands.
-# For multi-region configuration, use ~/.config/ursa/ursa-config.yaml instead.
+# For multi-region configuration, use ~/.config/ursa-<deployment>/ursa-config-<deployment>.yaml instead.
 
 # ========== AWS Configuration ==========
-# Regions are configured in ~/.config/ursa/ursa-config.yaml
+# Regions are configured in ~/.config/ursa-<deployment>/ursa-config-<deployment>.yaml
 # Do NOT use AWS_DEFAULT_REGION - regions must be explicit per API call
 
 # Regions to scan for ParallelCluster instances (comma-separated)
@@ -153,7 +153,7 @@ URSA_ALLOWED_REGIONS=us-west-2
 
 # ========== Server Configuration ==========
 # Host/port and TapDB namespace should normally be configured in
-# ~/.config/ursa/ursa-config.yaml, not here.
+# ~/.config/ursa-<deployment>/ursa-config-<deployment>.yaml, not here.
 # HTTPS is required for GUI/API startup.
 # If unset, `ursa server start` auto-generates localhost certs with mkcert.
 # URSA_SSL_CERT_FILE=/absolute/path/to/cert.pem

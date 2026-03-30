@@ -4,8 +4,10 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
 from fastapi.testclient import TestClient
 
+from daylib_ursa import observability as observability_module
 from tests.test_admin_gui_and_cluster_routes import ADMIN_USER_ID, _create_test_app
 
 DAYHOFF_SCHEMA_ROOT = Path("/Users/jmajor/.codex/worktrees/cbc5/dayhoff/contracts/observability")
@@ -22,6 +24,24 @@ def _assert_required_shape(payload: dict[str, Any], schema: dict[str, Any]) -> N
     if projection_schema and "projection" in payload:
         for key in projection_schema.get("required", []):
             assert key in payload["projection"], f"missing projection key {key}"
+
+
+@pytest.fixture(autouse=True)
+def _stub_schema_drift(monkeypatch: pytest.MonkeyPatch) -> None:
+    observability_module._SCHEMA_DRIFT_CACHE.clear()
+    monkeypatch.setattr(
+        observability_module,
+        "run_tapdb_schema_drift_check",
+        lambda **_kwargs: {
+            "status": "clean",
+            "checked_at": "2026-03-29T00:00:00Z",
+            "environment": "dev",
+            "tool_version": "3.0.9",
+            "summary": "no schema drift reported",
+            "report": {"counts": {"expected": 10, "live": 10}},
+            "strict": False,
+        },
+    )
 
 
 def test_observability_contract_endpoints_match_shared_frame() -> None:
@@ -60,6 +80,11 @@ def test_observability_contract_endpoints_match_shared_frame() -> None:
     assert healthz.json()["status"] == "ok"
     assert readyz.status_code == 200
     assert readyz.json()["database"]["detail"]
+    configured_services = set(obs_services_response.json()["dependencies"]["configured_services"])
+    assert {"atlas", "bloom"}.issubset(configured_services)
+    assert obs_services_response.json()["dependencies"]["observed_services"] == []
+    assert db_health_response.json()["database"]["schema_drift"]["status"] == "clean"
+    assert auth_health_response.json()["auth"]["sessions"]["supported"] is False
 
     for path, (response, schema_name) in responses.items():
         assert response.status_code == 200, f"{path} returned {response.status_code}"
@@ -129,6 +154,21 @@ def test_obs_services_advertises_canonical_capabilities() -> None:
         "/my_health": {"auth": "authenticated_self", "kind": "self"},
         "/auth_health": {"auth": "operator_or_service_token", "kind": "auth"},
     }
+    configured_services = set(response.json()["dependencies"]["configured_services"])
+    assert {"atlas", "bloom"}.issubset(configured_services)
+    assert response.json()["dependencies"]["observed_services"] == []
+
+
+def test_obs_services_reports_observed_dependencies_when_recorded() -> None:
+    app, _resources = _create_test_app(admin=True)
+    headers = {"Authorization": f"Bearer {app.state.api_key}"}
+    app.state.observability.record_observed_dependency("dewey")
+
+    with TestClient(app) as client:
+        response = client.get("/obs_services", headers=headers)
+
+    assert response.status_code == 200
+    assert response.json()["dependencies"]["observed_services"] == ["dewey"]
 
 
 def test_my_health_rejects_internal_service_token() -> None:
@@ -157,3 +197,36 @@ def test_admin_observability_page_renders() -> None:
     assert response.status_code == 200
     assert "Observability" in response.text
     assert "/db_health" in response.text
+    assert "Configured dependencies:" in response.text
+    assert "Schema drift:" in response.text
+    assert "Session summary:" in response.text
+
+
+def test_schema_drift_check_is_not_run_per_db_health_request(monkeypatch: pytest.MonkeyPatch) -> None:
+    observability_module._SCHEMA_DRIFT_CACHE.clear()
+    calls = {"count": 0}
+
+    def _fake_drift(**_kwargs):
+        calls["count"] += 1
+        return {
+            "status": "drift",
+            "checked_at": "2026-03-29T00:00:00Z",
+            "environment": "dev",
+            "tool_version": "3.0.9",
+            "summary": "schema drift detected",
+            "report": {},
+            "strict": False,
+        }
+
+    monkeypatch.setattr(observability_module, "run_tapdb_schema_drift_check", _fake_drift)
+    app, _resources = _create_test_app(admin=True)
+    headers = {"Authorization": f"Bearer {app.state.api_key}"}
+
+    with TestClient(app) as client:
+        first = client.get("/db_health", headers=headers)
+        second = client.get("/db_health", headers=headers)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert calls["count"] == 1
+    assert first.json()["database"]["schema_drift"]["status"] == "drift"

@@ -336,7 +336,7 @@ class ClusterService:
         else:
             LOGGER.warning(
                 "No AWS profile configured for pcluster command. "
-                "Set aws_profile in ~/.ursa/ursa-config.yaml"
+                "Set aws_profile in ~/.config/ursa-<deployment>/ursa-config-<deployment>.yaml"
             )
             LOGGER.info("Running: %s", cmd_display)
         LOGGER.debug(f"PATH: {os.environ.get('PATH', 'not set')[:200]}")

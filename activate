@@ -18,7 +18,66 @@ CYAN='\033[0;36m'
 BOLD='\033[1m'
 NC='\033[0m'
 
-CONDA_ENV_NAME="URSA"
+CONDA_ENV_BASE="URSA"
+
+truthy_env() {
+    case "${1:-}" in
+        1|true|TRUE|yes|YES|on|ON) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+sanitize_deployment_code() {
+    raw_value="$1"
+    sanitized="$(printf '%s' "$raw_value" | LC_ALL=C sed -E 's/[^A-Za-z0-9._-]+/-/g; s/^-+//; s/-+$//')"
+    if [ -z "$sanitized" ]; then
+        sanitized="local"
+    fi
+    printf '%s\n' "$sanitized"
+}
+
+ursa_config_dir_name() {
+    printf 'ursa-%s\n' "${CONDA_ENV_DEPLOYMENT_CODE}"
+}
+
+ursa_config_file_name() {
+    printf 'ursa-config-%s.yaml\n' "${CONDA_ENV_DEPLOYMENT_CODE}"
+}
+
+prepare_tapdb_config_path() {
+    client_id="$1"
+    namespace="$2"
+    explicit_path="${TAPDB_CONFIG_PATH:-}"
+    xdg_config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
+    deployment_code="${URSA_DEPLOYMENT_CODE:-${DEPLOYMENT_CODE:-${LSMC_DEPLOYMENT_CODE:-local}}}"
+    deployment_code="$(sanitize_deployment_code "${deployment_code}")"
+    scoped_namespace="${namespace}-${deployment_code}"
+    user_dir="${xdg_config_home}/tapdb/${client_id}/${scoped_namespace}"
+    user_path="${user_dir}/tapdb-config.yaml"
+    repo_template="${SCRIPT_DIR}/config/tapdb-config-${namespace}.yaml"
+
+    if [ -n "$explicit_path" ]; then
+        printf '%s\n' "$explicit_path"
+        return 0
+    fi
+    if [ -f "$user_path" ]; then
+        chmod 600 "$user_path" 2>/dev/null || true
+        printf '%s\n' "$user_path"
+        return 0
+    fi
+    if [ ! -f "$repo_template" ]; then
+        printf '%s\n' "$user_path"
+        return 0
+    fi
+    mkdir -p "$user_dir" || return 1
+    cp "$repo_template" "$user_path" || return 1
+    chmod 600 "$user_path" || return 1
+    printf '%s\n' "$user_path"
+}
+
+CONDA_ENV_DEPLOYMENT_CODE="${URSA_DEPLOYMENT_CODE:-${DEPLOYMENT_CODE:-${LSMC_DEPLOYMENT_CODE:-local}}}"
+CONDA_ENV_DEPLOYMENT_CODE="$(sanitize_deployment_code "${CONDA_ENV_DEPLOYMENT_CODE}")"
+CONDA_ENV_NAME="${CONDA_ENV_BASE}-${CONDA_ENV_DEPLOYMENT_CODE}"
 
 log_info() {
     printf "${CYAN}→${NC} %s\n" "$1"
@@ -244,8 +303,12 @@ activate_main() {
         "${SCRIPT_DIR}/../daylily-tapdb" \
         "${SCRIPT_DIR}/../lims_repos/daylily-tapdb"
     )"
-    if ! ensure_editable_repo "daylily-tapdb" "daylily_tapdb" "${URSA_TAPDB_REPO:-}" "[cli,admin,aurora,dev]"; then
-        return 1
+    if truthy_env "${USE_LOCAL_DAYLILY_TAPDB:-0}"; then
+        if ! ensure_editable_repo "daylily-tapdb" "daylily_tapdb" "${URSA_TAPDB_REPO:-}" "[cli,admin,aurora,dev]"; then
+            return 1
+        fi
+    else
+        log_success "Using packaged daylily-tapdb from ${CONDA_ENV_NAME}"
     fi
 
     URSA_DAYCOG_REPO="$(resolve_local_repo \
@@ -253,8 +316,12 @@ activate_main() {
         "${SCRIPT_DIR}/../daylily-cognito" \
         "${SCRIPT_DIR}/../lims_repos/daylily-cognito"
     )"
-    if ! ensure_editable_repo "daylily-cognito" "daylily_cognito" "${URSA_DAYCOG_REPO:-}"; then
-        return 1
+    if truthy_env "${USE_LOCAL_DAYLILY_COGNITO:-0}"; then
+        if ! ensure_editable_repo "daylily-cognito" "daylily_cognito" "${URSA_DAYCOG_REPO:-}"; then
+            return 1
+        fi
+    else
+        log_success "Using packaged daylily-cognito from ${CONDA_ENV_NAME}"
     fi
 
     URSA_CLI_CORE_REPO="$(resolve_local_repo \
@@ -262,8 +329,12 @@ activate_main() {
         "${SCRIPT_DIR}/../cli-core-yo" \
         "${SCRIPT_DIR}/../lims_repos/cli-core-yo"
     )"
-    if ! ensure_editable_repo "cli-core-yo" "cli_core_yo" "${URSA_CLI_CORE_REPO:-}"; then
-        return 1
+    if truthy_env "${USE_LOCAL_CLI_CORE_YO:-0}"; then
+        if ! ensure_editable_repo "cli-core-yo" "cli_core_yo" "${URSA_CLI_CORE_REPO:-}"; then
+            return 1
+        fi
+    else
+        log_success "Using packaged cli-core-yo from ${CONDA_ENV_NAME}"
     fi
 
     if command -v rehash >/dev/null 2>&1; then
@@ -273,6 +344,11 @@ activate_main() {
     fi
 
     export URSA_ROOT="${SCRIPT_DIR}"
+    export TAPDB_CLIENT_ID="${TAPDB_CLIENT_ID:-local}"
+    export TAPDB_DATABASE_NAME="${TAPDB_DATABASE_NAME:-ursa}"
+    export TAPDB_STRICT_NAMESPACE="${TAPDB_STRICT_NAMESPACE:-1}"
+    export TAPDB_ENV="${TAPDB_ENV:-dev}"
+    export TAPDB_CONFIG_PATH="$(prepare_tapdb_config_path "${TAPDB_CLIENT_ID}" "${TAPDB_DATABASE_NAME}")"
 
     require_tool "conda env" "aws" || return 1
     require_tool "conda env" "pcluster" || return 1
@@ -292,18 +368,14 @@ activate_main() {
     require_python_import "fastapi" "fastapi" || return 1
     require_python_import "pydantic_settings" "pydantic-settings" || return 1
 
-    URSA_CONFIG_FILE="${HOME}/.config/ursa/ursa-config.yaml"
-    URSA_CONFIG_LEGACY="${HOME}/.ursa/ursa-config.yaml"
+    URSA_CONFIG_FILE="${HOME}/.config/$(ursa_config_dir_name)/$(ursa_config_file_name)"
     URSA_CONFIG_EXAMPLE="${SCRIPT_DIR}/config/ursa-config.example.yaml"
 
     if [ -f "$URSA_CONFIG_FILE" ]; then
         log_success "Config file found: ${URSA_CONFIG_FILE}"
-    elif [ -f "$URSA_CONFIG_LEGACY" ]; then
-        log_warn "Config file found at legacy path: ${URSA_CONFIG_LEGACY}"
-        printf "   Consider moving to: ${CYAN}mkdir -p ~/.config/ursa && mv ${URSA_CONFIG_LEGACY} ${URSA_CONFIG_FILE}${NC}\n"
     else
         log_warn "Config file not found: ${URSA_CONFIG_FILE}"
-        printf "   Create it with: ${CYAN}mkdir -p ~/.config/ursa && cp ${URSA_CONFIG_EXAMPLE} ${URSA_CONFIG_FILE}${NC}\n"
+        printf "   Create it with: ${CYAN}mkdir -p %s && cp %s %s${NC}\n" "$(dirname "${URSA_CONFIG_FILE}")" "${URSA_CONFIG_EXAMPLE}" "${URSA_CONFIG_FILE}"
     fi
 
     if [ -n "${PS1:-}" ]; then
@@ -329,7 +401,7 @@ activate_main() {
     printf "  ${CYAN}Python:${NC}           %s\n" "$(python --version 2>&1 | cut -d' ' -f2)"
     printf "  ${CYAN}Project Root:${NC}     %s\n" "${SCRIPT_DIR}"
     printf "  ${CYAN}Ursa Config:${NC}      %s\n" "${URSA_CONFIG_FILE}"
-    printf "  ${CYAN}TapDB Runtime:${NC}    from ursa-config.yaml\n"
+    printf "  ${CYAN}TapDB Runtime:${NC}    from deployment-scoped Ursa config\n"
     printf "\n"
     printf "  ${BOLD}Command Groups:${NC}\n"
     printf "    ${CYAN}ursa server${NC}   API server management\n"

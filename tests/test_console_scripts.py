@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from typer.testing import CliRunner
 
 
@@ -51,6 +52,111 @@ def test_console_script_entrypoints_are_importable_and_callable():
 
 
 def test_ursa_server_start_uses_packaged_entrypoint(monkeypatch):
+    from daylib_ursa.cli import server as server_mod
+    import daylib_ursa.ursa_config as ursa_config_mod
+
+    class DummyUrsaConfig:
+        aws_profile = "test-profile"
+        is_configured = True
+        cognito_user_pool_id = "us-west-2_testpool"
+        cognito_app_client_id = "test-app-client"
+        cognito_region = "us-west-2"
+        cognito_domain = "ursa-auth"
+        cognito_callback_url = "https://localhost:8914/auth/callback"
+        cognito_logout_url = "https://localhost:8914/login"
+
+        def get_allowed_regions(self):
+            return ["us-west-2"]
+
+    monkeypatch.setenv("AWS_PROFILE", "test-profile")
+    monkeypatch.setattr(ursa_config_mod, "get_ursa_config", lambda reload=False: DummyUrsaConfig())
+    monkeypatch.setattr(server_mod, "_ensure_dir", lambda: None)
+    monkeypatch.setattr(server_mod, "_get_pid", lambda: None)
+    monkeypatch.setattr(server_mod, "source_env_file", lambda _path: False)
+    monkeypatch.setattr(
+        server_mod, "_resolve_https_cert_paths", lambda host: ("/tmp/cert.pem", "/tmp/key.pem")
+    )
+    monkeypatch.setattr(server_mod, "_require_auth_dependencies", lambda: None)
+    monkeypatch.setattr(server_mod, "_run_cognito_uri_check", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        server_mod,
+        "get_settings",
+        lambda: SimpleNamespace(
+            database_backend="tapdb",
+            database_target="local",
+            tapdb_client_id="local",
+            tapdb_database_name="ursa",
+            tapdb_env="dev",
+            api_host="0.0.0.0",
+            api_port=8913,
+        ),
+    )
+    monkeypatch.setattr(
+        server_mod, "export_database_url_for_target", lambda **_kwargs: "postgresql://test-db"
+    )
+
+    captured: dict[str, object] = {}
+
+    def _fake_run(cmd, cwd=None, **kwargs):
+        captured["cmd"] = cmd
+        captured["cwd"] = cwd
+        captured["kwargs"] = kwargs
+
+        class _DummyCompletedProcess:
+            def __init__(self, returncode: int):
+                self.returncode = returncode
+
+        return _DummyCompletedProcess(0)
+
+    monkeypatch.setattr(server_mod.subprocess, "run", _fake_run)
+
+    server_mod.start(
+        port=1234,
+        host="127.0.0.1",
+        reload=False,
+        background=False,
+    )
+
+    cmd = captured.get("cmd")
+    assert isinstance(cmd, list)
+
+
+def test_cli_requires_hyphenated_conda_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    from daylib_ursa.cli import _enforce_conda_env_contract
+
+    monkeypatch.setenv("CONDA_DEFAULT_ENV", "URSA")
+    with pytest.raises(SystemExit, match="deployment-scoped conda environment name with '-'"):
+        _enforce_conda_env_contract(["server", "status"])
+
+
+def test_cli_requires_active_conda_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    from daylib_ursa.cli import _enforce_conda_env_contract
+
+    monkeypatch.delenv("CONDA_DEFAULT_ENV", raising=False)
+    with pytest.raises(
+        SystemExit, match="requires an active deployment-scoped conda environment"
+    ):
+        _enforce_conda_env_contract(["server", "status"])
+
+
+def test_cli_accepts_hyphenated_conda_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    from daylib_ursa.cli import _enforce_conda_env_contract
+
+    monkeypatch.setenv("CONDA_DEFAULT_ENV", "URSA-local2")
+    _enforce_conda_env_contract(["server", "status"])
+
+
+def test_cli_skip_conda_env_check_flag_is_stripped() -> None:
+    from daylib_ursa.cli import _strip_skip_conda_env_check_flag
+
+    args, skip = _strip_skip_conda_env_check_flag(
+        ["--skip-conda-env-check", "server", "status"]
+    )
+    assert skip is True
+    assert args == ["server", "status"]
+
+
+def test_ursa_server_start_command_uses_module_entrypoint_and_profile(monkeypatch):
     from daylib_ursa.cli import server as server_mod
     import daylib_ursa.ursa_config as ursa_config_mod
 

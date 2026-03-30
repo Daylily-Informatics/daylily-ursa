@@ -571,13 +571,13 @@ def mount_gui(app: FastAPI) -> None:
             access_token = str(token_payload.get("access_token") or "").strip()
             token = id_token or access_token
             if not token:
-                raise AuthError("Cognito token response missing id_token or access_token")
+                raise AuthError("Cognito token response missing access_token or id_token")
             auth_provider = getattr(app.state, "auth_provider", None)
             if auth_provider is None:
                 raise AuthError("Authentication provider is not configured")
             actor = auth_provider.resolve_access_token(
                 token,
-                paired_access_token=access_token or None,
+                paired_access_token=access_token if token == id_token else id_token or None,
             )
         except AuthError as exc:
             request.session.pop("ursa_oauth_state", None)

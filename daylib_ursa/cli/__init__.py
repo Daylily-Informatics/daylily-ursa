@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 import yaml
@@ -16,6 +17,7 @@ from daylib_ursa.integrations.tapdb_runtime import (
     TapDBRuntimeError,
     ensure_tapdb_version,
 )
+from daylib_ursa.ursa_config import _resolve_deployment_code
 
 
 def _validate_ursa_config(content: str) -> list[str]:
@@ -116,8 +118,6 @@ def _ensure_tapdb_dependency() -> None:
         ) from exc
 
 
-_ensure_tapdb_dependency()
-
 _CONFIG_TEMPLATE = (
     Path(__file__).resolve().parents[2] / "config" / "ursa-config.example.yaml"
 ).read_bytes()
@@ -129,10 +129,10 @@ spec = CliSpec(
     dist_name="daylily-ursa",
     root_help="Ursa development CLI for beta analysis APIs and integrations.",
     xdg=XdgSpec(
-        app_dir_name="ursa",
+        app_dir_name=f"ursa-{_resolve_deployment_code()}",
     ),
     config=ConfigSpec(
-        primary_filename="ursa-config.yaml",
+        primary_filename=f"ursa-config-{_resolve_deployment_code()}.yaml",
         template_bytes=_CONFIG_TEMPLATE,
         validator=_validate_ursa_config,
     ),
@@ -144,6 +144,7 @@ spec = CliSpec(
     ),
     plugins=PluginSpec(
         explicit=[
+            "daylib_ursa.cli.db.register",
             "daylib_ursa.cli.server.register",
             "daylib_ursa.cli.env.register",
             "daylib_ursa.cli.test.register",
@@ -157,6 +158,45 @@ spec = CliSpec(
 
 app = create_app(spec)
 
+_SKIP_CONDA_ENV_CHECK_FLAG = "--skip-conda-env-check"
+_CONDA_ENV_CHECK_EXEMPT_COMMANDS = frozenset({"version", "info", "env", "help"})
+
+
+def _strip_skip_conda_env_check_flag(args: list[str]) -> tuple[list[str], bool]:
+    filtered = [arg for arg in args if arg != _SKIP_CONDA_ENV_CHECK_FLAG]
+    return filtered, len(filtered) != len(args)
+
+
+def _command_requires_conda_env_check(args: list[str]) -> bool:
+    if not args or "--help" in args or "-h" in args:
+        return False
+    for arg in args:
+        if not arg or arg.startswith("-"):
+            continue
+        return arg not in _CONDA_ENV_CHECK_EXEMPT_COMMANDS
+    return False
+
+
+def _enforce_conda_env_contract(args: list[str]) -> None:
+    if not _command_requires_conda_env_check(args):
+        return
+    active_env = os.environ.get("CONDA_DEFAULT_ENV", "").strip()
+    if not active_env:
+        raise SystemExit(
+            "Ursa CLI requires an active deployment-scoped conda environment. "
+            "Activate an env named like 'URSA-local2', or pass "
+            "--skip-conda-env-check to override."
+        )
+    if "-" not in active_env:
+        raise SystemExit(
+            f"Ursa CLI requires a deployment-scoped conda environment name with '-'. "
+            f"Current CONDA_DEFAULT_ENV='{active_env}'. Pass --skip-conda-env-check to override."
+        )
+
 
 def main() -> None:
-    raise SystemExit(run(spec))
+    _ensure_tapdb_dependency()
+    args, skip_conda_env_check = _strip_skip_conda_env_check_flag(sys.argv[1:])
+    if not skip_conda_env_check:
+        _enforce_conda_env_contract(args)
+    raise SystemExit(run(spec, args))

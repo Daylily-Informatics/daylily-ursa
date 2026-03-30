@@ -21,6 +21,16 @@
     <div class="container">
         <div class="card">
             <h2>Capability Discovery</h2>
+            {% set configured = obs_services_payload.dependencies.configured_services if obs_services_payload.dependencies is defined else [] %}
+            {% set observed = obs_services_payload.dependencies.observed_services if obs_services_payload.dependencies is defined else [] %}
+            <p>
+                Configured dependencies:
+                {% if configured %}{{ configured | join(", ") }}{% else %}none{% endif %}
+            </p>
+            <p>
+                Observed dependencies:
+                {% if observed %}{{ observed | join(", ") }}{% else %}none observed yet{% endif %}
+            </p>
             <pre>{{ obs_services_payload | tojson(indent=2) }}</pre>
         </div>
     </div>
@@ -48,6 +58,15 @@
     <div class="container">
         <div class="card">
             <h2>Database Health</h2>
+            {% set schema_drift = db_health_payload.database.schema_drift if db_health_payload.database is defined and db_health_payload.database.schema_drift is defined else none %}
+            <p>
+                Schema drift:
+                {% if schema_drift %}
+                    {{ schema_drift.status }}{% if schema_drift.summary %} - {{ schema_drift.summary }}{% endif %}
+                {% else %}
+                    unavailable
+                {% endif %}
+            </p>
             <pre>{{ db_health_payload | tojson(indent=2) }}</pre>
         </div>
     </div>
@@ -57,6 +76,17 @@
     <div class="container">
         <div class="card">
             <h2>Auth Health</h2>
+            {% set sessions = auth_health_payload.auth.sessions if auth_health_payload.auth is defined and auth_health_payload.auth.sessions is defined else none %}
+            <p>
+                Session summary:
+                {% if sessions and sessions.supported %}
+                    active={{ sessions.active_session_count }}, recent={{ sessions.recent_user_count }}
+                {% elif sessions %}
+                    session summary not supported for Ursa's current auth model
+                {% else %}
+                    unavailable
+                {% endif %}
+            </p>
             <pre>{{ auth_health_payload | tojson(indent=2) }}</pre>
         </div>
     </div>

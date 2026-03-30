@@ -1,9 +1,9 @@
 # Ursa Configuration Example
-# Copy this file to ~/.config/ursa/ursa-config.yaml and customize
+# Copy this file to ~/.config/ursa-<deployment>/ursa-config-<deployment>.yaml and customize
 #
 # Create the directory first:
-#   mkdir -p ~/.config/ursa
-#   cp config/ursa-config.example.yaml ~/.config/ursa/ursa-config.yaml
+#   mkdir -p ~/.config/ursa-<deployment>
+#   cp config/ursa-config.example.yaml ~/.config/ursa-<deployment>/ursa-config-<deployment>.yaml
 #
 # This file defines:
 # - AWS regions to scan for ParallelCluster instances

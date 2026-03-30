@@ -25,7 +25,9 @@ from cli_core_yo.server import (
 from rich.console import Console
 
 from daylib_ursa.config import get_settings
+from daylib_ursa.config import DEFAULT_API_PORT
 from daylib_ursa.integrations.tapdb_runtime import export_database_url_for_target
+from daylib_ursa.ursa_config import get_config_dir
 
 if TYPE_CHECKING:
     from cli_core_yo.registry import CommandRegistry
@@ -35,14 +37,31 @@ server_app = typer.Typer(help="API server management commands")
 console = Console()
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
-# PID and log file locations (XDG Base Directory: ~/.config/ursa/)
-CONFIG_DIR = Path.home() / ".config" / "ursa"
-LOG_DIR = CONFIG_DIR / "logs"
-PID_FILE = CONFIG_DIR / "server.pid"
-CERT_DIR = CONFIG_DIR / "certs"
-DEFAULT_SSL_CERT_FILE = CERT_DIR / "cert.pem"
-DEFAULT_SSL_KEY_FILE = CERT_DIR / "key.pem"
 REQUIRED_COGNITO_APP_CLIENT_NAME = "ursa"
+
+
+def _config_dir() -> Path:
+    return get_config_dir()
+
+
+def _log_dir() -> Path:
+    return _config_dir() / "logs"
+
+
+def _pid_file() -> Path:
+    return _config_dir() / "server.pid"
+
+
+def _cert_dir() -> Path:
+    return _config_dir() / "certs"
+
+
+def _default_ssl_cert_file() -> Path:
+    return _cert_dir() / "cert.pem"
+
+
+def _default_ssl_key_file() -> Path:
+    return _cert_dir() / "key.pem"
 
 
 def _resolved_server_host_port(
@@ -56,7 +75,7 @@ def _resolved_server_host_port(
         if port is not None
         else os.environ.get(
             "URSA_RUNTIME__PORT",
-            getattr(settings, "api_port", os.environ.get("URSA_PORT", 8914)),
+            getattr(settings, "api_port", os.environ.get("URSA_PORT", DEFAULT_API_PORT)),
         )
     )
     resolved_host = str(
@@ -82,10 +101,10 @@ def _require_auth_dependencies() -> None:
 
 
 def _ensure_dir():
-    """Ensure ~/.config/ursa directories exist."""
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
-    CERT_DIR.mkdir(parents=True, exist_ok=True)
+    """Ensure deployment-scoped Ursa runtime directories exist."""
+    _config_dir().mkdir(parents=True, exist_ok=True)
+    _log_dir().mkdir(parents=True, exist_ok=True)
+    _cert_dir().mkdir(parents=True, exist_ok=True)
 
 
 def _resolve_https_cert_paths(host: str) -> tuple[str, str]:
@@ -113,8 +132,8 @@ def _resolve_https_cert_paths(host: str) -> tuple[str, str]:
             raise typer.Exit(1)
         return str(cert_path), str(key_path)
 
-    cert_path = DEFAULT_SSL_CERT_FILE
-    key_path = DEFAULT_SSL_KEY_FILE
+    cert_path = _default_ssl_cert_file()
+    key_path = _default_ssl_key_file()
     if cert_path.exists() and key_path.exists():
         return str(cert_path), str(key_path)
 
@@ -198,20 +217,21 @@ def _require_cognito_configuration(ursa_config) -> dict[str, str]:
 
 def _get_pid() -> Optional[int]:
     """Get the running server PID if exists."""
-    if PID_FILE.exists():
+    pid_file = _pid_file()
+    if pid_file.exists():
         try:
-            pid = int(PID_FILE.read_text().strip())
+            pid = int(pid_file.read_text().strip())
             os.kill(pid, 0)
             cmdline = subprocess.check_output(
                 ["ps", "-p", str(pid), "-o", "command="],
                 text=True,
             ).strip()
             if "daylib_ursa.workset_api_cli" not in cmdline:
-                PID_FILE.unlink(missing_ok=True)
+                pid_file.unlink(missing_ok=True)
                 return None
             return pid
         except (ValueError, ProcessLookupError, PermissionError, subprocess.SubprocessError):
-            PID_FILE.unlink(missing_ok=True)
+            pid_file.unlink(missing_ok=True)
     return None
 
 
@@ -287,7 +307,7 @@ def start(
         return
 
     # Resolve AWS profile from env or config when explicitly provided.
-    from daylib_ursa.ursa_config import get_ursa_config, DEFAULT_CONFIG_PATH
+    from daylib_ursa.ursa_config import get_config_file_path, get_ursa_config
 
     ursa_config = get_ursa_config()
 
@@ -311,9 +331,10 @@ def start(
 
     # Check config file for region configuration
     if not ursa_config.is_configured:
-        console.print(f"[yellow]⚠[/yellow]  No regions configured in {DEFAULT_CONFIG_PATH}")
+        config_file_path = get_config_file_path()
+        console.print(f"[yellow]⚠[/yellow]  No regions configured in {config_file_path}")
         console.print("   Cluster discovery requires region definitions.")
-        console.print(f"   Create [cyan]{DEFAULT_CONFIG_PATH}[/cyan] with:")
+        console.print(f"   Create [cyan]{config_file_path}[/cyan] with:")
         console.print("")
         console.print("[dim]   regions:")
         console.print("     - us-west-2")
@@ -368,7 +389,7 @@ def start(
         console.print("[dim]Auto-reload enabled (foreground mode)[/dim]")
 
     if background:
-        log_file = new_log_path(LOG_DIR)
+        log_file = new_log_path(_log_dir())
         log_f = open(log_file, "w", buffering=1)  # Line-buffered
 
         proc = subprocess.Popen(
@@ -394,7 +415,7 @@ def start(
                         console.print(f"   {line}")
             raise typer.Exit(1)
 
-        write_pid(PID_FILE, proc.pid)
+        write_pid(_pid_file(), proc.pid)
         console.print(f"[green]✓[/green]  Server started (PID {proc.pid})")
         console.print(f"   URL: [cyan]https://{host}:{port}[/cyan]")
         console.print(f"   Logs: [dim]{log_file}[/dim]")
@@ -412,7 +433,7 @@ def start(
 @server_app.command("stop")
 def stop():
     """Stop the Ursa API server."""
-    stopped, msg = stop_pid(PID_FILE)
+    stopped, msg = stop_pid(_pid_file())
     if stopped:
         console.print(f"[green]✓[/green]  {msg}")
     elif "Permission" in msg:
@@ -428,7 +449,7 @@ def status():
     pid = _get_pid()
     if pid:
         host, port = _resolved_server_host_port()
-        log_file = latest_log(LOG_DIR)
+        log_file = latest_log(_log_dir())
         dh = display_host(host)
         console.print(f"[green]●[/green]  Server is [green]running[/green] (PID {pid})")
         console.print(f"   URL: [cyan]https://{dh}:{port}[/cyan]")
@@ -445,7 +466,7 @@ def logs(
 ):
     """View and follow Ursa API server logs (Ctrl+C to stop)."""
     if all_logs:
-        log_entries = list_logs(LOG_DIR)
+        log_entries = list_logs(_log_dir())
         if not log_entries:
             console.print("[yellow]⚠[/yellow]  No log files found.")
             return
@@ -455,7 +476,7 @@ def logs(
             console.print(f"  {lf.name}  [dim]({size:,} bytes)[/dim]")
         return
 
-    log_file = latest_log(LOG_DIR)
+    log_file = latest_log(_log_dir())
     if not log_file:
         console.print("[yellow]⚠[/yellow]  No log file found. Start the server first.")
         return

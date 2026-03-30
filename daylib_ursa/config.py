@@ -19,6 +19,13 @@ from daylib_ursa.domain_access import (
     is_allowed_origin,
 )
 
+DEFAULT_API_HOST = "0.0.0.0"
+DEFAULT_API_PORT = 8914
+DEFAULT_BLOOM_BASE_URL = "https://localhost:8001"
+DEFAULT_ATLAS_BASE_URL = "https://localhost:8000"
+DEFAULT_URSA_COGNITO_CALLBACK_URL = f"https://localhost:{DEFAULT_API_PORT}/auth/callback"
+DEFAULT_URSA_COGNITO_LOGOUT_URL = f"https://localhost:{DEFAULT_API_PORT}/login"
+
 
 def _yaml_seed_from_ursa_config() -> dict[str, object]:
     """Seed YAML-owned runtime settings from Ursa config before env resolution."""
@@ -29,7 +36,7 @@ def _yaml_seed_from_ursa_config() -> dict[str, object]:
     except Exception:
         return {}
 
-    return {
+    seeded = {
         "aws_profile": cfg.aws_profile,
         "ursa_portal_default_customer_id": cfg.ursa_portal_default_customer_id,
         "cognito_group_role_map": cfg.cognito_group_role_map,
@@ -61,6 +68,7 @@ def _yaml_seed_from_ursa_config() -> dict[str, object]:
         "deployment_color": cfg.deployment_color,
         "deployment_is_production": cfg.deployment_is_production,
     }
+    return {key: value for key, value in seeded.items() if value is not None}
 
 
 def _require_https_url(value: str, *, field_name: str) -> str:
@@ -287,11 +295,11 @@ class Settings(BaseSettings):
 
     # ========== API Server ==========
     api_host: str = Field(
-        default="0.0.0.0",
+        default=DEFAULT_API_HOST,
         description="API server host",
     )
     api_port: int = Field(
-        default=8914,
+        default=DEFAULT_API_PORT,
         description="API server port",
     )
     ursa_tapdb_mount_enabled: bool = Field(
@@ -307,7 +315,7 @@ class Settings(BaseSettings):
         description="Internal API key for Ursa beta write endpoints",
     )
     bloom_base_url: str = Field(
-        default="https://localhost:8001",
+        default=DEFAULT_BLOOM_BASE_URL,
         description="Bloom base URL for run/index resolver requests",
     )
     bloom_api_token: Optional[str] = Field(
@@ -319,7 +327,7 @@ class Settings(BaseSettings):
         description="Verify Bloom HTTPS certificates for resolver requests",
     )
     atlas_base_url: str = Field(
-        default="https://localhost:8000",
+        default=DEFAULT_ATLAS_BASE_URL,
         description="Atlas base URL for result return requests",
     )
     atlas_internal_api_key: Optional[str] = Field(
