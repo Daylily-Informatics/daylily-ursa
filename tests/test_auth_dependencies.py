@@ -34,7 +34,7 @@ def test_cognito_auth_provider_accepts_id_token_claims(monkeypatch) -> None:
     monkeypatch.setattr(
         auth_dependencies.CognitoAuthProvider,
         "_verify_id_token_claims",
-        lambda self, _token: {
+        lambda self, _token, access_token=None: {
             "sub": "user-123",
             "email": "ursa@example.com",
             "aud": "client-123",
@@ -53,6 +53,52 @@ def test_cognito_auth_provider_accepts_id_token_claims(monkeypatch) -> None:
 
     assert user.tenant_id == uuid.UUID("00000000-0000-0000-0000-000000000001")
     assert user.roles == ["ADMIN"]
+
+
+def test_cognito_auth_provider_passes_paired_access_token_for_id_token_at_hash(monkeypatch) -> None:
+    from jose import jwt
+
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        auth_dependencies,
+        "decode_jwt_unverified",
+        lambda _token: {"token_use": "id"},
+    )
+    monkeypatch.setattr(jwt, "get_unverified_header", lambda _token: {"kid": "kid-123"})
+
+    def _decode(token, key, algorithms=None, options=None, audience=None, issuer=None, subject=None, access_token=None):
+        captured["token"] = token
+        captured["key"] = key
+        captured["algorithms"] = algorithms
+        captured["issuer"] = issuer
+        captured["access_token"] = access_token
+        return {
+            "sub": "user-123",
+            "email": "ursa@example.com",
+            "aud": "client-123",
+            "custom:customer_id": "00000000-0000-0000-0000-000000000001",
+            "cognito:groups": ["ursa-admin"],
+        }
+
+    monkeypatch.setattr(jwt, "decode", _decode)
+
+    provider = auth_dependencies.CognitoAuthProvider(
+        user_pool_id="pool-123",
+        app_client_id="client-123",
+        region="us-west-2",
+    )
+    provider._jwks_cache = type("_Cache", (), {"get_key": lambda self, kid: f"key-for-{kid}"})()
+
+    user = provider.resolve_access_token(
+        "id-token-value",
+        paired_access_token="access-token-value",
+    )
+
+    assert user.roles == ["ADMIN"]
+    assert captured["token"] == "id-token-value"
+    assert captured["access_token"] == "access-token-value"
+    assert captured["issuer"] == "https://cognito-idp.us-west-2.amazonaws.com/pool-123"
 
 
 def test_claims_to_current_user_maps_external_admin_group() -> None:
@@ -77,7 +123,7 @@ def test_cognito_auth_provider_rejects_id_token_with_wrong_audience(monkeypatch)
     monkeypatch.setattr(
         auth_dependencies.CognitoAuthProvider,
         "_verify_id_token_claims",
-        lambda self, _token: (_ for _ in ()).throw(AuthError("Invalid token audience")),
+        lambda self, _token, access_token=None: (_ for _ in ()).throw(AuthError("Invalid token audience")),
     )
 
     provider = auth_dependencies.CognitoAuthProvider(

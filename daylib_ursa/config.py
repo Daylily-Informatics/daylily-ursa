@@ -33,6 +33,9 @@ def _yaml_seed_from_ursa_config() -> dict[str, object]:
         "aws_profile": cfg.aws_profile,
         "ursa_portal_default_customer_id": cfg.ursa_portal_default_customer_id,
         "cognito_group_role_map": cfg.cognito_group_role_map,
+        # Missing YAML allowlists should use the existing empty-string sentinel,
+        # not literal None, so downstream settings validation stays string-based.
+        "whitelist_domains": cfg.whitelist_domains or "",
         "ursa_internal_output_bucket": cfg.ursa_internal_output_bucket,
         "tapdb_client_id": cfg.tapdb_client_id,
         "tapdb_database_name": cfg.tapdb_database_name,
