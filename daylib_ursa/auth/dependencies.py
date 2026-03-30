@@ -230,7 +230,14 @@ def _claims_to_current_user(claims: dict[str, Any]) -> CurrentUser:
         try:
             from daylib_ursa.config import get_settings
 
-            tenant_value = get_settings().ursa_portal_default_customer_id
+            configured_default = str(get_settings().ursa_portal_default_customer_id or "").strip()
+            if configured_default:
+                try:
+                    tenant_value = str(uuid.UUID(configured_default))
+                except ValueError:
+                    tenant_value = str(uuid.UUID(int=0))
+            else:
+                tenant_value = str(uuid.UUID(int=0))
         except Exception:
             tenant_value = tenant_value
     name = str(claims.get("name") or claims.get("display_name") or "").strip() or None
