@@ -567,13 +567,18 @@ def mount_gui(app: FastAPI) -> None:
             raise HTTPException(status_code=400, detail="Invalid oauth state")
         try:
             token_payload = _exchange_auth_code(code.strip())
-            token = str(token_payload.get("id_token") or token_payload.get("access_token") or "").strip()
+            id_token = str(token_payload.get("id_token") or "").strip()
+            access_token = str(token_payload.get("access_token") or "").strip()
+            token = id_token or access_token
             if not token:
                 raise AuthError("Cognito token response missing id_token or access_token")
             auth_provider = getattr(app.state, "auth_provider", None)
             if auth_provider is None:
                 raise AuthError("Authentication provider is not configured")
-            actor = auth_provider.resolve_access_token(token)
+            actor = auth_provider.resolve_access_token(
+                token,
+                paired_access_token=access_token or None,
+            )
         except AuthError as exc:
             request.session.pop("ursa_oauth_state", None)
             request.session.pop("ursa_post_auth_redirect", None)

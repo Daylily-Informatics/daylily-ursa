@@ -305,7 +305,12 @@ class CognitoAuthProvider:
     def configured(self) -> bool:
         return bool(self.user_pool_id and self.app_client_id and self.region)
 
-    def _verify_id_token_claims(self, token: str) -> dict[str, Any]:
+    def _verify_id_token_claims(
+        self,
+        token: str,
+        *,
+        access_token: str | None = None,
+    ) -> dict[str, Any]:
         try:
             from jose import JWTError, jwt
         except ImportError as exc:  # pragma: no cover - environment issue
@@ -335,6 +340,7 @@ class CognitoAuthProvider:
                     "verify_aud": False,
                 },
                 issuer=issuer,
+                access_token=(str(access_token or "").strip() or None),
             )
         except JWTError as exc:
             raise AuthError("Invalid authentication token") from exc
@@ -344,7 +350,12 @@ class CognitoAuthProvider:
             raise AuthError("Invalid token audience")
         return claims
 
-    def resolve_access_token(self, access_token: str) -> CurrentUser:
+    def resolve_access_token(
+        self,
+        access_token: str,
+        *,
+        paired_access_token: str | None = None,
+    ) -> CurrentUser:
         token = str(access_token or "").strip()
         if not token:
             raise AuthError("Bearer token is required")
@@ -353,7 +364,10 @@ class CognitoAuthProvider:
         try:
             unverified_claims = decode_jwt_unverified(token)
             if str(unverified_claims.get("token_use") or "").strip().lower() == "id":
-                claims = self._verify_id_token_claims(token)
+                claims = self._verify_id_token_claims(
+                    token,
+                    access_token=paired_access_token,
+                )
             else:
                 claims = verify_jwt_claims(
                     token,

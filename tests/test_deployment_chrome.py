@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
+from daylib_ursa.auth.dependencies import CognitoAuthProvider
 from daylib_ursa.auth import CurrentUser
 from daylib_ursa.config import clear_settings_cache, get_settings, get_settings_for_testing
 from daylib_ursa import gui_app
@@ -83,7 +84,7 @@ def _app_with_gui(settings):
     app.state.settings = settings
     app.state.identity_client = SimpleNamespace(resolve_access_token=lambda _token: None)
     app.state.auth_provider = SimpleNamespace(
-        resolve_access_token=lambda _token: CurrentUser(
+        resolve_access_token=lambda _token, **_kwargs: CurrentUser(
             sub="user-123",
             email="user@example.com",
             name="Ursa User",
@@ -157,6 +158,73 @@ def test_auth_callback_persists_session_and_redirects(monkeypatch):
     login_page = client.get("/login?next=/usage", follow_redirects=False)
     assert login_page.status_code == 303
     assert login_page.headers["location"] == "/usage"
+
+
+def test_auth_callback_passes_paired_access_token_for_id_token_verification(monkeypatch):
+    settings = get_settings_for_testing(
+        ursa_internal_output_bucket="ursa-internal",
+        cognito_user_pool_id="pool-123",
+        cognito_region="us-west-2",
+        cognito_domain="ursa.auth.us-west-2.amazoncognito.com",
+        cognito_app_client_id="client-123",
+        cognito_callback_url="https://localhost:8913/auth/callback",
+        cognito_logout_url="https://localhost:8913/login",
+    )
+    from fastapi import FastAPI
+    from starlette.middleware.sessions import SessionMiddleware
+    from daylib_ursa.auth import dependencies as auth_dependencies
+
+    app = FastAPI()
+    app.add_middleware(SessionMiddleware, secret_key="test-secret")
+    app.state.settings = settings
+    app.state.identity_client = SimpleNamespace(resolve_access_token=lambda _token: None)
+    app.state.auth_provider = CognitoAuthProvider(
+        user_pool_id="pool-123",
+        app_client_id="client-123",
+        region="us-west-2",
+    )
+    mount_gui(app)
+    client = TestClient(app)
+
+    monkeypatch.setattr(gui_app.secrets, "token_urlsafe", lambda _n: "state-123")
+    monkeypatch.setattr(gui_app, "build_authorization_url", lambda **_kwargs: "https://example.auth/login")
+    monkeypatch.setattr(
+        gui_app,
+        "exchange_authorization_code",
+        lambda **_kwargs: {
+            "id_token": "id-token-123",
+            "access_token": "access-token-456",
+        },
+    )
+    captured: dict[str, str | None] = {}
+    monkeypatch.setattr(
+        auth_dependencies,
+        "decode_jwt_unverified",
+        lambda _token: {"token_use": "id"},
+    )
+
+    def _verify_id_token_claims(self, token: str, *, access_token: str | None = None):
+        captured["token"] = token
+        captured["access_token"] = access_token
+        return {
+            "sub": "user-123",
+            "email": "user@example.com",
+            "aud": "client-123",
+            "custom:customer_id": "11111111-1111-1111-1111-111111111111",
+            "cognito:groups": ["ursa-admin"],
+        }
+
+    monkeypatch.setattr(CognitoAuthProvider, "_verify_id_token_claims", _verify_id_token_claims)
+
+    client.get("/auth/login?next=/usage", follow_redirects=False)
+    response = client.get("/auth/callback?code=auth-code&state=state-123", follow_redirects=False)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/usage"
+    assert captured == {
+        "token": "id-token-123",
+        "access_token": "access-token-456",
+    }
 
 
 def test_favicon_route_redirects_to_svg():
