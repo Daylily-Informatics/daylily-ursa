@@ -567,9 +567,12 @@ def mount_gui(app: FastAPI) -> None:
             raise HTTPException(status_code=400, detail="Invalid oauth state")
         try:
             token_payload = _exchange_auth_code(code.strip())
-            token = str(token_payload.get("id_token") or token_payload.get("access_token") or "").strip()
+            # Hosted UI code exchange should prefer the access token for session auth.
+            # Falling back to id_token can trigger at_hash verification paths that expect
+            # the paired access token to be available.
+            token = str(token_payload.get("access_token") or token_payload.get("id_token") or "").strip()
             if not token:
-                raise AuthError("Cognito token response missing id_token or access_token")
+                raise AuthError("Cognito token response missing access_token or id_token")
             auth_provider = getattr(app.state, "auth_provider", None)
             if auth_provider is None:
                 raise AuthError("Authentication provider is not configured")

@@ -1343,12 +1343,19 @@ def create_app(
             raise HTTPException(status_code=503, detail="Dewey client is not configured")
         return client
 
+    def record_observed_dependency(service_id: str) -> None:
+        try:
+            app.state.observability.record_observed_dependency(service_id)
+        except Exception:
+            return
+
     def resolve_dewey_artifact_euid(artifact_euid: str) -> str:
         dewey_client = require_dewey_client()
         try:
             resolved = dewey_client.resolve_artifact(artifact_euid)
         except DeweyClientError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
+        record_observed_dependency("dewey")
         canonical = str(resolved.get("artifact_euid") or "").strip()
         if not canonical:
             raise HTTPException(
@@ -1362,6 +1369,7 @@ def create_app(
             resolved = dewey_client.resolve_artifact_set(artifact_set_euid)
         except DeweyClientError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
+        record_observed_dependency("dewey")
         canonical = str(resolved.get("artifact_set_euid") or "").strip()
         if not canonical:
             raise HTTPException(
@@ -1512,6 +1520,7 @@ def create_app(
                 )
             except DeweyClientError as exc:
                 raise HTTPException(status_code=502, detail=str(exc)) from exc
+            record_observed_dependency("dewey")
             resources.record_dewey_import(
                 artifact_euid=artifact_euid,
                 artifact_type=artifact_type,
@@ -1878,6 +1887,7 @@ def create_app(
             )
         except BloomResolverError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
+        record_observed_dependency("bloom")
 
         resolved_references: list[dict[str, Any]] = []
         if app.state.dewey_client is None:
@@ -1893,6 +1903,7 @@ def create_app(
                     resolved = app.state.dewey_client.resolve_artifact(raw_value)
                 except DeweyClientError as exc:
                     raise HTTPException(status_code=502, detail=str(exc)) from exc
+                record_observed_dependency("dewey")
                 resolved_references.append(
                     {
                         "reference_type": "artifact_euid",
@@ -1909,6 +1920,7 @@ def create_app(
                 resolved_set = app.state.dewey_client.resolve_artifact_set(raw_value)
             except DeweyClientError as exc:
                 raise HTTPException(status_code=502, detail=str(exc)) from exc
+            record_observed_dependency("dewey")
 
             members = resolved_set.get("members")
             member_payload = [
@@ -2003,6 +2015,7 @@ def create_app(
             resolved = dewey_client.resolve_artifact(source_artifact_euid)
         except DeweyClientError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
+        record_observed_dependency("dewey")
 
         artifact_type = str(resolved.get("artifact_type") or "").strip()
         storage_uri = str(resolved.get("storage_uri") or "").strip()
@@ -2130,6 +2143,7 @@ def create_app(
                 artifacts=atlas_artifacts,
                 idempotency_key=str(idempotency_key),
             )
+            record_observed_dependency("atlas")
         except AtlasResultClientError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
 
@@ -2291,6 +2305,7 @@ def create_app(
             )
         except DeweyClientError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
+        record_observed_dependency("dewey")
         record = resources.record_dewey_import(
             artifact_euid=artifact_euid,
             artifact_type=request.artifact_type,
@@ -2310,8 +2325,12 @@ def create_app(
             raise HTTPException(status_code=503, detail="Dewey client is not configured")
         try:
             if request.artifact_euid:
-                return app.state.dewey_client.resolve_artifact(request.artifact_euid)
-            return app.state.dewey_client.resolve_artifact_set(str(request.artifact_set_euid))
+                resolved = app.state.dewey_client.resolve_artifact(request.artifact_euid)
+                record_observed_dependency("dewey")
+                return resolved
+            resolved = app.state.dewey_client.resolve_artifact_set(str(request.artifact_set_euid))
+            record_observed_dependency("dewey")
+            return resolved
         except DeweyClientError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
 

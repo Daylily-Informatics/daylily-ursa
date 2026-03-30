@@ -12,7 +12,7 @@ import uvicorn
 from daylib_ursa.analysis_store import AnalysisStore
 from daylib_ursa.atlas_result_client import AtlasResultClient
 from daylib_ursa.bloom_resolver_client import BloomResolverClient
-from daylib_ursa.config import get_settings
+from daylib_ursa.config import DEFAULT_API_PORT, get_settings
 from daylib_ursa.dewey_client import DeweyClient
 from daylib_ursa.workset_api import create_app
 
@@ -26,7 +26,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument("--region", default="us-west-2", help="AWS region")
     parser.add_argument("--profile", help="AWS profile name")
     parser.add_argument("--host", default="0.0.0.0", help="Host to bind to")
-    parser.add_argument("--port", type=int, default=8914, help="Port to bind to")
+    parser.add_argument("--port", type=int, default=DEFAULT_API_PORT, help="Port to bind to")
     parser.add_argument(
         "--bootstrap-tapdb",
         action="store_true",

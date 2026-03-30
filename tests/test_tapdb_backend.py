@@ -89,7 +89,7 @@ def test_tapdb_env_for_target_uses_explicit_defaults(monkeypatch) -> None:
 
 
 def test_export_database_url_for_target_sets_runtime_environment(monkeypatch) -> None:
-    monkeypatch.setattr(tapdb_runtime, "ensure_tapdb_version", lambda *_args, **_kwargs: "3.0.6")
+    monkeypatch.setattr(tapdb_runtime, "ensure_tapdb_version", lambda *_args, **_kwargs: "3.0.9")
     monkeypatch.setattr(
         tapdb_runtime,
         "_get_tapdb_db_config_for_env",
@@ -119,3 +119,24 @@ def test_export_database_url_for_target_sets_runtime_environment(monkeypatch) ->
     assert tapdb_runtime.os.environ["TAPDB_DATABASE_NAME"] == "ursa"
     assert tapdb_runtime.os.environ["TAPDB_ENV"] == "dev"
     assert tapdb_runtime.os.environ["DATABASE_URL"] == db_url
+
+
+def test_resolve_tapdb_config_path_prefers_deployment_scoped_user_config(monkeypatch, tmp_path) -> None:
+    scoped = (
+        tmp_path
+        / ".config"
+        / "tapdb"
+        / "local"
+        / "ursa-local2"
+        / "tapdb-config.yaml"
+    )
+    scoped.parent.mkdir(parents=True, exist_ok=True)
+    scoped.write_text("meta: {}\n", encoding="utf-8")
+
+    monkeypatch.delenv("TAPDB_CONFIG_PATH", raising=False)
+    monkeypatch.setenv("DEPLOYMENT_CODE", "local2")
+    monkeypatch.setattr(tapdb_runtime.Path, "home", classmethod(lambda cls: tmp_path))
+
+    resolved = tapdb_runtime._resolve_tapdb_config_path(namespace="ursa", client_id="local")
+
+    assert resolved == str(scoped)

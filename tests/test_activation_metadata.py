@@ -20,7 +20,9 @@ def test_activate_uses_conda_only_bootstrap() -> None:
         encoding="utf-8"
     )
 
-    assert 'CONDA_ENV_NAME="URSA"' in activate_script
+    assert 'CONDA_ENV_BASE="URSA"' in activate_script
+    assert 'CONDA_ENV_NAME="${CONDA_ENV_BASE}-${CONDA_ENV_DEPLOYMENT_CODE}"' in activate_script
+    assert 'CONDA_ENV_DEPLOYMENT_CODE="${URSA_DEPLOYMENT_CODE:-${DEPLOYMENT_CODE:-${LSMC_DEPLOYMENT_CODE:-local}}}"' in activate_script
     assert 'ENV_FILE="${SCRIPT_DIR}/config/ursa_env.yaml"' in activate_script
     assert 'conda env create -n "$CONDA_ENV_NAME" -f "$ENV_FILE"' in activate_script
     assert 'conda activate "$CONDA_ENV_NAME"' in activate_script

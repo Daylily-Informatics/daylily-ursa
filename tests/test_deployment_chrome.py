@@ -12,7 +12,11 @@ from daylib_ursa.gui_app import mount_gui
 
 
 def test_get_settings_reads_cognito_and_deployment_from_yaml_not_env(tmp_path, monkeypatch):
-    config_path = tmp_path / "ursa-config.yaml"
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("URSA_DEPLOYMENT_CODE", "local")
+    config_dir = tmp_path / ".config" / "ursa-local"
+    config_dir.mkdir(parents=True)
+    config_path = config_dir / "ursa-config-local.yaml"
     config_path.write_text(
         """
 aws_profile: lsmc
@@ -46,8 +50,6 @@ deployment:
         encoding="utf-8",
     )
 
-    monkeypatch.setattr("daylib_ursa.ursa_config.DEFAULT_CONFIG_PATH", config_path)
-    monkeypatch.setattr("daylib_ursa.ursa_config.LEGACY_CONFIG_PATHS", [])
     monkeypatch.setattr("daylib_ursa.ursa_config._global_config", None)
     monkeypatch.setenv("COGNITO_USER_POOL_ID", "env-pool")
     monkeypatch.setenv("COGNITO_APP_CLIENT_ID", "env-client")

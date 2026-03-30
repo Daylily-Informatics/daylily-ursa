@@ -9,7 +9,7 @@ TapDB persistence is Postgres-backed and configured via `TAPDB_*` strict-namespa
 
 ## Configure Regions
 
-Create `~/.config/ursa/ursa-config.yaml`:
+Create `~/.config/ursa-<deployment>/ursa-config-<deployment>.yaml`:
 
 ```yaml
 aws_profile: lsmc

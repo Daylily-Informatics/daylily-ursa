@@ -3,18 +3,20 @@
 from __future__ import annotations
 
 import importlib.metadata
+import json
 import os
 import re
 import subprocess
 import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import quote
 
 from daylily_tapdb import InstanceFactory, TAPDBConnection, TemplateManager
 
-TAPDB_REQUIRED_VERSION = "3.0.6"
+TAPDB_REQUIRED_VERSION = "3.0.9"
 DEFAULT_AWS_PROFILE = "lsmc"
 DEFAULT_AWS_REGION = "us-west-2"
 DEFAULT_TAPDB_CLIENT_ID = "local"
@@ -31,6 +33,21 @@ _AURORA_ENGINE_TYPES = {"aurora", "aurora-postgres", "rds", "rds-aurora"}
 
 class TapDBRuntimeError(RuntimeError):
     """Raised when TapDB runtime setup or invocation fails."""
+
+
+def _sanitize_deployment_code(value: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "-", (value or "").strip())
+    cleaned = cleaned.strip("-")
+    return cleaned or "local"
+
+
+def _resolve_deployment_code() -> str:
+    return _sanitize_deployment_code(
+        os.environ.get("URSA_DEPLOYMENT_CODE")
+        or os.environ.get("DEPLOYMENT_CODE")
+        or os.environ.get("LSMC_DEPLOYMENT_CODE")
+        or "local"
+    )
 
 
 @dataclass(frozen=True)
@@ -270,6 +287,18 @@ def _resolve_tapdb_config_path(*, namespace: str, client_id: str) -> str | None:
     default_client_id, default_namespace, _default_tapdb_env = _resolved_default_identity()
     normalized_namespace = (namespace or default_namespace).strip() or default_namespace
     normalized_client_id = (client_id or default_client_id).strip() or default_client_id
+    deployment_code = _resolve_deployment_code()
+
+    deployment_scoped = (
+        Path.home()
+        / ".config"
+        / "tapdb"
+        / normalized_client_id
+        / f"{normalized_namespace}-{deployment_code}"
+        / "tapdb-config.yaml"
+    )
+    if deployment_scoped.exists():
+        return str(deployment_scoped)
 
     user_scoped = (
         Path.home()
@@ -430,3 +459,71 @@ def run_tapdb_cli(
         details = stderr or stdout or "tapdb command failed without output."
         raise TapDBRuntimeError(f"tapdb {' '.join(args)} failed: {details}")
     return result
+
+
+def run_schema_drift_check(
+    *,
+    target: str,
+    client_id: str = DEFAULT_TAPDB_CLIENT_ID,
+    profile: str = DEFAULT_AWS_PROFILE,
+    region: str = DEFAULT_AWS_REGION,
+    namespace: str = DEFAULT_TAPDB_DATABASE_NAME,
+    tapdb_env: str | None = None,
+    cwd: Path | None = None,
+) -> dict[str, object]:
+    """Run TapDB schema drift check in report-only mode and normalize the result."""
+
+    env_name = (tapdb_env or tapdb_env_for_target(target)).strip().lower()
+    tool_version = ensure_tapdb_version()
+    result = run_tapdb_cli(
+        ["db", "schema", "drift-check", env_name, "--json", "--no-strict"],
+        target=target,
+        client_id=client_id,
+        profile=profile,
+        region=region,
+        namespace=namespace,
+        tapdb_env=env_name,
+        cwd=cwd,
+        check=False,
+    )
+
+    payload: dict[str, object] = {}
+    raw_stdout = (result.stdout or "").strip()
+    if raw_stdout:
+        try:
+            parsed = json.loads(raw_stdout)
+        except json.JSONDecodeError:
+            parsed = {"raw_stdout": raw_stdout}
+        if isinstance(parsed, dict):
+            payload = parsed
+
+    status = "check_failed"
+    if result.returncode == 0:
+        status = "clean"
+    elif result.returncode == 1:
+        status = "drift"
+
+    counts = payload.get("counts")
+    summary = "schema drift report unavailable"
+    if isinstance(counts, dict):
+        expected = counts.get("expected")
+        live = counts.get("live")
+        summary = f"expected={expected} live={live}"
+    elif status == "clean":
+        summary = "no schema drift reported"
+    elif status == "drift":
+        summary = "schema drift detected"
+
+    normalized: dict[str, object] = {
+        "status": status,
+        "checked_at": datetime.now(UTC).isoformat(),
+        "environment": env_name,
+        "tool_version": tool_version,
+        "summary": summary,
+        "report": payload,
+        "strict": False,
+    }
+    stderr = (result.stderr or "").strip()
+    if stderr and status == "check_failed":
+        normalized["stderr"] = stderr
+    return normalized
