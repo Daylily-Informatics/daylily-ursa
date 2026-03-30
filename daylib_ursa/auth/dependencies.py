@@ -226,6 +226,20 @@ def _claims_to_current_user(claims: dict[str, Any]) -> CurrentUser:
         or claims.get("custom:tenant_id")
         or claims.get("custom:customer_id")
     )
+    if not str(tenant_value or "").strip():
+        try:
+            from daylib_ursa.config import get_settings
+
+            configured_default = str(get_settings().ursa_portal_default_customer_id or "").strip()
+            if configured_default:
+                try:
+                    tenant_value = str(uuid.UUID(configured_default))
+                except ValueError:
+                    tenant_value = str(uuid.UUID(int=0))
+            else:
+                tenant_value = str(uuid.UUID(int=0))
+        except Exception:
+            tenant_value = tenant_value
     name = str(claims.get("name") or claims.get("display_name") or "").strip() or None
     raw_roles = claims.get("cognito:groups")
     return CurrentUser(

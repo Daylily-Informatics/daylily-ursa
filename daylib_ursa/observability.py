@@ -7,6 +7,7 @@ import time
 from collections import Counter, deque
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from importlib.metadata import PackageNotFoundError, version
 from math import ceil
 from threading import RLock
 from typing import Any
@@ -17,9 +18,14 @@ from sqlalchemy import event
 from daylib_ursa import __version__
 from daylib_ursa.auth import CurrentUser
 from daylib_ursa.config import Settings
+from daylib_ursa.integrations.tapdb_runtime import (
+    TapDBRuntimeError,
+    run_schema_drift_check as run_tapdb_schema_drift_check,
+)
 
 CONTRACT_VERSION = "v3"
 SERVICE_NAME = "ursa"
+_SCHEMA_DRIFT_CACHE: dict[tuple[str, str, str, str, str], dict[str, Any]] = {}
 
 
 def _utcnow() -> str:
@@ -59,6 +65,25 @@ def _normalize_sql(statement: str) -> tuple[str, str]:
     statement_kind = text.split(" ", 1)[0].upper() if text else "UNKNOWN"
     digest = _fingerprint(text or statement_kind)
     return digest, statement_kind
+
+
+def _tool_version() -> str:
+    try:
+        return version("daylily-tapdb")
+    except PackageNotFoundError:
+        return ""
+
+
+def _default_schema_drift_payload(environment: str = "") -> dict[str, Any]:
+    return {
+        "status": "not_run",
+        "checked_at": None,
+        "environment": environment,
+        "tool_version": _tool_version(),
+        "summary": "Schema drift check has not been run.",
+        "report": {},
+        "strict": False,
+    }
 
 
 @dataclass
@@ -182,12 +207,18 @@ class UrsaObservabilityStore:
         self.app_version = app_version
         self._lock = RLock()
         self._started_at = _utcnow()
+        self._dependency_observed_at = self._started_at
         self._endpoint_rollups: dict[tuple[str, str], EndpointRollup] = {}
         self._family_rollups: dict[str, FamilyRollup] = {}
         self._db_rollups: dict[str, DbQueryRollup] = {}
         self._db_probes: deque[dict[str, Any]] = deque(maxlen=25)
         self._auth_recent: deque[dict[str, Any]] = deque(maxlen=25)
         self._auth_status_counts: Counter[str] = Counter()
+        self._observed_dependencies: set[str] = set()
+        self._schema_drift = _default_schema_drift_payload(
+            str(self.settings.tapdb_env or self.settings.daylily_env or "")
+        )
+        self._refresh_schema_drift_status()
         self._obs_services_snapshot = self._build_obs_services_snapshot()
 
     def _build_obs_services_snapshot(self) -> dict[str, Any]:
@@ -213,9 +244,72 @@ class UrsaObservabilityStore:
             "extensions": [
                 "ursa.admin_observability_ui",
                 "ursa.anomalies_v1",
+                "ursa.topology_v1",
             ],
-            "observed_at": self._started_at,
+            "dependencies": self._dependencies_snapshot(),
+            "observed_at": self._dependency_observed_at,
         }
+
+    def _configured_dependencies(self) -> list[str]:
+        configured: list[str] = []
+        if str(self.settings.atlas_base_url or "").strip():
+            configured.append("atlas")
+        if str(self.settings.bloom_base_url or "").strip():
+            configured.append("bloom")
+        if self.settings.dewey_enabled and str(self.settings.dewey_base_url or "").strip():
+            configured.append("dewey")
+        return configured
+
+    def _dependencies_snapshot(self) -> dict[str, Any]:
+        return {
+            "configured_services": self._configured_dependencies(),
+            "observed_services": sorted(self._observed_dependencies),
+        }
+
+    def _session_summary(self, observed_at: str | None = None) -> dict[str, Any]:
+        return {
+            "supported": False,
+            "active_session_count": None,
+            "recent_user_count": None,
+            "observed_at": observed_at or self._started_at,
+        }
+
+    def _refresh_schema_drift_status(self) -> None:
+        environment = str(self.settings.tapdb_env or self.settings.daylily_env or "").strip()
+        cache_key = (
+            str(self.settings.database_target or "").strip(),
+            str(self.settings.tapdb_client_id or "").strip(),
+            str(self.settings.tapdb_database_name or "").strip(),
+            environment,
+            str(self.settings.aws_profile or "").strip(),
+        )
+        cached = _SCHEMA_DRIFT_CACHE.get(cache_key)
+        if cached is not None:
+            self._schema_drift = dict(cached)
+            return
+        try:
+            result = run_tapdb_schema_drift_check(
+                target=self.settings.database_target,
+                client_id=self.settings.tapdb_client_id,
+                profile=self.settings.aws_profile or "",
+                region=self.settings.day_aws_region or self.settings.daylily_primary_region or "us-west-2",
+                namespace=self.settings.tapdb_database_name,
+                tapdb_env=environment or None,
+            )
+        except TapDBRuntimeError as exc:
+            result = {
+                **_default_schema_drift_payload(environment),
+                "status": "check_failed",
+                "summary": f"Unable to execute tapdb drift-check: {exc}",
+            }
+        except Exception as exc:
+            result = {
+                **_default_schema_drift_payload(environment),
+                "status": "check_failed",
+                "summary": f"Unable to execute tapdb drift-check: {exc}",
+            }
+        self._schema_drift = dict(result)
+        _SCHEMA_DRIFT_CACHE[cache_key] = dict(result)
 
     def projection(self, *, observed_at: str | None = None, detail: str | None = None) -> ProjectionMetadata:
         seen_at = observed_at or self._started_at
@@ -276,6 +370,15 @@ class UrsaObservabilityStore:
                 }
             )
 
+    def record_observed_dependency(self, service_id: str) -> None:
+        candidate = str(service_id or "").strip().lower()
+        if not candidate:
+            return
+        with self._lock:
+            self._observed_dependencies.add(candidate)
+            self._dependency_observed_at = _utcnow()
+            self._obs_services_snapshot = self._build_obs_services_snapshot()
+
     def record_auth_event(
         self,
         *,
@@ -326,7 +429,8 @@ class UrsaObservabilityStore:
         }
 
     def obs_services_snapshot(self) -> tuple[ProjectionMetadata, dict[str, Any]]:
-        snapshot = dict(self._obs_services_snapshot)
+        with self._lock:
+            snapshot = dict(self._build_obs_services_snapshot())
         observed_at = str(snapshot.get("observed_at") or self._started_at)
         return self.projection(observed_at=observed_at), snapshot
 
@@ -363,6 +467,7 @@ class UrsaObservabilityStore:
         with self._lock:
             latest = dict(self._db_probes[0]) if self._db_probes else None
             recent_queries = [rollup.to_dict() for rollup in self._db_rollups.values()]
+            schema_drift = dict(self._schema_drift)
         recent_queries.sort(key=lambda item: (-float(item["p95_ms"]), -int(item["request_count"]), item["label"]))
         hottest = sorted(recent_queries, key=lambda item: (-int(item["request_count"]), item["label"]))[:10]
         slowest = sorted(recent_queries, key=lambda item: (-float(item["p95_ms"]), item["label"]))[:10]
@@ -376,6 +481,7 @@ class UrsaObservabilityStore:
             "recent": recent_queries[:25],
             "slowest": slowest,
             "hottest": hottest,
+            "schema_drift": schema_drift,
             "observed_at": observed_at,
         }
         return self.projection(observed_at=observed_at), payload
@@ -399,6 +505,7 @@ class UrsaObservabilityStore:
             "app_client_id_present": bool(self.settings.cognito_app_client_id),
             "recent": recent,
             "status_counts": status_counts,
+            "sessions": self._session_summary(observed_at),
             "observed_at": observed_at,
         }
 
@@ -486,6 +593,7 @@ def build_obs_services_payload(
     )
     payload["endpoints"] = list(snapshot.get("endpoints") or [])
     payload["extensions"] = list(snapshot.get("extensions") or [])
+    payload["dependencies"] = dict(snapshot.get("dependencies") or {})
     return _with_projection(payload, projection)
 
 
@@ -569,6 +677,7 @@ def build_auth_health_payload(
         "app_client_id_present": bool(auth_rollup.get("app_client_id_present", False)),
         "recent": list(auth_rollup.get("recent") or []),
         "status_counts": dict(auth_rollup.get("status_counts") or {}),
+        "sessions": dict(auth_rollup.get("sessions") or {}),
     }
     return _with_projection(payload, projection)
 

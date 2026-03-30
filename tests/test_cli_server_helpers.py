@@ -64,8 +64,8 @@ def test_resolve_https_cert_paths_fails_without_mkcert(
 ) -> None:
     cert = tmp_path / "auto-cert.pem"
     key = tmp_path / "auto-key.pem"
-    monkeypatch.setattr(server_cli, "DEFAULT_SSL_CERT_FILE", cert)
-    monkeypatch.setattr(server_cli, "DEFAULT_SSL_KEY_FILE", key)
+    monkeypatch.setattr(server_cli, "_default_ssl_cert_file", lambda: cert)
+    monkeypatch.setattr(server_cli, "_default_ssl_key_file", lambda: key)
     monkeypatch.delenv("URSA_SSL_CERT_FILE", raising=False)
     monkeypatch.delenv("URSA_SSL_KEY_FILE", raising=False)
     monkeypatch.setattr(server_cli.shutil, "which", lambda _name: None)
@@ -82,8 +82,8 @@ def test_resolve_https_cert_paths_generates_with_mkcert(
 ) -> None:
     cert = tmp_path / "auto-cert.pem"
     key = tmp_path / "auto-key.pem"
-    monkeypatch.setattr(server_cli, "DEFAULT_SSL_CERT_FILE", cert)
-    monkeypatch.setattr(server_cli, "DEFAULT_SSL_KEY_FILE", key)
+    monkeypatch.setattr(server_cli, "_default_ssl_cert_file", lambda: cert)
+    monkeypatch.setattr(server_cli, "_default_ssl_key_file", lambda: key)
     monkeypatch.delenv("URSA_SSL_CERT_FILE", raising=False)
     monkeypatch.delenv("URSA_SSL_KEY_FILE", raising=False)
     monkeypatch.setattr(server_cli.shutil, "which", lambda _name: "/usr/local/bin/mkcert")
@@ -225,7 +225,7 @@ def test_get_pid_clears_non_ursa_process(
 ) -> None:
     pid_file = tmp_path / "server.pid"
     pid_file.write_text("4242", encoding="utf-8")
-    monkeypatch.setattr(server_cli, "PID_FILE", pid_file)
+    monkeypatch.setattr(server_cli, "_pid_file", lambda: pid_file)
     monkeypatch.setattr(server_cli.os, "kill", lambda _pid, _sig: None)
     monkeypatch.setattr(
         server_cli.subprocess,

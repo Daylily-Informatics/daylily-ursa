@@ -1,4 +1,4 @@
-"""Ursa configuration loader for ~/.config/ursa/ursa-config.yaml.
+"""Ursa configuration loader for ~/.config/ursa-<deployment>/ursa-config-<deployment>.yaml.
 
 This module provides:
 - List of AWS regions to scan for ParallelCluster instances
@@ -9,12 +9,12 @@ S3 buckets are discovered from cluster tags (aws-parallelcluster-monitor-bucket)
 rather than being configured statically per region.
 
 Configuration follows XDG Base Directory conventions:
-- Config file: ~/.config/ursa/ursa-config.yaml
-- Legacy paths (~/.ursa/*) are checked for backward compatibility
+- Config file: ~/.config/ursa-<deployment>/ursa-config-<deployment>.yaml
 """
 
 import logging
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -44,15 +44,28 @@ class RegionConfig:
         return str(Path(self.ssh_pem).expanduser())
 
 
-# Canonical config path (XDG Base Directory convention)
-DEFAULT_CONFIG_PATH = Path.home() / ".config" / "ursa" / "ursa-config.yaml"
+def _sanitize_deployment_code(value: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "-", str(value or "").strip()).strip("-")
+    return cleaned or "local"
 
-# Legacy paths to check (for backward compatibility during migration)
-LEGACY_CONFIG_PATHS = [
-    Path.home() / ".ursa" / "ursa-config.yaml",  # Previous canonical path
-    Path.home() / ".ursa" / "ursa.yaml",
-    Path.home() / ".ursa" / "config.yaml",
-]
+
+def _resolve_deployment_code() -> str:
+    return _sanitize_deployment_code(
+        os.environ.get("URSA_DEPLOYMENT_CODE")
+        or os.environ.get("DEPLOYMENT_CODE")
+        or os.environ.get("LSMC_DEPLOYMENT_CODE")
+        or "local"
+    )
+
+
+def get_config_dir() -> Path:
+    xdg_config_home = Path(os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config"))
+    return xdg_config_home / f"ursa-{_resolve_deployment_code()}"
+
+
+def get_config_file_path() -> Path:
+    deployment = _resolve_deployment_code()
+    return get_config_dir() / f"ursa-config-{deployment}.yaml"
 
 # Expected schema fields
 VALID_FIELDS = {
@@ -203,13 +216,12 @@ def validate_config_file(path: Path) -> Tuple[bool, List[str], List[str]]:
 
 @dataclass
 class UrsaConfig:
-    """Ursa configuration loaded from ~/.config/ursa/ursa-config.yaml.
+    """Ursa configuration loaded from ~/.config/ursa-<deployment>/ursa-config-<deployment>.yaml.
 
     S3 buckets are NOT configured here - they are discovered dynamically from
     cluster tags (aws-parallelcluster-monitor-bucket) when a cluster is selected.
 
-    Configuration follows XDG Base Directory conventions. Legacy paths under
-    ~/.ursa/ are checked for backward compatibility.
+    Configuration follows deployment-scoped XDG Base Directory conventions.
     """
 
     regions: List[RegionConfig] = field(default_factory=list)
@@ -302,9 +314,6 @@ class UrsaConfig:
     _config_path: Optional[Path] = None
     """Path where config was loaded from."""
 
-    _from_legacy_path: bool = False
-    """Whether config was loaded from a legacy path."""
-
     _region_map: Dict[str, RegionConfig] = field(default_factory=dict, repr=False)
     """Internal map from region name to RegionConfig for fast lookup."""
 
@@ -317,37 +326,20 @@ class UrsaConfig:
 
         Args:
             config_path: Path to config file. If not provided, looks for
-                         ~/.config/ursa/ursa-config.yaml first, then legacy paths.
+                         ~/.config/ursa-<deployment>/ursa-config-<deployment>.yaml.
 
         Returns:
             UrsaConfig instance (empty regions list if file doesn't exist).
         """
-        from_legacy = False
-
         # Find config file
         if config_path:
             path = config_path
         else:
-            # Check canonical path first
-            if DEFAULT_CONFIG_PATH.exists():
-                path = DEFAULT_CONFIG_PATH
-            else:
-                # Check legacy paths
-                path = None
-                for candidate in LEGACY_CONFIG_PATHS:
-                    if candidate.exists():
-                        path = candidate
-                        from_legacy = True
-                        LOGGER.warning(
-                            "Using legacy config path %s. Consider moving to %s",
-                            path,
-                            DEFAULT_CONFIG_PATH,
-                        )
-                        break
+            path = get_config_file_path()
 
         if not path or not path.exists():
-            LOGGER.warning("Ursa config not found at %s", DEFAULT_CONFIG_PATH)
-            return cls(_config_path=DEFAULT_CONFIG_PATH)
+            LOGGER.warning("Ursa config not found at %s", get_config_file_path())
+            return cls(_config_path=get_config_file_path())
 
         # Validate the config file
         is_valid, errors, warnings = validate_config_file(path)
@@ -466,7 +458,6 @@ class UrsaConfig:
             deployment_color=str(deployment.get("color") or "#0f766e"),
             deployment_is_production=bool(deployment.get("is_production", False)),
             _config_path=path,
-            _from_legacy_path=from_legacy,
             _region_map=region_map,
         )
 
@@ -511,11 +502,6 @@ class UrsaConfig:
     def config_path(self) -> Optional[Path]:
         """Get the path where config was loaded from."""
         return self._config_path
-
-    @property
-    def from_legacy_path(self) -> bool:
-        """Check if config was loaded from a legacy path."""
-        return self._from_legacy_path
 
     def get_effective_aws_profile(self) -> Optional[str]:
         """Get the effective AWS profile (env var or config).
