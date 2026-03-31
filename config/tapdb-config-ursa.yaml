@@ -10,7 +10,7 @@ environments:
     port: "5588"
     ui_port: "8918"
     database: tapdb_ursa_dev
-    audit_log_euid_prefix: URA
+    audit_log_euid_prefix: RSA
     support_email: support@lsmc.bio
     cognito_user_pool_id: ""
 
@@ -21,7 +21,7 @@ environments:
     user: tapdb_admin
     password: ""
     database: tapdb_ursa_prod
-    audit_log_euid_prefix: URA
+    audit_log_euid_prefix: RSA
     support_email: support@lsmc.bio
     cognito_user_pool_id: ""
     region: us-west-2
