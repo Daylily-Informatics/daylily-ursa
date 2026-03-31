@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import json
 import uuid
 from types import SimpleNamespace
 
@@ -98,6 +100,52 @@ def _app_with_gui(settings):
     return app
 
 
+def _login_user(
+    monkeypatch,
+    client,
+    *,
+    email: str = "user@example.com",
+    sub: str = "user-123",
+    name: str = "Ursa User",
+    roles: list[str] | None = None,
+) -> None:
+    monkeypatch.setattr(gui_app.secrets, "token_urlsafe", lambda _n: "state-123")
+
+    def _resolve_access_token(_token: str, **_kwargs):
+        return CurrentUser(
+            sub=sub,
+            email=email,
+            name=name,
+            tenant_id=uuid.UUID("11111111-1111-1111-1111-111111111111"),
+            roles=roles or ["ADMIN"],
+        )
+
+    client.app.state.auth_provider = SimpleNamespace(resolve_access_token=_resolve_access_token)
+    monkeypatch.setattr(gui_app, "build_authorization_url", lambda **_kwargs: "https://example.auth/login")
+    monkeypatch.setattr(
+        gui_app,
+        "exchange_authorization_code",
+        lambda **_kwargs: {
+            "id_token": "id-token-123",
+            "access_token": "access-token-456",
+        },
+    )
+    login_response = client.get("/auth/login?next=/usage", follow_redirects=False)
+    assert login_response.status_code == 303
+    callback_response = client.get(
+        "/auth/callback?code=auth-code&state=state-123",
+        follow_redirects=False,
+    )
+    assert callback_response.status_code == 303
+    assert callback_response.headers["location"] == "/usage"
+
+
+def _decode_session_cookie(client: TestClient) -> dict[str, object]:
+    cookie_name = next(iter(client.cookies.keys()))
+    payload = client.cookies[cookie_name].split(".", 1)[0]
+    return json.loads(base64.b64decode(payload))
+
+
 def test_login_page_renders_banner_and_favicon():
     settings = get_settings_for_testing(
         ursa_internal_output_bucket="ursa-internal",
@@ -160,6 +208,80 @@ def test_auth_callback_persists_session_and_redirects(monkeypatch):
     login_page = client.get("/login?next=/usage", follow_redirects=False)
     assert login_page.status_code == 303
     assert login_page.headers["location"] == "/usage"
+
+
+def test_two_browser_sessions_keep_distinct_users(monkeypatch):
+    settings = get_settings_for_testing(
+        ursa_internal_output_bucket="ursa-internal",
+        cognito_domain="ursa.auth.us-west-2.amazoncognito.com",
+        cognito_app_client_id="client-123",
+        cognito_callback_url="https://localhost:8913/auth/callback",
+        cognito_logout_url="https://localhost:8913/login",
+    )
+    app = _app_with_gui(settings)
+
+    with TestClient(app) as client_a, TestClient(app) as client_b:
+        _login_user(
+            monkeypatch,
+            client_a,
+            email="operator-a@example.com",
+            sub="sub-a",
+            name="Operator A",
+        )
+        _login_user(
+            monkeypatch,
+            client_b,
+            email="operator-b@example.com",
+            sub="sub-b",
+            name="Operator B",
+        )
+
+        session_a = _decode_session_cookie(client_a)
+        session_b = _decode_session_cookie(client_b)
+
+        assert session_a["email"] == "operator-a@example.com"
+        assert session_a["user_sub"] == "sub-a"
+        assert session_b["email"] == "operator-b@example.com"
+        assert session_b["user_sub"] == "sub-b"
+        assert session_a["email"] != session_b["email"]
+        assert session_a["user_sub"] != session_b["user_sub"]
+        assert client_a.get("/login?next=/usage", follow_redirects=False).status_code == 303
+        assert client_b.get("/login?next=/usage", follow_redirects=False).status_code == 303
+
+
+def test_logout_from_one_session_does_not_clear_the_other(monkeypatch):
+    settings = get_settings_for_testing(
+        ursa_internal_output_bucket="ursa-internal",
+        cognito_domain="ursa.auth.us-west-2.amazoncognito.com",
+        cognito_app_client_id="client-123",
+        cognito_callback_url="https://localhost:8913/auth/callback",
+        cognito_logout_url="https://localhost:8913/login",
+    )
+    app = _app_with_gui(settings)
+
+    with TestClient(app) as client_a, TestClient(app) as client_b:
+        _login_user(
+            monkeypatch,
+            client_a,
+            email="shared@example.com",
+            sub="sub-shared",
+            name="Shared User",
+        )
+        _login_user(
+            monkeypatch,
+            client_b,
+            email="shared@example.com",
+            sub="sub-shared",
+            name="Shared User",
+        )
+
+        logout = client_a.get("/logout", follow_redirects=False)
+        assert logout.status_code == 303
+        assert logout.headers["location"].startswith("https://ursa.auth.us-west-2.amazoncognito.com/logout")
+
+        assert client_a.get("/login?next=/usage", follow_redirects=False).status_code == 200
+        assert client_b.get("/login?next=/usage", follow_redirects=False).status_code == 303
+        assert _decode_session_cookie(client_b)["email"] == "shared@example.com"
 
 
 def test_auth_callback_passes_paired_access_token_for_id_token_verification(monkeypatch):

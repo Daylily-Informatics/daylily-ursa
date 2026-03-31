@@ -571,15 +571,14 @@ def mount_gui(app: FastAPI) -> None:
             token_payload = _exchange_auth_code(code.strip())
             id_token = str(token_payload.get("id_token") or "").strip()
             access_token = str(token_payload.get("access_token") or "").strip()
-            token = access_token or id_token
-            if not token:
+            if not id_token and not access_token:
                 raise AuthError("Cognito token response missing access_token or id_token")
             auth_provider = getattr(app.state, "auth_provider", None)
             if auth_provider is None:
                 raise AuthError("Authentication provider is not configured")
             actor = auth_provider.resolve_access_token(
-                token,
-                paired_access_token=id_token if token == access_token else access_token or None,
+                id_token or access_token,
+                paired_access_token=access_token or None,
             )
         except AuthError as exc:
             LOGGER.warning("Ursa Cognito callback failed: %s", exc)
