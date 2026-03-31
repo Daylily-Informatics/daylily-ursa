@@ -5,6 +5,8 @@ from __future__ import annotations
 import inspect
 from pathlib import Path
 
+import yaml
+
 from daylib_ursa.integrations import tapdb_runtime
 from daylib_ursa.tapdb_graph import backend as backend_module
 from daylib_ursa.tapdb_graph.backend import (
@@ -140,3 +142,14 @@ def test_resolve_tapdb_config_path_prefers_deployment_scoped_user_config(monkeyp
     resolved = tapdb_runtime._resolve_tapdb_config_path(namespace="ursa", client_id="local")
 
     assert resolved == str(scoped)
+
+
+def test_repo_ships_tapdb_config_template() -> None:
+    template_path = Path("config/tapdb-config-ursa.yaml")
+    payload = yaml.safe_load(template_path.read_text(encoding="utf-8"))
+
+    assert template_path.is_file()
+    assert payload["meta"]["client_id"] == "local"
+    assert payload["meta"]["database_name"] == "ursa"
+    assert payload["environments"]["dev"]["port"] == "5588"
+    assert payload["environments"]["dev"]["database"] == "tapdb_ursa_dev"
