@@ -36,7 +36,7 @@ class TapDBRuntimeError(RuntimeError):
 
 
 def _sanitize_deployment_code(value: str) -> str:
-    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "-", (value or "").strip())
+    cleaned = re.sub(r"[^A-Za-z0-9-]+", "-", (value or "").strip())
     cleaned = cleaned.strip("-")
     return cleaned or "local"
 

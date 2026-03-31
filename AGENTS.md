@@ -1,7 +1,7 @@
 # WHEN INITIALIZING A NEW TERMINAL SESSION
 
 ## ALWAYS DO THIS FIRST
-source ./activate
+source ./activate <deploy-name>
 
 ## CLI Policy
 
@@ -18,7 +18,7 @@ source ./activate
 
 ## Ursa Examples
 
-- Start with `source ./activate`
+- Start with `source ./activate <deploy-name>`
 - Use `ursa server start --port 8913`
 - Use `ursa config ...` and `ursa env ...` for Ursa-owned runtime operations
 - Use `daycog ...` for Cognito lifecycle and `tapdb ...` for DB/runtime lifecycle where Ursa docs explicitly delegate to them

@@ -41,7 +41,7 @@ flowchart LR
 ### Quickstart
 
 ```bash
-source ./activate
+source ./activate <deploy-name>
 ursa config init
 ursa server start --port 8913
 ```
