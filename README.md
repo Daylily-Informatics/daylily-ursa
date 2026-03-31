@@ -46,6 +46,9 @@ ursa config init
 ursa server start --port 8913
 ```
 
+`ursa server start` uses the shared TLS resolver by default. Pass `--no-ssl` for HTTP-only
+local testing, or `--cert` and `--key` to override the deployment-scoped cert pair.
+
 Validation:
 
 ```bash

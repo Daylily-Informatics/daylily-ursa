@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import builtins
+import json
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -11,6 +12,7 @@ import pytest
 import typer
 
 from daylib_ursa.cli import server as server_cli
+import cli_core_yo.certs as shared_certs
 
 
 def test_require_auth_dependencies_raises_when_jose_missing(
@@ -34,8 +36,8 @@ def test_require_auth_dependencies_raises_when_jose_missing(
 def test_resolve_https_cert_paths_requires_both_env_vars(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("URSA_SSL_CERT_FILE", "/tmp/cert.pem")
-    monkeypatch.delenv("URSA_SSL_KEY_FILE", raising=False)
+    monkeypatch.setenv("SSL_CERT_FILE", "/tmp/cert.pem")
+    monkeypatch.delenv("SSL_KEY_FILE", raising=False)
 
     with pytest.raises(typer.Exit) as exc:
         server_cli._resolve_https_cert_paths("localhost")
@@ -52,23 +54,72 @@ def test_resolve_https_cert_paths_uses_env_files_when_present(
     cert.write_text("cert", encoding="utf-8")
     key.write_text("key", encoding="utf-8")
 
+    monkeypatch.setenv("SSL_CERT_FILE", str(cert))
+    monkeypatch.setenv("SSL_KEY_FILE", str(key))
+
+    assert server_cli._resolve_https_cert_paths("localhost") == (str(cert), str(key))
+
+
+def test_resolve_https_cert_paths_uses_legacy_env_after_generic_absent(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    cert = tmp_path / "legacy-cert.pem"
+    key = tmp_path / "legacy-key.pem"
+    cert.write_text("cert", encoding="utf-8")
+    key.write_text("key", encoding="utf-8")
+
+    monkeypatch.delenv("SSL_CERT_FILE", raising=False)
+    monkeypatch.delenv("SSL_KEY_FILE", raising=False)
     monkeypatch.setenv("URSA_SSL_CERT_FILE", str(cert))
     monkeypatch.setenv("URSA_SSL_KEY_FILE", str(key))
 
     assert server_cli._resolve_https_cert_paths("localhost") == (str(cert), str(key))
 
 
+def test_resolve_https_cert_paths_prefers_shared_dayhoff_certs_dir(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    shared_dir = tmp_path / "shared"
+    repo_dir = tmp_path / "repo"
+    shared_dir.mkdir(parents=True)
+    repo_dir.mkdir(parents=True)
+    shared_cert = shared_dir / "cert.pem"
+    shared_key = shared_dir / "key.pem"
+    repo_cert = repo_dir / "cert.pem"
+    repo_key = repo_dir / "key.pem"
+    shared_cert.write_text("shared-cert", encoding="utf-8")
+    shared_key.write_text("shared-key", encoding="utf-8")
+    repo_cert.write_text("repo-cert", encoding="utf-8")
+    repo_key.write_text("repo-key", encoding="utf-8")
+
+    monkeypatch.delenv("SSL_CERT_FILE", raising=False)
+    monkeypatch.delenv("SSL_KEY_FILE", raising=False)
+    monkeypatch.delenv("URSA_SSL_CERT_FILE", raising=False)
+    monkeypatch.delenv("URSA_SSL_KEY_FILE", raising=False)
+    monkeypatch.setattr(server_cli, "shared_dayhoff_certs_dir", lambda _deploy: shared_dir)
+    monkeypatch.setattr(server_cli, "REPO_CERTS_DIR", repo_dir)
+
+    assert server_cli._resolve_https_cert_paths("localhost") == (
+        str(shared_cert),
+        str(shared_key),
+    )
+
+
 def test_resolve_https_cert_paths_fails_without_mkcert(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    cert = tmp_path / "auto-cert.pem"
-    key = tmp_path / "auto-key.pem"
-    monkeypatch.setattr(server_cli, "_default_ssl_cert_file", lambda: cert)
-    monkeypatch.setattr(server_cli, "_default_ssl_key_file", lambda: key)
+    shared_dir = tmp_path / "shared"
+    repo_dir = tmp_path / "repo"
+    monkeypatch.delenv("SSL_CERT_FILE", raising=False)
+    monkeypatch.delenv("SSL_KEY_FILE", raising=False)
     monkeypatch.delenv("URSA_SSL_CERT_FILE", raising=False)
     monkeypatch.delenv("URSA_SSL_KEY_FILE", raising=False)
-    monkeypatch.setattr(server_cli.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(server_cli, "shared_dayhoff_certs_dir", lambda _deploy: shared_dir)
+    monkeypatch.setattr(server_cli, "REPO_CERTS_DIR", repo_dir)
+    monkeypatch.setattr(shared_certs.shutil, "which", lambda _name: None)
 
     with pytest.raises(typer.Exit) as exc:
         server_cli._resolve_https_cert_paths("localhost")
@@ -80,13 +131,17 @@ def test_resolve_https_cert_paths_generates_with_mkcert(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    cert = tmp_path / "auto-cert.pem"
-    key = tmp_path / "auto-key.pem"
-    monkeypatch.setattr(server_cli, "_default_ssl_cert_file", lambda: cert)
-    monkeypatch.setattr(server_cli, "_default_ssl_key_file", lambda: key)
+    shared_dir = tmp_path / "shared" / "certs"
+    repo_dir = tmp_path / "repo"
+    shared_dir.mkdir(parents=True)
+    repo_dir.mkdir(parents=True)
+    monkeypatch.delenv("SSL_CERT_FILE", raising=False)
+    monkeypatch.delenv("SSL_KEY_FILE", raising=False)
     monkeypatch.delenv("URSA_SSL_CERT_FILE", raising=False)
     monkeypatch.delenv("URSA_SSL_KEY_FILE", raising=False)
-    monkeypatch.setattr(server_cli.shutil, "which", lambda _name: "/usr/local/bin/mkcert")
+    monkeypatch.setattr(server_cli, "shared_dayhoff_certs_dir", lambda _deploy: shared_dir)
+    monkeypatch.setattr(server_cli, "REPO_CERTS_DIR", repo_dir)
+    monkeypatch.setattr(shared_certs.shutil, "which", lambda _name: "/usr/local/bin/mkcert")
 
     calls: list[list[str]] = []
 
@@ -99,11 +154,42 @@ def test_resolve_https_cert_paths_generates_with_mkcert(
             key_path.write_text("key", encoding="utf-8")
         return SimpleNamespace(returncode=0)
 
-    monkeypatch.setattr(server_cli.subprocess, "run", fake_run)
+    monkeypatch.setattr(shared_certs.subprocess, "run", fake_run)
 
     result = server_cli._resolve_https_cert_paths("0.0.0.0")
-    assert result == (str(cert), str(key))
+    assert result == (str(shared_dir / "cert.pem"), str(shared_dir / "key.pem"))
     assert any("-install" in call for call in calls)
+    assert (shared_dir / "cert.pem").exists()
+    assert (shared_dir / "key.pem").exists()
+
+
+def test_status_reports_http_after_no_ssl_start(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    (state_dir / "server-meta.json").write_text(json.dumps({"ssl_enabled": False}), encoding="utf-8")
+    monkeypatch.setattr(server_cli, "_config_dir", lambda: state_dir)
+    monkeypatch.setattr(server_cli, "_get_pid", lambda: 4242)
+    monkeypatch.setattr(server_cli, "_resolved_server_host_port", lambda: ("0.0.0.0", 8914))
+    monkeypatch.setattr(server_cli, "latest_log", lambda _log_dir: None)
+
+    server_cli.status()
+
+    output = capsys.readouterr().out
+    assert "http://localhost:8914" in output
+
+
+def test_workset_api_cli_parse_args_supports_ssl_flags() -> None:
+    from daylib_ursa.workset_api_cli import parse_args
+
+    args = parse_args(["--no-ssl", "--cert", "/tmp/cert.pem", "--key", "/tmp/key.pem"])
+
+    assert args.ssl is False
+    assert args.cert == "/tmp/cert.pem"
+    assert args.key == "/tmp/key.pem"
 
 
 def test_uri_helpers_cover_normalization_and_ports() -> None:

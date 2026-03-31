@@ -155,9 +155,14 @@ URSA_ALLOWED_REGIONS=us-west-2
 # Host/port and TapDB namespace should normally be configured in
 # ~/.config/ursa-<deployment>/ursa-config-<deployment>.yaml, not here.
 # HTTPS is required for GUI/API startup.
-# If unset, `ursa server start` auto-generates localhost certs with mkcert.
-# URSA_SSL_CERT_FILE=/absolute/path/to/cert.pem
-# URSA_SSL_KEY_FILE=/absolute/path/to/key.pem
+# Resolution order for `ursa server start`:
+#   1. --cert / --key
+#   2. SSL_CERT_FILE / SSL_KEY_FILE
+#   3. URSA_SSL_CERT_FILE / URSA_SSL_KEY_FILE (migration fallback)
+#   4. shared Dayhoff deployment certs under ~/.local/state/dayhoff/<deploy>/certs
+#   5. repo-local certs/ fallback
+#   6. mkcert generation into the shared Dayhoff cert dir
+# Use `ursa server start --no-ssl` to run HTTP only.
 
 # ========== Authentication ==========
 # Set to 'true' to enable Cognito authentication

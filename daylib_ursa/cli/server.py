@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+import json
 import os
-import shutil
 import subprocess
 import sys
 import time
@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Optional
 
 import typer
 import boto3
+from cli_core_yo.certs import resolve_https_certs, shared_dayhoff_certs_dir
 from cli_core_yo.oauth import runtime_oauth_host, validate_cognito_app_client
 from cli_core_yo.server import (
     display_host,
@@ -36,6 +37,7 @@ if TYPE_CHECKING:
 server_app = typer.Typer(help="API server management commands")
 console = Console()
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+REPO_CERTS_DIR = PROJECT_ROOT / "certs"
 
 REQUIRED_COGNITO_APP_CLIENT_NAME = "ursa"
 
@@ -52,16 +54,18 @@ def _pid_file() -> Path:
     return _config_dir() / "server.pid"
 
 
-def _cert_dir() -> Path:
-    return _config_dir() / "certs"
+def _runtime_meta_file() -> Path:
+    return _config_dir() / "server-meta.json"
 
 
-def _default_ssl_cert_file() -> Path:
-    return _cert_dir() / "cert.pem"
+def _shared_dayhoff_certs_dir() -> Path:
+    from daylib_ursa.ursa_config import _resolve_deployment_code
+
+    return shared_dayhoff_certs_dir(_resolve_deployment_code())
 
 
-def _default_ssl_key_file() -> Path:
-    return _cert_dir() / "key.pem"
+def _option_default(value, fallback):
+    return fallback if isinstance(value, typer.models.OptionInfo) else value
 
 
 def _resolved_server_host_port(
@@ -104,73 +108,63 @@ def _ensure_dir():
     """Ensure deployment-scoped Ursa runtime directories exist."""
     _config_dir().mkdir(parents=True, exist_ok=True)
     _log_dir().mkdir(parents=True, exist_ok=True)
-    _cert_dir().mkdir(parents=True, exist_ok=True)
 
 
-def _resolve_https_cert_paths(host: str) -> tuple[str, str]:
-    """Resolve or generate HTTPS certificate/key paths.
+def _runtime_scheme() -> str:
+    meta_file = _runtime_meta_file()
+    if not meta_file.exists():
+        return "https"
+    try:
+        payload = json.loads(meta_file.read_text(encoding="utf-8"))
+    except Exception:
+        return "https"
+    if isinstance(payload, dict):
+        ssl_enabled = payload.get("ssl_enabled")
+        if isinstance(ssl_enabled, bool):
+            return "https" if ssl_enabled else "http"
+    return "https"
 
-    Prefers explicit env vars:
-    - URSA_SSL_CERT_FILE
-    - URSA_SSL_KEY_FILE
 
-    If not provided, auto-generates localhost certs via mkcert.
-    """
-    cert_from_env = os.environ.get("URSA_SSL_CERT_FILE")
-    key_from_env = os.environ.get("URSA_SSL_KEY_FILE")
-
-    if cert_from_env or key_from_env:
-        if not cert_from_env or not key_from_env:
-            console.print("[red]✗[/red]  Both URSA_SSL_CERT_FILE and URSA_SSL_KEY_FILE must be set")
-            raise typer.Exit(1)
-        cert_path = Path(cert_from_env).expanduser()
-        key_path = Path(key_from_env).expanduser()
-        if not cert_path.exists() or not key_path.exists():
-            console.print("[red]✗[/red]  HTTPS certificate file(s) not found")
-            console.print(f"   cert: [dim]{cert_path}[/dim]")
-            console.print(f"   key:  [dim]{key_path}[/dim]")
-            raise typer.Exit(1)
-        return str(cert_path), str(key_path)
-
-    cert_path = _default_ssl_cert_file()
-    key_path = _default_ssl_key_file()
-    if cert_path.exists() and key_path.exists():
-        return str(cert_path), str(key_path)
-
-    mkcert_bin = shutil.which("mkcert")
-    if not mkcert_bin:
-        console.print("[red]✗[/red]  HTTPS is required but mkcert is not installed")
-        console.print("   Install mkcert and retry, or set URSA_SSL_CERT_FILE / URSA_SSL_KEY_FILE")
-        raise typer.Exit(1)
-
-    # Install local root CA (idempotent), then generate a localhost cert.
-    subprocess.run(
-        [mkcert_bin, "-install"], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+def _write_runtime_meta(*, ssl_enabled: bool) -> None:
+    _runtime_meta_file().write_text(
+        json.dumps({"ssl_enabled": ssl_enabled}, sort_keys=True),
+        encoding="utf-8",
     )
 
+
+def _clear_runtime_meta() -> None:
+    _runtime_meta_file().unlink(missing_ok=True)
+
+
+def _https_san_hosts(host: str) -> tuple[str, ...]:
     san_hosts = ["localhost", "127.0.0.1", "::1"]
     if host not in ("0.0.0.0", "::", "127.0.0.1", "localhost"):
         san_hosts.insert(0, host)
+    return tuple(san_hosts)
 
+
+def _resolve_https_cert_paths(
+    host: str,
+    *,
+    cert: str | None = None,
+    key: str | None = None,
+) -> tuple[str, str]:
+    shared_dir = _shared_dayhoff_certs_dir()
     try:
-        subprocess.run(
-            [
-                mkcert_bin,
-                "-cert-file",
-                str(cert_path),
-                "-key-file",
-                str(key_path),
-                *san_hosts,
-            ],
-            check=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+        resolved = resolve_https_certs(
+            cert_path=cert,
+            key_path=key,
+            legacy_cert_env_vars=("URSA_SSL_CERT_FILE",),
+            legacy_key_env_vars=("URSA_SSL_KEY_FILE",),
+            shared_certs_dir=shared_dir,
+            fallback_certs_dir=REPO_CERTS_DIR,
+            hosts=_https_san_hosts(host),
         )
-    except subprocess.CalledProcessError:
-        console.print("[red]✗[/red]  Failed to generate HTTPS certs with mkcert")
-        raise typer.Exit(1)
+    except SystemExit as exc:
+        console.print(f"[red]✗[/red]  {exc}")
+        raise typer.Exit(1) from exc
 
-    return str(cert_path), str(key_path)
+    return str(resolved.cert_path), str(resolved.key_path)
 
 
 def _describe_cognito_app_client(
@@ -279,6 +273,9 @@ def _run_cognito_uri_check(
 def start(
     port: int | None = typer.Option(None, "--port", "-p", help="Port to run the server on"),
     host: str | None = typer.Option(None, "--host", "-h", help="Host to bind to"),
+    ssl: bool = typer.Option(True, "--ssl/--no-ssl", help="Serve over HTTPS"),
+    cert: str | None = typer.Option(None, "--cert", help="Path to TLS certificate file"),
+    key: str | None = typer.Option(None, "--key", help="Path to TLS private key file"),
     reload: bool = typer.Option(False, "--reload", "-r", help="Enable auto-reload (foreground)"),
     background: bool = typer.Option(
         True, "--background/--foreground", "-b/-f", help="Run in background"
@@ -290,6 +287,15 @@ def start(
     ),
 ):
     """Start the Ursa beta analysis API server."""
+    port = _option_default(port, None)
+    host = _option_default(host, None)
+    ssl = _option_default(ssl, True)
+    cert = _option_default(cert, None)
+    key = _option_default(key, None)
+    reload = _option_default(reload, False)
+    background = _option_default(background, True)
+    check_cognito_uris = _option_default(check_cognito_uris, True)
+
     _ensure_dir()
 
     # Source .env file
@@ -303,8 +309,13 @@ def start(
     pid = _get_pid()
     if pid:
         console.print(f"[yellow]⚠[/yellow]  Server already running (PID {pid})")
-        console.print(f"   URL: [cyan]https://{host}:{port}[/cyan]")
+        protocol = "https" if _runtime_scheme() == "https" else "http"
+        console.print(f"   URL: [cyan]{protocol}://{host}:{port}[/cyan]")
         return
+
+    if not ssl and (cert or key):
+        console.print("[red]✗[/red]  --cert and --key cannot be used with --no-ssl")
+        raise typer.Exit(1)
 
     # Resolve AWS profile from env or config when explicitly provided.
     from daylib_ursa.ursa_config import get_config_file_path, get_ursa_config
@@ -327,7 +338,9 @@ def start(
         or (ursa_config.get_allowed_regions()[0] if ursa_config.is_configured else "us-west-2")
     )
 
-    ssl_certfile, ssl_keyfile = _resolve_https_cert_paths(host)
+    protocol = "https" if ssl else "http"
+    if ssl:
+        _resolve_https_cert_paths(host, cert=cert, key=key)
 
     # Check config file for region configuration
     if not ursa_config.is_configured:
@@ -355,11 +368,12 @@ def start(
         "--region",
         aws_region,
         "--bootstrap-tapdb",
-        "--ssl-certfile",
-        ssl_certfile,
-        "--ssl-keyfile",
-        ssl_keyfile,
+        "--ssl" if ssl else "--no-ssl",
     ]
+    if cert:
+        cmd.extend(["--cert", cert])
+    if key:
+        cmd.extend(["--key", key])
     if aws_profile:
         cmd.extend(["--profile", aws_profile])
 
@@ -403,6 +417,7 @@ def start(
 
         time.sleep(2)
         if proc.poll() is not None:
+            _clear_runtime_meta()
             log_f.close()
             console.print("[red]✗[/red]  Server failed to start. Check logs:")
             console.print(f"   [dim]{log_file}[/dim]")
@@ -416,18 +431,24 @@ def start(
             raise typer.Exit(1)
 
         write_pid(_pid_file(), proc.pid)
+        _write_runtime_meta(ssl_enabled=ssl)
         console.print(f"[green]✓[/green]  Server started (PID {proc.pid})")
-        console.print(f"   URL: [cyan]https://{host}:{port}[/cyan]")
+        console.print(f"   URL: [cyan]{protocol}://{host}:{port}[/cyan]")
         console.print(f"   Logs: [dim]{log_file}[/dim]")
     else:
-        console.print(f"[green]✓[/green]  Starting server on [cyan]https://{host}:{port}[/cyan]")
+        _write_runtime_meta(ssl_enabled=ssl)
+        console.print(f"[green]✓[/green]  Starting server on [cyan]{protocol}://{host}:{port}[/cyan]")
         console.print("   Press Ctrl+C to stop\n")
         try:
             result = subprocess.run(cmd, cwd=PROJECT_ROOT, env=env)
             if result.returncode != 0:
+                _clear_runtime_meta()
                 raise typer.Exit(result.returncode)
         except KeyboardInterrupt:
+            _clear_runtime_meta()
             console.print("\n[yellow]⚠[/yellow]  Server stopped")
+        else:
+            _clear_runtime_meta()
 
 
 @server_app.command("stop")
@@ -435,6 +456,7 @@ def stop():
     """Stop the Ursa API server."""
     stopped, msg = stop_pid(_pid_file())
     if stopped:
+        _clear_runtime_meta()
         console.print(f"[green]✓[/green]  {msg}")
     elif "Permission" in msg:
         console.print(f"[red]✗[/red]  {msg}")
@@ -451,8 +473,9 @@ def status():
         host, port = _resolved_server_host_port()
         log_file = latest_log(_log_dir())
         dh = display_host(host)
+        protocol = _runtime_scheme()
         console.print(f"[green]●[/green]  Server is [green]running[/green] (PID {pid})")
-        console.print(f"   URL: [cyan]https://{dh}:{port}[/cyan]")
+        console.print(f"   URL: [cyan]{protocol}://{dh}:{port}[/cyan]")
         if log_file:
             console.print(f"   Logs: [dim]{log_file}[/dim]")
     else:
@@ -492,11 +515,19 @@ def logs(
 def restart(
     port: int | None = typer.Option(None, "--port", "-p", help="Port to run the server on"),
     host: str | None = typer.Option(None, "--host", "-h", help="Host to bind to"),
+    ssl: bool = typer.Option(True, "--ssl/--no-ssl", help="Serve over HTTPS"),
+    cert: str | None = typer.Option(None, "--cert", help="Path to TLS certificate file"),
+    key: str | None = typer.Option(None, "--key", help="Path to TLS private key file"),
 ):
     """Restart the Ursa API server."""
+    port = _option_default(port, None)
+    host = _option_default(host, None)
+    ssl = _option_default(ssl, True)
+    cert = _option_default(cert, None)
+    key = _option_default(key, None)
     stop()
     time.sleep(1)
-    start(port=port, host=host, reload=False, background=True)
+    start(port=port, host=host, ssl=ssl, cert=cert, key=key, reload=False, background=True)
 
 
 def register(registry: CommandRegistry, spec: CliSpec) -> None:

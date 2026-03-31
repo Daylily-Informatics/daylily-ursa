@@ -8,11 +8,13 @@ import sys
 from typing import Optional, Sequence
 
 import uvicorn
+import typer
 
 from daylib_ursa.analysis_store import AnalysisStore
 from daylib_ursa.atlas_result_client import AtlasResultClient
 from daylib_ursa.bloom_resolver_client import BloomResolverClient
 from daylib_ursa.config import DEFAULT_API_PORT, get_settings
+from daylib_ursa.cli.server import _resolve_https_cert_paths
 from daylib_ursa.dewey_client import DeweyClient
 from daylib_ursa.workset_api import create_app
 
@@ -40,8 +42,24 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         help="Don't bootstrap TapDB templates automatically",
     )
     parser.add_argument("--reload", action="store_true", help="Enable auto-reload for development")
-    parser.add_argument("--ssl-certfile", default=None, help="Path to TLS certificate file (PEM)")
-    parser.add_argument("--ssl-keyfile", default=None, help="Path to TLS private key file (PEM)")
+    parser.add_argument(
+        "--ssl",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Serve over HTTPS",
+    )
+    parser.add_argument("--cert", default=None, help="Path to TLS certificate file (PEM)")
+    parser.add_argument("--key", default=None, help="Path to TLS private key file (PEM)")
+    parser.add_argument(
+        "--ssl-certfile",
+        default=None,
+        help="Legacy TLS certificate file (PEM)",
+    )
+    parser.add_argument(
+        "--ssl-keyfile",
+        default=None,
+        help="Legacy TLS private key file (PEM)",
+    )
     parser.add_argument("--verbose", action="store_true", help="Enable debug logging")
     return parser.parse_args(argv)
 
@@ -66,6 +84,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         raise ValueError(
             "ATLAS_INTERNAL_API_KEY is required for authenticated Ursa->Atlas integration"
         )
+
+    cert_arg = str(args.cert or "").strip() or None
+    key_arg = str(args.key or "").strip() or None
+    legacy_cert = str(args.ssl_certfile or "").strip() or None
+    legacy_key = str(args.ssl_keyfile or "").strip() or None
+    if not args.ssl and any([cert_arg, key_arg, legacy_cert, legacy_key]):
+        raise ValueError("--cert and --key cannot be used with --no-ssl")
 
     LOGGER.info("Initializing Ursa beta analysis store")
     store = AnalysisStore()
@@ -100,6 +125,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
 
     LOGGER.info("Starting Ursa beta analysis API on %s:%d", args.host, args.port)
+    ssl_certfile = None
+    ssl_keyfile = None
+    if args.ssl:
+        try:
+            resolved = _resolve_https_cert_paths(
+                args.host,
+                cert=cert_arg or legacy_cert,
+                key=key_arg or legacy_key,
+            )
+        except typer.Exit as exc:
+            raise SystemExit(exc.exit_code)
+        ssl_certfile, ssl_keyfile = resolved
     uvicorn.run(
         app,
         host=args.host,

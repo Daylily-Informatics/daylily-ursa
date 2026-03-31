@@ -47,6 +47,17 @@ def test_template_definitions_are_template_spec_instances() -> None:
         assert spec.template_code.endswith("/")
 
 
+def test_template_definitions_use_frozen_prefix_remaps() -> None:
+    template_pack = yaml.safe_load(Path("config/tapdb_templates/ursa/templates.json").read_text(encoding="utf-8"))
+    prefixes = {template["instance_prefix"] for template in template_pack["templates"]}
+    assert {"URV", "UTK", "UTR", "UTG", "UAN"}.issubset(prefixes)
+    assert "ARV" not in prefixes
+    assert "TKN" not in prefixes
+    assert "TKR" not in prefixes
+    assert "TKG" not in prefixes
+    assert "ANM" not in prefixes
+
+
 def test_from_json_addl_extracts_dict() -> None:
     class _FakeInstance:
         json_addl = {"foo": "bar", "n": 42}
@@ -136,6 +147,8 @@ def test_resolve_tapdb_config_path_prefers_deployment_scoped_user_config(monkeyp
     scoped.write_text("meta: {}\n", encoding="utf-8")
 
     monkeypatch.delenv("TAPDB_CONFIG_PATH", raising=False)
+    monkeypatch.delenv("URSA_DEPLOYMENT_CODE", raising=False)
+    monkeypatch.delenv("LSMC_DEPLOYMENT_CODE", raising=False)
     monkeypatch.setenv("DEPLOYMENT_CODE", "local2")
     monkeypatch.setattr(tapdb_runtime.Path, "home", classmethod(lambda cls: tmp_path))
 

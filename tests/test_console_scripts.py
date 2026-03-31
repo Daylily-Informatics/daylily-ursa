@@ -51,7 +51,10 @@ def test_console_script_entrypoints_are_importable_and_callable():
         assert callable(func), f"Console script {name!r} target is not callable: {target!r}"
 
 
-def test_ursa_server_start_uses_packaged_entrypoint(monkeypatch):
+def test_ursa_server_start_uses_packaged_entrypoint(
+    monkeypatch,
+    tmp_path: Path,
+):
     from daylib_ursa.cli import server as server_mod
     import daylib_ursa.ursa_config as ursa_config_mod
 
@@ -73,11 +76,14 @@ def test_ursa_server_start_uses_packaged_entrypoint(monkeypatch):
     monkeypatch.setattr(server_mod, "_ensure_dir", lambda: None)
     monkeypatch.setattr(server_mod, "_get_pid", lambda: None)
     monkeypatch.setattr(server_mod, "source_env_file", lambda _path: False)
-    monkeypatch.setattr(
-        server_mod, "_resolve_https_cert_paths", lambda host: ("/tmp/cert.pem", "/tmp/key.pem")
-    )
     monkeypatch.setattr(server_mod, "_require_auth_dependencies", lambda: None)
     monkeypatch.setattr(server_mod, "_run_cognito_uri_check", lambda *args, **kwargs: None)
+    monkeypatch.setattr(server_mod, "_write_runtime_meta", lambda **_kwargs: None)
+    monkeypatch.setattr(server_mod, "_clear_runtime_meta", lambda: None)
+    cert_path = tmp_path / "cert.pem"
+    key_path = tmp_path / "key.pem"
+    cert_path.write_text("cert", encoding="utf-8")
+    key_path.write_text("key", encoding="utf-8")
     monkeypatch.setattr(
         server_mod,
         "get_settings",
@@ -113,12 +119,20 @@ def test_ursa_server_start_uses_packaged_entrypoint(monkeypatch):
     server_mod.start(
         port=1234,
         host="127.0.0.1",
+        ssl=True,
+        cert=str(cert_path),
+        key=str(key_path),
         reload=False,
         background=False,
     )
 
     cmd = captured.get("cmd")
     assert isinstance(cmd, list)
+    assert "--ssl" in cmd
+    assert "--cert" in cmd
+    assert "--key" in cmd
+    assert str(cert_path) in cmd
+    assert str(key_path) in cmd
 
 
 def test_cli_requires_hyphenated_conda_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -156,7 +170,10 @@ def test_cli_skip_conda_env_check_flag_is_stripped() -> None:
     assert args == ["server", "status"]
 
 
-def test_ursa_server_start_command_uses_module_entrypoint_and_profile(monkeypatch):
+def test_ursa_server_start_command_uses_module_entrypoint_and_profile(
+    monkeypatch,
+    tmp_path: Path,
+):
     from daylib_ursa.cli import server as server_mod
     import daylib_ursa.ursa_config as ursa_config_mod
 
@@ -178,11 +195,12 @@ def test_ursa_server_start_command_uses_module_entrypoint_and_profile(monkeypatc
     monkeypatch.setattr(server_mod, "_ensure_dir", lambda: None)
     monkeypatch.setattr(server_mod, "_get_pid", lambda: None)
     monkeypatch.setattr(server_mod, "source_env_file", lambda _path: False)
-    monkeypatch.setattr(
-        server_mod, "_resolve_https_cert_paths", lambda host: ("/tmp/cert.pem", "/tmp/key.pem")
-    )
     monkeypatch.setattr(server_mod, "_require_auth_dependencies", lambda: None)
     monkeypatch.setattr(server_mod, "_run_cognito_uri_check", lambda *args, **kwargs: None)
+    cert_path = tmp_path / "cert.pem"
+    key_path = tmp_path / "key.pem"
+    cert_path.write_text("cert", encoding="utf-8")
+    key_path.write_text("key", encoding="utf-8")
     monkeypatch.setattr(
         server_mod,
         "get_settings",
@@ -218,6 +236,9 @@ def test_ursa_server_start_command_uses_module_entrypoint_and_profile(monkeypatc
     server_mod.start(
         port=1234,
         host="127.0.0.1",
+        ssl=True,
+        cert=str(cert_path),
+        key=str(key_path),
         reload=False,
         background=False,
     )
@@ -226,6 +247,11 @@ def test_ursa_server_start_command_uses_module_entrypoint_and_profile(monkeypatc
     assert isinstance(cmd, list)
     assert cmd[:3] == [sys.executable, "-m", "daylib_ursa.workset_api_cli"]
     assert not any("bin/daylily-workset-api" in str(part) for part in cmd)
+    assert "--ssl" in cmd
+    assert "--cert" in cmd
+    assert "--key" in cmd
+    assert str(cert_path) in cmd
+    assert str(key_path) in cmd
     assert "--profile" in cmd
     assert "test-profile" in cmd
 
@@ -263,11 +289,10 @@ def test_ursa_server_start_allows_ambient_credentials(monkeypatch):
     monkeypatch.setattr(server_mod, "_ensure_dir", lambda: None)
     monkeypatch.setattr(server_mod, "_get_pid", lambda: None)
     monkeypatch.setattr(server_mod, "source_env_file", lambda _path: False)
-    monkeypatch.setattr(
-        server_mod, "_resolve_https_cert_paths", lambda host: ("/tmp/cert.pem", "/tmp/key.pem")
-    )
     monkeypatch.setattr(server_mod, "_require_auth_dependencies", lambda: None)
     monkeypatch.setattr(server_mod, "_run_cognito_uri_check", lambda *args, **kwargs: None)
+    monkeypatch.setattr(server_mod, "_write_runtime_meta", lambda **_kwargs: None)
+    monkeypatch.setattr(server_mod, "_clear_runtime_meta", lambda: None)
     monkeypatch.setattr(
         server_mod,
         "get_settings",
@@ -303,6 +328,7 @@ def test_ursa_server_start_allows_ambient_credentials(monkeypatch):
     server_mod.start(
         port=1234,
         host="127.0.0.1",
+        ssl=False,
         reload=False,
         background=False,
     )
@@ -311,6 +337,9 @@ def test_ursa_server_start_allows_ambient_credentials(monkeypatch):
     assert isinstance(cmd, list)
     assert cmd[:3] == [sys.executable, "-m", "daylib_ursa.workset_api_cli"]
     assert "--profile" not in cmd
+    assert "--no-ssl" in cmd
+    assert "--cert" not in cmd
+    assert "--key" not in cmd
 
     kwargs = captured.get("kwargs")
     assert isinstance(kwargs, dict)
@@ -321,6 +350,32 @@ def test_ursa_server_start_allows_ambient_credentials(monkeypatch):
     assert "TAPDB_CLIENT_ID" not in env
     assert "TAPDB_DATABASE_NAME" not in env
     assert "TAPDB_ENV" not in env
+
+
+def test_ursa_server_restart_forwards_tls_flags(monkeypatch):
+    from daylib_ursa.cli import server as server_mod
+
+    called: dict[str, object] = {}
+
+    monkeypatch.setattr(server_mod, "stop", lambda: called.setdefault("stop", True))
+
+    def fake_start(**kwargs):
+        called["start_kwargs"] = kwargs
+
+    monkeypatch.setattr(server_mod, "start", fake_start)
+
+    server_mod.restart(port=1234, host="127.0.0.1", ssl=False, cert=None, key=None)
+
+    assert called["stop"] is True
+    assert called["start_kwargs"] == {
+        "port": 1234,
+        "host": "127.0.0.1",
+        "ssl": False,
+        "cert": None,
+        "key": None,
+        "reload": False,
+        "background": True,
+    }
 
 
 def test_ursa_cli_exposes_standardized_groups():
