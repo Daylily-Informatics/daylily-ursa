@@ -2,7 +2,7 @@
 # Ursa Environment Activation Script
 # ==========================================
 # This script must be SOURCED, not executed:
-#   source ./activate
+#   source ./activate <deploy-name>
 #
 # It will:
 #   1. Build the URSA conda environment from config/ursa_env.yaml if it doesn't exist
@@ -29,11 +29,19 @@ truthy_env() {
 
 sanitize_deployment_code() {
     raw_value="$1"
-    sanitized="$(printf '%s' "$raw_value" | LC_ALL=C sed -E 's/[^A-Za-z0-9._-]+/-/g; s/^-+//; s/-+$//')"
+    sanitized="$(printf '%s' "$raw_value" | LC_ALL=C sed -E 's/[^A-Za-z0-9-]+/-/g; s/^-+//; s/-+$//')"
     if [ -z "$sanitized" ]; then
         sanitized="local"
     fi
     printf '%s\n' "$sanitized"
+}
+
+validate_deploy_name() {
+    deploy_name="$1"
+    if ! [[ "$deploy_name" =~ ^[A-Za-z0-9-]{2,8}$ ]]; then
+        printf "${RED}✗${NC} %s\n" "deploy-name must match ^[A-Za-z0-9-]{2,8}$"
+        return 1
+    fi
 }
 
 ursa_config_dir_name() {
@@ -75,8 +83,19 @@ prepare_tapdb_config_path() {
     printf '%s\n' "$user_path"
 }
 
-CONDA_ENV_DEPLOYMENT_CODE="${URSA_DEPLOYMENT_CODE:-${DEPLOYMENT_CODE:-${LSMC_DEPLOYMENT_CODE:-local}}}"
-CONDA_ENV_DEPLOYMENT_CODE="$(sanitize_deployment_code "${CONDA_ENV_DEPLOYMENT_CODE}")"
+if [ "$#" -ne 1 ]; then
+    printf "Error: Ursa activation requires exactly one positional deploy-name.\n"
+    printf "Usage: source ./activate <deploy-name>\n"
+    _ursa_return_or_exit 1
+fi
+
+CONDA_ENV_DEPLOYMENT_CODE="$1"
+if ! validate_deploy_name "${CONDA_ENV_DEPLOYMENT_CODE}"; then
+    _ursa_return_or_exit 1
+fi
+export URSA_DEPLOYMENT_CODE="${CONDA_ENV_DEPLOYMENT_CODE}"
+export DEPLOYMENT_CODE="${CONDA_ENV_DEPLOYMENT_CODE}"
+export LSMC_DEPLOYMENT_CODE="${CONDA_ENV_DEPLOYMENT_CODE}"
 CONDA_ENV_NAME="${CONDA_ENV_BASE}-${CONDA_ENV_DEPLOYMENT_CODE}"
 
 log_info() {
@@ -131,7 +150,7 @@ PY
 
 if [ -n "${BASH_VERSION:-}" ] && [ "${BASH_SOURCE[0]}" = "$0" ]; then
     printf "Error: This script must be sourced, not executed.\n"
-    printf "Usage: source ./activate\n"
+    printf "Usage: source ./activate <deploy-name>\n"
     exit 1
 fi
 
@@ -344,6 +363,8 @@ activate_main() {
     fi
 
     export URSA_ROOT="${SCRIPT_DIR}"
+    export URSA_ACTIVE=1
+    export URSA_PROJECT_ROOT="${SCRIPT_DIR}"
     export TAPDB_CLIENT_ID="${TAPDB_CLIENT_ID:-local}"
     export TAPDB_DATABASE_NAME="${TAPDB_DATABASE_NAME:-ursa}"
     export TAPDB_STRICT_NAMESPACE="${TAPDB_STRICT_NAMESPACE:-1}"
@@ -424,4 +445,4 @@ activate_main() {
     unset URSA_TAPDB_REPO
 }
 
-activate_main "$@" || _ursa_return_or_exit $?
+activate_main || _ursa_return_or_exit $?

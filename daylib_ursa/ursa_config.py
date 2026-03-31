@@ -45,7 +45,7 @@ class RegionConfig:
 
 
 def _sanitize_deployment_code(value: str) -> str:
-    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "-", str(value or "").strip()).strip("-")
+    cleaned = re.sub(r"[^A-Za-z0-9-]+", "-", str(value or "").strip()).strip("-")
     return cleaned or "local"
 
 
