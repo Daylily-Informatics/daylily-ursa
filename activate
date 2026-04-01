@@ -55,7 +55,6 @@ ursa_config_file_name() {
 prepare_tapdb_config_path() {
     client_id="$1"
     namespace="$2"
-    explicit_path="${URSA_TAPDB_CONFIG_PATH:-}"
     xdg_config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
     deployment_code="${URSA_DEPLOYMENT_CODE:-${DEPLOYMENT_CODE:-${LSMC_DEPLOYMENT_CODE:-local}}}"
     deployment_code="$(sanitize_deployment_code "${deployment_code}")"
@@ -64,10 +63,6 @@ prepare_tapdb_config_path() {
     user_path="${user_dir}/tapdb-config.yaml"
     repo_template="${SCRIPT_DIR}/config/tapdb-config-${namespace}.yaml"
 
-    if [ -n "$explicit_path" ]; then
-        printf '%s\n' "$explicit_path"
-        return 0
-    fi
     if [ -f "$user_path" ]; then
         chmod 600 "$user_path" 2>/dev/null || true
         printf '%s\n' "$user_path"
@@ -365,10 +360,10 @@ activate_main() {
     export URSA_ROOT="${SCRIPT_DIR}"
     export URSA_ACTIVE=1
     export URSA_PROJECT_ROOT="${SCRIPT_DIR}"
-    _URSA_TAPDB_CLIENT_ID="${URSA_TAPDB_CLIENT_ID:-local}"
-    _URSA_TAPDB_DATABASE_NAME="${URSA_TAPDB_DATABASE_NAME:-ursa}"
-    _URSA_TAPDB_ENV="${URSA_TAPDB_ENV:-dev}"
-    export URSA_TAPDB_CONFIG_PATH="$(prepare_tapdb_config_path "${_URSA_TAPDB_CLIENT_ID}" "${_URSA_TAPDB_DATABASE_NAME}")"
+    _URSA_TAPDB_CLIENT_ID="local"
+    _URSA_TAPDB_DATABASE_NAME="ursa"
+    _URSA_TAPDB_ENV="dev"
+    _URSA_RUNTIME_TAPDB_CONFIG_PATH="$(prepare_tapdb_config_path "${_URSA_TAPDB_CLIENT_ID}" "${_URSA_TAPDB_DATABASE_NAME}")"
 
     require_tool "conda env" "aws" || return 1
     require_tool "conda env" "pcluster" || return 1

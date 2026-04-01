@@ -5,7 +5,9 @@ surface is the analysis API described in [../README.md](../README.md).
 
 Ursa can scan multiple AWS regions for ParallelCluster instances and run worksets on clusters in any configured region.
 
-TapDB persistence is Postgres-backed and configured via `TAPDB_*` strict-namespace environment variables. TapDB is not configured as per-region “tables”.
+TapDB persistence is Postgres-backed and configured via the deployment TapDB
+config file plus explicit `--config` and `--env` selection. TapDB is not
+configured as per-region “tables”.
 
 ## Configure Regions
 

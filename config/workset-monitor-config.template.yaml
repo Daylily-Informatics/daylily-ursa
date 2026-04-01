@@ -9,11 +9,9 @@
 #   # Edit my-monitor-config.yaml with your settings
 #   daylily-workset-monitor config/my-monitor-config.yaml --enable-tapdb
 #
-# For TapDB state tracking (recommended for portal UI):
-#   export TAPDB_STRICT_NAMESPACE=1
-#   export TAPDB_CLIENT_ID=local
-#   export TAPDB_DATABASE_NAME=ursa
-#   export TAPDB_ENV=dev
+# For TapDB state tracking (recommended for portal UI), prefer an explicit
+# TapDB config file and target environment:
+#   tapdb --config ~/.config/tapdb/local/ursa/tapdb-config.yaml --env dev info
 #
 #   daylily-workset-monitor config/my-monitor-config.yaml \
 #     --enable-tapdb \

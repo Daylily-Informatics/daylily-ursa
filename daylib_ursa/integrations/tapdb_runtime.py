@@ -307,14 +307,14 @@ def _resolve_tapdb_config_path(
     return None
 
 
-def resolve_tapdb_cli_cwd(cwd: Path | None = None) -> Path | None:
-    base = cwd.resolve() if cwd else Path.cwd().resolve()
-    candidates = _local_tapdb_repo_candidates(base)
-    for candidate in candidates:
-        schema_file = candidate / "schema" / "tapdb_schema.sql"
-        if candidate.exists() and schema_file.exists():
-            return candidate
-    return cwd
+def _require_config_path(runtime_env: Mapping[str, str]) -> str:
+    config_path = str(runtime_env.get("config_path") or "").strip()
+    if not config_path:
+        raise TapDBRuntimeError(
+            "TapDB config path is required. Resolve it via Ursa settings and pass it explicitly "
+            "to TapDB with --config."
+        )
+    return config_path
 
 
 def export_database_url_for_target(
@@ -337,9 +337,10 @@ def export_database_url_for_target(
         tapdb_env=tapdb_env,
         config_path=config_path,
     )
+    resolved_config_path = _require_config_path(runtime_env)
     cfg = _get_tapdb_db_config_for_env(
         runtime_env["tapdb_env"],
-        config_path=runtime_env["config_path"],
+        config_path=resolved_config_path,
         client_id=runtime_env["client_id"],
         database_name=runtime_env["database_name"],
     )
@@ -367,7 +368,7 @@ def get_tapdb_bundle(
         tapdb_env=tapdb_env,
         config_path=config_path,
     )
-    resolved_config_path = runtime_env["config_path"]
+    resolved_config_path = _require_config_path(runtime_env)
     cfg = _get_tapdb_db_config_for_env(
         runtime_env["tapdb_env"],
         config_path=resolved_config_path,
@@ -422,18 +423,13 @@ def run_tapdb_cli(
         sys.executable,
         "-m",
         "daylily_tapdb.cli",
-        "--client-id",
-        runtime_env["client_id"],
-        "--database-name",
-        runtime_env["database_name"],
+        "--config",
+        _require_config_path(runtime_env),
         "--env",
         runtime_env["tapdb_env"],
     ]
-    if runtime_env["config_path"]:
-        cmd.extend(["--config", runtime_env["config_path"]])
     cmd.extend(args)
 
-    resolved_cwd = resolve_tapdb_cli_cwd(cwd)
     child_env = os.environ.copy()
     child_env["AWS_PROFILE"] = runtime_env["aws_profile"]
     child_env["AWS_REGION"] = runtime_env["aws_region"]
@@ -441,7 +437,7 @@ def run_tapdb_cli(
     child_env.setdefault("PYTHONSAFEPATH", "1")
     result = subprocess.run(
         cmd,
-        cwd=resolved_cwd,
+        cwd=cwd,
         env=child_env,
         capture_output=True,
         text=True,

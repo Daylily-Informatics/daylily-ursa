@@ -111,7 +111,11 @@ def test_export_database_url_for_target_sets_runtime_environment(monkeypatch) ->
             "database": "daylily_ursa",
         },
     )
-    monkeypatch.setattr(tapdb_runtime, "_resolve_tapdb_config_path", lambda **_kwargs: None)
+    monkeypatch.setattr(
+        tapdb_runtime,
+        "_resolve_tapdb_config_path",
+        lambda **_kwargs: "/tmp/ursa-tapdb.yaml",
+    )
 
     db_url = tapdb_runtime.export_database_url_for_target(
         target="local",
@@ -154,6 +158,7 @@ def test_repo_ships_tapdb_config_template() -> None:
     payload = yaml.safe_load(template_path.read_text(encoding="utf-8"))
 
     assert template_path.is_file()
+    assert payload["meta"]["config_version"] == 3
     assert payload["meta"]["client_id"] == "local"
     assert payload["meta"]["database_name"] == "ursa"
     assert payload["environments"]["dev"]["port"] == "5588"

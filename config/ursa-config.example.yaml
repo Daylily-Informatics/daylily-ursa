@@ -32,8 +32,8 @@ regions:
 # =============================================================================
 # Ursa reads its TapDB namespace/runtime from this YAML file.
 # Bootstrap the matching namespace with:
-#   tapdb --client-id local --database-name ursa config init --env dev --db-port dev=5541 --ui-port dev=8916
-#   tapdb --client-id local --database-name ursa bootstrap local
+#   tapdb --config ~/.config/tapdb/local/ursa/tapdb-config.yaml --env dev config init --env dev --db-port dev=5541 --ui-port dev=8916
+#   tapdb --config ~/.config/tapdb/local/ursa/tapdb-config.yaml --env dev bootstrap local
 tapdb_client_id: local
 tapdb_database_name: ursa
 tapdb_env: dev
