@@ -10,7 +10,7 @@ auth flow.
 
 1. Add a dedicated Ursa integration module to:
    - lazy load TapDB admin app (`admin.main:app`)
-   - force mounted-mode TapDB auth bypass env vars
+   - wire an explicit mounted admin identity into the embedded TapDB app
    - enforce Ursa admin session gate before forwarding requests
 2. Mount TapDB from `daylib_ursa.workset_api.create_app` after Ursa routes are
    composed.
@@ -32,5 +32,5 @@ auth flow.
 
 - Ursa starts one FastAPI app containing `/admin/tapdb`.
 - Mounted TapDB routes are inaccessible without Ursa admin session.
-- TapDB local auth flow is bypassed in mounted mode.
+- TapDB local auth flow is bypassed in mounted mode without mutating `TAPDB_ADMIN_*`.
 - Tests pass for mounted admin-only behavior and startup policy.

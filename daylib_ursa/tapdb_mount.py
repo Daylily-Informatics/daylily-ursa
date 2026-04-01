@@ -5,7 +5,6 @@ from __future__ import annotations
 import hmac
 import importlib
 import logging
-import os
 from typing import Callable
 
 from fastapi import FastAPI
@@ -16,19 +15,41 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from daylib_ursa.config import Settings
 
 LOGGER = logging.getLogger("daylily.tapdb_mount")
+_URSA_TAPDB_SCOPE_USER_KEY = "ursa_tapdb_user"
 
 
-def _force_mounted_auth_bypass_env() -> None:
-    """Force TapDB into mounted mode without TapDB-local auth."""
-    os.environ["TAPDB_ADMIN_DISABLE_AUTH"] = "true"
-    os.environ["TAPDB_ADMIN_DISABLED_USER_ROLE"] = "admin"
-    os.environ["TAPDB_ADMIN_DISABLED_USER_EMAIL"] = "ursa-mounted-tapdb-admin@localhost"
-    os.environ["TAPDB_ADMIN_SHARED_AUTH"] = "false"
+def _embedded_tapdb_admin_user() -> dict[str, object]:
+    return {
+        "uid": 0,
+        "username": "ursa-mounted-tapdb-admin@localhost",
+        "email": "ursa-mounted-tapdb-admin@localhost",
+        "display_name": "Ursa Mounted TapDB Admin",
+        "role": "admin",
+        "is_active": True,
+        "require_password_change": False,
+    }
+
+
+def _configure_embedded_tapdb_auth(admin_main_module, admin_auth_module) -> None:
+    if getattr(admin_main_module, "_ursa_embedded_auth_configured", False):
+        return
+
+    async def _get_current_user(request):
+        user = request.scope.get(_URSA_TAPDB_SCOPE_USER_KEY)
+        if isinstance(user, dict):
+            return user
+        return None
+
+    admin_auth_module.get_current_user = _get_current_user
+    admin_main_module.get_current_user = _get_current_user
+    setattr(admin_main_module, "_ursa_embedded_auth_configured", True)
 
 
 def _load_tapdb_admin_app() -> ASGIApp:
     """Load the TapDB admin FastAPI app lazily."""
     module = importlib.import_module("admin.main")
+    auth_module = importlib.import_module("admin.auth")
+    _configure_embedded_tapdb_auth(module, auth_module)
     tapdb_app = getattr(module, "app", None)
     if tapdb_app is None:
         raise RuntimeError("admin.main does not export an 'app'")
@@ -51,7 +72,9 @@ class UrsaTapdbAdminGate:
             await self._deny_not_authenticated(scope, receive, send)
             return
 
-        await self._app(scope, receive, send)
+        forward_scope = dict(scope)
+        forward_scope[_URSA_TAPDB_SCOPE_USER_KEY] = _embedded_tapdb_admin_user()
+        await self._app(forward_scope, receive, send)
 
     def _is_authenticated(self, scope: Scope) -> bool:
         connection = HTTPConnection(scope)
@@ -95,7 +118,6 @@ def mount_tapdb_admin(
     if any(getattr(route, "path", None) == mount_path for route in app.routes):
         raise RuntimeError(f"Cannot mount TapDB: path already in use: {mount_path}")
 
-    _force_mounted_auth_bypass_env()
     resolved_loader = loader or _load_tapdb_admin_app
     try:
         tapdb_app = resolved_loader()

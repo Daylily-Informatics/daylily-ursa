@@ -120,17 +120,12 @@ def test_mounted_route_denies_wrong_api_key(monkeypatch, tmp_path):
     assert response.json() == {"detail": "Invalid or missing API key"}
 
 
-def test_mounted_mode_forces_tapdb_local_auth_bypass(monkeypatch, tmp_path):
-    captured: dict[str, str | None] = {}
-
-    def _loader():
-        captured["disable_auth"] = os.environ.get("TAPDB_ADMIN_DISABLE_AUTH")
-        captured["disabled_role"] = os.environ.get("TAPDB_ADMIN_DISABLED_USER_ROLE")
-        captured["shared_auth"] = os.environ.get("TAPDB_ADMIN_SHARED_AUTH")
-        return _fake_tapdb_app()
-
+def test_mounted_mode_does_not_inject_tapdb_admin_env(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setattr("daylib_ursa.tapdb_mount._load_tapdb_admin_app", _loader)
+    monkeypatch.delenv("TAPDB_ADMIN_DISABLE_AUTH", raising=False)
+    monkeypatch.delenv("TAPDB_ADMIN_DISABLED_USER_ROLE", raising=False)
+    monkeypatch.delenv("TAPDB_ADMIN_SHARED_AUTH", raising=False)
+    monkeypatch.setattr("daylib_ursa.tapdb_mount._load_tapdb_admin_app", _fake_tapdb_app)
 
     app = create_app(
         DummyStore(),
@@ -143,11 +138,9 @@ def test_mounted_mode_forces_tapdb_local_auth_bypass(monkeypatch, tmp_path):
         response = client.get("/admin/tapdb/", headers={"X-API-Key": "test-key"})
 
     assert response.status_code == 200
-    assert captured == {
-        "disable_auth": "true",
-        "disabled_role": "admin",
-        "shared_auth": "false",
-    }
+    assert "TAPDB_ADMIN_DISABLE_AUTH" not in os.environ
+    assert "TAPDB_ADMIN_DISABLED_USER_ROLE" not in os.environ
+    assert "TAPDB_ADMIN_SHARED_AUTH" not in os.environ
 
 
 def test_mount_enabled_fails_fast_when_tapdb_import_fails(monkeypatch, tmp_path):
