@@ -50,7 +50,7 @@ def test_template_definitions_are_template_spec_instances() -> None:
 def test_template_definitions_use_frozen_prefix_remaps() -> None:
     template_pack = yaml.safe_load(Path("config/tapdb_templates/ursa/templates.json").read_text(encoding="utf-8"))
     prefixes = {template["instance_prefix"] for template in template_pack["templates"]}
-    assert prefixes == {"RSA"}
+    assert prefixes == {"UGX"}
 
 
 def test_from_json_addl_extracts_dict() -> None:
@@ -88,9 +88,11 @@ def test_adapter_module_has_no_legacy_repo_reference() -> None:
 
 
 def test_tapdb_env_for_target_uses_explicit_defaults(monkeypatch) -> None:
-    monkeypatch.delenv("URSA_TAPDB_ENV_LOCAL", raising=False)
-    monkeypatch.delenv("URSA_TAPDB_ENV_AURORA", raising=False)
-    monkeypatch.setattr(tapdb_runtime, "_detect_tapdb_env_for_target", lambda _target: None)
+    monkeypatch.setattr(
+        tapdb_runtime,
+        "_detect_tapdb_env_for_target",
+        lambda _target, **_kwargs: None,
+    )
 
     assert tapdb_runtime.tapdb_env_for_target("local") == "dev"
     assert tapdb_runtime.tapdb_env_for_target("aurora") == "prod"
@@ -101,7 +103,7 @@ def test_export_database_url_for_target_sets_runtime_environment(monkeypatch) ->
     monkeypatch.setattr(
         tapdb_runtime,
         "_get_tapdb_db_config_for_env",
-        lambda _env: {
+        lambda _env, **_kwargs: {
             "user": "ursa_user",
             "password": "secret",
             "host": "db.example.test",
@@ -121,12 +123,7 @@ def test_export_database_url_for_target_sets_runtime_environment(monkeypatch) ->
     )
 
     assert db_url == "postgresql+psycopg2://ursa_user:secret@db.example.test:5432/daylily_ursa"
-    assert tapdb_runtime.os.environ["AWS_PROFILE"] == "test-profile"
-    assert tapdb_runtime.os.environ["AWS_REGION"] == "us-west-2"
-    assert tapdb_runtime.os.environ["TAPDB_CLIENT_ID"] == "local"
-    assert tapdb_runtime.os.environ["TAPDB_DATABASE_NAME"] == "ursa"
-    assert tapdb_runtime.os.environ["TAPDB_ENV"] == "dev"
-    assert tapdb_runtime.os.environ["DATABASE_URL"] == db_url
+    assert "DATABASE_URL" not in tapdb_runtime.os.environ
 
 
 def test_resolve_tapdb_config_path_prefers_deployment_scoped_user_config(monkeypatch, tmp_path) -> None:
@@ -161,4 +158,4 @@ def test_repo_ships_tapdb_config_template() -> None:
     assert payload["meta"]["database_name"] == "ursa"
     assert payload["environments"]["dev"]["port"] == "5588"
     assert payload["environments"]["dev"]["database"] == "tapdb_ursa_dev"
-    assert payload["environments"]["dev"]["audit_log_euid_prefix"] == "RSA"
+    assert payload["environments"]["dev"]["audit_log_euid_prefix"] == "UGX"

@@ -34,9 +34,9 @@ The `regions` list controls which AWS regions Ursa will scan for clusters, and l
 
 TapDB connectivity and namespace are configured separately via:
 
-- `TAPDB_STRICT_NAMESPACE=1`
-- `TAPDB_CLIENT_ID`
-- `TAPDB_DATABASE_NAME`
-- `TAPDB_ENV`
+- `tapdb_strict_namespace: true`
+- `tapdb_client_id`
+- `tapdb_database_name`
+- `tapdb_env`
 
 See `config/ursa-config.example.yaml` for an example and `daylib_ursa.tapdb_graph.backend.TapDBBackend` for enforcement ([../daylib_ursa/tapdb_graph/backend.py](../daylib_ursa/tapdb_graph/backend.py)).
