@@ -340,7 +340,7 @@ def start(
 
     protocol = "https" if ssl else "http"
     if ssl:
-        _resolve_https_cert_paths(host, cert=cert, key=key)
+        cert, key = _resolve_https_cert_paths(host, cert=cert, key=key)
 
     # Check config file for region configuration
     if not ursa_config.is_configured:
