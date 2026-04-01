@@ -63,23 +63,19 @@ def _ursa_info_hook() -> list[tuple[str, str]]:
     rows.append(
         (
             "TapDB Env",
-            os.environ.get("TAPDB_ENV") or getattr(settings, "tapdb_env", None) or "dev",
+            getattr(settings, "tapdb_env", None) or "dev",
         )
     )
     rows.append(
         (
             "TapDB Client",
-            os.environ.get("TAPDB_CLIENT_ID")
-            or getattr(settings, "tapdb_client_id", None)
-            or "local",
+            getattr(settings, "tapdb_client_id", None) or "local",
         )
     )
     rows.append(
         (
             "TapDB Namespace",
-            os.environ.get("TAPDB_DATABASE_NAME")
-            or getattr(settings, "tapdb_database_name", None)
-            or DEFAULT_TAPDB_DATABASE_NAME,
+            getattr(settings, "tapdb_database_name", None) or DEFAULT_TAPDB_DATABASE_NAME,
         )
     )
     if settings is not None:
@@ -113,7 +109,6 @@ def _ensure_tapdb_dependency() -> None:
     except TapDBRuntimeError as exc:
         raise SystemExit(
             "Ursa CLI startup failed. "
-            "Install daylily-tapdb==3.0.9 or use the supported local editable override. "
             f"Details: {exc}"
         ) from exc
 

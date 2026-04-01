@@ -55,7 +55,7 @@ ursa_config_file_name() {
 prepare_tapdb_config_path() {
     client_id="$1"
     namespace="$2"
-    explicit_path="${TAPDB_CONFIG_PATH:-}"
+    explicit_path="${URSA_TAPDB_CONFIG_PATH:-}"
     xdg_config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
     deployment_code="${URSA_DEPLOYMENT_CODE:-${DEPLOYMENT_CODE:-${LSMC_DEPLOYMENT_CODE:-local}}}"
     deployment_code="$(sanitize_deployment_code "${deployment_code}")"
@@ -365,11 +365,10 @@ activate_main() {
     export URSA_ROOT="${SCRIPT_DIR}"
     export URSA_ACTIVE=1
     export URSA_PROJECT_ROOT="${SCRIPT_DIR}"
-    export TAPDB_CLIENT_ID="${TAPDB_CLIENT_ID:-local}"
-    export TAPDB_DATABASE_NAME="${TAPDB_DATABASE_NAME:-ursa}"
-    export TAPDB_STRICT_NAMESPACE="${TAPDB_STRICT_NAMESPACE:-1}"
-    export TAPDB_ENV="${TAPDB_ENV:-dev}"
-    export TAPDB_CONFIG_PATH="$(prepare_tapdb_config_path "${TAPDB_CLIENT_ID}" "${TAPDB_DATABASE_NAME}")"
+    _URSA_TAPDB_CLIENT_ID="${URSA_TAPDB_CLIENT_ID:-local}"
+    _URSA_TAPDB_DATABASE_NAME="${URSA_TAPDB_DATABASE_NAME:-ursa}"
+    _URSA_TAPDB_ENV="${URSA_TAPDB_ENV:-dev}"
+    export URSA_TAPDB_CONFIG_PATH="$(prepare_tapdb_config_path "${_URSA_TAPDB_CLIENT_ID}" "${_URSA_TAPDB_DATABASE_NAME}")"
 
     require_tool "conda env" "aws" || return 1
     require_tool "conda env" "pcluster" || return 1
@@ -383,8 +382,8 @@ activate_main() {
     require_tool "conda env" "psql" || return 1
     require_tool "conda env" "node" || return 1
     require_tool "conda env" "ipython" || return 1
-    require_python_import "daylily_tapdb" "daylily-tapdb==3.0.9" || return 1
-    require_python_import "daylily_cognito" "daylily-cognito==0.1.30" || return 1
+    require_python_import "daylily_tapdb" "daylily-tapdb" || return 1
+    require_python_import "daylily_cognito" "daylily-cognito" || return 1
     require_python_import "cli_core_yo" "../cli-core-yo" || return 1
     require_python_import "fastapi" "fastapi" || return 1
     require_python_import "pydantic_settings" "pydantic-settings" || return 1
