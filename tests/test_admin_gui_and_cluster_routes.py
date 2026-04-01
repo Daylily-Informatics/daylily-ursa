@@ -701,7 +701,7 @@ def test_gui_routes_cover_remaining_pages_and_logout() -> None:
         admin_client_detail_page = client.get(
             f"/admin/clients/{registration.json()['client_registration_euid']}"
         )
-        logout = client.get("/logout", follow_redirects=False)
+        logout = client.get("/auth/logout", follow_redirects=False)
 
     assert worksets_page.status_code == 200
     assert "Tumor Batch" in worksets_page.text

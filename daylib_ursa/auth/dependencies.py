@@ -277,7 +277,13 @@ def _get_current_user_from_session(request: Request) -> CurrentUser | None:
         return None
 
 
-def persist_session_user(request: Request, current_user: CurrentUser) -> None:
+def persist_session_user(
+    request: Request,
+    current_user: CurrentUser,
+    *,
+    access_token: str | None = None,
+    id_token: str | None = None,
+) -> None:
     if not hasattr(request, "session"):
         raise AuthError("Session middleware is not configured")
     request.session["user_sub"] = current_user.sub
@@ -291,6 +297,8 @@ def persist_session_user(request: Request, current_user: CurrentUser) -> None:
     request.session["client_registration_euid"] = current_user.client_registration_euid or ""
     request.session["organization"] = current_user.organization or ""
     request.session["site"] = current_user.site or ""
+    request.session["access_token"] = str(access_token or "").strip()
+    request.session["id_token"] = str(id_token or "").strip()
 
 
 def clear_session_user(request: Request) -> None:

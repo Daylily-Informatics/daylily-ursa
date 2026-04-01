@@ -596,8 +596,12 @@ def mount_gui(app: FastAPI) -> None:
                 },
                 status_code=status.HTTP_401_UNAUTHORIZED,
             )
-
-        persist_session_user(request, actor)
+        persist_session_user(
+            request,
+            actor,
+            access_token=access_token or None,
+            id_token=id_token or None,
+        )
         redirect_to = _next_path(request.session.pop("ursa_post_auth_redirect", "/"))
         request.session.pop("ursa_oauth_state", None)
         return RedirectResponse(url=redirect_to, status_code=status.HTTP_303_SEE_OTHER)
@@ -640,7 +644,7 @@ def mount_gui(app: FastAPI) -> None:
                 },
                 status_code=status.HTTP_401_UNAUTHORIZED,
             )
-        persist_session_user(request, actor)
+        persist_session_user(request, actor, access_token=token)
         return RedirectResponse(url=_next_path(next_path), status_code=status.HTTP_303_SEE_OTHER)
 
     @app.get("/favicon.ico", include_in_schema=False)
@@ -649,8 +653,35 @@ def mount_gui(app: FastAPI) -> None:
             url="/ui/static/favicon.svg", status_code=status.HTTP_307_TEMPORARY_REDIRECT
         )
 
-    @app.get("/logout")
-    async def logout(request: Request):
+    @app.get("/auth/error", include_in_schema=False)
+    async def auth_error(request: Request, reason: str = "auth_error"):
+        messages = {
+            "auth_error": "An authentication error prevented sign-in from completing.",
+            "session_expired": "Your session ended before the requested page loaded.",
+            "not_authorized": "This account is not provisioned for Ursa access.",
+        }
+        message = messages.get(reason, messages["auth_error"])
+        return templates.TemplateResponse(
+            request,
+            "login.html",
+            {
+                "request": request,
+                "next_path": "/",
+                "cognito_login_url": _cognito_login_path("/"),
+                "error": message,
+                "auth_badge": "Access Review",
+                "auth_title": "This account could not complete sign-in.",
+                "auth_description": "Ursa access is provisioned per deployment and user role.",
+                "auth_card_title": "Sign-in was blocked",
+                "auth_card_copy": message,
+                "auth_primary_href": "/auth/login",
+                "auth_primary_label": "Return to Sign In",
+                "deployment": _deployment_context(),
+            },
+            status_code=status.HTTP_403_FORBIDDEN,
+        )
+
+    async def _logout_response(request: Request):
         clear_session_user(request)
         try:
             state = _oauth_state()
@@ -661,6 +692,18 @@ def mount_gui(app: FastAPI) -> None:
             )
         except HTTPException:
             return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+
+    @app.get("/auth/logout", include_in_schema=False)
+    async def auth_logout_get(request: Request):
+        return await _logout_response(request)
+
+    @app.post("/auth/logout", include_in_schema=False)
+    async def auth_logout_post(request: Request):
+        return await _logout_response(request)
+
+    @app.get("/logout")
+    async def logout(request: Request):
+        return await _logout_response(request)
 
     @app.get("/", response_class=HTMLResponse)
     async def dashboard_page(request: Request):

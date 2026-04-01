@@ -275,7 +275,7 @@ def test_logout_from_one_session_does_not_clear_the_other(monkeypatch):
             name="Shared User",
         )
 
-        logout = client_a.get("/logout", follow_redirects=False)
+        logout = client_a.get("/auth/logout", follow_redirects=False)
         assert logout.status_code == 303
         assert logout.headers["location"].startswith("https://ursa.auth.us-west-2.amazoncognito.com/logout")
 

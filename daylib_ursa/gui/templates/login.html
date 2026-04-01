@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Login | Ursa</title>
+    <title>{{ auth_card_title|default("Login") }} | Ursa</title>
     <link rel="icon" href="/ui/static/favicon.svg" type="image/svg+xml">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -16,26 +16,29 @@
     <div style="height:18px;line-height:18px;background:{{ deployment.color }};color:#ffffff;text-align:center;font-size:11px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;">{{ deployment.name|upper }}</div>
     {% endif %}
     <main class="login-shell">
-        <section class="login-card">
-            <div class="page-header" style="margin-bottom: 2rem;">
-                <div>
-                    <h1 class="page-title">Ursa PR19 Portal</h1>
-                    <p class="page-subtitle">Restore the legacy shell on top of the current Atlas-backed Ursa backend.</p>
+        <section class="login-card" style="display: grid; gap: 2rem; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));">
+            <div>
+                <p class="page-subtitle" style="text-transform: uppercase; letter-spacing: 0.12em; font-size: 0.75rem;">{{ auth_badge|default("Authentication Required") }}</p>
+                <h1 class="page-title">{{ auth_title|default("Ursa PR19 Portal") }}</h1>
+                <p class="page-subtitle">{{ auth_description|default("Restore the legacy shell on top of the current Atlas-backed Ursa backend.") }}</p>
+            </div>
+            <div class="panel" style="padding: 1.75rem;">
+                <p class="page-subtitle" style="text-transform: uppercase; letter-spacing: 0.12em; font-size: 0.75rem;">Access</p>
+                <h2 class="page-title" style="font-size: 1.8rem;">{{ auth_card_title|default("Sign In") }}</h2>
+                <p class="page-subtitle" style="margin-bottom: 1.5rem;">
+                    {{ auth_card_copy|default("Sign in through Cognito Hosted UI to access the Ursa operator portal.") }}
+                </p>
+                {% if error %}
+                <div class="alert alert-error">
+                    <i class="fa-solid fa-triangle-exclamation"></i>
+                    <div>{{ error }}</div>
                 </div>
-            </div>
-            {% if error %}
-            <div class="alert alert-error">
-                <i class="fa-solid fa-triangle-exclamation"></i>
-                <div>{{ error }}</div>
-            </div>
-            {% endif %}
-            <p class="page-subtitle" style="margin-bottom: 1.5rem;">
-                Sign in through Cognito Hosted UI to access the Ursa operator portal.
-            </p>
-            <div class="toolbar">
-                <a class="btn btn-primary" href="{{ cognito_login_url }}">
-                    <i class="fa-solid fa-right-to-bracket"></i> Sign In with Cognito
-                </a>
+                {% endif %}
+                <div class="toolbar">
+                    <a class="btn btn-primary" href="{{ auth_primary_href|default(cognito_login_url) }}">
+                        <i class="fa-solid fa-right-to-bracket"></i> {{ auth_primary_label|default("Sign In with Cognito") }}
+                    </a>
+                </div>
             </div>
         </section>
     </main>
