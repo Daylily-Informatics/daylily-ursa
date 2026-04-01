@@ -133,6 +133,34 @@ def reset(
     build(target=target, cluster=cluster, profile=profile, region=region, namespace=namespace)
 
 
+@db_app.command("nuke")
+def nuke(
+    force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation"),
+    target: str = typer.Option("local", "--target", help="TapDB target: local|aurora"),
+    profile: str = typer.Option(DEFAULT_AWS_PROFILE, "--profile", help="AWS profile"),
+    region: str = typer.Option(DEFAULT_AWS_REGION, "--region", help="AWS region"),
+    namespace: str = typer.Option(
+        DEFAULT_TAPDB_DATABASE_NAME, "--namespace", help="TapDB namespace"
+    ),
+) -> None:
+    """Delete the TapDB target without rebuilding."""
+    if not force and not typer.confirm("This will delete the current TapDB DB target. Continue?"):
+        raise typer.Exit(0)
+
+    try:
+        run_tapdb_cli(
+            ["db", "delete", tapdb_env_for_target(target), "--force"],
+            target=target,
+            client_id=DEFAULT_TAPDB_CLIENT_ID,
+            profile=profile,
+            region=region,
+            namespace=namespace,
+        )
+    except TapDBRuntimeError as exc:
+        console.print(f"[red]Delete failed:[/red] {exc}")
+        raise typer.Exit(1) from exc
+
+
 def register(registry: CommandRegistry, spec: CliSpec) -> None:
     """Register the db command group."""
     registry.add_typer_app(None, db_app, "db", "TapDB lifecycle and overlay commands")

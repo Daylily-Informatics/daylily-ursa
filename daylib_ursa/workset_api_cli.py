@@ -142,8 +142,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         host=args.host,
         port=args.port,
         reload=args.reload,
-        ssl_certfile=args.ssl_certfile,
-        ssl_keyfile=args.ssl_keyfile,
+        ssl_certfile=ssl_certfile,
+        ssl_keyfile=ssl_keyfile,
         log_level="debug" if args.verbose else "info",
     )
     return 0

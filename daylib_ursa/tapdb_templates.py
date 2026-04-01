@@ -20,7 +20,7 @@ def template_config_root() -> Path:
 
 def seed_ursa_templates(session) -> None:
     """Load the canonical Ursa JSON template pack through TapDB."""
-    core_prefix = resolve_client_scoped_core_prefix("U")
+    core_prefix = resolve_client_scoped_core_prefix("R")
     config_dirs = resolve_seed_config_dirs(template_config_root())
     templates, issues = validate_template_configs(config_dirs, strict=True)
     errors = [issue for issue in issues if issue.level == "error"]

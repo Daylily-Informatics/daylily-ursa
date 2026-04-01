@@ -2,6 +2,7 @@ meta:
   config_version: 3
   client_id: local
   database_name: ursa
+  euid_client_code: R
 environments:
   dev:
     engine_type: local
@@ -9,7 +10,7 @@ environments:
     port: '5588'
     ui_port: '8918'
     database: tapdb_ursa_dev
-    audit_log_euid_prefix: UGX
+    audit_log_euid_prefix: RGX
     support_email: support@lsmc.bio
     cognito_user_pool_id: ''
   prod:
@@ -19,7 +20,7 @@ environments:
     user: tapdb_admin
     password: ''
     database: tapdb_ursa_prod
-    audit_log_euid_prefix: UGX
+    audit_log_euid_prefix: RGX
     support_email: support@lsmc.bio
     cognito_user_pool_id: ''
     region: us-west-2
