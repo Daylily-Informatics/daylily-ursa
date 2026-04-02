@@ -20,13 +20,6 @@ NC='\033[0m'
 
 CONDA_ENV_BASE="URSA"
 
-truthy_env() {
-    case "${1:-}" in
-        1|true|TRUE|yes|YES|on|ON) return 0 ;;
-        *) return 1 ;;
-    esac
-}
-
 sanitize_deployment_code() {
     raw_value="$1"
     sanitized="$(printf '%s' "$raw_value" | LC_ALL=C sed -E 's/[^A-Za-z0-9-]+/-/g; s/^-+//; s/-+$//')"
@@ -166,28 +159,6 @@ unset _URSA_SCRIPT_PATH
 ENV_FILE="${SCRIPT_DIR}/config/ursa_env.yaml"
 BIN_DIR="${SCRIPT_DIR}/bin"
 
-resolve_local_repo() {
-    module_dir="$1"
-    shift
-    candidate=""
-    candidate_path=""
-    fallback=""
-    for candidate in "$@"; do
-        [ -d "$candidate" ] || continue
-        candidate_path="$(cd "$candidate" 2>/dev/null && pwd)"
-        [ -n "$candidate_path" ] || continue
-        [ -d "${candidate_path}/${module_dir}" ] || continue
-        if [ -d "${candidate_path}/.git" ]; then
-            printf '%s\n' "$candidate_path"
-            return 0
-        fi
-        if [ -z "$fallback" ]; then
-            fallback="$candidate_path"
-        fi
-    done
-    [ -n "$fallback" ] && printf '%s\n' "$fallback"
-}
-
 module_is_from_repo() {
     module_name="$1"
     repo_root="$2"
@@ -312,44 +283,9 @@ activate_main() {
         return 1
     fi
 
-    URSA_TAPDB_REPO="$(resolve_local_repo \
-        daylily_tapdb \
-        "${SCRIPT_DIR}/../daylily-tapdb" \
-        "${SCRIPT_DIR}/../lims_repos/daylily-tapdb"
-    )"
-    if truthy_env "${USE_LOCAL_DAYLILY_TAPDB:-0}"; then
-        if ! ensure_editable_repo "daylily-tapdb" "daylily_tapdb" "${URSA_TAPDB_REPO:-}" "[cli,admin,aurora,dev]"; then
-            return 1
-        fi
-    else
-        log_success "Using packaged daylily-tapdb from ${CONDA_ENV_NAME}"
-    fi
-
-    URSA_DAYCOG_REPO="$(resolve_local_repo \
-        daylily_cognito \
-        "${SCRIPT_DIR}/../daylily-cognito" \
-        "${SCRIPT_DIR}/../lims_repos/daylily-cognito"
-    )"
-    if truthy_env "${USE_LOCAL_DAYLILY_COGNITO:-0}"; then
-        if ! ensure_editable_repo "daylily-cognito" "daylily_cognito" "${URSA_DAYCOG_REPO:-}"; then
-            return 1
-        fi
-    else
-        log_success "Using packaged daylily-cognito from ${CONDA_ENV_NAME}"
-    fi
-
-    URSA_CLI_CORE_REPO="$(resolve_local_repo \
-        cli_core_yo \
-        "${SCRIPT_DIR}/../cli-core-yo" \
-        "${SCRIPT_DIR}/../lims_repos/cli-core-yo"
-    )"
-    if truthy_env "${USE_LOCAL_CLI_CORE_YO:-0}"; then
-        if ! ensure_editable_repo "cli-core-yo" "cli_core_yo" "${URSA_CLI_CORE_REPO:-}"; then
-            return 1
-        fi
-    else
-        log_success "Using packaged cli-core-yo from ${CONDA_ENV_NAME}"
-    fi
+    log_success "Using packaged daylily-tapdb from ${CONDA_ENV_NAME}"
+    log_success "Using packaged daylily-cognito from ${CONDA_ENV_NAME}"
+    log_success "Using packaged cli-core-yo from ${CONDA_ENV_NAME}"
 
     if command -v rehash >/dev/null 2>&1; then
         rehash
@@ -379,7 +315,7 @@ activate_main() {
     require_tool "conda env" "ipython" || return 1
     require_python_import "daylily_tapdb" "daylily-tapdb" || return 1
     require_python_import "daylily_cognito" "daylily-cognito" || return 1
-    require_python_import "cli_core_yo" "../cli-core-yo" || return 1
+    require_python_import "cli_core_yo" "cli-core-yo" || return 1
     require_python_import "fastapi" "fastapi" || return 1
     require_python_import "pydantic_settings" "pydantic-settings" || return 1
 
@@ -434,9 +370,6 @@ activate_main() {
     printf "  ${BOLD}Deactivate:${NC}\n"
     printf "    conda deactivate\n\n"
 
-    unset URSA_CLI_CORE_REPO
-    unset URSA_DAYCOG_REPO
-    unset URSA_TAPDB_REPO
 }
 
 activate_main || _ursa_return_or_exit $?
