@@ -157,9 +157,14 @@ def _settings() -> Settings:
     return Settings(
         aws_profile="",
         cors_origins="*",
+        session_secret_key="test-session-secret",
         ursa_internal_api_key="ursa-test-key",
         bloom_base_url="https://bloom.example",
         atlas_base_url="https://atlas.example",
+        cognito_domain="ursa.auth.us-west-2.amazoncognito.com",
+        cognito_app_client_id="client-123",
+        cognito_callback_url="https://localhost:8913/auth/callback",
+        cognito_logout_url="https://localhost:8913/login",
         ursa_internal_output_bucket="ursa-internal",
         ursa_tapdb_mount_enabled=False,
     )

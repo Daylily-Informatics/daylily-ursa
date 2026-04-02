@@ -48,7 +48,9 @@ def test_template_definitions_are_template_spec_instances() -> None:
 
 
 def test_template_definitions_use_frozen_prefix_remaps() -> None:
-    template_pack = yaml.safe_load(Path("config/tapdb_templates/ursa/templates.json").read_text(encoding="utf-8"))
+    template_pack = yaml.safe_load(
+        Path("config/tapdb_templates/ursa/templates.json").read_text(encoding="utf-8")
+    )
     prefixes = {template["instance_prefix"] for template in template_pack["templates"]}
     assert prefixes == {"RGX"}
 
@@ -130,15 +132,10 @@ def test_export_database_url_for_target_sets_runtime_environment(monkeypatch) ->
     assert "DATABASE_URL" not in tapdb_runtime.os.environ
 
 
-def test_resolve_tapdb_config_path_prefers_deployment_scoped_user_config(monkeypatch, tmp_path) -> None:
-    scoped = (
-        tmp_path
-        / ".config"
-        / "tapdb"
-        / "local"
-        / "ursa-local2"
-        / "tapdb-config.yaml"
-    )
+def test_resolve_tapdb_config_path_prefers_deployment_scoped_user_config(
+    monkeypatch, tmp_path
+) -> None:
+    scoped = tmp_path / ".config" / "tapdb" / "local" / "ursa-local2" / "tapdb-config.yaml"
     scoped.parent.mkdir(parents=True, exist_ok=True)
     scoped.write_text("meta: {}\n", encoding="utf-8")
 
