@@ -35,7 +35,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from starlette.middleware.trustedhost import TrustedHostMiddleware
-from starlette.middleware.sessions import SessionMiddleware
+
+from daylily_cognito import configure_session_middleware
 
 from daylib_ursa import __version__
 from daylib_ursa.analysis_store import (
@@ -54,6 +55,7 @@ from daylib_ursa.atlas_result_client import (
 from daylib_ursa.auth import (
     AtlasUserDirectoryEntry,
     AuthError,
+    build_web_session_config,
     CognitoAuthProvider,
     CognitoUserDirectoryService,
     CurrentUser,
@@ -1207,6 +1209,7 @@ def create_app(
     )
 
     allow_local_domain_access = not settings.is_production
+    app.state.server_instance_id = secrets.token_urlsafe(16)
     app.add_middleware(
         TrustedHostMiddleware,
         allowed_hosts=build_trusted_hosts(allow_local=allow_local_domain_access),
@@ -1219,11 +1222,9 @@ def create_app(
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    app.add_middleware(
-        SessionMiddleware,
-        secret_key=settings.session_secret_key,
-        same_site="lax",
-        https_only=settings.is_production,
+    configure_session_middleware(
+        app,
+        build_web_session_config(settings, app.state.server_instance_id),
     )
 
     @app.middleware("http")

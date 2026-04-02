@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import json
 import logging
-import secrets
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
-from daylily_cognito import build_authorization_url, exchange_authorization_code
+from daylily_cognito import (
+    CognitoWebAuthError,
+    complete_cognito_callback,
+    start_cognito_login,
+)
 from fastapi import FastAPI, Form, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -19,9 +22,11 @@ from daylib_ursa.auth import (
     AuthError,
     CurrentUser,
     USER_TOKEN_TEMPLATE,
+    build_web_session_config,
     clear_session_user,
     get_current_user,
     persist_session_user,
+    session_principal_from_current_user,
 )
 from daylib_ursa.observability import (
     build_api_health_payload,
@@ -57,9 +62,6 @@ def mount_gui(app: FastAPI) -> None:
     def _cognito_login_path(next_path: str) -> str:
         return f"/auth/login?next={_next_path(next_path)}"
 
-    def _oauth_state() -> str:
-        return secrets.token_urlsafe(24)
-
     def _cognito_settings() -> dict[str, str]:
         settings = getattr(app.state, "settings", None)
         values = {
@@ -79,14 +81,12 @@ def mount_gui(app: FastAPI) -> None:
             )
         return values
 
-    def _build_cognito_login_url(*, state: str) -> str:
-        cognito = _cognito_settings()
-        return build_authorization_url(
-            domain=cognito["domain"],
-            client_id=cognito["client_id"],
-            redirect_uri=cognito["callback_url"],
-            state=state,
-        )
+    def _web_session_config():
+        settings = getattr(app.state, "settings", None)
+        server_instance_id = str(getattr(app.state, "server_instance_id", "") or "").strip()
+        if settings is None or not server_instance_id:
+            raise HTTPException(status_code=503, detail="Authentication provider is not configured")
+        return build_web_session_config(settings, server_instance_id)
 
     def _build_cognito_logout_url(*, state: str | None = None) -> str:
         cognito = _cognito_settings()
@@ -98,18 +98,49 @@ def mount_gui(app: FastAPI) -> None:
             query["state"] = state
         return f"https://{cognito['domain']}/logout?{urlencode(query)}"
 
-    def _exchange_auth_code(code: str) -> dict[str, Any]:
-        cognito = _cognito_settings()
+    def _auth_error_message(reason: str | None) -> str | None:
+        messages = {
+            "auth_error": "An authentication error prevented sign-in from completing.",
+            "session_expired": "Your session ended before the requested page loaded.",
+            "not_authorized": "This account is not provisioned for Ursa access.",
+            "invalid_state": "The sign-in state was invalid or expired. Start sign-in again.",
+            "missing_code": "The sign-in response was incomplete. Start sign-in again.",
+            "token_exchange_failed": "The sign-in exchange failed. Start sign-in again.",
+        }
+        clean_reason = str(reason or "").strip()
+        return messages.get(clean_reason) or None
+
+    def _login_redirect_response(request: Request) -> RedirectResponse:
+        next_path = quote(str(request.url.path or "/"), safe="/?=&")
+        reason = str(getattr(request.state, "cognito_auth_reason", "") or "").strip()
+        suffix = f"&reason={quote(reason)}" if reason else ""
+        return RedirectResponse(
+            url=f"/login?next={next_path}{suffix}",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+
+    async def _resolve_cognito_session_principal(token_payload: dict[str, Any], request: Request):
         try:
-            return exchange_authorization_code(
-                domain=cognito["domain"],
-                client_id=cognito["client_id"],
-                code=code,
-                redirect_uri=cognito["callback_url"],
-                client_secret=cognito["client_secret"] or None,
+            id_token = str(token_payload.get("id_token") or "").strip()
+            access_token = str(token_payload.get("access_token") or "").strip()
+            if not id_token and not access_token:
+                raise AuthError("Cognito token response missing access_token or id_token")
+            auth_provider = getattr(app.state, "auth_provider", None)
+            if auth_provider is None:
+                raise AuthError("Authentication provider is not configured")
+            actor = auth_provider.resolve_access_token(
+                id_token or access_token,
+                paired_access_token=access_token or None,
             )
-        except RuntimeError as exc:
-            raise AuthError(str(exc)) from exc
+            return session_principal_from_current_user(actor)
+        except AuthError as exc:
+            reason = "not_authorized" if "not authorized" in str(exc).lower() else "auth_error"
+            raise CognitoWebAuthError(
+                reason,
+                str(exc),
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                redirect_to_error=True,
+            ) from exc
 
     def _session_actor(request: Request) -> CurrentUser | None:
         try:
@@ -180,9 +211,7 @@ def mount_gui(app: FastAPI) -> None:
     ) -> HTMLResponse | RedirectResponse:
         actor = _session_actor(request)
         if actor is None:
-            return RedirectResponse(
-                url=f"/login?next={request.url.path}", status_code=status.HTTP_303_SEE_OTHER
-            )
+            return _login_redirect_response(request)
         if admin_only and not actor.is_admin:
             raise HTTPException(status_code=403, detail="Admin privileges are required")
 
@@ -534,7 +563,7 @@ def mount_gui(app: FastAPI) -> None:
         }
 
     @app.get("/login", response_class=HTMLResponse)
-    async def login_page(request: Request, next: str = "/"):
+    async def login_page(request: Request, next: str = "/", reason: str = ""):
         actor = _session_actor(request)
         if actor is not None:
             return RedirectResponse(url=_next_path(next), status_code=status.HTTP_303_SEE_OTHER)
@@ -545,66 +574,32 @@ def mount_gui(app: FastAPI) -> None:
                 "request": request,
                 "next_path": _next_path(next),
                 "cognito_login_url": _cognito_login_path(next),
-                "error": None,
+                "error": _auth_error_message(reason),
                 "deployment": _deployment_context(),
             },
         )
 
     @app.get("/auth/login", include_in_schema=False)
     async def auth_login(request: Request, next: str = "/"):
-        state = _oauth_state()
-        request.session["ursa_oauth_state"] = state
-        request.session["ursa_post_auth_redirect"] = _next_path(next)
-        return RedirectResponse(
-            url=_build_cognito_login_url(state=state),
-            status_code=status.HTTP_303_SEE_OTHER,
-        )
+        return start_cognito_login(request, _web_session_config(), _next_path(next))
 
     @app.get("/auth/callback", include_in_schema=False)
     async def auth_callback(request: Request, code: str = "", state: str = ""):
-        expected_state = str(request.session.get("ursa_oauth_state") or "").strip()
-        if not code.strip():
-            raise HTTPException(status_code=400, detail="Missing authorization code")
-        if not state.strip() or state.strip() != expected_state:
-            raise HTTPException(status_code=400, detail="Invalid oauth state")
         try:
-            token_payload = _exchange_auth_code(code.strip())
-            id_token = str(token_payload.get("id_token") or "").strip()
-            access_token = str(token_payload.get("access_token") or "").strip()
-            if not id_token and not access_token:
-                raise AuthError("Cognito token response missing access_token or id_token")
-            auth_provider = getattr(app.state, "auth_provider", None)
-            if auth_provider is None:
-                raise AuthError("Authentication provider is not configured")
-            actor = auth_provider.resolve_access_token(
-                id_token or access_token,
-                paired_access_token=access_token or None,
-            )
-        except AuthError as exc:
-            LOGGER.warning("Ursa Cognito callback failed: %s", exc)
-            request.session.pop("ursa_oauth_state", None)
-            request.session.pop("ursa_post_auth_redirect", None)
-            return templates.TemplateResponse(
+            return await complete_cognito_callback(
                 request,
-                "login.html",
-                {
-                    "request": request,
-                    "next_path": _next_path(request.query_params.get("next") or "/"),
-                    "cognito_login_url": _cognito_login_path(request.query_params.get("next") or "/"),
-                    "error": str(exc),
-                    "deployment": _deployment_context(),
-                },
-                status_code=status.HTTP_401_UNAUTHORIZED,
+                _web_session_config(),
+                code.strip() or None,
+                state.strip() or None,
+                _resolve_cognito_session_principal,
             )
-        persist_session_user(
-            request,
-            actor,
-            access_token=access_token or None,
-            id_token=id_token or None,
-        )
-        redirect_to = _next_path(request.session.pop("ursa_post_auth_redirect", "/"))
-        request.session.pop("ursa_oauth_state", None)
-        return RedirectResponse(url=redirect_to, status_code=status.HTTP_303_SEE_OTHER)
+        except CognitoWebAuthError as exc:
+            LOGGER.warning("Ursa Cognito callback failed: %s", exc)
+            request.state.cognito_auth_reason = exc.reason
+            return RedirectResponse(
+                url=f"/auth/error?reason={quote(exc.reason)}",
+                status_code=status.HTTP_303_SEE_OTHER,
+            )
 
     @app.post("/login", response_class=HTMLResponse)
     async def login_submit(
@@ -644,7 +639,7 @@ def mount_gui(app: FastAPI) -> None:
                 },
                 status_code=status.HTTP_401_UNAUTHORIZED,
             )
-        persist_session_user(request, actor, access_token=token)
+        persist_session_user(request, actor)
         return RedirectResponse(url=_next_path(next_path), status_code=status.HTTP_303_SEE_OTHER)
 
     @app.get("/favicon.ico", include_in_schema=False)
@@ -655,12 +650,7 @@ def mount_gui(app: FastAPI) -> None:
 
     @app.get("/auth/error", include_in_schema=False)
     async def auth_error(request: Request, reason: str = "auth_error"):
-        messages = {
-            "auth_error": "An authentication error prevented sign-in from completing.",
-            "session_expired": "Your session ended before the requested page loaded.",
-            "not_authorized": "This account is not provisioned for Ursa access.",
-        }
-        message = messages.get(reason, messages["auth_error"])
+        message = _auth_error_message(reason) or _auth_error_message("auth_error") or "Authentication failed."
         return templates.TemplateResponse(
             request,
             "login.html",
@@ -682,16 +672,13 @@ def mount_gui(app: FastAPI) -> None:
         )
 
     async def _logout_response(request: Request):
-        clear_session_user(request)
         try:
-            state = _oauth_state()
-            request.session["ursa_oauth_state"] = state
-            return RedirectResponse(
-                url=_build_cognito_logout_url(state=state),
-                status_code=status.HTTP_303_SEE_OTHER,
-            )
+            logout_url = _build_cognito_logout_url()
         except HTTPException:
+            clear_session_user(request)
             return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+        clear_session_user(request)
+        return RedirectResponse(url=logout_url, status_code=status.HTTP_303_SEE_OTHER)
 
     @app.get("/auth/logout", include_in_schema=False)
     async def auth_logout_get(request: Request):
@@ -709,9 +696,7 @@ def mount_gui(app: FastAPI) -> None:
     async def dashboard_page(request: Request):
         actor = _session_actor(request)
         if actor is None:
-            return RedirectResponse(
-                url=f"/login?next={request.url.path}", status_code=status.HTTP_303_SEE_OTHER
-            )
+            return _login_redirect_response(request)
         return _render_page(
             request,
             template_name="dashboard.html",
@@ -724,9 +709,7 @@ def mount_gui(app: FastAPI) -> None:
     async def usage_page(request: Request):
         actor = _session_actor(request)
         if actor is None:
-            return RedirectResponse(
-                url=f"/login?next={request.url.path}", status_code=status.HTTP_303_SEE_OTHER
-            )
+            return _login_redirect_response(request)
         return _render_page(
             request,
             template_name="usage.html",
@@ -739,9 +722,7 @@ def mount_gui(app: FastAPI) -> None:
     async def worksets_page(request: Request):
         actor = _session_actor(request)
         if actor is None:
-            return RedirectResponse(
-                url=f"/login?next={request.url.path}", status_code=status.HTTP_303_SEE_OTHER
-            )
+            return _login_redirect_response(request)
         return _render_page(
             request,
             template_name="worksets/list.html",
@@ -754,9 +735,7 @@ def mount_gui(app: FastAPI) -> None:
     async def worksets_new_page(request: Request):
         actor = _session_actor(request)
         if actor is None:
-            return RedirectResponse(
-                url=f"/login?next={request.url.path}", status_code=status.HTTP_303_SEE_OTHER
-            )
+            return _login_redirect_response(request)
         manifests = _list_manifests(actor)
         clusters = (
             [

@@ -11,9 +11,7 @@ def perform_login(page: Page, *, base_url: str, email: str, password: str) -> No
     page.locator("a:has-text('Sign In with Cognito')").click()
     _complete_identity_provider_login(page, email=email, password=password)
     page.wait_for_url(f"{base_url}/**", timeout=30000)
-    if "/auth/callback" in page.url:
-        page.goto(f"{base_url}/")
-        page.wait_for_url(f"{base_url}/**", timeout=30000)
+    assert "/auth/callback" not in page.url, f"Login flow stalled on callback URL: {page.url}"
     assert_authenticated_page(page)
 
 
