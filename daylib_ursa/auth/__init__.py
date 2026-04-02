@@ -10,6 +10,7 @@ from daylib_ursa.auth.dependencies import (
     RequireInternal,
     RequireObservability,
     WebAuthRedirect,
+    build_web_session_config,
     clear_session_user,
     get_current_tenant,
     get_current_user,
@@ -18,6 +19,7 @@ from daylib_ursa.auth.dependencies import (
     persist_session_user,
     require_permission,
     require_role,
+    session_principal_from_current_user,
 )
 from daylib_ursa.auth.rbac import (
     Permission,
@@ -69,6 +71,7 @@ __all__ = [
     "UserTokenService",
     "UserTokenUsageRecord",
     "WebAuthRedirect",
+    "build_web_session_config",
     "can_access_tenant",
     "can_write",
     "clear_session_user",
@@ -84,4 +87,5 @@ __all__ = [
     "persist_session_user",
     "require_permission",
     "require_role",
+    "session_principal_from_current_user",
 ]

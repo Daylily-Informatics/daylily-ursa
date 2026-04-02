@@ -5,13 +5,20 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Annotated, Any
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 import boto3
 from botocore.exceptions import ClientError
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from daylily_cognito import (
+    CognitoWebSessionConfig,
+    SessionPrincipal,
+    clear_session_principal as clear_web_session_principal,
+    load_session_principal,
+    store_session_principal,
+)
 from daylily_cognito.jwks import JWKSCache
 from daylily_cognito.tokens import decode_jwt_unverified, verify_jwt_claims
 
@@ -252,58 +259,104 @@ def _claims_to_current_user(claims: dict[str, Any]) -> CurrentUser:
 
 
 def _get_current_user_from_session(request: Request) -> CurrentUser | None:
-    session = getattr(request, "session", None)
-    if not session:
-        return None
-    if "user_sub" not in session:
-        return None
     try:
+        principal = load_session_principal(request)
+        if principal is None:
+            return None
+        app_context = principal.app_context
         return CurrentUser(
-            sub=str(session.get("user_sub") or "").strip(),
-            email=str(session.get("email") or "").strip(),
-            name=str(session.get("name") or "").strip() or None,
-            tenant_id=_parse_uuid(session.get("tenant_id"), label="tenant_id"),
-            roles=_normalize_roles(session.get("roles") or []),
-            auth_source=str(session.get("auth_source") or "cognito").strip() or "cognito",
-            token_euid=str(session.get("token_euid") or "").strip() or None,
-            token_scope=str(session.get("token_scope") or "").strip() or None,
-            client_registration_euid=str(session.get("client_registration_euid") or "").strip()
+            sub=principal.user_sub,
+            email=principal.email,
+            name=principal.name,
+            tenant_id=_parse_uuid(app_context.get("tenant_id"), label="tenant_id"),
+            roles=_normalize_roles(principal.roles),
+            auth_source=str(principal.auth_mode or "cognito").strip() or "cognito",
+            token_euid=str(app_context.get("token_euid") or "").strip() or None,
+            token_scope=str(app_context.get("token_scope") or "").strip() or None,
+            client_registration_euid=str(app_context.get("client_registration_euid") or "").strip()
             or None,
-            organization=str(session.get("organization") or "").strip() or None,
-            site=str(session.get("site") or "").strip() or None,
+            organization=str(app_context.get("organization") or "").strip() or None,
+            site=str(app_context.get("site") or "").strip() or None,
         )
-    except AuthError:
-        session.clear()
+    except (AuthError, RuntimeError):
+        clear_session_user(request)
         return None
 
 
 def persist_session_user(
     request: Request,
     current_user: CurrentUser,
-    *,
-    access_token: str | None = None,
-    id_token: str | None = None,
 ) -> None:
     if not hasattr(request, "session"):
         raise AuthError("Session middleware is not configured")
-    request.session["user_sub"] = current_user.sub
-    request.session["email"] = current_user.email
-    request.session["name"] = current_user.name or ""
-    request.session["tenant_id"] = str(current_user.tenant_id)
-    request.session["roles"] = list(current_user.roles)
-    request.session["auth_source"] = current_user.auth_source
-    request.session["token_euid"] = current_user.token_euid or ""
-    request.session["token_scope"] = current_user.token_scope or ""
-    request.session["client_registration_euid"] = current_user.client_registration_euid or ""
-    request.session["organization"] = current_user.organization or ""
-    request.session["site"] = current_user.site or ""
-    request.session["access_token"] = str(access_token or "").strip()
-    request.session["id_token"] = str(id_token or "").strip()
+    store_session_principal(
+        request,
+        _request_web_session_config(request),
+        session_principal_from_current_user(current_user),
+    )
 
 
 def clear_session_user(request: Request) -> None:
     if hasattr(request, "session"):
-        request.session.clear()
+        clear_web_session_principal(request)
+        try:
+            config = _request_web_session_config(request)
+            request.session.pop(config.state_session_key, None)
+            request.session.pop(config.next_path_session_key, None)
+        except AuthError:
+            pass
+        request.session.pop("ursa_oauth_state", None)
+        request.session.pop("ursa_post_auth_redirect", None)
+
+
+def build_web_session_config(settings: Any, server_instance_id: str) -> CognitoWebSessionConfig:
+    callback_url = str(getattr(settings, "cognito_callback_url", "") or "").strip()
+    logout_url = str(getattr(settings, "cognito_logout_url", "") or "").strip() or callback_url
+    public_base_url = ""
+    if callback_url:
+        callback_parts = urlparse(callback_url)
+        if callback_parts.scheme and callback_parts.netloc:
+            public_base_url = f"{callback_parts.scheme}://{callback_parts.netloc}"
+
+    return CognitoWebSessionConfig(
+        domain=str(getattr(settings, "cognito_domain", "") or "").strip(),
+        client_id=str(getattr(settings, "cognito_app_client_id", "") or "").strip(),
+        redirect_uri=callback_url,
+        logout_uri=logout_url,
+        public_base_url=public_base_url or None,
+        session_secret_key=str(getattr(settings, "session_secret_key", "") or "").strip(),
+        session_cookie_name="ursa_session",
+        client_secret=str(getattr(settings, "cognito_app_client_secret", "") or "").strip() or None,
+        allow_insecure_http=callback_url.startswith("http://"),
+        error_redirect_path="/auth/error",
+        server_instance_id=str(server_instance_id or "").strip(),
+    )
+
+
+def session_principal_from_current_user(current_user: CurrentUser) -> SessionPrincipal:
+    return SessionPrincipal(
+        user_sub=current_user.sub,
+        email=current_user.email,
+        name=current_user.name,
+        roles=list(current_user.roles),
+        auth_mode=current_user.auth_source or "cognito",
+        app_context={
+            "tenant_id": str(current_user.tenant_id),
+            "token_euid": current_user.token_euid or "",
+            "token_scope": current_user.token_scope or "",
+            "client_registration_euid": current_user.client_registration_euid or "",
+            "organization": current_user.organization or "",
+            "site": current_user.site or "",
+        },
+    )
+
+
+def _request_web_session_config(request: Request) -> CognitoWebSessionConfig:
+    settings = getattr(request.app.state, "settings", None)
+    server_instance_id = str(getattr(request.app.state, "server_instance_id", "") or "").strip()
+    if settings is None or not server_instance_id:
+        raise AuthError("Shared session configuration is not initialized")
+    return build_web_session_config(settings, server_instance_id)
 
 
 class CognitoAuthProvider:
@@ -743,7 +796,9 @@ async def get_current_user_web(
     except HTTPException as exc:
         if exc.status_code == status.HTTP_401_UNAUTHORIZED:
             next_path = quote(str(request.url.path or "/"), safe="/?=&")
-            raise WebAuthRedirect(f"/login?next={next_path}") from exc
+            reason = str(getattr(request.state, "cognito_auth_reason", "") or "").strip()
+            suffix = f"&reason={quote(reason)}" if reason else ""
+            raise WebAuthRedirect(f"/login?next={next_path}{suffix}") from exc
         raise
 
 
