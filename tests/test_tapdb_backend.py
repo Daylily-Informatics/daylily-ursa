@@ -50,7 +50,7 @@ def test_template_definitions_are_template_spec_instances() -> None:
 def test_template_definitions_use_frozen_prefix_remaps() -> None:
     template_pack = yaml.safe_load(Path("config/tapdb_templates/ursa/templates.json").read_text(encoding="utf-8"))
     prefixes = {template["instance_prefix"] for template in template_pack["templates"]}
-    assert prefixes == {"UGX"}
+    assert prefixes == {"RGX"}
 
 
 def test_from_json_addl_extracts_dict() -> None:
@@ -163,4 +163,4 @@ def test_repo_ships_tapdb_config_template() -> None:
     assert payload["meta"]["database_name"] == "ursa"
     assert payload["environments"]["dev"]["port"] == "5588"
     assert payload["environments"]["dev"]["database"] == "tapdb_ursa_dev"
-    assert payload["environments"]["dev"]["audit_log_euid_prefix"] == "UGX"
+    assert payload["environments"]["dev"]["audit_log_euid_prefix"] == "RGX"

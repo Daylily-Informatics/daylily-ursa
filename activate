@@ -19,6 +19,11 @@ BOLD='\033[1m'
 NC='\033[0m'
 
 CONDA_ENV_BASE="URSA"
+URSA_LEGACY_REBIND_VARS=(
+    USE_LOCAL_DAYLILY_TAPDB
+    USE_LOCAL_DAYLILY_COGNITO
+    USE_LOCAL_CLI_CORE_YO
+)
 
 sanitize_deployment_code() {
     raw_value="$1"
@@ -74,12 +79,12 @@ prepare_tapdb_config_path() {
 if [ "$#" -ne 1 ]; then
     printf "Error: Ursa activation requires exactly one positional deploy-name.\n"
     printf "Usage: source ./activate <deploy-name>\n"
-    _ursa_return_or_exit 1
+    return 1 2>/dev/null || exit 1
 fi
 
 CONDA_ENV_DEPLOYMENT_CODE="$1"
 if ! validate_deploy_name "${CONDA_ENV_DEPLOYMENT_CODE}"; then
-    _ursa_return_or_exit 1
+    return 1 2>/dev/null || exit 1
 fi
 export URSA_DEPLOYMENT_CODE="${CONDA_ENV_DEPLOYMENT_CODE}"
 export DEPLOYMENT_CODE="${CONDA_ENV_DEPLOYMENT_CODE}"
@@ -102,14 +107,28 @@ log_error() {
     printf "${RED}✗${NC} %s\n" "$1"
 }
 
-_ursa_return_or_exit() {
-    return "$1" 2>/dev/null || exit "$1"
-}
-
 fail_activate() {
     log_error "$1"
     return 1
 }
+
+reject_legacy_local_rebind_env() {
+    for var_name in "${URSA_LEGACY_REBIND_VARS[@]}"; do
+        if [ -n "${ZSH_VERSION:-}" ]; then
+            eval 'var_value="${(P)var_name-}"'
+        else
+            eval 'var_value="${!var_name-}"'
+        fi
+        if [ -n "$var_value" ]; then
+            fail_activate "${var_name} is no longer supported; use packaged dependencies from ${CONDA_ENV_NAME}"
+            return 1
+        fi
+    done
+}
+
+if ! reject_legacy_local_rebind_env; then
+    return 1 2>/dev/null || exit 1
+fi
 
 require_tool() {
     tool_scope="$1"
@@ -372,4 +391,4 @@ activate_main() {
 
 }
 
-activate_main || _ursa_return_or_exit $?
+activate_main || return $? 2>/dev/null || exit $?
