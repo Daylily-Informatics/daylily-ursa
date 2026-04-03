@@ -16,6 +16,8 @@ dependencies:
   - awscli==2.22.4
   - postgresql
   - nodejs
+  - ipython
+  - pre-commit
   - pip
   - pip:
       - boto3>=1.26.0

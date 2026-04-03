@@ -178,34 +178,34 @@ unset _URSA_SCRIPT_PATH
 ENV_FILE="${SCRIPT_DIR}/environment.yaml"
 BIN_DIR="${SCRIPT_DIR}/bin"
 
-module_is_from_repo() {
-    module_name="$1"
+distribution_is_editable_from_repo() {
+    dist_name="$1"
     repo_root="$2"
-    python - "${module_name}" "${repo_root}" >/dev/null 2>&1 <<'PY'
-import importlib
-import pathlib
-import sys
+    editable_location=""
 
-module = importlib.import_module(sys.argv[1])
-repo_root = pathlib.Path(sys.argv[2]).resolve()
-module_file = getattr(module, "__file__", "")
-if not module_file:
-    raise SystemExit(1)
-module_path = pathlib.Path(module_file).resolve()
-raise SystemExit(0 if module_path == repo_root or repo_root in module_path.parents else 1)
-PY
+    editable_location="$(python -m pip show "$dist_name" 2>/dev/null | awk -F': ' '/^Editable project location:/ {print $2; exit}')"
+    [ -n "$editable_location" ] || return 1
+
+    editable_location="$(cd "$editable_location" 2>/dev/null && pwd)"
+    [ -n "$editable_location" ] || return 1
+
+    [ "$editable_location" = "$repo_root" ]
 }
 
 ensure_editable_repo() {
     label="$1"
-    module_name="$2"
+    dist_name="$2"
     repo_root="$3"
     extras="${4:-}"
     install_target=""
     if [ -z "$repo_root" ]; then
         return 0
     fi
-    if module_is_from_repo "$module_name" "$repo_root"; then
+    if [ -z "$dist_name" ]; then
+        fail_activate "Distribution name is required for local ${label} checkout validation"
+        return 1
+    fi
+    if distribution_is_editable_from_repo "$dist_name" "$repo_root"; then
         log_success "Using local ${label} checkout: ${repo_root}"
         return 0
     fi
@@ -215,11 +215,22 @@ ensure_editable_repo() {
         fail_activate "Failed to install local ${label} checkout from ${repo_root}"
         return 1
     fi
-    if ! module_is_from_repo "$module_name" "$repo_root"; then
-        fail_activate "${label} still resolves outside ${repo_root}"
+    if ! distribution_is_editable_from_repo "$dist_name" "$repo_root"; then
+        fail_activate "${label} is not installed editable from ${repo_root}"
         return 1
     fi
     log_success "Using local ${label} checkout: ${repo_root}"
+}
+
+ensure_pre_commit_hooks() {
+    if ! git -C "${SCRIPT_DIR}" rev-parse --git-dir >/dev/null 2>&1; then
+        return 0
+    fi
+    if ! (cd "${SCRIPT_DIR}" && pre-commit install --hook-type pre-commit --hook-type pre-push >/dev/null); then
+        fail_activate "Failed to install Git pre-commit hooks"
+        return 1
+    fi
+    log_success "Installed Git pre-commit and pre-push hooks"
 }
 
 activate_main() {
@@ -298,7 +309,7 @@ activate_main() {
         esac
     fi
 
-    if ! ensure_editable_repo "Ursa" "daylib_ursa" "${SCRIPT_DIR}"; then
+    if ! ensure_editable_repo "Ursa" "daylily-ursa" "${SCRIPT_DIR}"; then
         return 1
     fi
 
@@ -332,11 +343,13 @@ activate_main() {
     require_tool "conda env" "psql" || return 1
     require_tool "conda env" "node" || return 1
     require_tool "conda env" "ipython" || return 1
+    require_tool "conda env" "pre-commit" || return 1
     require_python_import "daylily_tapdb" "daylily-tapdb" || return 1
     require_python_import "daylily_cognito" "daylily-cognito" || return 1
     require_python_import "cli_core_yo" "cli-core-yo" || return 1
     require_python_import "fastapi" "fastapi" || return 1
     require_python_import "pydantic_settings" "pydantic-settings" || return 1
+    ensure_pre_commit_hooks || return 1
 
     URSA_CONFIG_FILE="${HOME}/.config/$(ursa_config_dir_name)/$(ursa_config_file_name)"
     URSA_CONFIG_EXAMPLE="${SCRIPT_DIR}/config/ursa-config.example.yaml"

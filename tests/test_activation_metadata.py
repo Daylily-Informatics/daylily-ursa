@@ -33,6 +33,8 @@ def test_activate_uses_conda_only_bootstrap() -> None:
     assert (project_root / "environment.yaml").is_file()
     assert not (project_root / "config" / "ursa_env.yaml").exists()
     assert "-e ." not in environment
+    assert "\n  - ipython\n" in environment
+    assert "\n  - pre-commit\n" in environment
 
     activate_script = (Path(__file__).resolve().parents[1] / "activate").read_text(encoding="utf-8")
 
@@ -47,6 +49,8 @@ def test_activate_uses_conda_only_bootstrap() -> None:
     assert 'ENV_FILE="${SCRIPT_DIR}/environment.yaml"' in activate_script
     assert 'conda env create -n "$CONDA_ENV_NAME" -f "$ENV_FILE"' in activate_script
     assert 'conda activate "$CONDA_ENV_NAME"' in activate_script
+    assert 'require_tool "conda env" "pre-commit"' in activate_script
+    assert "pre-commit install --hook-type pre-commit --hook-type pre-push" in activate_script
     assert 'require_python_import "daylily_tapdb" "daylily-tapdb"' in activate_script
     assert 'pip install --no-deps -e "$install_target" -q' in activate_script
     assert ".venv" not in activate_script
