@@ -14,6 +14,11 @@ from daylib_ursa.auth.dependencies import CognitoAuthProvider, build_web_session
 from daylib_ursa.auth import CurrentUser
 from daylib_ursa.config import clear_settings_cache, get_settings, get_settings_for_testing
 from daylib_ursa.gui_app import mount_gui
+from daylib_ursa.ursa_config import (
+    DEFAULT_DEPLOYMENT_BANNER_COLOR,
+    _resolve_deployment_chrome,
+    _stable_deployment_color_hex,
+)
 
 
 def test_get_settings_reads_cognito_and_deployment_from_yaml_not_env(tmp_path, monkeypatch):
@@ -84,7 +89,9 @@ deployment:
 def _app_with_gui(settings):
     app = FastAPI()
     app.state.server_instance_id = "test-server"
-    configure_session_middleware(app, build_web_session_config(settings, app.state.server_instance_id))
+    configure_session_middleware(
+        app, build_web_session_config(settings, app.state.server_instance_id)
+    )
     app.state.settings = settings
     app.state.identity_client = SimpleNamespace(resolve_access_token=lambda _token: None)
     app.state.auth_provider = SimpleNamespace(
@@ -194,6 +201,55 @@ def test_login_page_renders_banner_and_favicon():
     assert "/ui/static/favicon.svg" in response.text
     assert "Sign In with Cognito" in response.text
     assert "/auth/login?next=/" in response.text
+
+
+def test_deployment_settings_fall_back_to_deployment_code(monkeypatch):
+    monkeypatch.setenv("URSA_DEPLOYMENT_CODE", "stage-g")
+    clear_settings_cache()
+
+    settings = get_settings_for_testing(
+        ursa_internal_output_bucket="ursa-internal",
+        deployment_name="",
+        deployment_color="",
+        deployment_is_production=True,
+        cognito_domain="ursa.auth.us-west-2.amazoncognito.com",
+        cognito_app_client_id="client-123",
+        cognito_callback_url="https://localhost:8913/auth/callback",
+        cognito_logout_url="https://localhost:8913/login",
+    )
+
+    assert settings.deployment == {
+        "name": "stage-g",
+        "color": _stable_deployment_color_hex("stage-g"),
+        "is_production": False,
+    }
+
+
+def test_prod_deployment_name_hides_banner() -> None:
+    settings = get_settings_for_testing(
+        ursa_internal_output_bucket="ursa-internal",
+        deployment_name="production",
+        deployment_color="",
+        deployment_is_production=False,
+        cognito_domain="ursa.auth.us-west-2.amazoncognito.com",
+        cognito_app_client_id="client-123",
+        cognito_callback_url="https://localhost:8913/auth/callback",
+        cognito_logout_url="https://localhost:8913/login",
+    )
+
+    assert settings.deployment == {
+        "name": "production",
+        "color": _stable_deployment_color_hex("production"),
+        "is_production": True,
+    }
+
+
+def test_light_aqua_is_used_without_any_deployment_name() -> None:
+    assert _resolve_deployment_chrome(name="", color="", fallback_name="") == {
+        "name": "",
+        "color": DEFAULT_DEPLOYMENT_BANNER_COLOR,
+        "is_production": False,
+    }
 
 
 def test_auth_login_redirects_to_cognito(monkeypatch):
@@ -377,7 +433,9 @@ def test_logout_from_one_session_does_not_clear_the_other(monkeypatch):
 
         logout = client_a.get("/auth/logout", follow_redirects=False)
         assert logout.status_code == 303
-        assert logout.headers["location"].startswith("https://ursa.auth.us-west-2.amazoncognito.com/logout")
+        assert logout.headers["location"].startswith(
+            "https://ursa.auth.us-west-2.amazoncognito.com/logout"
+        )
 
         assert client_a.get("/login?next=/usage", follow_redirects=False).status_code == 200
         assert client_b.get("/login?next=/usage", follow_redirects=False).status_code == 303
@@ -398,7 +456,9 @@ def test_auth_callback_passes_paired_access_token_for_id_token_verification(monk
 
     app = FastAPI()
     app.state.server_instance_id = "test-server"
-    configure_session_middleware(app, build_web_session_config(settings, app.state.server_instance_id))
+    configure_session_middleware(
+        app, build_web_session_config(settings, app.state.server_instance_id)
+    )
     app.state.settings = settings
     app.state.identity_client = SimpleNamespace(resolve_access_token=lambda _token: None)
     app.state.auth_provider = CognitoAuthProvider(

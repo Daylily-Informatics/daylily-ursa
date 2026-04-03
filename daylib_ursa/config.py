@@ -18,6 +18,7 @@ from daylib_ursa.domain_access import (
     APPROVED_WEB_DOMAIN_SUFFIXES,
     is_allowed_origin,
 )
+from daylib_ursa.ursa_config import _resolve_deployment_chrome, _resolve_deployment_code
 
 DEFAULT_API_HOST = "0.0.0.0"
 DEFAULT_API_PORT = 8914
@@ -279,7 +280,7 @@ class Settings(BaseSettings):
         description="Deployment name shown in non-production UI chrome",
     )
     deployment_color: str = Field(
-        default="#0f766e",
+        default="",
         description="Deployment banner color shown in non-production UI chrome",
     )
     deployment_is_production: bool = Field(
@@ -573,6 +574,14 @@ class Settings(BaseSettings):
                 raise ValueError("dewey_api_token is required when dewey_enabled=true")
         if not str(self.ursa_internal_output_bucket or "").strip():
             raise ValueError("ursa_internal_output_bucket is required")
+        deployment = _resolve_deployment_chrome(
+            name=self.deployment_name,
+            color=self.deployment_color,
+            fallback_name=_resolve_deployment_code(),
+        )
+        self.deployment_name = str(deployment["name"])
+        self.deployment_color = str(deployment["color"])
+        self.deployment_is_production = bool(deployment["is_production"])
         return self
 
     def get_cors_origins(self) -> List[str]:
