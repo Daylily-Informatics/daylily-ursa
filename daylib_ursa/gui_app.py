@@ -51,7 +51,7 @@ def mount_gui(app: FastAPI) -> None:
         settings = getattr(app.state, "settings", None)
         return {
             "name": str(getattr(settings, "deployment_name", "") or ""),
-            "color": str(getattr(settings, "deployment_color", "#0f766e") or "#0f766e"),
+            "color": str(getattr(settings, "deployment_color", "#AFEEEE") or "#AFEEEE"),
             "is_production": bool(getattr(settings, "deployment_is_production", False)),
         }
 

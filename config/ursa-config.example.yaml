@@ -66,5 +66,5 @@ dewey_verify_ssl: true
 # Non-production deployment chrome
 deployment:
   name: ""
-  color: "#0f766e"
+  color: ""
   is_production: false
