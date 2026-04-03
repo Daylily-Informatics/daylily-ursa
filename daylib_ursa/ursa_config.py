@@ -117,6 +117,7 @@ VALID_FIELDS = {
     "tapdb_client_id": (str, "TapDB client identifier"),
     "tapdb_database_name": (str, "TapDB namespace / database name"),
     "tapdb_env": (str, "TapDB environment selector"),
+    "tapdb_config_path": (str, "Explicit deployment-scoped TapDB config path"),
     "cognito_region": (str, "AWS region for Cognito"),
     "cognito_user_pool_id": (str, "Cognito User Pool ID"),
     "cognito_app_client_id": (str, "Cognito App Client ID"),
@@ -124,6 +125,7 @@ VALID_FIELDS = {
     "cognito_domain": (str, "Cognito Hosted UI domain"),
     "cognito_callback_url": (str, "Cognito Hosted UI callback URL"),
     "cognito_logout_url": (str, "Cognito Hosted UI logout redirect URL"),
+    "ursa_internal_api_key": (str, "Internal API key for Ursa service-to-service access"),
     "api_host": (str, "API bind host"),
     "api_port": (int, "API bind port"),
     "bloom_base_url": (str, "Bloom base URL"),
@@ -288,6 +290,9 @@ class UrsaConfig:
     tapdb_env: Optional[str] = None
     """TapDB environment selector read from YAML config."""
 
+    tapdb_config_path: Optional[str] = None
+    """Explicit deployment-scoped TapDB config path read from YAML config."""
+
     cognito_user_pool_id: Optional[str] = None
     """Cognito User Pool ID read from YAML config."""
 
@@ -308,6 +313,9 @@ class UrsaConfig:
 
     cognito_logout_url: Optional[str] = None
     """Cognito Hosted UI logout redirect URL, read from YAML config."""
+
+    ursa_internal_api_key: Optional[str] = None
+    """Internal API key for Ursa service-to-service access, read from YAML config."""
 
     api_host: Optional[str] = None
     """API bind host read from YAML config."""
@@ -448,6 +456,7 @@ class UrsaConfig:
         tapdb_client_id = data.get("tapdb_client_id")
         tapdb_database_name = data.get("tapdb_database_name")
         tapdb_env = data.get("tapdb_env")
+        tapdb_config_path = data.get("tapdb_config_path")
         cognito_user_pool_id = data.get("cognito_user_pool_id")
         cognito_app_client_id = data.get("cognito_app_client_id")
         cognito_app_client_secret = data.get("cognito_app_client_secret")
@@ -455,6 +464,7 @@ class UrsaConfig:
         cognito_region = data.get("cognito_region")
         cognito_callback_url = data.get("cognito_callback_url")
         cognito_logout_url = data.get("cognito_logout_url")
+        ursa_internal_api_key = data.get("ursa_internal_api_key")
         api_host = data.get("api_host")
         api_port = data.get("api_port")
         bloom_base_url = data.get("bloom_base_url")
@@ -482,6 +492,7 @@ class UrsaConfig:
             tapdb_client_id=tapdb_client_id,
             tapdb_database_name=tapdb_database_name,
             tapdb_env=tapdb_env,
+            tapdb_config_path=tapdb_config_path,
             cognito_user_pool_id=cognito_user_pool_id,
             cognito_app_client_id=cognito_app_client_id,
             cognito_app_client_secret=cognito_app_client_secret,
@@ -489,6 +500,7 @@ class UrsaConfig:
             cognito_region=cognito_region,
             cognito_callback_url=cognito_callback_url,
             cognito_logout_url=cognito_logout_url,
+            ursa_internal_api_key=ursa_internal_api_key,
             api_host=api_host,
             api_port=api_port,
             bloom_base_url=bloom_base_url,

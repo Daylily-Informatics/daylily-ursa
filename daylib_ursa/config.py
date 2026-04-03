@@ -48,6 +48,7 @@ def _yaml_seed_from_ursa_config() -> dict[str, object]:
         "tapdb_client_id": cfg.tapdb_client_id,
         "tapdb_database_name": cfg.tapdb_database_name,
         "tapdb_env": cfg.tapdb_env,
+        "tapdb_config_path": cfg.tapdb_config_path,
         "cognito_user_pool_id": cfg.cognito_user_pool_id,
         "cognito_app_client_id": cfg.cognito_app_client_id,
         "cognito_app_client_secret": cfg.cognito_app_client_secret,
@@ -57,6 +58,7 @@ def _yaml_seed_from_ursa_config() -> dict[str, object]:
         "cognito_logout_url": cfg.cognito_logout_url,
         "api_host": cfg.api_host,
         "api_port": cfg.api_port,
+        "ursa_internal_api_key": cfg.ursa_internal_api_key,
         "bloom_base_url": cfg.bloom_base_url,
         "bloom_verify_ssl": cfg.bloom_verify_ssl,
         "atlas_base_url": cfg.atlas_base_url,
@@ -166,6 +168,10 @@ class Settings(BaseSettings):
     tapdb_env: str = Field(
         default="dev",
         description="TapDB environment selector",
+    )
+    tapdb_config_path: Optional[str] = Field(
+        default=None,
+        description="Explicit deployment-scoped TapDB config path",
     )
     ursa_cost_monitor_regions: str = Field(
         default="us-west-2",
