@@ -34,9 +34,7 @@ def test_activate_uses_conda_only_bootstrap() -> None:
     assert not (project_root / "config" / "ursa_env.yaml").exists()
     assert "-e ." not in environment
 
-    activate_script = (Path(__file__).resolve().parents[1] / "activate").read_text(
-        encoding="utf-8"
-    )
+    activate_script = (Path(__file__).resolve().parents[1] / "activate").read_text(encoding="utf-8")
 
     assert 'CONDA_ENV_BASE="URSA"' in activate_script
     assert 'CONDA_ENV_NAME="${CONDA_ENV_BASE}-${CONDA_ENV_DEPLOYMENT_CODE}"' in activate_script
