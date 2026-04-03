@@ -98,7 +98,7 @@ Approximate only.
 
 ## Development Notes
 
-- Canonical local entry path: `source ./activate`
+- Canonical local entry path: `source ./activate <deploy-name>`
 - Use `ursa ...` for Ursa-owned runtime operations
 - Use `tapdb ...` only where Ursa explicitly delegates shared DB/runtime lifecycle
 - Use `daycog ...` only where Ursa explicitly delegates shared auth lifecycle
@@ -106,7 +106,7 @@ Approximate only.
 Useful checks:
 
 ```bash
-source ./activate
+source ./activate <deploy-name>
 ursa --help
 pytest -q
 ```
