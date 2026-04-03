@@ -16,7 +16,6 @@ dependencies:
   - awscli==2.22.4
   - postgresql
   - nodejs
-  - ipython
   - pre-commit
   - pip
   - pip:

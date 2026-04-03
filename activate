@@ -342,7 +342,6 @@ activate_main() {
     require_tool "conda env" "fd" || return 1
     require_tool "conda env" "psql" || return 1
     require_tool "conda env" "node" || return 1
-    require_tool "conda env" "ipython" || return 1
     require_tool "conda env" "pre-commit" || return 1
     require_python_import "daylily_tapdb" "daylily-tapdb" || return 1
     require_python_import "daylily_cognito" "daylily-cognito" || return 1

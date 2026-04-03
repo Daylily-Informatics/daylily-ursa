@@ -33,7 +33,6 @@ def test_activate_uses_conda_only_bootstrap() -> None:
     assert (project_root / "environment.yaml").is_file()
     assert not (project_root / "config" / "ursa_env.yaml").exists()
     assert "-e ." not in environment
-    assert "\n  - ipython\n" in environment
     assert "\n  - pre-commit\n" in environment
 
     activate_script = (Path(__file__).resolve().parents[1] / "activate").read_text(encoding="utf-8")
