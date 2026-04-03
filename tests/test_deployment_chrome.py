@@ -89,7 +89,9 @@ deployment:
 def _app_with_gui(settings):
     app = FastAPI()
     app.state.server_instance_id = "test-server"
-    configure_session_middleware(app, build_web_session_config(settings, app.state.server_instance_id))
+    configure_session_middleware(
+        app, build_web_session_config(settings, app.state.server_instance_id)
+    )
     app.state.settings = settings
     app.state.identity_client = SimpleNamespace(resolve_access_token=lambda _token: None)
     app.state.auth_provider = SimpleNamespace(
@@ -431,7 +433,9 @@ def test_logout_from_one_session_does_not_clear_the_other(monkeypatch):
 
         logout = client_a.get("/auth/logout", follow_redirects=False)
         assert logout.status_code == 303
-        assert logout.headers["location"].startswith("https://ursa.auth.us-west-2.amazoncognito.com/logout")
+        assert logout.headers["location"].startswith(
+            "https://ursa.auth.us-west-2.amazoncognito.com/logout"
+        )
 
         assert client_a.get("/login?next=/usage", follow_redirects=False).status_code == 200
         assert client_b.get("/login?next=/usage", follow_redirects=False).status_code == 303
@@ -452,7 +456,9 @@ def test_auth_callback_passes_paired_access_token_for_id_token_verification(monk
 
     app = FastAPI()
     app.state.server_instance_id = "test-server"
-    configure_session_middleware(app, build_web_session_config(settings, app.state.server_instance_id))
+    configure_session_middleware(
+        app, build_web_session_config(settings, app.state.server_instance_id)
+    )
     app.state.settings = settings
     app.state.identity_client = SimpleNamespace(resolve_access_token=lambda _token: None)
     app.state.auth_provider = CognitoAuthProvider(

@@ -103,11 +103,15 @@ def _resolve_deployment_chrome(
         "is_production": resolved_name.lower() in PRODUCTION_DEPLOYMENT_NAMES,
     }
 
+
 # Expected schema fields
 VALID_FIELDS = {
     "regions": (list, "List of AWS regions to scan"),
     "aws_profile": (str, "AWS profile name"),
-    "ursa_portal_default_customer_id": (str, "Fallback customer ID used by the lightweight portal surface"),
+    "ursa_portal_default_customer_id": (
+        str,
+        "Fallback customer ID used by the lightweight portal surface",
+    ),
     "cognito_group_role_map": (dict, "Canonical Cognito group-to-role mapping"),
     "ursa_internal_output_bucket": (str, "Ursa-managed internal S3 bucket"),
     "tapdb_client_id": (str, "TapDB client identifier"),

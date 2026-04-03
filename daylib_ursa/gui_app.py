@@ -73,7 +73,9 @@ def mount_gui(app: FastAPI) -> None:
         }
         if values["domain"].startswith("https://"):
             values["domain"] = values["domain"][len("https://") :]
-        missing = [key for key in ("domain", "client_id", "callback_url", "logout_url") if not values[key]]
+        missing = [
+            key for key in ("domain", "client_id", "callback_url", "logout_url") if not values[key]
+        ]
         if missing:
             raise HTTPException(
                 status_code=503,
@@ -650,7 +652,11 @@ def mount_gui(app: FastAPI) -> None:
 
     @app.get("/auth/error", include_in_schema=False)
     async def auth_error(request: Request, reason: str = "auth_error"):
-        message = _auth_error_message(reason) or _auth_error_message("auth_error") or "Authentication failed."
+        message = (
+            _auth_error_message(reason)
+            or _auth_error_message("auth_error")
+            or "Authentication failed."
+        )
         return templates.TemplateResponse(
             request,
             "login.html",
