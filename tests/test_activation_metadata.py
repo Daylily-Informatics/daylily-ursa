@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import tomllib
 from pathlib import Path
 
 
@@ -15,6 +16,17 @@ def test_pyproject_relies_on_conda_env_yaml_for_tool_union() -> None:
     assert "\ntools = [" not in pyproject_text
 
 
+def test_pyproject_uses_exact_internal_package_pins() -> None:
+    pyproject = tomllib.loads(_load_pyproject())
+    dependencies = pyproject["project"]["dependencies"]
+    cluster_extra = pyproject["project"]["optional-dependencies"]["cluster"]
+
+    assert "cli-core-yo==0.5.2" in dependencies
+    assert "daylily-cognito==0.4.2" in dependencies
+    assert "daylily-tapdb==3.2.3" in dependencies
+    assert "daylily-ephemeral-cluster==0.7.614" in cluster_extra
+
+
 def test_activate_uses_conda_only_bootstrap() -> None:
     project_root = Path(__file__).resolve().parents[1]
     environment = (project_root / "environment.yaml").read_text(encoding="utf-8")
@@ -22,9 +34,7 @@ def test_activate_uses_conda_only_bootstrap() -> None:
     assert not (project_root / "config" / "ursa_env.yaml").exists()
     assert "-e ." not in environment
 
-    activate_script = (Path(__file__).resolve().parents[1] / "activate").read_text(
-        encoding="utf-8"
-    )
+    activate_script = (Path(__file__).resolve().parents[1] / "activate").read_text(encoding="utf-8")
 
     assert 'CONDA_ENV_BASE="URSA"' in activate_script
     assert 'CONDA_ENV_NAME="${CONDA_ENV_BASE}-${CONDA_ENV_DEPLOYMENT_CODE}"' in activate_script

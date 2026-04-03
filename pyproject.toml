@@ -16,11 +16,11 @@ dependencies = [
     "boto3>=1.26.0",
     "pyyaml>=6.0",
     "sqlalchemy>=2.0.0",
-    "cli-core-yo>=0.5.1",
+    "cli-core-yo==0.5.2",
     # Cognito auth library
-    "daylily-cognito==0.4.1",
+    "daylily-cognito==0.4.2",
     # TapDB graph persistence
-    "daylily-tapdb==3.2.2",
+    "daylily-tapdb==3.2.3",
     "fastapi>=0.104.0",
     "uvicorn[standard]>=0.24.0",
     "pydantic>=2.0.0",
@@ -59,7 +59,7 @@ dev = [
 
 # Cluster integration (optional - for workset_monitor cluster operations)
 cluster = [
-    "daylily-ephemeral-cluster",
+    "daylily-ephemeral-cluster==0.7.614",
 ]
 
 [project.scripts]
