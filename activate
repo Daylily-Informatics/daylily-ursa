@@ -5,7 +5,7 @@
 #   source ./activate <deploy-name>
 #
 # It will:
-#   1. Build the URSA conda environment from config/ursa_env.yaml if it doesn't exist
+#   1. Build the URSA conda environment from environment.yaml if it doesn't exist
 #   2. Activate the URSA conda environment
 #   3. Expose the repo-local commands and Python package path
 #   4. Validate the required CLI tools from the canonical Conda environment
@@ -175,7 +175,7 @@ _URSA_SCRIPT_PATH="$(_ursa_script_path)"
 SCRIPT_DIR="$(cd "$(dirname "${_URSA_SCRIPT_PATH}")" 2>/dev/null && pwd)"
 unset _URSA_SCRIPT_PATH
 
-ENV_FILE="${SCRIPT_DIR}/config/ursa_env.yaml"
+ENV_FILE="${SCRIPT_DIR}/environment.yaml"
 BIN_DIR="${SCRIPT_DIR}/bin"
 
 module_is_from_repo() {

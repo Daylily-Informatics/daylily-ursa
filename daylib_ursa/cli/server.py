@@ -100,7 +100,7 @@ def _require_auth_dependencies() -> None:
         import jose  # noqa: F401
     except ImportError:
         console.print("[red]✗[/red]  Authentication requested but python-jose is not installed")
-        console.print('   Install with: [cyan]python -m pip install -e ".[auth]"[/cyan]')
+        console.print("   Refresh the runtime env with: [cyan]conda env update -f environment.yaml --prune[/cyan]")
         raise typer.Exit(1)
 
 
