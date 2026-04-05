@@ -158,10 +158,9 @@ URSA_ALLOWED_REGIONS=us-west-2
 # Resolution order for `ursa server start`:
 #   1. --cert / --key
 #   2. SSL_CERT_FILE / SSL_KEY_FILE
-#   3. URSA_SSL_CERT_FILE / URSA_SSL_KEY_FILE (migration fallback)
-#   4. shared Dayhoff deployment certs under ~/.local/state/dayhoff/<deploy>/certs
-#   5. repo-local certs/ fallback
-#   6. mkcert generation into the shared Dayhoff cert dir
+#   3. shared Dayhoff deployment certs under ~/.local/state/dayhoff/<deploy>/certs
+#   4. repo-local certs/ fallback
+#   5. mkcert generation into the shared Dayhoff cert dir
 # Use `ursa server start --no-ssl` to run HTTP only.
 
 # ========== Authentication ==========

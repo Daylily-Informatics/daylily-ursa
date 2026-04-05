@@ -1098,7 +1098,9 @@ def create_app(
     def _anomaly_repository():
         resource_store = getattr(app.state, "resource_store", None)
         token_service = getattr(app.state, "token_service", None)
-        backend = getattr(resource_store, "backend", None) or getattr(token_service, "backend", None)
+        backend = getattr(resource_store, "backend", None) or getattr(
+            token_service, "backend", None
+        )
         if resource_store is None or backend is None:
             raise HTTPException(status_code=503, detail="Anomaly repository is not configured")
         return open_anomaly_repository(
@@ -1116,7 +1118,9 @@ def create_app(
             getattr(getattr(backend, "bundle", None), "connection", None),
             getattr(getattr(backend, "_conn", None), "engine", None),
         ):
-            engine = getattr(engine_candidate, "engine", None) if engine_candidate is not None else None
+            engine = (
+                getattr(engine_candidate, "engine", None) if engine_candidate is not None else None
+            )
             if engine is not None:
                 return engine
             if engine_candidate is not None and hasattr(engine_candidate, "connect"):
@@ -1140,7 +1144,7 @@ def create_app(
         app.state.observability_cleanup = cleanup_callbacks
 
     def _correlation_id(source: str) -> str:
-        return hashlib.sha1(source.encode("utf-8")).hexdigest()[:12]
+        return hashlib.sha1(source.encode("utf-8")).hexdigest()[:12]  # nosec B324 — non-security correlation ID
 
     def _route_template_for_request(request: Request) -> str:
         route = request.scope.get("route")
@@ -1724,10 +1728,9 @@ def create_app(
     async def health(actor: RequireObservability, request: Request) -> dict[str, Any]:
         _ = actor
         snapshot = app.state.observability.health_snapshot()
-        observed_at = (
-            snapshot.get("checks", {}).get("database", {}).get("observed_at")
-            or snapshot.get("checks", {}).get("auth", {}).get("observed_at")
-        )
+        observed_at = snapshot.get("checks", {}).get("database", {}).get(
+            "observed_at"
+        ) or snapshot.get("checks", {}).get("auth", {}).get("observed_at")
         projection = app.state.observability.projection(observed_at=observed_at)
         return build_health_payload(
             request,
@@ -2268,7 +2271,7 @@ def create_app(
         if not tsv_content:
             raise HTTPException(
                 status_code=409,
-                detail="Legacy manifests do not have downloadable TSV editor content",
+                detail="This manifest does not have downloadable TSV editor content",
             )
         filename = f"{record.name or record.manifest_euid}.tsv".replace("/", "-")
         return PlainTextResponse(

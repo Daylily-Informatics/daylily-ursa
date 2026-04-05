@@ -100,7 +100,9 @@ def _require_auth_dependencies() -> None:
         import jose  # noqa: F401
     except ImportError:
         console.print("[red]✗[/red]  Authentication requested but python-jose is not installed")
-        console.print("   Refresh the runtime env with: [cyan]conda env update -f environment.yaml --prune[/cyan]")
+        console.print(
+            "   Refresh the runtime env with: [cyan]conda env update -f environment.yaml --prune[/cyan]"
+        )
         raise typer.Exit(1)
 
 
@@ -154,8 +156,6 @@ def _resolve_https_cert_paths(
         resolved = resolve_https_certs(
             cert_path=cert,
             key_path=key,
-            legacy_cert_env_vars=("URSA_SSL_CERT_FILE",),
-            legacy_key_env_vars=("URSA_SSL_KEY_FILE",),
             shared_certs_dir=shared_dir,
             fallback_certs_dir=REPO_CERTS_DIR,
             hosts=_https_san_hosts(host),
@@ -437,7 +437,9 @@ def start(
         console.print(f"   Logs: [dim]{log_file}[/dim]")
     else:
         _write_runtime_meta(ssl_enabled=ssl)
-        console.print(f"[green]✓[/green]  Starting server on [cyan]{protocol}://{host}:{port}[/cyan]")
+        console.print(
+            f"[green]✓[/green]  Starting server on [cyan]{protocol}://{host}:{port}[/cyan]"
+        )
         console.print("   Press Ctrl+C to stop\n")
         try:
             result = subprocess.run(cmd, cwd=PROJECT_ROOT, env=env)

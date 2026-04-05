@@ -175,15 +175,12 @@ def validate_config_file(path: Path) -> Tuple[bool, List[str], List[str]]:
     for key in data.keys():
         if key in known_fields:
             continue
-        # Tolerate legacy region key aliases from older deployments.
-        if str(key).endswith("_db_region"):
-            continue
         warnings.append(f"Unknown field '{key}' (will be ignored)")
 
-    # Validate regions field - accepts multiple formats:
+    # Validate regions field — accepted formats:
     # 1. Simple list of strings: ["us-west-2", "eu-central-1"]
     # 2. List of dicts with region config: [{"us-west-2": {"ssh_pem": "~/.ssh/key.pem"}}]
-    # 3. Legacy dict format: {"us-west-2": "bucket-name"}
+    # Dict format (e.g. {"us-west-2": "bucket-name"}) is rejected.
     if "regions" in data:
         regions = data["regions"]
         if isinstance(regions, list):
@@ -204,8 +201,9 @@ def validate_config_file(path: Path) -> Tuple[bool, List[str], List[str]]:
                 else:
                     errors.append(f"regions[{i}] must be a string or dict, got {type(r).__name__}")
         elif isinstance(regions, dict):
-            warnings.append(
-                "Legacy region-to-bucket format detected; consider updating to list format"
+            errors.append(
+                "'regions' must be a list, not a dict. "
+                'Update to list format: regions: ["us-west-2", ...]'
             )
         else:
             errors.append(f"'regions' must be a list, got {type(regions).__name__}")
@@ -398,10 +396,16 @@ class UrsaConfig:
             LOGGER.error("Failed to load Ursa config from %s: %s", path, e)
             return cls(_config_path=path)
 
-        # Parse regions - support multiple formats for backward compatibility
+        # Parse regions — list format only
         regions_data = data.get("regions", [])
         region_configs: List[RegionConfig] = []
         region_map: Dict[str, RegionConfig] = {}
+
+        if isinstance(regions_data, dict):
+            raise ValueError(
+                f"'regions' in {path} must be a list, not a dict. "
+                f"Update to: regions: [{', '.join(regions_data.keys())}]"
+            )
 
         if isinstance(regions_data, list):
             for item in regions_data:
@@ -421,20 +425,6 @@ class UrsaConfig:
                             rc = RegionConfig(name=region_name, ssh_pem=ssh_pem)
                             region_configs.append(rc)
                             region_map[region_name] = rc
-        elif isinstance(regions_data, dict):
-            # Legacy format: dict with region -> bucket mappings
-            # Extract just the region names, ignore bucket mappings
-            for region_name in regions_data.keys():
-                rc = RegionConfig(name=region_name)
-                region_configs.append(rc)
-                region_map[region_name] = rc
-            LOGGER.warning(
-                "Legacy region-to-bucket config format detected in %s. "
-                "Buckets are now discovered from cluster tags. "
-                "Consider updating to: regions: [%s]",
-                path,
-                ", ".join(region_map.keys()),
-            )
 
         deployment = data.get("deployment") or {}
         if not isinstance(deployment, dict):

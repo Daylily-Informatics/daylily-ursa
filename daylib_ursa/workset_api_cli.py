@@ -50,16 +50,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument("--cert", default=None, help="Path to TLS certificate file (PEM)")
     parser.add_argument("--key", default=None, help="Path to TLS private key file (PEM)")
-    parser.add_argument(
-        "--ssl-certfile",
-        default=None,
-        help="Legacy TLS certificate file (PEM)",
-    )
-    parser.add_argument(
-        "--ssl-keyfile",
-        default=None,
-        help="Legacy TLS private key file (PEM)",
-    )
+
     parser.add_argument("--verbose", action="store_true", help="Enable debug logging")
     return parser.parse_args(argv)
 
@@ -87,9 +78,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     cert_arg = str(args.cert or "").strip() or None
     key_arg = str(args.key or "").strip() or None
-    legacy_cert = str(args.ssl_certfile or "").strip() or None
-    legacy_key = str(args.ssl_keyfile or "").strip() or None
-    if not args.ssl and any([cert_arg, key_arg, legacy_cert, legacy_key]):
+    if not args.ssl and any([cert_arg, key_arg]):
         raise ValueError("--cert and --key cannot be used with --no-ssl")
 
     LOGGER.info("Initializing Ursa beta analysis store")
@@ -131,8 +120,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         try:
             resolved = _resolve_https_cert_paths(
                 args.host,
-                cert=cert_arg or legacy_cert,
-                key=key_arg or legacy_key,
+                cert=cert_arg,
+                key=key_arg,
             )
         except typer.Exit as exc:
             raise SystemExit(exc.exit_code)
