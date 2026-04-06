@@ -433,13 +433,82 @@ def test_logout_from_one_session_does_not_clear_the_other(monkeypatch):
 
         logout = client_a.get("/auth/logout", follow_redirects=False)
         assert logout.status_code == 303
-        assert logout.headers["location"].startswith(
-            "https://ursa.auth.us-west-2.amazoncognito.com/logout"
-        )
+        parsed = urlparse(logout.headers["location"])
+        params = parse_qs(parsed.query)
+        assert parsed.scheme == "https"
+        assert parsed.netloc == "ursa.auth.us-west-2.amazoncognito.com"
+        assert parsed.path == "/logout"
+        assert params["client_id"] == ["client-123"]
+        assert params["redirect_uri"] == ["https://localhost:8913/auth/callback"]
+        assert params["response_type"] == ["code"]
+        assert "logout_uri" not in params
 
         assert client_a.get("/login?next=/usage", follow_redirects=False).status_code == 200
         assert client_b.get("/login?next=/usage", follow_redirects=False).status_code == 303
         assert _decode_session_cookie(client_b)["email"] == "shared@example.com"
+
+
+def test_auth_login_redirects_to_local_auth_error_when_cognito_is_misconfigured(
+    monkeypatch,
+):
+    settings = get_settings_for_testing(
+        ursa_internal_output_bucket="ursa-internal",
+        cognito_domain="ursa.auth.us-west-2.amazoncognito.com",
+        cognito_app_client_id="client-123",
+        cognito_callback_url="https://localhost:8913/auth/callback",
+        cognito_logout_url="https://localhost:8913/login",
+    )
+    app = _app_with_gui(settings)
+    monkeypatch.setattr(
+        "daylib_ursa.gui_app.build_web_session_config",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError("callback mismatch")),
+    )
+
+    with _test_client(app) as client:
+        response = client.get("/auth/login?next=/usage", follow_redirects=False)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/auth/error?reason=cognito_sign_in_misconfigured"
+
+
+def test_auth_logout_redirects_to_local_auth_error_when_cognito_is_misconfigured(
+    monkeypatch,
+):
+    settings = get_settings_for_testing(
+        ursa_internal_output_bucket="ursa-internal",
+        cognito_domain="ursa.auth.us-west-2.amazoncognito.com",
+        cognito_app_client_id="client-123",
+        cognito_callback_url="https://localhost:8913/auth/callback",
+        cognito_logout_url="",
+    )
+    app = _app_with_gui(settings)
+
+    with _test_client(app) as client:
+        _login_user(monkeypatch, client)
+        response = client.get("/auth/logout", follow_redirects=False)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/auth/error?reason=cognito_logout_misconfigured"
+
+
+def test_auth_error_renders_human_readable_logout_message():
+    settings = get_settings_for_testing(
+        ursa_internal_output_bucket="ursa-internal",
+        cognito_domain="ursa.auth.us-west-2.amazoncognito.com",
+        cognito_app_client_id="client-123",
+        cognito_callback_url="https://localhost:8913/auth/callback",
+        cognito_logout_url="https://localhost:8913/login",
+    )
+    app = _app_with_gui(settings)
+
+    with _test_client(app) as client:
+        response = client.get(
+            "/auth/error?reason=cognito_logout_misconfigured",
+            follow_redirects=False,
+        )
+
+    assert response.status_code == 403
+    assert "Ursa cleared your local session" in response.text
 
 
 def test_auth_callback_passes_paired_access_token_for_id_token_verification(monkeypatch):
