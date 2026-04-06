@@ -143,7 +143,6 @@ def test_run_tapdb_cli_exports_explicit_identity_env(monkeypatch) -> None:
         "_resolve_tapdb_config_path",
         lambda **_kwargs: "/tmp/ursa-tapdb.yaml",
     )
-    monkeypatch.setattr(tapdb_runtime.shutil, "which", lambda _name: "/usr/bin/tapdb")
 
     def fake_run(cmd, *, cwd=None, env=None, capture_output, text):
         captured["cmd"] = cmd
