@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 monitor_app = typer.Typer(help="Workset monitor management commands")
 console = Console()
 
+
 def _config_dir() -> Path:
     return get_config_dir()
 
@@ -123,9 +124,7 @@ def start(
         console.print(
             "   Provide one with: [cyan]ursa monitor start --config path/to/monitor-config.yaml[/cyan]"
         )
-        console.print(
-            f"   Or create: [cyan]{_default_monitor_config_path()}[/cyan]"
-        )
+        console.print(f"   Or create: [cyan]{_default_monitor_config_path()}[/cyan]")
         raise typer.Exit(1)
 
     # Check deployment-scoped Ursa config for region configuration
@@ -234,9 +233,22 @@ def stop():
 @monitor_app.command("status")
 def status():
     """Check the status of the workset monitor."""
+    from cli_core_yo import ccyo_out
+    from cli_core_yo.runtime import get_context
+
     pid = _get_pid()
+    log_file = _get_latest_log() if pid else None
+    data = {
+        "running": pid is not None,
+        "pid": pid,
+        "log_file": str(log_file) if log_file else None,
+    }
+
+    if get_context().json_mode:
+        ccyo_out.emit_json(data)
+        return
+
     if pid:
-        log_file = _get_latest_log()
         console.print(f"[green]●[/green]  Monitor is [green]running[/green] (PID {pid})")
         if log_file:
             console.print(f"   Logs: [dim]{log_file}[/dim]")

@@ -48,52 +48,58 @@ def validate():
 @env_app.command("status")
 def status():
     """Check system status (conda, AWS, dependencies, tooling)."""
-    table = Table(title="System Status")
-    table.add_column("Component", style="cyan")
-    table.add_column("Status")
+    import sys as _sys
 
-    # Python
-    import sys
+    from cli_core_yo import ccyo_out
+    from cli_core_yo.runtime import get_context
 
-    table.add_row("Python", f"{sys.version.split()[0]}")
-
-    # Conda environment
     conda_env = os.environ.get("CONDA_DEFAULT_ENV", "")
-    if conda_env:
-        table.add_row("Conda Env", f"[green]{conda_env}[/green]")
-    else:
-        table.add_row("Conda Env", "[yellow]Not active[/yellow]")
-
-    # AWS Profile
     aws_profile = os.environ.get("AWS_PROFILE", "")
-    if aws_profile:
-        table.add_row("AWS Profile", f"[green]{aws_profile}[/green]")
-    else:
-        table.add_row("AWS Profile", "[red]Not set[/red]")
-
-    # AWS Region (from AWS_REGION or ursa config)
     aws_region = os.environ.get("AWS_REGION", "")
-    if aws_region:
-        table.add_row("AWS Region", f"[green]{aws_region}[/green] (env)")
-    else:
-        # Try to get from ursa config
+    aws_region_source = "env" if aws_region else None
+    if not aws_region:
         try:
             from daylib_ursa.ursa_config import get_ursa_config
 
             ursa_config = get_ursa_config()
             if ursa_config.aws_region:
-                table.add_row("AWS Region", f"[green]{ursa_config.aws_region}[/green] (config)")
-            else:
-                table.add_row("AWS Region", "[yellow]Not configured[/yellow]")
+                aws_region = ursa_config.aws_region
+                aws_region_source = "config"
         except Exception:
-            table.add_row("AWS Region", "[yellow]Not configured[/yellow]")
-
-    # .env file
+            pass
     env_file = Path.cwd() / ".env"
-    if env_file.exists():
-        table.add_row(".env file", "[green]Found[/green]")
+
+    data = {
+        "python_version": _sys.version.split()[0],
+        "conda_env": conda_env or None,
+        "aws_profile": aws_profile or None,
+        "aws_region": aws_region or None,
+        "aws_region_source": aws_region_source,
+        "env_file_exists": env_file.exists(),
+    }
+
+    if get_context().json_mode:
+        ccyo_out.emit_json(data)
+        return
+
+    table = Table(title="System Status")
+    table.add_column("Component", style="cyan")
+    table.add_column("Status")
+
+    table.add_row("Python", data["python_version"])
+    table.add_row(
+        "Conda Env", f"[green]{conda_env}[/green]" if conda_env else "[yellow]Not active[/yellow]"
+    )
+    table.add_row(
+        "AWS Profile", f"[green]{aws_profile}[/green]" if aws_profile else "[red]Not set[/red]"
+    )
+    if aws_region:
+        table.add_row("AWS Region", f"[green]{aws_region}[/green] ({aws_region_source})")
     else:
-        table.add_row(".env file", "[yellow]Not found[/yellow]")
+        table.add_row("AWS Region", "[yellow]Not configured[/yellow]")
+    table.add_row(
+        ".env file", "[green]Found[/green]" if env_file.exists() else "[yellow]Not found[/yellow]"
+    )
 
     console.print(table)
 
