@@ -12,15 +12,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
 import typer
-from rich.console import Console
 from daylib_ursa.ursa_config import get_config_dir, _resolve_deployment_code
+from cli_core_yo import output as cli_output
 
 if TYPE_CHECKING:
     from cli_core_yo.registry import CommandRegistry
     from cli_core_yo.spec import CliSpec
 
 monitor_app = typer.Typer(help="Workset monitor management commands")
-console = Console()
 
 
 def _config_dir() -> Path:
@@ -112,7 +111,7 @@ def start(
     # Check if already running
     pid = _get_pid()
     if pid:
-        console.print(f"[yellow]⚠[/yellow]  Monitor already running (PID {pid})")
+        cli_output.print_rich(f"[yellow]⚠[/yellow]  Monitor already running (PID {pid})")
         return
 
     # Find config file
@@ -120,11 +119,11 @@ def start(
         config = _find_default_config()
 
     if config is None or not config.exists():
-        console.print("[red]✗[/red]  No monitor config file found")
-        console.print(
+        cli_output.error(" No monitor config file found")
+        cli_output.print_rich(
             "   Provide one with: [cyan]ursa monitor start --config path/to/monitor-config.yaml[/cyan]"
         )
-        console.print(f"   Or create: [cyan]{_default_monitor_config_path()}[/cyan]")
+        cli_output.print_rich(f"   Or create: [cyan]{_default_monitor_config_path()}[/cyan]")
         raise typer.Exit(1)
 
     # Check deployment-scoped Ursa config for region configuration
@@ -133,16 +132,16 @@ def start(
     ursa_config = get_ursa_config()
     if not ursa_config.is_configured:
         config_file_path = get_config_file_path()
-        console.print(f"[yellow]⚠[/yellow]  No regions configured in {config_file_path}")
-        console.print("   Cluster discovery requires region definitions.")
-        console.print(f"   Create [cyan]{config_file_path}[/cyan] with:")
-        console.print("")
-        console.print("[dim]   regions:")
-        console.print("     - us-west-2")
-        console.print("     - us-east-1[/dim]")
+        cli_output.print_rich(f"[yellow]⚠[/yellow]  No regions configured in {config_file_path}")
+        cli_output.print_rich("   Cluster discovery requires region definitions.")
+        cli_output.print_rich(f"   Create [cyan]{config_file_path}[/cyan] with:")
+        cli_output.print_rich("")
+        cli_output.print_rich("[dim]   regions:")
+        cli_output.print_rich("     - us-west-2")
+        cli_output.print_rich("     - us-east-1[/dim]")
     else:
         regions = ursa_config.get_allowed_regions()
-        console.print(f"[green]✓[/green]  Ursa config loaded: [cyan]{len(regions)} regions[/cyan]")
+        cli_output.print_rich(f"[green]✓[/green]  Ursa config loaded: [cyan]{len(regions)} regions[/cyan]")
 
     # Build command
     cmd = [sys.executable, "-m", "daylib_ursa.workset_monitor_cli", str(config)]
@@ -177,28 +176,28 @@ def start(
         time.sleep(1)
         if proc.poll() is not None:
             log_f.close()
-            console.print("[red]✗[/red]  Monitor failed to start. Check logs:")
-            console.print(f"   [dim]{log_file}[/dim]")
+            cli_output.error(" Monitor failed to start. Check logs:")
+            cli_output.print_rich(f"   [dim]{log_file}[/dim]")
             if log_file.exists():
                 content = log_file.read_text().strip()
                 if content:
-                    console.print("\n[dim]--- Last error ---[/dim]")
+                    cli_output.print_rich("\n[dim]--- Last error ---[/dim]")
                     for line in content.split("\n")[-10:]:
-                        console.print(f"   {line}")
+                        cli_output.print_rich(f"   {line}")
             raise typer.Exit(1)
 
         PID_FILE.write_text(str(proc.pid))
-        console.print(f"[green]✓[/green]  Monitor started (PID {proc.pid})")
-        console.print(f"   Config: [dim]{config}[/dim]")
-        console.print(f"   Logs: [dim]{log_file}[/dim]")
+        cli_output.print_rich(f"[green]✓[/green]  Monitor started (PID {proc.pid})")
+        cli_output.print_rich(f"   Config: [dim]{config}[/dim]")
+        cli_output.print_rich(f"   Logs: [dim]{log_file}[/dim]")
     else:
-        console.print("[green]✓[/green]  Starting monitor")
-        console.print(f"   Config: [dim]{config}[/dim]")
-        console.print("   Press Ctrl+C to stop\n")
+        cli_output.success(" Starting monitor")
+        cli_output.print_rich(f"   Config: [dim]{config}[/dim]")
+        cli_output.print_rich("   Press Ctrl+C to stop\n")
         try:
             subprocess.run(cmd, cwd=Path.cwd())
         except KeyboardInterrupt:
-            console.print("\n[yellow]⚠[/yellow]  Monitor stopped")
+            cli_output.print_rich("\n[yellow]⚠[/yellow]  Monitor stopped")
 
 
 @monitor_app.command("stop")
@@ -206,7 +205,7 @@ def stop():
     """Stop the workset monitor daemon."""
     pid = _get_pid()
     if not pid:
-        console.print("[yellow]⚠[/yellow]  No monitor running")
+        cli_output.print_rich("[yellow]⚠[/yellow]  No monitor running")
         return
 
     try:
@@ -221,12 +220,12 @@ def stop():
             os.kill(pid, signal.SIGKILL)
 
         PID_FILE.unlink(missing_ok=True)
-        console.print(f"[green]✓[/green]  Monitor stopped (was PID {pid})")
+        cli_output.print_rich(f"[green]✓[/green]  Monitor stopped (was PID {pid})")
     except ProcessLookupError:
         PID_FILE.unlink(missing_ok=True)
-        console.print("[yellow]⚠[/yellow]  Monitor was not running")
+        cli_output.print_rich("[yellow]⚠[/yellow]  Monitor was not running")
     except PermissionError:
-        console.print(f"[red]✗[/red]  Permission denied stopping PID {pid}")
+        cli_output.print_rich(f"[red]✗[/red]  Permission denied stopping PID {pid}")
         raise typer.Exit(1)
 
 
@@ -249,11 +248,11 @@ def status():
         return
 
     if pid:
-        console.print(f"[green]●[/green]  Monitor is [green]running[/green] (PID {pid})")
+        cli_output.print_rich(f"[green]●[/green]  Monitor is [green]running[/green] (PID {pid})")
         if log_file:
-            console.print(f"   Logs: [dim]{log_file}[/dim]")
+            cli_output.print_rich(f"   Logs: [dim]{log_file}[/dim]")
     else:
-        console.print("[dim]○[/dim]  Monitor is [dim]not running[/dim]")
+        cli_output.print_rich("[dim]○[/dim]  Monitor is [dim]not running[/dim]")
 
 
 @monitor_app.command("logs")
@@ -265,24 +264,24 @@ def logs(
     if all_logs:
         log_files = sorted(LOG_DIR.glob("monitor_*.log"), reverse=True)
         if not log_files:
-            console.print("[yellow]⚠[/yellow]  No log files found.")
+            cli_output.print_rich("[yellow]⚠[/yellow]  No log files found.")
             return
-        console.print(f"[bold]Monitor log files ({len(log_files)}):[/bold]")
+        cli_output.print_rich(f"[bold]Monitor log files ({len(log_files)}):[/bold]")
         for lf in log_files[:20]:
             size = lf.stat().st_size
-            console.print(f"  {lf.name}  [dim]({size:,} bytes)[/dim]")
+            cli_output.print_rich(f"  {lf.name}  [dim]({size:,} bytes)[/dim]")
         return
 
     log_file = _get_latest_log()
     if not log_file:
-        console.print("[yellow]⚠[/yellow]  No log file found. Start the monitor first.")
+        cli_output.print_rich("[yellow]⚠[/yellow]  No log file found. Start the monitor first.")
         return
 
-    console.print(f"[dim]Following {log_file.name} (Ctrl+C to stop)[/dim]\n")
+    cli_output.print_rich(f"[dim]Following {log_file.name} (Ctrl+C to stop)[/dim]\n")
     try:
         subprocess.run(["tail", "-f", "-n", str(lines), str(log_file)])
     except KeyboardInterrupt:
-        console.print("\n")
+        cli_output.print_rich("\n")
 
 
 @monitor_app.command("grep")
@@ -313,7 +312,7 @@ def grep_logs(
         log_files = [latest] if latest else []
 
     if not log_files:
-        console.print("[yellow]⚠[/yellow]  No log files found.")
+        cli_output.print_rich("[yellow]⚠[/yellow]  No log files found.")
         return
 
     # Build grep command
@@ -330,12 +329,12 @@ def grep_logs(
     grep_cmd.append(pattern)
     grep_cmd.extend(str(lf) for lf in log_files)
 
-    console.print(f"[dim]Searching {len(log_files)} log file(s) for '{pattern}'[/dim]\n")
+    cli_output.print_rich(f"[dim]Searching {len(log_files)} log file(s) for '{pattern}'[/dim]\n")
 
     result = subprocess.run(grep_cmd)
 
     if result.returncode == 1:
-        console.print(f"\n[yellow]⚠[/yellow]  No matches found for '{pattern}'")
+        cli_output.print_rich(f"\n[yellow]⚠[/yellow]  No matches found for '{pattern}'")
 
 
 def register(registry: CommandRegistry, spec: CliSpec) -> None:
