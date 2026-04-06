@@ -106,6 +106,8 @@ fi
 export URSA_DEPLOYMENT_CODE="${CONDA_ENV_DEPLOYMENT_CODE}"
 export DEPLOYMENT_CODE="${CONDA_ENV_DEPLOYMENT_CODE}"
 export LSMC_DEPLOYMENT_CODE="${CONDA_ENV_DEPLOYMENT_CODE}"
+export MERIDIAN_DOMAIN_CODE="${MERIDIAN_DOMAIN_CODE:-R}"
+export TAPDB_APP_CODE="${TAPDB_APP_CODE:-R}"
 CONDA_ENV_NAME="${CONDA_ENV_BASE}-${CONDA_ENV_DEPLOYMENT_CODE}"
 
 log_info() {
@@ -485,6 +487,8 @@ activate_main() {
     printf "  ${CYAN}Project Root:${NC}     %s\n" "${SCRIPT_DIR}"
     printf "  ${CYAN}Ursa Config:${NC}      %s\n" "${URSA_CONFIG_FILE}"
     printf "  ${CYAN}TapDB Runtime:${NC}    from deployment-scoped Ursa config\n"
+    printf "  ${CYAN}MERIDIAN_DOMAIN_CODE:${NC} %s\n" "${MERIDIAN_DOMAIN_CODE}"
+    printf "  ${CYAN}TAPDB_APP_CODE:${NC}      %s\n" "${TAPDB_APP_CODE}"
     printf "\n"
     printf "  ${BOLD}Command Groups:${NC}\n"
     printf "    ${CYAN}ursa server${NC}   API server management\n"

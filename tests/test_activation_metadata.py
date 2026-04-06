@@ -45,6 +45,8 @@ def test_activate_bootstraps_local_ursa_repo_only() -> None:
     assert 'export URSA_DEPLOYMENT_CODE="${CONDA_ENV_DEPLOYMENT_CODE}"' in activate_script
     assert 'export DEPLOYMENT_CODE="${CONDA_ENV_DEPLOYMENT_CODE}"' in activate_script
     assert 'export LSMC_DEPLOYMENT_CODE="${CONDA_ENV_DEPLOYMENT_CODE}"' in activate_script
+    assert 'export MERIDIAN_DOMAIN_CODE="${MERIDIAN_DOMAIN_CODE:-R}"' in activate_script
+    assert 'export TAPDB_APP_CODE="${TAPDB_APP_CODE:-R}"' in activate_script
     assert 'ENV_FILE="${SCRIPT_DIR}/environment.yaml"' in activate_script
     assert 'conda env create -n "$CONDA_ENV_NAME" -f "$ENV_FILE"' in activate_script
     assert 'conda activate "$CONDA_ENV_NAME"' in activate_script
@@ -66,3 +68,15 @@ def test_activate_bootstraps_local_ursa_repo_only() -> None:
     assert "--no-deps" not in activate_script
     assert ".venv" not in activate_script
     assert "[auth,cluster,dev,tools]" not in activate_script
+    assert "MERIDIAN_DOMAIN_CODE=R" in (
+        project_root / "config" / "ursa-config.example.yaml"
+    ).read_text(encoding="utf-8")
+    assert "TAPDB_APP_CODE=R" in (project_root / "config" / "ursa-config.example.yaml").read_text(
+        encoding="utf-8"
+    )
+    assert "MERIDIAN_DOMAIN_CODE=R" in (
+        project_root / "config" / "tapdb-config-ursa.yaml"
+    ).read_text(encoding="utf-8")
+    assert "TAPDB_APP_CODE=R" in (project_root / "config" / "tapdb-config-ursa.yaml").read_text(
+        encoding="utf-8"
+    )

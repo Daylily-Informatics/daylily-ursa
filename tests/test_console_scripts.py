@@ -258,6 +258,8 @@ def test_ursa_server_start_command_uses_module_entrypoint_and_profile(
     assert env["DATABASE_BACKEND"] == "tapdb"
     assert env["DATABASE_TARGET"] == "local"
     assert env["DATABASE_URL"] == "postgresql://test-db"
+    assert env["MERIDIAN_DOMAIN_CODE"] == "R"
+    assert env["TAPDB_APP_CODE"] == "R"
     assert "TAPDB_CLIENT_ID" not in env
     assert "TAPDB_DATABASE_NAME" not in env
     assert "TAPDB_ENV" not in env
@@ -343,6 +345,8 @@ def test_ursa_server_start_allows_ambient_credentials(monkeypatch):
     assert isinstance(env, dict)
     assert "AWS_PROFILE" not in env
     assert env["DATABASE_URL"] == "postgresql://test-db"
+    assert env["MERIDIAN_DOMAIN_CODE"] == "R"
+    assert env["TAPDB_APP_CODE"] == "R"
     assert "TAPDB_CLIENT_ID" not in env
     assert "TAPDB_DATABASE_NAME" not in env
     assert "TAPDB_ENV" not in env
