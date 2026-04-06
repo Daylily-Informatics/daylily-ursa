@@ -8,15 +8,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import typer
-from rich.console import Console
 from rich.table import Table
+from cli_core_yo import output as cli_output
 
 if TYPE_CHECKING:
     from cli_core_yo.registry import CommandRegistry
     from cli_core_yo.spec import CliSpec
 
 env_app = typer.Typer(help="Environment and configuration commands")
-console = Console()
 
 
 @env_app.command("validate")
@@ -26,21 +25,21 @@ def validate():
 
     config_path = get_config_file_path()
     if not config_path.exists():
-        console.print(f"[yellow]⚠[/yellow]  Config file not found: {config_path}")
-        console.print("   Create one with: [cyan]ursa config generate[/cyan]")
+        cli_output.print_rich(f"[yellow]⚠[/yellow]  Config file not found: {config_path}")
+        cli_output.print_rich("   Create one with: [cyan]ursa config generate[/cyan]")
         raise typer.Exit(1)
 
     is_valid, errors, warnings = validate_config_file(config_path)
     if errors:
-        console.print(f"[red]Found {len(errors)} error(s):[/red]")
+        cli_output.print_rich(f"[red]Found {len(errors)} error(s):[/red]")
         for err in errors:
-            console.print(f"  [red]•[/red] {err}")
+            cli_output.print_rich(f"  [red]•[/red] {err}")
     if warnings:
-        console.print(f"[yellow]Found {len(warnings)} warning(s):[/yellow]")
+        cli_output.print_rich(f"[yellow]Found {len(warnings)} warning(s):[/yellow]")
         for w in warnings:
-            console.print(f"  [yellow]•[/yellow] {w}")
+            cli_output.print_rich(f"  [yellow]•[/yellow] {w}")
     if is_valid and not warnings:
-        console.print(f"[green]✓[/green]  Configuration is valid: {config_path}")
+        cli_output.print_rich(f"[green]✓[/green]  Configuration is valid: {config_path}")
     if not is_valid:
         raise typer.Exit(1)
 
@@ -101,10 +100,10 @@ def status():
         ".env file", "[green]Found[/green]" if env_file.exists() else "[yellow]Not found[/yellow]"
     )
 
-    console.print(table)
+    cli_output.print_rich(table)
 
     # Show key dependencies
-    console.print("\n[bold]Key Dependencies:[/bold]")
+    cli_output.print_rich("\n[bold]Key Dependencies:[/bold]")
     deps = [
         "boto3",
         "fastapi",
@@ -119,18 +118,18 @@ def status():
         try:
             mod = __import__(dep)
             version = getattr(mod, "__version__", "?")
-            console.print(f"  [green]✓[/green] {dep} ({version})")
+            cli_output.print_rich(f"  [green]✓[/green] {dep} ({version})")
         except ImportError:
-            console.print(f"  [red]✗[/red] {dep} (not installed)")
+            cli_output.print_rich(f"  [red]✗[/red] {dep} (not installed)")
 
-    console.print("\n[bold]CLI Tools:[/bold]")
+    cli_output.print_rich("\n[bold]CLI Tools:[/bold]")
     tools = ["aws", "pcluster", "jq", "yq", "rclone", "parallel", "fd", "psql", "node"]
     for tool in tools:
         path = shutil.which(tool)
         if path:
-            console.print(f"  [green]✓[/green] {tool} ({path})")
+            cli_output.print_rich(f"  [green]✓[/green] {tool} ({path})")
         else:
-            console.print(f"  [red]✗[/red] {tool} (not found)")
+            cli_output.print_rich(f"  [red]✗[/red] {tool} (not found)")
 
 
 @env_app.command("generate")
@@ -141,8 +140,8 @@ def generate(
     env_file = Path.cwd() / ".env"
 
     if env_file.exists() and not force:
-        console.print("[yellow]⚠[/yellow]  .env file already exists")
-        console.print("   Use --force to overwrite")
+        cli_output.print_rich("[yellow]⚠[/yellow]  .env file already exists")
+        cli_output.print_rich("   Use --force to overwrite")
         return
 
     template = """# Ursa Configuration
@@ -191,8 +190,8 @@ ENABLE_AUTH=true
 """
 
     env_file.write_text(template)
-    console.print("[green]✓[/green]  Created .env file")
-    console.print("   Edit it to configure your settings")
+    cli_output.success(" Created .env file")
+    cli_output.print_rich("   Edit it to configure your settings")
 
 
 @env_app.command("clean")
@@ -219,16 +218,16 @@ def clean():
         for path in project_root.glob(pattern):
             if path.is_dir():
                 shutil.rmtree(path)
-                console.print(f"  [dim]Removed {path}[/dim]")
+                cli_output.print_rich(f"  [dim]Removed {path}[/dim]")
             else:
                 path.unlink()
-                console.print(f"  [dim]Removed {path}[/dim]")
+                cli_output.print_rich(f"  [dim]Removed {path}[/dim]")
             removed += 1
 
     if removed:
-        console.print(f"\n[green]✓[/green]  Cleaned {removed} items")
+        cli_output.print_rich(f"\n[green]✓[/green]  Cleaned {removed} items")
     else:
-        console.print("[dim]Nothing to clean[/dim]")
+        cli_output.print_rich("[dim]Nothing to clean[/dim]")
 
 
 def register(registry: CommandRegistry, spec: CliSpec) -> None:
