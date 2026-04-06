@@ -9,11 +9,11 @@ if TYPE_CHECKING:
     from cli_core_yo.spec import CliSpec
 
 import typer
+from cli_core_yo import output as cli_output
 
 from daylib_ursa.analysis_store import AnalysisStore
 from daylib_ursa.config import get_settings
 from daylib_ursa.integrations.tapdb_runtime import (
-from cli_core_yo import output as cli_output
     DEFAULT_AWS_PROFILE,
     DEFAULT_AWS_REGION,
     DEFAULT_TAPDB_CLIENT_ID,
