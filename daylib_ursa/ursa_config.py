@@ -385,9 +385,8 @@ class UrsaConfig:
             LOGGER.warning("%s: %s", path, warn)
 
         if not is_valid:
-            for err in errors:
-                LOGGER.error("%s: %s", path, err)
-            return cls(_config_path=path)
+            detail = "; ".join(errors)
+            raise ValueError(f"{path}: {detail}")
 
         try:
             with open(path) as f:

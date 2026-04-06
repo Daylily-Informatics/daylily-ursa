@@ -147,9 +147,7 @@ def test_cli_requires_active_conda_env(monkeypatch: pytest.MonkeyPatch) -> None:
     from daylib_ursa.cli import _enforce_conda_env_contract
 
     monkeypatch.delenv("CONDA_DEFAULT_ENV", raising=False)
-    with pytest.raises(
-        SystemExit, match="requires an active deployment-scoped conda environment"
-    ):
+    with pytest.raises(SystemExit, match="requires an active deployment-scoped conda environment"):
         _enforce_conda_env_contract(["server", "status"])
 
 
@@ -163,9 +161,7 @@ def test_cli_accepts_hyphenated_conda_env(monkeypatch: pytest.MonkeyPatch) -> No
 def test_cli_skip_conda_env_check_flag_is_stripped() -> None:
     from daylib_ursa.cli import _strip_skip_conda_env_check_flag
 
-    args, skip = _strip_skip_conda_env_check_flag(
-        ["--skip-conda-env-check", "server", "status"]
-    )
+    args, skip = _strip_skip_conda_env_check_flag(["--skip-conda-env-check", "server", "status"])
     assert skip is True
     assert args == ["server", "status"]
 
@@ -407,3 +403,46 @@ def test_ursa_cli_exposes_dewey_integration_group():
     assert "resolve-artifact" in result.output
     assert "resolve-artifact-set" in result.output
     assert "import-artifact" in result.output
+
+
+# ---------------------------------------------------------------------------
+# §2.3 — Strict config validation: dict-format regions must be rejected
+# ---------------------------------------------------------------------------
+
+
+class TestStrictConfigValidation:
+    """Verify that deprecated config formats are rejected, not silently tolerated."""
+
+    def test_validate_config_file_rejects_dict_regions(self, tmp_path):
+        import yaml
+
+        from daylib_ursa.ursa_config import validate_config_file
+
+        config_file = tmp_path / "ursa-config.yaml"
+        config_file.write_text(yaml.dump({"regions": {"us-west-2": "bucket"}}))
+        valid, errors, warnings = validate_config_file(config_file)
+        assert not valid
+        assert any("must be a list, not a dict" in e for e in errors), (
+            f"Expected dict-format rejection error, got errors={errors}"
+        )
+
+    def test_load_raises_on_dict_regions(self, tmp_path):
+        import yaml
+
+        from daylib_ursa.ursa_config import UrsaConfig
+
+        config_file = tmp_path / "ursa-config.yaml"
+        config_file.write_text(yaml.dump({"regions": {"us-west-2": "bucket"}}))
+
+        with pytest.raises(ValueError, match="must be a list, not a dict"):
+            UrsaConfig.load(config_file)
+
+    def test_validate_config_file_accepts_list_regions(self, tmp_path):
+        import yaml
+
+        from daylib_ursa.ursa_config import validate_config_file
+
+        config_file = tmp_path / "ursa-config.yaml"
+        config_file.write_text(yaml.dump({"regions": ["us-west-2", "eu-central-1"]}))
+        valid, errors, warnings = validate_config_file(config_file)
+        assert valid, f"Expected valid config, got errors={errors}"
