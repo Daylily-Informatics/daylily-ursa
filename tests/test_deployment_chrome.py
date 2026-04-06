@@ -12,7 +12,12 @@ from daylily_cognito import SessionPrincipal, configure_session_middleware, stor
 
 from daylib_ursa.auth.dependencies import CognitoAuthProvider, build_web_session_config
 from daylib_ursa.auth import CurrentUser
-from daylib_ursa.config import clear_settings_cache, get_settings, get_settings_for_testing
+from daylib_ursa.config import (
+    build_default_config_template,
+    clear_settings_cache,
+    get_settings,
+    get_settings_for_testing,
+)
 from daylib_ursa.gui_app import mount_gui
 from daylib_ursa.ursa_config import (
     DEFAULT_DEPLOYMENT_BANNER_COLOR,
@@ -86,6 +91,17 @@ deployment:
     }
 
 
+def test_default_config_template_emits_secret_and_domain_defaults() -> None:
+    template = build_default_config_template().decode("utf-8")
+
+    assert "session_secret_key:" in template
+    assert "generated-on-init" not in template
+    assert "default_tenant_id: 00000000-0000-0000-0000-000000000000" in template
+    assert "auto_provision_allowed_domains:" in template
+    assert "  - lsmc.com" in template
+    assert "whitelist_domains: lsmc.com,lsmc.bio,lsmc.life,daylilyinformatics.com" in template
+
+
 def _app_with_gui(settings):
     app = FastAPI()
     app.state.server_instance_id = "test-server"
@@ -97,7 +113,7 @@ def _app_with_gui(settings):
     app.state.auth_provider = SimpleNamespace(
         resolve_access_token=lambda _token, **_kwargs: CurrentUser(
             sub="user-123",
-            email="user@example.com",
+            email="user@lsmc.com",
             name="Ursa User",
             tenant_id=uuid.UUID("11111111-1111-1111-1111-111111111111"),
             roles=["ADMIN"],
@@ -112,7 +128,7 @@ def _app_with_gui(settings):
             build_web_session_config(settings, app.state.server_instance_id),
             SessionPrincipal(
                 user_sub="user-123",
-                email="user@example.com",
+                email="user@lsmc.com",
                 name="Ursa User",
                 roles=["ADMIN"],
                 app_context={"tenant_id": "11111111-1111-1111-1111-111111111111"},
@@ -137,7 +153,7 @@ def _login_user(
     monkeypatch,
     client,
     *,
-    email: str = "user@example.com",
+    email: str = "user@lsmc.com",
     sub: str = "user-123",
     name: str = "Ursa User",
     roles: list[str] | None = None,
@@ -298,7 +314,7 @@ def test_auth_callback_persists_session_and_redirects(monkeypatch):
     assert "ursa_session" in client.cookies
 
     session_payload = _decode_session_cookie(client)
-    assert session_payload["email"] == "user@example.com"
+    assert session_payload["email"] == "user@lsmc.com"
     assert session_payload["user_sub"] == "user-123"
     assert session_payload["app_context"]["tenant_id"] == "11111111-1111-1111-1111-111111111111"
     assert "access_token" not in session_payload
@@ -308,6 +324,41 @@ def test_auth_callback_persists_session_and_redirects(monkeypatch):
     login_page = client.get("/login?next=/usage", follow_redirects=False)
     assert login_page.status_code == 303
     assert login_page.headers["location"] == "/usage"
+
+
+def test_auth_callback_rejects_disallowed_email_domain(monkeypatch):
+    settings = get_settings_for_testing(
+        ursa_internal_output_bucket="ursa-internal",
+        cognito_domain="ursa.auth.us-west-2.amazoncognito.com",
+        cognito_app_client_id="client-123",
+        cognito_callback_url="https://localhost:8913/auth/callback",
+        cognito_logout_url="https://localhost:8913/login",
+    )
+    client = _test_client(_app_with_gui(settings))
+    monkeypatch.setattr(
+        "daylily_cognito.web_session.build_authorization_url",
+        _mock_cognito_login_url,
+    )
+    login_response = client.get("/auth/login?next=/usage", follow_redirects=False)
+    state = parse_qs(urlparse(login_response.headers["location"]).query)["state"][0]
+    monkeypatch.setattr(
+        "daylily_cognito.web_session.exchange_authorization_code",
+        lambda **_kwargs: {"id_token": "token-123"},
+    )
+    client.app.state.auth_provider = SimpleNamespace(
+        resolve_access_token=lambda _token, **_kwargs: CurrentUser(
+            sub="user-123",
+            email="user@gmail.com",
+            name="Ursa User",
+            tenant_id=uuid.UUID("11111111-1111-1111-1111-111111111111"),
+            roles=["ADMIN"],
+        )
+    )
+
+    response = client.get(f"/auth/callback?code=auth-code&state={state}", follow_redirects=False)
+
+    assert response.status_code in {302, 303}
+    assert response.headers["location"] == "/auth/error?reason=not_authorized"
 
 
 def test_auth_callback_without_prior_login_redirects_to_auth_error():
@@ -380,14 +431,14 @@ def test_two_browser_sessions_keep_distinct_users(monkeypatch):
         _login_user(
             monkeypatch,
             client_a,
-            email="operator-a@example.com",
+            email="operator-a@lsmc.com",
             sub="sub-a",
             name="Operator A",
         )
         _login_user(
             monkeypatch,
             client_b,
-            email="operator-b@example.com",
+            email="operator-b@daylilyinformatics.com",
             sub="sub-b",
             name="Operator B",
         )
@@ -395,9 +446,9 @@ def test_two_browser_sessions_keep_distinct_users(monkeypatch):
         session_a = _decode_session_cookie(client_a)
         session_b = _decode_session_cookie(client_b)
 
-        assert session_a["email"] == "operator-a@example.com"
+        assert session_a["email"] == "operator-a@lsmc.com"
         assert session_a["user_sub"] == "sub-a"
-        assert session_b["email"] == "operator-b@example.com"
+        assert session_b["email"] == "operator-b@daylilyinformatics.com"
         assert session_b["user_sub"] == "sub-b"
         assert session_a["email"] != session_b["email"]
         assert session_a["user_sub"] != session_b["user_sub"]
@@ -419,14 +470,14 @@ def test_logout_from_one_session_does_not_clear_the_other(monkeypatch):
         _login_user(
             monkeypatch,
             client_a,
-            email="shared@example.com",
+            email="shared@lsmc.bio",
             sub="sub-shared",
             name="Shared User",
         )
         _login_user(
             monkeypatch,
             client_b,
-            email="shared@example.com",
+            email="shared@lsmc.bio",
             sub="sub-shared",
             name="Shared User",
         )
@@ -445,7 +496,7 @@ def test_logout_from_one_session_does_not_clear_the_other(monkeypatch):
 
         assert client_a.get("/login?next=/usage", follow_redirects=False).status_code == 200
         assert client_b.get("/login?next=/usage", follow_redirects=False).status_code == 303
-        assert _decode_session_cookie(client_b)["email"] == "shared@example.com"
+        assert _decode_session_cookie(client_b)["email"] == "shared@lsmc.bio"
 
 
 def test_auth_login_redirects_to_local_auth_error_when_cognito_is_misconfigured(
@@ -561,7 +612,7 @@ def test_auth_callback_passes_paired_access_token_for_id_token_verification(monk
         captured["access_token"] = access_token
         return {
             "sub": "user-123",
-            "email": "user@example.com",
+            "email": "user@lsmc.com",
             "aud": "client-123",
             "custom:customer_id": "11111111-1111-1111-1111-111111111111",
             "cognito:groups": ["ursa-admin"],

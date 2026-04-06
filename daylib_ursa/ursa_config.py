@@ -124,6 +124,12 @@ VALID_FIELDS = {
     "cognito_domain": (str, "Cognito Hosted UI domain"),
     "cognito_callback_url": (str, "Cognito Hosted UI callback URL"),
     "cognito_logout_url": (str, "Cognito Hosted UI logout redirect URL"),
+    "session_secret_key": (str, "Session secret key for web sessions"),
+    "default_tenant_id": (str, "Default tenant ID for zero-tenant fallback"),
+    "auto_provision_allowed_domains": (
+        list,
+        "Allowed email domains for auto-provision fallback",
+    ),
     "api_host": (str, "API bind host"),
     "api_port": (int, "API bind port"),
     "bloom_base_url": (str, "Bloom base URL"),
@@ -222,6 +228,8 @@ def validate_config_file(path: Path) -> Tuple[bool, List[str], List[str]]:
         "cognito_domain",
         "cognito_callback_url",
         "cognito_logout_url",
+        "session_secret_key",
+        "default_tenant_id",
         "api_host",
         "bloom_base_url",
         "atlas_base_url",
@@ -233,6 +241,22 @@ def validate_config_file(path: Path) -> Tuple[bool, List[str], List[str]]:
                 errors.append(
                     f"'{field_name}' must be a string, got {type(data[field_name]).__name__}"
                 )
+
+    if (
+        "auto_provision_allowed_domains" in data
+        and data["auto_provision_allowed_domains"] is not None
+    ):
+        value = data["auto_provision_allowed_domains"]
+        if not isinstance(value, list):
+            errors.append(
+                f"'auto_provision_allowed_domains' must be a list, got {type(value).__name__}"
+            )
+        else:
+            for i, item in enumerate(value):
+                if not isinstance(item, str):
+                    errors.append(
+                        f"'auto_provision_allowed_domains[{i}]' must be a string, got {type(item).__name__}"
+                    )
 
     for field_name in ["api_port"]:
         if field_name in data and data[field_name] is not None:
@@ -306,6 +330,15 @@ class UrsaConfig:
 
     cognito_logout_url: Optional[str] = None
     """Cognito Hosted UI logout redirect URL, read from YAML config."""
+
+    session_secret_key: Optional[str] = None
+    """Session secret key for web sessions read from YAML config."""
+
+    default_tenant_id: Optional[str] = None
+    """Default tenant ID for zero-tenant fallback read from YAML config."""
+
+    auto_provision_allowed_domains: Optional[List[str]] = None
+    """Allowed domains for auto-provision fallback read from YAML config."""
 
     api_host: Optional[str] = None
     """API bind host read from YAML config."""
@@ -444,6 +477,9 @@ class UrsaConfig:
         cognito_region = data.get("cognito_region")
         cognito_callback_url = data.get("cognito_callback_url")
         cognito_logout_url = data.get("cognito_logout_url")
+        session_secret_key = data.get("session_secret_key")
+        default_tenant_id = data.get("default_tenant_id")
+        auto_provision_allowed_domains = data.get("auto_provision_allowed_domains")
         api_host = data.get("api_host")
         api_port = data.get("api_port")
         bloom_base_url = data.get("bloom_base_url")
@@ -478,6 +514,9 @@ class UrsaConfig:
             cognito_region=cognito_region,
             cognito_callback_url=cognito_callback_url,
             cognito_logout_url=cognito_logout_url,
+            session_secret_key=session_secret_key,
+            default_tenant_id=default_tenant_id,
+            auto_provision_allowed_domains=auto_provision_allowed_domains,
             api_host=api_host,
             api_port=api_port,
             bloom_base_url=bloom_base_url,
@@ -570,6 +609,9 @@ class UrsaConfig:
         env_map = {
             "aws_profile": "AWS_PROFILE",
             "whitelist_domains": "WHITELIST_DOMAINS",
+            "session_secret_key": "SESSION_SECRET_KEY",
+            "default_tenant_id": "DEFAULT_TENANT_ID",
+            "auto_provision_allowed_domains": "AUTO_PROVISION_ALLOWED_DOMAINS",
         }
 
         env_var = env_map.get(field)
