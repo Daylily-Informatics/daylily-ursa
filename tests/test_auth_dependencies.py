@@ -6,6 +6,7 @@ import pytest
 
 from daylib_ursa.auth import AuthError
 from daylib_ursa.auth import dependencies as auth_dependencies
+from daylib_ursa.config import Settings
 
 
 def test_claims_to_current_user_maps_canonical_cognito_groups() -> None:
@@ -67,7 +68,16 @@ def test_cognito_auth_provider_passes_paired_access_token_for_id_token_at_hash(m
     )
     monkeypatch.setattr(jwt, "get_unverified_header", lambda _token: {"kid": "kid-123"})
 
-    def _decode(token, key, algorithms=None, options=None, audience=None, issuer=None, subject=None, access_token=None):
+    def _decode(
+        token,
+        key,
+        algorithms=None,
+        options=None,
+        audience=None,
+        issuer=None,
+        subject=None,
+        access_token=None,
+    ):
         captured["token"] = token
         captured["key"] = key
         captured["algorithms"] = algorithms
@@ -114,6 +124,25 @@ def test_claims_to_current_user_maps_external_admin_group() -> None:
     assert user.roles == ["EXTERNAL_USER_ADMIN"]
 
 
+def test_settings_whitelist_domains_default_to_base_four() -> None:
+    settings = Settings(
+        ursa_internal_output_bucket="ursa-internal",
+        cognito_domain="https://auth.example.com",
+        cognito_app_client_id="client-1",
+        cognito_callback_url="https://localhost:8914/auth/callback",
+        cognito_logout_url="https://localhost:8914/login",
+    )
+
+    assert settings.get_whitelist_domains() == [
+        "lsmc.com",
+        "lsmc.bio",
+        "lsmc.life",
+        "daylilyinformatics.com",
+    ]
+    assert settings.is_domain_whitelisted("user@lsmc.bio") is True
+    assert settings.is_domain_whitelisted("user@gmail.com") is False
+
+
 def test_cognito_auth_provider_rejects_id_token_with_wrong_audience(monkeypatch) -> None:
     monkeypatch.setattr(
         auth_dependencies,
@@ -123,7 +152,9 @@ def test_cognito_auth_provider_rejects_id_token_with_wrong_audience(monkeypatch)
     monkeypatch.setattr(
         auth_dependencies.CognitoAuthProvider,
         "_verify_id_token_claims",
-        lambda self, _token, access_token=None: (_ for _ in ()).throw(AuthError("Invalid token audience")),
+        lambda self, _token, access_token=None: (_ for _ in ()).throw(
+            AuthError("Invalid token audience")
+        ),
     )
 
     provider = auth_dependencies.CognitoAuthProvider(
@@ -148,7 +179,10 @@ def test_user_directory_uses_cognito_groups_as_role_source() -> None:
                         "Attributes": [
                             {"Name": "sub", "Value": "user-123"},
                             {"Name": "email", "Value": "ursa@example.com"},
-                            {"Name": "custom:customer_id", "Value": "00000000-0000-0000-0000-000000000001"},
+                            {
+                                "Name": "custom:customer_id",
+                                "Value": "00000000-0000-0000-0000-000000000001",
+                            },
                             {"Name": "custom:roles", "Value": "READ_ONLY"},
                         ],
                     }

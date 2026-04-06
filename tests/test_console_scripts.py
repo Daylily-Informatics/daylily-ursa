@@ -75,7 +75,6 @@ def test_ursa_server_start_uses_packaged_entrypoint(
     monkeypatch.setattr(ursa_config_mod, "get_ursa_config", lambda reload=False: DummyUrsaConfig())
     monkeypatch.setattr(server_mod, "_ensure_dir", lambda: None)
     monkeypatch.setattr(server_mod, "_get_pid", lambda: None)
-    monkeypatch.setattr(server_mod, "source_env_file", lambda _path: False)
     monkeypatch.setattr(server_mod, "_require_auth_dependencies", lambda: None)
     monkeypatch.setattr(server_mod, "_run_cognito_uri_check", lambda *args, **kwargs: None)
     monkeypatch.setattr(server_mod, "_write_runtime_meta", lambda **_kwargs: None)
@@ -133,6 +132,21 @@ def test_ursa_server_start_uses_packaged_entrypoint(
     assert "--key" in cmd
     assert str(cert_path) in cmd
     assert str(key_path) in cmd
+    assert "--profile" in cmd
+    assert "test-profile" in cmd
+
+    kwargs = captured.get("kwargs")
+    assert isinstance(kwargs, dict)
+    env = kwargs.get("env")
+    assert isinstance(env, dict)
+    assert env["DATABASE_BACKEND"] == "tapdb"
+    assert env["DATABASE_TARGET"] == "local"
+    assert env["DATABASE_URL"] == "postgresql://test-db"
+    assert env["MERIDIAN_DOMAIN_CODE"] == "R"
+    assert env["TAPDB_APP_CODE"] == "R"
+    assert "TAPDB_CLIENT_ID" not in env
+    assert "TAPDB_DATABASE_NAME" not in env
+    assert "TAPDB_ENV" not in env
 
 
 def test_cli_requires_hyphenated_conda_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -190,7 +204,6 @@ def test_ursa_server_start_command_uses_module_entrypoint_and_profile(
     monkeypatch.setattr(ursa_config_mod, "get_ursa_config", lambda reload=False: DummyUrsaConfig())
     monkeypatch.setattr(server_mod, "_ensure_dir", lambda: None)
     monkeypatch.setattr(server_mod, "_get_pid", lambda: None)
-    monkeypatch.setattr(server_mod, "source_env_file", lambda _path: False)
     monkeypatch.setattr(server_mod, "_require_auth_dependencies", lambda: None)
     monkeypatch.setattr(server_mod, "_run_cognito_uri_check", lambda *args, **kwargs: None)
     cert_path = tmp_path / "cert.pem"
@@ -248,21 +261,20 @@ def test_ursa_server_start_command_uses_module_entrypoint_and_profile(
     assert "--key" in cmd
     assert str(cert_path) in cmd
     assert str(key_path) in cmd
-    assert "--profile" in cmd
-    assert "test-profile" in cmd
 
-    kwargs = captured.get("kwargs")
-    assert isinstance(kwargs, dict)
-    env = kwargs.get("env")
-    assert isinstance(env, dict)
-    assert env["DATABASE_BACKEND"] == "tapdb"
-    assert env["DATABASE_TARGET"] == "local"
-    assert env["DATABASE_URL"] == "postgresql://test-db"
-    assert env["MERIDIAN_DOMAIN_CODE"] == "R"
-    assert env["TAPDB_APP_CODE"] == "R"
-    assert "TAPDB_CLIENT_ID" not in env
-    assert "TAPDB_DATABASE_NAME" not in env
-    assert "TAPDB_ENV" not in env
+
+def test_ursa_config_template_bytes_are_fresh() -> None:
+    from daylib_ursa.config import build_default_config_template
+
+    first = build_default_config_template()
+    second = build_default_config_template()
+
+    assert first != second
+    text = first.decode("utf-8")
+    assert "session_secret_key:" in text
+    assert "default_tenant_id: 00000000-0000-0000-0000-000000000000" in text
+    assert "auto_provision_allowed_domains:" in text
+    assert "whitelist_domains: lsmc.com,lsmc.bio,lsmc.life,daylilyinformatics.com" in text
 
 
 def test_ursa_server_start_allows_ambient_credentials(monkeypatch):
@@ -286,7 +298,6 @@ def test_ursa_server_start_allows_ambient_credentials(monkeypatch):
     monkeypatch.setattr(ursa_config_mod, "get_ursa_config", lambda reload=False: DummyUrsaConfig())
     monkeypatch.setattr(server_mod, "_ensure_dir", lambda: None)
     monkeypatch.setattr(server_mod, "_get_pid", lambda: None)
-    monkeypatch.setattr(server_mod, "source_env_file", lambda _path: False)
     monkeypatch.setattr(server_mod, "_require_auth_dependencies", lambda: None)
     monkeypatch.setattr(server_mod, "_run_cognito_uri_check", lambda *args, **kwargs: None)
     monkeypatch.setattr(server_mod, "_write_runtime_meta", lambda **_kwargs: None)

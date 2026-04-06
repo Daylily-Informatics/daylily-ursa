@@ -112,6 +112,14 @@ def mount_gui(app: FastAPI) -> None:
         clean_reason = str(reason or "").strip()
         return messages.get(clean_reason) or None
 
+    def _require_allowed_cognito_email(email: str) -> None:
+        settings = getattr(app.state, "settings", None)
+        if settings is None:
+            raise AuthError("Authentication provider is not configured")
+        valid, message = settings.validate_email_domain(email)
+        if not valid:
+            raise AuthError(f"not authorized: {message}")
+
     def _login_redirect_response(request: Request) -> RedirectResponse:
         next_path = quote(str(request.url.path or "/"), safe="/?=&")
         reason = str(getattr(request.state, "cognito_auth_reason", "") or "").strip()
@@ -134,6 +142,7 @@ def mount_gui(app: FastAPI) -> None:
                 id_token or access_token,
                 paired_access_token=access_token or None,
             )
+            _require_allowed_cognito_email(actor.email)
             return session_principal_from_current_user(actor)
         except AuthError as exc:
             reason = "not_authorized" if "not authorized" in str(exc).lower() else "auth_error"
@@ -628,6 +637,7 @@ def mount_gui(app: FastAPI) -> None:
             if auth_provider is None:
                 raise AuthError("Authentication provider is not configured")
             actor = auth_provider.resolve_access_token(token)
+            _require_allowed_cognito_email(actor.email)
         except AuthError as exc:
             return templates.TemplateResponse(
                 request,

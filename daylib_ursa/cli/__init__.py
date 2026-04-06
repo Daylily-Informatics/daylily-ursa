@@ -17,6 +17,7 @@ from daylib_ursa.integrations.tapdb_runtime import (
     TapDBRuntimeError,
     ensure_tapdb_version,
 )
+from daylib_ursa.config import build_default_config_template
 from daylib_ursa.ursa_config import _resolve_deployment_code
 
 
@@ -110,43 +111,42 @@ def _ensure_tapdb_dependency() -> None:
         raise SystemExit(f"Ursa CLI startup failed. Details: {exc}") from exc
 
 
-_CONFIG_TEMPLATE = (
-    Path(__file__).resolve().parents[2] / "config" / "ursa-config.example.yaml"
-).read_bytes()
+def _build_spec() -> CliSpec:
+    return CliSpec(
+        prog_name="ursa",
+        app_display_name="Ursa",
+        dist_name="daylily-ursa",
+        root_help="Ursa development CLI for beta analysis APIs and integrations.",
+        xdg=XdgSpec(
+            app_dir_name=f"ursa-{_resolve_deployment_code()}",
+        ),
+        config=ConfigSpec(
+            xdg_relative_path=f"ursa-config-{_resolve_deployment_code()}.yaml",
+            template_bytes=build_default_config_template(),
+            validator=_validate_ursa_config,
+        ),
+        env=EnvSpec(
+            active_env_var="URSA_ACTIVE",
+            project_root_env_var="URSA_PROJECT_ROOT",
+            activate_script_name="activate <deploy-name>",
+            deactivate_script_name="ursa_deactivate",
+        ),
+        plugins=PluginSpec(
+            explicit=[
+                "daylib_ursa.cli.db.register",
+                "daylib_ursa.cli.server.register",
+                "daylib_ursa.cli.env.register",
+                "daylib_ursa.cli.test.register",
+                "daylib_ursa.cli.quality.register",
+                "daylib_ursa.cli.integrations.register",
+                "daylib_ursa.cli.monitor.register",
+            ],
+        ),
+        info_hooks=[_ursa_info_hook],
+    )
 
 
-spec = CliSpec(
-    prog_name="ursa",
-    app_display_name="Ursa",
-    dist_name="daylily-ursa",
-    root_help="Ursa development CLI for beta analysis APIs and integrations.",
-    xdg=XdgSpec(
-        app_dir_name=f"ursa-{_resolve_deployment_code()}",
-    ),
-    config=ConfigSpec(
-        xdg_relative_path=f"ursa-config-{_resolve_deployment_code()}.yaml",
-        template_bytes=_CONFIG_TEMPLATE,
-        validator=_validate_ursa_config,
-    ),
-    env=EnvSpec(
-        active_env_var="URSA_ACTIVE",
-        project_root_env_var="URSA_PROJECT_ROOT",
-        activate_script_name="activate <deploy-name>",
-        deactivate_script_name="ursa_deactivate",
-    ),
-    plugins=PluginSpec(
-        explicit=[
-            "daylib_ursa.cli.db.register",
-            "daylib_ursa.cli.server.register",
-            "daylib_ursa.cli.env.register",
-            "daylib_ursa.cli.test.register",
-            "daylib_ursa.cli.quality.register",
-            "daylib_ursa.cli.integrations.register",
-            "daylib_ursa.cli.monitor.register",
-        ],
-    ),
-    info_hooks=[_ursa_info_hook],
-)
+spec = _build_spec()
 
 app = create_app(spec)
 
@@ -191,4 +191,4 @@ def main() -> None:
     args, skip_conda_env_check = _strip_skip_conda_env_check_flag(sys.argv[1:])
     if not skip_conda_env_check:
         _enforce_conda_env_contract(args)
-    raise SystemExit(run(spec, args))
+    raise SystemExit(run(_build_spec(), args))
