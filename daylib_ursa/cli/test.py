@@ -8,14 +8,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import typer
-from rich.console import Console
+from cli_core_yo import output as cli_output
 
 if TYPE_CHECKING:
     from cli_core_yo.registry import CommandRegistry
     from cli_core_yo.spec import CliSpec
 
 test_app = typer.Typer(help="Test execution commands")
-console = Console()
 
 
 def _get_project_root() -> Path:
@@ -47,7 +46,7 @@ def run(
     if pattern:
         cmd.extend(["-k", pattern])
 
-    console.print("[cyan]Running tests...[/cyan]")
+    cli_output.print_rich("[cyan]Running tests...[/cyan]")
     result = subprocess.run(cmd, cwd=project_root)
     raise typer.Exit(result.returncode)
 
@@ -64,11 +63,11 @@ def coverage(
     if html:
         cmd.append("--cov-report=html")
 
-    console.print("[cyan]Running tests with coverage...[/cyan]")
+    cli_output.print_rich("[cyan]Running tests with coverage...[/cyan]")
     result = subprocess.run(cmd, cwd=project_root)
 
     if html and result.returncode == 0:
-        console.print("\n[green]✓[/green]  HTML report: [cyan]htmlcov/index.html[/cyan]")
+        cli_output.print_rich("\n[green]✓[/green]  HTML report: [cyan]htmlcov/index.html[/cyan]")
 
     raise typer.Exit(result.returncode)
 
@@ -80,7 +79,7 @@ def all_checks():
 
     cmd = [sys.executable, "-m", "pytest", "-q", "--tb=short", "--cov=daylib_ursa"]
 
-    console.print("[cyan]Running full test suite...[/cyan]")
+    cli_output.print_rich("[cyan]Running full test suite...[/cyan]")
     result = subprocess.run(cmd, cwd=project_root)
     raise typer.Exit(result.returncode)
 

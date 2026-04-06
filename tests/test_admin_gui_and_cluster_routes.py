@@ -736,7 +736,7 @@ def test_gui_routes_cover_remaining_pages_and_logout() -> None:
     assert admin_client_detail_page.status_code == 200
     assert "Client dewey-client" in admin_client_detail_page.text
     assert logout.status_code == 303
-    assert logout.headers["location"] == "/login"
+    assert logout.headers["location"] == "/auth/error?reason=cognito_logout_misconfigured"
 
 
 def test_gui_routes_use_session_auth_and_gate_admin_pages() -> None:

@@ -94,7 +94,8 @@ def mount_gui(app: FastAPI) -> None:
         cognito = _cognito_settings()
         query = {
             "client_id": cognito["client_id"],
-            "logout_uri": cognito["logout_url"],
+            "redirect_uri": cognito["callback_url"].rstrip("/"),
+            "response_type": "code",
         }
         if state:
             query["state"] = state
@@ -108,6 +109,14 @@ def mount_gui(app: FastAPI) -> None:
             "invalid_state": "The sign-in state was invalid or expired. Start sign-in again.",
             "missing_code": "The sign-in response was incomplete. Start sign-in again.",
             "token_exchange_failed": "The sign-in exchange failed. Start sign-in again.",
+            "cognito_sign_in_misconfigured": (
+                "Ursa Cognito sign-in is misconfigured. The shared app client callback/logout "
+                "URLs or redirect URI do not match this Ursa deployment."
+            ),
+            "cognito_logout_misconfigured": (
+                "Ursa cleared your local session, but the shared Cognito logout contract is "
+                "misconfigured. Update the shared app client redirect URLs for this Ursa deployment."
+            ),
         }
         clean_reason = str(reason or "").strip()
         return messages.get(clean_reason) or None
@@ -119,6 +128,12 @@ def mount_gui(app: FastAPI) -> None:
         valid, message = settings.validate_email_domain(email)
         if not valid:
             raise AuthError(f"not authorized: {message}")
+
+    def _auth_error_redirect(reason: str) -> RedirectResponse:
+        return RedirectResponse(
+            url=f"/auth/error?reason={quote(reason)}",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
 
     def _login_redirect_response(request: Request) -> RedirectResponse:
         next_path = quote(str(request.url.path or "/"), safe="/?=&")
@@ -592,7 +607,11 @@ def mount_gui(app: FastAPI) -> None:
 
     @app.get("/auth/login", include_in_schema=False)
     async def auth_login(request: Request, next: str = "/"):
-        return start_cognito_login(request, _web_session_config(), _next_path(next))
+        try:
+            return start_cognito_login(request, _web_session_config(), _next_path(next))
+        except (HTTPException, ValueError) as exc:
+            LOGGER.error("Ursa Cognito sign-in is misconfigured: %s", exc)
+            return _auth_error_redirect("cognito_sign_in_misconfigured")
 
     @app.get("/auth/callback", include_in_schema=False)
     async def auth_callback(request: Request, code: str = "", state: str = ""):
@@ -688,13 +707,22 @@ def mount_gui(app: FastAPI) -> None:
         )
 
     async def _logout_response(request: Request):
+        logout_reason: str | None = None
         try:
             logout_url = _build_cognito_logout_url()
-        except HTTPException:
-            clear_session_user(request)
-            return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+        except (HTTPException, ValueError) as exc:
+            LOGGER.error("Ursa Cognito logout is misconfigured: %s", exc)
+            logout_reason = "cognito_logout_misconfigured"
+            logout_url = ""
         clear_session_user(request)
-        return RedirectResponse(url=logout_url, status_code=status.HTTP_303_SEE_OTHER)
+        return (
+            _auth_error_redirect(logout_reason)
+            if logout_reason
+            else RedirectResponse(
+                url=logout_url,
+                status_code=status.HTTP_303_SEE_OTHER,
+            )
+        )
 
     @app.get("/auth/logout", include_in_schema=False)
     async def auth_logout_get(request: Request):
