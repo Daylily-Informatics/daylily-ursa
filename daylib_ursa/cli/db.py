@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     from cli_core_yo.spec import CliSpec
 
 import typer
-from cli_core_yo import output as cli_output
+from rich.console import Console
 
 from daylib_ursa.analysis_store import AnalysisStore
 from daylib_ursa.config import get_settings
@@ -25,6 +25,7 @@ from daylib_ursa.integrations.tapdb_runtime import (
     tapdb_env_for_target,
 )
 
+console = Console()
 db_app = typer.Typer(help="TapDB lifecycle and Ursa overlay commands")
 
 
@@ -69,7 +70,7 @@ def _validate_target(target: str) -> str:
 
 
 def _apply_ursa_overlay(*, start_step: int, total_steps: int) -> None:
-    cli_output.print_rich(
+    console.print(
         f"[cyan]Step {start_step}/{total_steps}:[/cyan] Applying Ursa TapDB template overlay"
     )
     _bootstrap_ursa_templates()
@@ -121,7 +122,7 @@ def _build_target(
             namespace=namespace,
         )
     if result.stdout:
-        cli_output.print_rich(result.stdout.rstrip())
+        console.print(result.stdout.rstrip())
 
     db_url = export_database_url_for_target(
         target=target,
@@ -130,9 +131,9 @@ def _build_target(
         region=region,
         namespace=namespace,
     )
-    cli_output.print_rich(f"[green]DATABASE_URL[/green] resolved: [dim]{db_url}[/dim]")
+    console.print(f"[green]DATABASE_URL[/green] resolved: [dim]{db_url}[/dim]")
     _apply_ursa_overlay(start_step=overlay_start_step, total_steps=overlay_total_steps)
-    cli_output.print_rich("[green]Ursa TapDB overlay complete[/green]")
+    console.print("[green]Ursa TapDB overlay complete[/green]")
 
 
 @db_app.command("build")
@@ -157,7 +158,7 @@ def build(
             overlay_total_steps=3,
         )
     except TapDBRuntimeError as exc:
-        cli_output.print_rich(f"[red]DB build failed:[/red] {exc}")
+        console.print(f"[red]DB build failed:[/red] {exc}")
         raise typer.Exit(1) from exc
 
 
@@ -185,10 +186,10 @@ def seed(
             region=region,
             namespace=namespace,
         )
-        cli_output.print_rich(f"[green]DATABASE_URL[/green] resolved: [dim]{db_url}[/dim]")
+        console.print(f"[green]DATABASE_URL[/green] resolved: [dim]{db_url}[/dim]")
         _apply_ursa_overlay(start_step=1, total_steps=1)
     except Exception as exc:
-        cli_output.print_rich(f"[red]DB seed failed:[/red] {exc}")
+        console.print(f"[red]DB seed failed:[/red] {exc}")
         raise typer.Exit(1) from exc
 
 
@@ -223,7 +224,7 @@ def reset(
             namespace=namespace,
         )
     except TapDBRuntimeError as exc:
-        cli_output.print_rich(f"[red]Delete failed:[/red] {exc}")
+        console.print(f"[red]Delete failed:[/red] {exc}")
         raise typer.Exit(1) from exc
 
     try:
@@ -237,7 +238,7 @@ def reset(
             overlay_total_steps=4,
         )
     except TapDBRuntimeError as exc:
-        cli_output.print_rich(f"[red]DB build failed:[/red] {exc}")
+        console.print(f"[red]DB build failed:[/red] {exc}")
         raise typer.Exit(1) from exc
 
 
@@ -271,7 +272,7 @@ def nuke(
             namespace=namespace,
         )
     except TapDBRuntimeError as exc:
-        cli_output.print_rich(f"[red]Delete failed:[/red] {exc}")
+        console.print(f"[red]Delete failed:[/red] {exc}")
         raise typer.Exit(1) from exc
 
 

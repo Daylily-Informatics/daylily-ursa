@@ -142,7 +142,9 @@ class AnalysisStore:
 
     @staticmethod
     def _payload(instance: generic_instance) -> dict[str, Any]:
-        return dict(instance.json_addl or {})
+        payload = dict(from_json_addl(instance))
+        payload.pop("properties", None)
+        return payload
 
     def _artifact_from_instance(self, instance: generic_instance) -> AnalysisArtifact:
         payload = from_json_addl(instance)
@@ -169,7 +171,7 @@ class AnalysisStore:
         if not contexts:
             return {}
         contexts.sort(key=lambda item: item.created_dt or item.modified_dt, reverse=True)
-        return dict(contexts[0].json_addl or {})
+        return from_json_addl(contexts[0])
 
     def _atlas_return_payload(self, session, analysis: generic_instance) -> dict[str, Any]:
         events = self.backend.list_children(
@@ -180,7 +182,7 @@ class AnalysisStore:
         if not events:
             return {}
         events.sort(key=lambda item: item.created_dt or item.modified_dt, reverse=True)
-        return dict(events[0].json_addl or {})
+        return from_json_addl(events[0])
 
     def _artifacts(self, session, analysis: generic_instance) -> list[AnalysisArtifact]:
         return [

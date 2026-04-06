@@ -128,13 +128,11 @@ def mount_gui(app: FastAPI) -> None:
         valid, message = settings.validate_email_domain(email)
         if not valid:
             raise AuthError(f"not authorized: {message}")
-
     def _auth_error_redirect(reason: str) -> RedirectResponse:
         return RedirectResponse(
             url=f"/auth/error?reason={quote(reason)}",
             status_code=status.HTTP_303_SEE_OTHER,
         )
-
     def _login_redirect_response(request: Request) -> RedirectResponse:
         next_path = quote(str(request.url.path or "/"), safe="/?=&")
         reason = str(getattr(request.state, "cognito_auth_reason", "") or "").strip()
