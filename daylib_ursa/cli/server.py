@@ -152,10 +152,25 @@ def _resolve_https_cert_paths(
     key: str | None = None,
 ) -> tuple[str, str]:
     shared_dir = _shared_dayhoff_certs_dir()
+    env = dict(os.environ)
+    if not str(env.get("SSL_CERT_FILE", "")).strip():
+        legacy_cert = str(env.get("URSA_SSL_CERT_FILE", "")).strip()
+        if legacy_cert:
+            env["SSL_CERT_FILE"] = legacy_cert
+    if not str(env.get("SSL_KEY_FILE", "")).strip():
+        legacy_key = str(env.get("URSA_SSL_KEY_FILE", "")).strip()
+        if legacy_key:
+            env["SSL_KEY_FILE"] = legacy_key
+    env_cert = str(env.get("SSL_CERT_FILE", "")).strip()
+    env_key = str(env.get("SSL_KEY_FILE", "")).strip()
+    if bool(env_cert) != bool(env_key):
+        console.print("[red]✗[/red]  SSL_CERT_FILE and SSL_KEY_FILE must be set together")
+        raise typer.Exit(1)
     try:
         resolved = resolve_https_certs(
             cert_path=cert,
             key_path=key,
+            env=env,
             shared_certs_dir=shared_dir,
             fallback_certs_dir=REPO_CERTS_DIR,
             hosts=_https_san_hosts(host),

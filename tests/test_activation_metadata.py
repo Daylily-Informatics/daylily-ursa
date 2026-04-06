@@ -16,18 +16,18 @@ def test_pyproject_relies_on_conda_env_yaml_for_tool_union() -> None:
     assert "\ntools = [" not in pyproject_text
 
 
-def test_pyproject_uses_exact_internal_package_pins() -> None:
+def test_pyproject_uses_minimum_internal_package_versions() -> None:
     pyproject = tomllib.loads(_load_pyproject())
     dependencies = pyproject["project"]["dependencies"]
     cluster_extra = pyproject["project"]["optional-dependencies"]["cluster"]
 
-    assert "cli-core-yo==0.5.2" in dependencies
-    assert "daylily-cognito==0.4.2" in dependencies
-    assert "daylily-tapdb==3.2.3" in dependencies
+    assert "cli-core-yo>=1.3.1" in dependencies
+    assert "daylily-cognito>=1.1.7" in dependencies
+    assert "daylily-tapdb>=4.0.7" in dependencies
     assert "daylily-ephemeral-cluster==0.7.614" in cluster_extra
 
 
-def test_activate_uses_conda_only_bootstrap() -> None:
+def test_activate_bootstraps_local_ursa_repo_only() -> None:
     project_root = Path(__file__).resolve().parents[1]
     environment = (project_root / "environment.yaml").read_text(encoding="utf-8")
     assert (project_root / "environment.yaml").is_file()
@@ -50,7 +50,19 @@ def test_activate_uses_conda_only_bootstrap() -> None:
     assert 'conda activate "$CONDA_ENV_NAME"' in activate_script
     assert 'require_tool "conda env" "pre-commit"' in activate_script
     assert "pre-commit install --hook-type pre-commit --hook-type pre-push" in activate_script
-    assert 'require_python_import "daylily_tapdb" "daylily-tapdb"' in activate_script
-    assert 'pip install --no-deps -e "$install_target" -q' in activate_script
+    assert "URSA_REQUIRED_IMPORTS=(" in activate_script
+    assert '"daylily_tapdb:daylily-tapdb"' in activate_script
+    assert '"pytest:pytest"' in activate_script
+    assert 'URSA_PIP_INSTALL_EXTRAS="[auth,dev]"' in activate_script
+    assert 'python -m pip install --upgrade -e "$install_target" -q' in activate_script
+    assert 'install_target="${SCRIPT_DIR}${URSA_PIP_INSTALL_EXTRAS}"' in activate_script
+    assert (
+        'if ! distribution_is_editable_from_repo "daylily-ursa" "${SCRIPT_DIR}"; then'
+        in activate_script
+    )
+    assert "../daylily-tapdb" not in activate_script
+    assert "../daylily-cognito" not in activate_script
+    assert "../cli-core-yo" not in activate_script
+    assert "--no-deps" not in activate_script
     assert ".venv" not in activate_script
     assert "[auth,cluster,dev,tools]" not in activate_script

@@ -107,10 +107,7 @@ def _ensure_tapdb_dependency() -> None:
     try:
         ensure_tapdb_version()
     except TapDBRuntimeError as exc:
-        raise SystemExit(
-            "Ursa CLI startup failed. "
-            f"Details: {exc}"
-        ) from exc
+        raise SystemExit(f"Ursa CLI startup failed. Details: {exc}") from exc
 
 
 _CONFIG_TEMPLATE = (
@@ -127,7 +124,7 @@ spec = CliSpec(
         app_dir_name=f"ursa-{_resolve_deployment_code()}",
     ),
     config=ConfigSpec(
-        primary_filename=f"ursa-config-{_resolve_deployment_code()}.yaml",
+        xdg_relative_path=f"ursa-config-{_resolve_deployment_code()}.yaml",
         template_bytes=_CONFIG_TEMPLATE,
         validator=_validate_ursa_config,
     ),

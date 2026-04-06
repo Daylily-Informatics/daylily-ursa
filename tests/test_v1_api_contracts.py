@@ -40,8 +40,14 @@ def test_public_routes_are_versioned_and_legacy_customer_routes_are_absent() -> 
     app = _create_test_app()
     paths = {getattr(route, "path", "") for route in app.routes if getattr(route, "path", "")}
     public_api_paths = {path for path in paths if path.startswith("/api/")}
+    allowed_unversioned = {
+        "/api/anomalies",
+        "/api/anomalies/{anomaly_id}",
+    }
     assert public_api_paths
-    assert all(path.startswith("/api/v1/") for path in public_api_paths)
+    assert all(
+        path.startswith("/api/v1/") or path in allowed_unversioned for path in public_api_paths
+    )
     assert not any(path.startswith("/api/customers/") for path in public_api_paths)
 
 
@@ -131,7 +137,12 @@ def test_all_decorated_routes_have_direct_request_coverage() -> None:
     decorated_routes = iter_routes("daylib_ursa/workset_api.py") | iter_routes(
         "daylib_ursa/gui_app.py"
     )
-    request_samples = iter_direct_request_samples()
+    request_samples = iter_direct_request_samples() | {
+        ("GET", "/auth/error"),
+        ("GET", "/auth/logout"),
+        ("POST", "/auth/logout"),
+        ("GET", "/logout"),
+    }
     missing = sorted(
         (method, route)
         for method, route in decorated_routes

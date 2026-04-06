@@ -95,6 +95,11 @@ def test_main_bootstraps_and_runs_with_atlas_client(monkeypatch: pytest.MonkeyPa
         return "fake-app"
 
     monkeypatch.setattr(cli, "create_app", _create_app)
+    monkeypatch.setattr(
+        cli,
+        "_resolve_https_cert_paths",
+        lambda _host, *, cert=None, key=None: (cert, key),
+    )
 
     run_calls: list[dict[str, object]] = []
 

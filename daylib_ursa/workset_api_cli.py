@@ -76,9 +76,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             "ATLAS_INTERNAL_API_KEY is required for authenticated Ursa->Atlas integration"
         )
 
-    cert_arg = str(args.cert or "").strip() or None
-    key_arg = str(args.key or "").strip() or None
-    if not args.ssl and any([cert_arg, key_arg]):
+    ssl_enabled = bool(getattr(args, "ssl", True))
+    cert_arg = str(getattr(args, "cert", getattr(args, "ssl_certfile", "")) or "").strip() or None
+    key_arg = str(getattr(args, "key", getattr(args, "ssl_keyfile", "")) or "").strip() or None
+    if not ssl_enabled and any([cert_arg, key_arg]):
         raise ValueError("--cert and --key cannot be used with --no-ssl")
 
     LOGGER.info("Initializing Ursa beta analysis store")
@@ -116,7 +117,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     LOGGER.info("Starting Ursa beta analysis API on %s:%d", args.host, args.port)
     ssl_certfile = None
     ssl_keyfile = None
-    if args.ssl:
+    if ssl_enabled:
         try:
             resolved = _resolve_https_cert_paths(
                 args.host,

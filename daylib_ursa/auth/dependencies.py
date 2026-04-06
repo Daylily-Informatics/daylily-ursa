@@ -317,17 +317,25 @@ def build_web_session_config(settings: Any, server_instance_id: str) -> CognitoW
         callback_parts = urlparse(callback_url)
         if callback_parts.scheme and callback_parts.netloc:
             public_base_url = f"{callback_parts.scheme}://{callback_parts.netloc}"
+    if not public_base_url:
+        public_base_url = "http://localhost"
+    effective_callback_url = callback_url or f"{public_base_url}/auth/callback"
+    effective_logout_url = logout_url or f"{public_base_url}/auth/logout"
+    effective_domain = str(getattr(settings, "cognito_domain", "") or "").strip() or "localhost"
+    effective_client_id = (
+        str(getattr(settings, "cognito_app_client_id", "") or "").strip() or "ursa-local-client"
+    )
 
     return CognitoWebSessionConfig(
-        domain=str(getattr(settings, "cognito_domain", "") or "").strip(),
-        client_id=str(getattr(settings, "cognito_app_client_id", "") or "").strip(),
-        redirect_uri=callback_url,
-        logout_uri=logout_url,
+        domain=effective_domain,
+        client_id=effective_client_id,
+        redirect_uri=effective_callback_url,
+        logout_uri=effective_logout_url,
         public_base_url=public_base_url or None,
         session_secret_key=str(getattr(settings, "session_secret_key", "") or "").strip(),
         session_cookie_name="ursa_session",
         client_secret=str(getattr(settings, "cognito_app_client_secret", "") or "").strip() or None,
-        allow_insecure_http=callback_url.startswith("http://"),
+        allow_insecure_http=public_base_url.startswith("http://"),
         error_redirect_path="/auth/error",
         server_instance_id=str(server_instance_id or "").strip(),
     )
@@ -519,7 +527,9 @@ class CognitoUserDirectoryService:
             try:
                 response = self._get_client().admin_list_groups_for_user(**kwargs)
             except ClientError as exc:
-                raise AuthError(f"Cognito user group lookup failed for {clean_username}: {exc}") from exc
+                raise AuthError(
+                    f"Cognito user group lookup failed for {clean_username}: {exc}"
+                ) from exc
             for item in response.get("Groups") or []:
                 name = str(item.get("GroupName") or "").strip()
                 if name and name not in groups:
@@ -529,7 +539,9 @@ class CognitoUserDirectoryService:
                 break
         return groups
 
-    def _entry_from_user(self, item: dict[str, Any], group_names: list[str]) -> AtlasUserDirectoryEntry:
+    def _entry_from_user(
+        self, item: dict[str, Any], group_names: list[str]
+    ) -> AtlasUserDirectoryEntry:
         attrs = self._attrs_to_dict(item)
         user_id = str(attrs.get("sub") or "").strip() or str(item.get("Username") or "").strip()
         tenant_id = _parse_uuid(
