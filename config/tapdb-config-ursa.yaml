@@ -3,6 +3,9 @@ meta:
   client_id: local
   database_name: ursa
   euid_client_code: R
+  # Explicit env contract for TapDB/Meridian subprocesses:
+  # MERIDIAN_DOMAIN_CODE=R
+  # TAPDB_APP_CODE=R
 environments:
   dev:
     engine_type: local

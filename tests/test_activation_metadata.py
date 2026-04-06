@@ -16,14 +16,14 @@ def test_pyproject_relies_on_conda_env_yaml_for_tool_union() -> None:
     assert "\ntools = [" not in pyproject_text
 
 
-def test_pyproject_uses_minimum_internal_package_versions() -> None:
+def test_pyproject_uses_requested_internal_package_versions() -> None:
     pyproject = tomllib.loads(_load_pyproject())
     dependencies = pyproject["project"]["dependencies"]
     cluster_extra = pyproject["project"]["optional-dependencies"]["cluster"]
 
     assert "cli-core-yo>=1.3.1" in dependencies
-    assert "daylily-cognito>=1.1.7" in dependencies
-    assert "daylily-tapdb>=4.0.7" in dependencies
+    assert "daylily-cognito==1.2.0" in dependencies
+    assert "daylily-tapdb==4.1.1" in dependencies
     assert "daylily-ephemeral-cluster==0.7.614" in cluster_extra
 
 
@@ -45,6 +45,8 @@ def test_activate_bootstraps_local_ursa_repo_only() -> None:
     assert 'export URSA_DEPLOYMENT_CODE="${CONDA_ENV_DEPLOYMENT_CODE}"' in activate_script
     assert 'export DEPLOYMENT_CODE="${CONDA_ENV_DEPLOYMENT_CODE}"' in activate_script
     assert 'export LSMC_DEPLOYMENT_CODE="${CONDA_ENV_DEPLOYMENT_CODE}"' in activate_script
+    assert 'export MERIDIAN_DOMAIN_CODE="${MERIDIAN_DOMAIN_CODE:-R}"' in activate_script
+    assert 'export TAPDB_APP_CODE="${TAPDB_APP_CODE:-R}"' in activate_script
     assert 'ENV_FILE="${SCRIPT_DIR}/environment.yaml"' in activate_script
     assert 'conda env create -n "$CONDA_ENV_NAME" -f "$ENV_FILE"' in activate_script
     assert 'conda activate "$CONDA_ENV_NAME"' in activate_script
@@ -54,15 +56,32 @@ def test_activate_bootstraps_local_ursa_repo_only() -> None:
     assert '"daylily_tapdb:daylily-tapdb"' in activate_script
     assert '"pytest:pytest"' in activate_script
     assert 'URSA_PIP_INSTALL_EXTRAS="[auth,dev]"' in activate_script
-    assert 'python -m pip install --upgrade -e "$install_target" -q' in activate_script
+    assert 'python -m pip install -e "$install_target" -q' in activate_script
     assert 'install_target="${SCRIPT_DIR}${URSA_PIP_INSTALL_EXTRAS}"' in activate_script
+    assert "env_created=0" in activate_script
+    assert "env_created=1" in activate_script
+    assert 'if [ "${env_created}" -eq 1 ]; then' in activate_script
+    assert "if ! bootstrap_local_ursa_repo; then" in activate_script
     assert (
         'if ! distribution_is_editable_from_repo "daylily-ursa" "${SCRIPT_DIR}"; then'
         in activate_script
     )
+    assert "ensure_local_ursa_checkout()" not in activate_script
     assert "../daylily-tapdb" not in activate_script
     assert "../daylily-cognito" not in activate_script
     assert "../cli-core-yo" not in activate_script
     assert "--no-deps" not in activate_script
     assert ".venv" not in activate_script
     assert "[auth,cluster,dev,tools]" not in activate_script
+    assert "MERIDIAN_DOMAIN_CODE=R" in (
+        project_root / "config" / "ursa-config.example.yaml"
+    ).read_text(encoding="utf-8")
+    assert "TAPDB_APP_CODE=R" in (project_root / "config" / "ursa-config.example.yaml").read_text(
+        encoding="utf-8"
+    )
+    assert "MERIDIAN_DOMAIN_CODE=R" in (
+        project_root / "config" / "tapdb-config-ursa.yaml"
+    ).read_text(encoding="utf-8")
+    assert "TAPDB_APP_CODE=R" in (project_root / "config" / "tapdb-config-ursa.yaml").read_text(
+        encoding="utf-8"
+    )

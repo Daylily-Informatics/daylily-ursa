@@ -60,21 +60,30 @@ def test_resolve_https_cert_paths_uses_env_files_when_present(
     assert server_cli._resolve_https_cert_paths("localhost") == (str(cert), str(key))
 
 
-def test_resolve_https_cert_paths_uses_legacy_env_after_generic_absent(
+def test_resolve_https_cert_paths_ignores_legacy_env_after_generic_absent(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    cert = tmp_path / "legacy-cert.pem"
-    key = tmp_path / "legacy-key.pem"
-    cert.write_text("cert", encoding="utf-8")
-    key.write_text("key", encoding="utf-8")
+    shared_dir = tmp_path / "shared"
+    repo_dir = tmp_path / "repo"
+    shared_dir.mkdir(parents=True)
+    repo_dir.mkdir(parents=True)
+    shared_cert = shared_dir / "cert.pem"
+    shared_key = shared_dir / "key.pem"
+    shared_cert.write_text("shared-cert", encoding="utf-8")
+    shared_key.write_text("shared-key", encoding="utf-8")
 
     monkeypatch.delenv("SSL_CERT_FILE", raising=False)
     monkeypatch.delenv("SSL_KEY_FILE", raising=False)
-    monkeypatch.setenv("URSA_SSL_CERT_FILE", str(cert))
-    monkeypatch.setenv("URSA_SSL_KEY_FILE", str(key))
+    monkeypatch.setenv("URSA_SSL_CERT_FILE", str(tmp_path / "legacy-cert.pem"))
+    monkeypatch.setenv("URSA_SSL_KEY_FILE", str(tmp_path / "legacy-key.pem"))
+    monkeypatch.setattr(server_cli, "shared_dayhoff_certs_dir", lambda _deploy: shared_dir)
+    monkeypatch.setattr(server_cli, "REPO_CERTS_DIR", repo_dir)
 
-    assert server_cli._resolve_https_cert_paths("localhost") == (str(cert), str(key))
+    assert server_cli._resolve_https_cert_paths("localhost") == (
+        str(shared_cert),
+        str(shared_key),
+    )
 
 
 def test_resolve_https_cert_paths_prefers_shared_dayhoff_certs_dir(
@@ -170,7 +179,9 @@ def test_status_reports_http_after_no_ssl_start(
 ) -> None:
     state_dir = tmp_path / "state"
     state_dir.mkdir()
-    (state_dir / "server-meta.json").write_text(json.dumps({"ssl_enabled": False}), encoding="utf-8")
+    (state_dir / "server-meta.json").write_text(
+        json.dumps({"ssl_enabled": False}), encoding="utf-8"
+    )
     monkeypatch.setattr(server_cli, "_config_dir", lambda: state_dir)
     monkeypatch.setattr(server_cli, "_get_pid", lambda: 4242)
     monkeypatch.setattr(server_cli, "_resolved_server_host_port", lambda: ("0.0.0.0", 8914))
@@ -344,7 +355,9 @@ def test_server_start_sources_repo_root_env_file(monkeypatch: pytest.MonkeyPatch
 
     monkeypatch.setattr(server_cli, "_ensure_dir", lambda: None)
     monkeypatch.setattr(server_cli, "get_settings", lambda: SimpleNamespace())
-    monkeypatch.setattr(server_cli, "_resolved_server_host_port", lambda **_kwargs: ("0.0.0.0", 8913))
+    monkeypatch.setattr(
+        server_cli, "_resolved_server_host_port", lambda **_kwargs: ("0.0.0.0", 8913)
+    )
     monkeypatch.setattr(server_cli, "_get_pid", lambda: 12345)
 
     def _fake_source_env_file(path: Path) -> bool:
@@ -358,7 +371,9 @@ def test_server_start_sources_repo_root_env_file(monkeypatch: pytest.MonkeyPatch
     assert seen["path"] == server_cli.PROJECT_ROOT / ".env"
 
 
-def test_resolved_server_host_port_prefers_settings_over_legacy_env(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_resolved_server_host_port_prefers_settings_over_legacy_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("URSA_PORT", "8914")
     monkeypatch.setenv("URSA_HOST", "127.0.0.1")
     monkeypatch.delenv("URSA_RUNTIME__PORT", raising=False)

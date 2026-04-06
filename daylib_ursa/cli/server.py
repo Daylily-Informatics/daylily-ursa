@@ -387,6 +387,8 @@ def start(
     for key in list(env):
         if key.startswith("TAPDB_"):
             env.pop(key, None)
+    env["MERIDIAN_DOMAIN_CODE"] = "R"
+    env["TAPDB_APP_CODE"] = "R"
     env["PYTHONUNBUFFERED"] = "1"
     env["ENABLE_AUTH"] = "true"
 

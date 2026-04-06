@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import inspect
+import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import yaml
 
@@ -130,6 +132,46 @@ def test_export_database_url_for_target_sets_runtime_environment(monkeypatch) ->
 
     assert db_url == "postgresql+psycopg2://ursa_user:secret@db.example.test:5432/daylily_ursa"
     assert "DATABASE_URL" not in tapdb_runtime.os.environ
+
+
+def test_run_tapdb_cli_exports_explicit_identity_env(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(tapdb_runtime, "ensure_tapdb_version", lambda: "3.0.9")
+    monkeypatch.setattr(
+        tapdb_runtime,
+        "_resolve_tapdb_config_path",
+        lambda **_kwargs: "/tmp/ursa-tapdb.yaml",
+    )
+
+    def fake_run(cmd, *, cwd=None, env=None, capture_output, text):
+        captured["cmd"] = cmd
+        captured["cwd"] = cwd
+        captured["env"] = env
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(tapdb_runtime.subprocess, "run", fake_run)
+
+    result = tapdb_runtime.run_tapdb_cli(
+        ["bootstrap", "local", "--no-gui"],
+        target="local",
+        client_id="local",
+        profile="lsmc",
+        region="us-west-2",
+        namespace="ursa",
+    )
+
+    assert result.returncode == 0
+    assert captured["cmd"][:5] == [
+        sys.executable,
+        "-m",
+        "daylily_tapdb.cli",
+        "--config",
+        "/tmp/ursa-tapdb.yaml",
+    ]
+    assert captured["cmd"][5:7] == ["--env", "dev"]
+    assert captured["env"]["MERIDIAN_DOMAIN_CODE"] == "R"
+    assert captured["env"]["TAPDB_APP_CODE"] == "R"
 
 
 def test_resolve_tapdb_config_path_prefers_deployment_scoped_user_config(

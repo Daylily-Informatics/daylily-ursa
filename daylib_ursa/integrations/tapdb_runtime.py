@@ -74,9 +74,7 @@ def _local_tapdb_repo_candidates(base: Path) -> list[Path]:
             candidates.append(candidate)
     git_repos = [candidate for candidate in candidates if (candidate / ".git").exists()]
     other_repos = [
-        candidate
-        for candidate in candidates
-        if candidate.exists() and candidate not in git_repos
+        candidate for candidate in candidates if candidate.exists() and candidate not in git_repos
     ]
     return [*git_repos, *other_repos]
 
@@ -125,12 +123,15 @@ def _detect_tapdb_env_for_target(
     discovered: dict[str, dict[str, str]] = {}
     for env_name in ("dev", "prod"):
         try:
-            cfg = get_db_config_for_env(
-                env_name,
-                config_path=config_path or None,
-                client_id=client_id,
-                database_name=namespace,
-            ) or {}
+            cfg = (
+                get_db_config_for_env(
+                    env_name,
+                    config_path=config_path or None,
+                    client_id=client_id,
+                    database_name=namespace,
+                )
+                or {}
+            )
         except Exception:
             continue
         if cfg:
@@ -241,20 +242,27 @@ def _resolve_runtime_env(
     resolved_namespace = (namespace or default_namespace).strip() or default_namespace
     resolved_cfg_path = str(config_path or default_config_path).strip()
     if not resolved_cfg_path:
-        resolved_cfg_path = _resolve_tapdb_config_path(
-            namespace=resolved_namespace,
-            client_id=resolved_client_id,
-        ) or ""
-    resolved_env = (
-        tapdb_env
-        or default_tapdb_env
-        or tapdb_env_for_target(
-            target,
-            config_path=resolved_cfg_path or "",
-            client_id=resolved_client_id,
-            namespace=resolved_namespace,
+        resolved_cfg_path = (
+            _resolve_tapdb_config_path(
+                namespace=resolved_namespace,
+                client_id=resolved_client_id,
+            )
+            or ""
         )
-    ).strip().lower()
+    resolved_env = (
+        (
+            tapdb_env
+            or default_tapdb_env
+            or tapdb_env_for_target(
+                target,
+                config_path=resolved_cfg_path or "",
+                client_id=resolved_client_id,
+                namespace=resolved_namespace,
+            )
+        )
+        .strip()
+        .lower()
+    )
     return {
         "aws_profile": (profile or DEFAULT_AWS_PROFILE).strip() or DEFAULT_AWS_PROFILE,
         "aws_region": (region or DEFAULT_AWS_REGION).strip() or DEFAULT_AWS_REGION,
@@ -434,6 +442,8 @@ def run_tapdb_cli(
     child_env["AWS_PROFILE"] = runtime_env["aws_profile"]
     child_env["AWS_REGION"] = runtime_env["aws_region"]
     child_env["AWS_DEFAULT_REGION"] = runtime_env["aws_region"]
+    child_env["MERIDIAN_DOMAIN_CODE"] = os.environ.get("MERIDIAN_DOMAIN_CODE", "R")
+    child_env["TAPDB_APP_CODE"] = os.environ.get("TAPDB_APP_CODE", "R")
     child_env.setdefault("PYTHONSAFEPATH", "1")
     result = subprocess.run(
         cmd,
@@ -464,14 +474,18 @@ def run_schema_drift_check(
     """Run TapDB schema drift check in report-only mode and normalize the result."""
 
     env_name = (
-        tapdb_env
-        or tapdb_env_for_target(
-            target,
-            config_path=config_path,
-            client_id=client_id,
-            namespace=namespace,
+        (
+            tapdb_env
+            or tapdb_env_for_target(
+                target,
+                config_path=config_path,
+                client_id=client_id,
+                namespace=namespace,
+            )
         )
-    ).strip().lower()
+        .strip()
+        .lower()
+    )
     tool_version = ensure_tapdb_version()
     result = run_tapdb_cli(
         ["db", "schema", "drift-check", env_name, "--json", "--no-strict"],
