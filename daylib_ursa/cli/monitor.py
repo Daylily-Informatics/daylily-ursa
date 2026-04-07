@@ -145,8 +145,8 @@ def start(
         cli_output.print_rich(f"   Create [cyan]{config_file_path}[/cyan] with:")
         cli_output.print_rich("")
         cli_output.print_rich("[dim]   regions:")
-        cli_output.print_rich("     - us-west-2")
-        cli_output.print_rich("     - us-east-1[/dim]")
+        cli_output.print_rich("[dim]     - us-west-2[/dim]")
+        cli_output.print_rich("[dim]     - us-east-1[/dim]")
     else:
         regions = ursa_config.get_allowed_regions()
         cli_output.print_rich(
