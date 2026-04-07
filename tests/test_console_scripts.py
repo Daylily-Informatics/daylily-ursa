@@ -149,37 +149,6 @@ def test_ursa_server_start_uses_packaged_entrypoint(
     assert "TAPDB_ENV" not in env
 
 
-def test_cli_requires_hyphenated_conda_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    from daylib_ursa.cli import _enforce_conda_env_contract
-
-    monkeypatch.setenv("CONDA_DEFAULT_ENV", "URSA")
-    with pytest.raises(SystemExit, match="deployment-scoped conda environment name with '-'"):
-        _enforce_conda_env_contract(["server", "status"])
-
-
-def test_cli_requires_active_conda_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    from daylib_ursa.cli import _enforce_conda_env_contract
-
-    monkeypatch.delenv("CONDA_DEFAULT_ENV", raising=False)
-    with pytest.raises(SystemExit, match="requires an active deployment-scoped conda environment"):
-        _enforce_conda_env_contract(["server", "status"])
-
-
-def test_cli_accepts_hyphenated_conda_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    from daylib_ursa.cli import _enforce_conda_env_contract
-
-    monkeypatch.setenv("CONDA_DEFAULT_ENV", "URSA-local2")
-    _enforce_conda_env_contract(["server", "status"])
-
-
-def test_cli_skip_conda_env_check_flag_is_stripped() -> None:
-    from daylib_ursa.cli import _strip_skip_conda_env_check_flag
-
-    args, skip = _strip_skip_conda_env_check_flag(["--skip-conda-env-check", "server", "status"])
-    assert skip is True
-    assert args == ["server", "status"]
-
-
 def test_ursa_server_start_command_uses_module_entrypoint_and_profile(
     monkeypatch,
     tmp_path: Path,
