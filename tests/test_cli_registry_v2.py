@@ -2,10 +2,15 @@ from __future__ import annotations
 
 import json
 
-from cli_core_yo.runtime_checks import evaluate_prereq
+import pytest
 from typer.testing import CliRunner
 
-from daylib_ursa.cli import app, spec
+pytest.importorskip("daylily_tapdb")
+cli_core_yo_runtime_checks = pytest.importorskip("cli_core_yo.runtime_checks")
+
+from daylib_ursa.cli import app, spec  # noqa: E402
+
+evaluate_prereq = cli_core_yo_runtime_checks.evaluate_prereq
 
 runner = CliRunner()
 
@@ -127,4 +132,4 @@ def test_runtime_required_command_fails_without_active_env(monkeypatch) -> None:
     assert result.exit_code == 3
     assert "Runtime validation failed." in result.stderr
     assert "ursa-conda-active-env" in result.stderr
-    assert "source ./activate <deploy-name>" in result.stderr
+    assert "source ./activate [deploy-name] [--debug]" in result.stderr

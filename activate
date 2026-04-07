@@ -2,7 +2,7 @@
 # Ursa Environment Activation Script
 # ==========================================
 # This script must be SOURCED, not executed:
-#   source ./activate <deploy-name>
+#   source ./activate [deploy-name] [--debug]
 #
 # It will:
 #   1. Build the URSA conda environment from environment.yaml if it doesn't exist
@@ -19,6 +19,16 @@ BOLD='\033[1m'
 NC='\033[0m'
 
 CONDA_ENV_BASE="URSA"
+CONDA_ENV_DEPLOYMENT_CODE=""
+_URSA_DEPLOY_NAME_MAX_SUFFIX_LENGTH=8
+_URSA_DEBUG=0
+_URSA_REQUESTED_HELP=0
+_URSA_CONDA_ENV_CREATED=0
+_URSA_CONDA_ENV_ACTIVATED=0
+_URSA_CLEANUP_COMPLETED=0
+_URSA_ACTIVATE_STATUS=0
+_URSA_PREVIOUS_CONDA_ENV="${CONDA_DEFAULT_ENV:-}"
+_URSA_PREVIOUS_CONDA_PREFIX="${CONDA_PREFIX:-}"
 URSA_PIP_INSTALL_EXTRAS="[auth,dev]"
 URSA_LEGACY_REBIND_VARS=(
     USE_LOCAL_DAYLILY_TAPDB
@@ -47,7 +57,83 @@ sanitize_deployment_code() {
     if [ -z "$sanitized" ]; then
         sanitized="local"
     fi
+    sanitized="$(printf '%s' "$sanitized" | LC_ALL=C cut -c1-"${_URSA_DEPLOY_NAME_MAX_SUFFIX_LENGTH}")"
+    if [ -z "$sanitized" ]; then
+        sanitized="local"
+    fi
     printf '%s\n' "$sanitized"
+}
+
+resolve_raw_package_version() {
+    python - "$SCRIPT_DIR" <<'PY'
+import pathlib
+import re
+import subprocess
+import sys
+
+repo_root = pathlib.Path(sys.argv[1]).resolve()
+pyproject_text = (repo_root / "pyproject.toml").read_text(encoding="utf-8")
+
+static_version = re.search(r"(?m)^\s*version\s*=\s*['\"]([^'\"]+)['\"]\s*$", pyproject_text)
+if static_version:
+    print(static_version.group(1).strip())
+    raise SystemExit(0)
+
+try:
+    import daylib_ursa
+except Exception:
+    daylib_ursa = None
+
+if daylib_ursa is not None:
+    helper_version = str(getattr(daylib_ursa, "__version__", "")).strip()
+    if helper_version and helper_version != "0.0.0":
+        print(helper_version)
+        raise SystemExit(0)
+
+scm_version = ""
+try:
+    from setuptools_scm import get_version
+except Exception:
+    get_version = None
+
+if get_version is not None:
+    def _config_value(pattern: str, default: str) -> str:
+        match = re.search(pattern, pyproject_text, re.MULTILINE)
+        return match.group(1).strip() if match else default
+
+    try:
+        scm_version = get_version(
+            root=str(repo_root),
+            version_scheme=_config_value(r"^\s*version_scheme\s*=\s*['\"]([^'\"]+)['\"]\s*$", "guess-next-dev"),
+            local_scheme=_config_value(r"^\s*local_scheme\s*=\s*['\"]([^'\"]+)['\"]\s*$", "node-and-date"),
+            fallback_version=_config_value(r"^\s*fallback_version\s*=\s*['\"]([^'\"]+)['\"]\s*$", "0.0.0"),
+        ).strip()
+    except Exception:
+        scm_version = ""
+
+if scm_version and scm_version != "0.0.0":
+    print(scm_version)
+    raise SystemExit(0)
+
+git_tags = subprocess.run(
+    ["git", "-C", str(repo_root), "tag", "--points-at", "HEAD"],
+    check=False,
+    capture_output=True,
+    text=True,
+)
+for raw_tag in git_tags.stdout.splitlines():
+    tag = raw_tag.strip()
+    if re.fullmatch(r"[0-9]+(?:\.[0-9]+)*", tag):
+        print(tag)
+        raise SystemExit(0)
+
+print("0.0.0")
+PY
+}
+
+resolve_default_deploy_name() {
+    raw_version="$(resolve_raw_package_version)"
+    sanitize_deployment_code "${raw_version}"
 }
 
 validate_deploy_name() {
@@ -92,13 +178,152 @@ prepare_tapdb_config_path() {
     printf '%s\n' "$user_path"
 }
 
-if [ "$#" -ne 1 ]; then
-    printf "Error: Ursa activation requires exactly one positional deploy-name.\n"
-    printf "Usage: source ./activate <deploy-name>\n"
+if [ -n "${BASH_VERSION:-}" ] && [ "${BASH_SOURCE[0]}" = "$0" ]; then
+    printf "Error: This script must be sourced, not executed.\n"
+    printf "Usage: source ./activate [deploy-name] [--debug]\n"
+    exit 1
+fi
+
+_ursa_script_path() {
+    if [ -n "${ZSH_VERSION:-}" ]; then
+        printf '%s\n' "${(%):-%x}"
+    elif [ -n "${BASH_SOURCE[0]:-}" ]; then
+        printf '%s\n' "${BASH_SOURCE[0]}"
+    else
+        printf '%s\n' "$0"
+    fi
+}
+
+_URSA_SCRIPT_PATH="$(_ursa_script_path)"
+SCRIPT_DIR="$(cd "$(dirname "${_URSA_SCRIPT_PATH}")" 2>/dev/null && pwd)"
+unset _URSA_SCRIPT_PATH
+
+ENV_FILE="${SCRIPT_DIR}/environment.yaml"
+BIN_DIR="${SCRIPT_DIR}/bin"
+
+parse_activate_args() {
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --debug)
+                _URSA_DEBUG=1
+                shift
+                ;;
+            --help|-h)
+                _URSA_REQUESTED_HELP=1
+                printf "Usage: source ./activate [deploy-name] [--debug]\n"
+                return 0
+                ;;
+            --*)
+                printf "${RED}✗${NC} %s\n" "Unknown activate argument: $1"
+                return 1
+                ;;
+            *)
+                if [ -n "${CONDA_ENV_DEPLOYMENT_CODE}" ]; then
+                    printf "${RED}✗${NC} %s\n" "Only one deploy-name may be provided."
+                    return 1
+                fi
+                CONDA_ENV_DEPLOYMENT_CODE="$1"
+                shift
+                ;;
+        esac
+    done
+}
+
+register_activation_return_trap() {
+    if [ -n "${ZSH_VERSION:-}" ]; then
+        trap '_ursa_activation_return_trap' EXIT
+    else
+        trap '_ursa_activation_return_trap' RETURN
+    fi
+}
+
+disable_activation_return_trap() {
+    if [ -n "${ZSH_VERSION:-}" ]; then
+        trap - EXIT 2>/dev/null || true
+    else
+        trap - RETURN 2>/dev/null || true
+    fi
+}
+
+print_activation_failure_block() {
+    cleanup_message="$1"
+    debug_message="no"
+    if [ "${_URSA_DEBUG}" -eq 1 ]; then
+        debug_message="yes"
+    fi
+    printf "\n${BOLD}${RED}╔══════════════════════════════════════════════════════════════╗${NC}\n"
+    printf "${BOLD}${RED}║                   Ursa activation failed                    ║${NC}\n"
+    printf "${BOLD}${RED}╚══════════════════════════════════════════════════════════════╝${NC}\n"
+    printf "  ${CYAN}Conda Environment:${NC} %s\n" "${CONDA_ENV_NAME}"
+    printf "  ${CYAN}Deploy Name:${NC}      %s\n" "${CONDA_ENV_DEPLOYMENT_CODE}"
+    printf "  ${CYAN}Debug Mode:${NC}       %s\n" "${debug_message}"
+    printf "  ${CYAN}Cleanup:${NC}          %s\n" "${cleanup_message}"
+    printf "  ${CYAN}Previous Env:${NC}     %s\n" "${_URSA_PREVIOUS_CONDA_ENV:-<none>}"
+    printf "\n"
+}
+
+cleanup_failed_activation() {
+    activation_status="$1"
+    cleanup_message="not required"
+
+    if [ "$activation_status" -eq 0 ]; then
+        return 0
+    fi
+    if [ "${_URSA_CLEANUP_COMPLETED}" -eq 1 ]; then
+        return 0
+    fi
+    _URSA_CLEANUP_COMPLETED=1
+
+    if [ "${_URSA_CONDA_ENV_ACTIVATED}" -eq 1 ] && [ "${CONDA_DEFAULT_ENV:-}" = "${CONDA_ENV_NAME}" ]; then
+        log_info "Deactivating failed target environment '${CONDA_ENV_NAME}'..."
+        conda deactivate >/dev/null 2>&1 || true
+    fi
+
+    if [ "${_URSA_CONDA_ENV_CREATED}" -eq 1 ]; then
+        if [ "${_URSA_DEBUG}" -eq 1 ]; then
+            cleanup_message="skipped because --debug was set"
+        else
+            log_info "Removing newly created environment '${CONDA_ENV_NAME}'..."
+            if conda env remove -n "$CONDA_ENV_NAME" -y >/dev/null 2>&1; then
+                cleanup_message="deleted newly created environment"
+            else
+                cleanup_message="delete attempted but did not complete cleanly"
+            fi
+        fi
+    else
+        cleanup_message="skipped because the environment pre-existed"
+    fi
+
+    if [ -n "${_URSA_PREVIOUS_CONDA_ENV}" ] && [ "${_URSA_PREVIOUS_CONDA_ENV}" != "${CONDA_ENV_NAME}" ]; then
+        if [ "${CONDA_DEFAULT_ENV:-}" != "${_URSA_PREVIOUS_CONDA_ENV}" ]; then
+            log_info "Restoring previous conda environment '${_URSA_PREVIOUS_CONDA_ENV}'..."
+            if ! conda activate "${_URSA_PREVIOUS_CONDA_ENV}" >/dev/null 2>&1; then
+                log_warn "Failed to restore previous conda environment '${_URSA_PREVIOUS_CONDA_ENV}'"
+            fi
+        fi
+    fi
+
+    print_activation_failure_block "${cleanup_message}"
+    return 0
+}
+
+_ursa_activation_return_trap() {
+    disable_activation_return_trap
+    cleanup_failed_activation "${_URSA_ACTIVATE_STATUS}"
+}
+
+if ! parse_activate_args "$@"; then
     return 1 2>/dev/null || exit 1
 fi
 
-CONDA_ENV_DEPLOYMENT_CODE="$1"
+if [ "${_URSA_REQUESTED_HELP}" -eq 1 ]; then
+    return 0 2>/dev/null || exit 0
+fi
+
+if [ -z "${CONDA_ENV_DEPLOYMENT_CODE}" ]; then
+    CONDA_ENV_DEPLOYMENT_CODE="$(resolve_default_deploy_name)"
+fi
+
 if ! validate_deploy_name "${CONDA_ENV_DEPLOYMENT_CODE}"; then
     return 1 2>/dev/null || exit 1
 fi
@@ -249,29 +474,6 @@ require_distribution_version() {
     fi
 }
 
-if [ -n "${BASH_VERSION:-}" ] && [ "${BASH_SOURCE[0]}" = "$0" ]; then
-    printf "Error: This script must be sourced, not executed.\n"
-    printf "Usage: source ./activate <deploy-name>\n"
-    exit 1
-fi
-
-_ursa_script_path() {
-    if [ -n "${ZSH_VERSION:-}" ]; then
-        printf '%s\n' "${(%):-%x}"
-    elif [ -n "${BASH_SOURCE[0]:-}" ]; then
-        printf '%s\n' "${BASH_SOURCE[0]}"
-    else
-        printf '%s\n' "$0"
-    fi
-}
-
-_URSA_SCRIPT_PATH="$(_ursa_script_path)"
-SCRIPT_DIR="$(cd "$(dirname "${_URSA_SCRIPT_PATH}")" 2>/dev/null && pwd)"
-unset _URSA_SCRIPT_PATH
-
-ENV_FILE="${SCRIPT_DIR}/environment.yaml"
-BIN_DIR="${SCRIPT_DIR}/bin"
-
 distribution_is_editable_from_repo() {
     dist_name="$1"
     repo_root="$2"
@@ -313,6 +515,8 @@ ensure_pre_commit_hooks() {
 
 activate_main() {
     env_created=0
+    _URSA_CONDA_ENV_CREATED=0
+    _URSA_CONDA_ENV_ACTIVATED=0
     printf "\n${BOLD}${BLUE}╔══════════════════════════════════════════════════════════════╗${NC}\n"
     printf "${BOLD}${BLUE}║               Ursa Conda environment activation            ║${NC}\n"
     printf "${BOLD}${BLUE}╚══════════════════════════════════════════════════════════════╝${NC}\n\n"
@@ -349,6 +553,7 @@ activate_main() {
             return 1
         fi
         env_created=1
+        _URSA_CONDA_ENV_CREATED=1
         log_success "Environment '${CONDA_ENV_NAME}' created successfully"
     fi
 
@@ -357,6 +562,7 @@ activate_main() {
         fail_activate "Failed to activate conda environment '${CONDA_ENV_NAME}'"
         return 1
     fi
+    _URSA_CONDA_ENV_ACTIVATED=1
     log_success "Activated conda environment: ${CONDA_ENV_NAME}"
 
     if [ -n "${CONDA_PREFIX:-}" ] && [ -x "${CONDA_PREFIX}/bin/python" ]; then
@@ -488,4 +694,16 @@ activate_main() {
 
 }
 
-activate_main || return $? 2>/dev/null || exit $?
+activate_wrapper() {
+    if [ -n "${ZSH_VERSION:-}" ]; then
+        setopt localtraps
+        trap '_ursa_activation_return_trap' EXIT
+    else
+        trap '_ursa_activation_return_trap' RETURN
+    fi
+    activate_main "$@"
+    _URSA_ACTIVATE_STATUS=$?
+    return "${_URSA_ACTIVATE_STATUS}"
+}
+
+activate_wrapper "$@"

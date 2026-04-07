@@ -133,7 +133,7 @@ def _build_spec() -> CliSpec:
         env=EnvSpec(
             active_env_var="URSA_ACTIVE",
             project_root_env_var="URSA_PROJECT_ROOT",
-            activate_script_name="activate <deploy-name>",
+            activate_script_name="activate [deploy-name] [--debug]",
             deactivate_script_name="ursa_deactivate",
             preferred_backend="ursa-conda",
         ),
@@ -142,7 +142,7 @@ def _build_spec() -> CliSpec:
                 ExecutionBackendSpec(
                     name="ursa-conda",
                     kind="conda",
-                    entry_guidance="source ./activate <deploy-name>",
+                    entry_guidance="source ./activate [deploy-name] [--debug]",
                     detect=BackendDetectSpec(env_vars=("CONDA_PREFIX",)),
                     validation=BackendValidationSpec(env_vars=("CONDA_PREFIX",)),
                 )
@@ -154,13 +154,13 @@ def _build_spec() -> CliSpec:
                     key="ursa-conda-active-env",
                     kind="env_var",
                     value="CONDA_DEFAULT_ENV",
-                    help="Activate Ursa with source ./activate <deploy-name>.",
+                    help="Activate Ursa with source ./activate [deploy-name] [--debug].",
                     applies_to_backends={"ursa-conda"},
                     tags={URSA_RUNTIME_TAG},
                     success_message="Deployment-scoped conda environment is active.",
                     failure_message=(
                         "Ursa CLI requires an active deployment-scoped conda environment. "
-                        "Run `source ./activate <deploy-name>`."
+                        "Run `source ./activate [deploy-name] [--debug]`."
                     ),
                 ),
                 PrereqSpec(
@@ -178,7 +178,7 @@ def _build_spec() -> CliSpec:
                     success_message="Deployment-scoped conda environment name is valid.",
                     failure_message=(
                         "Ursa CLI requires a deployment-scoped conda environment name with '-'. "
-                        "Run `source ./activate <deploy-name>`."
+                        "Run `source ./activate [deploy-name] [--debug]`."
                     ),
                 ),
                 PrereqSpec(
@@ -190,7 +190,7 @@ def _build_spec() -> CliSpec:
                     tags={URSA_RUNTIME_TAG},
                     success_message="Dependency available: daylily-tapdb",
                     failure_message=(
-                        "Missing dependency: daylily-tapdb. Re-run `source ./activate <deploy-name>`."
+                        "Missing dependency: daylily-tapdb. Re-run `source ./activate [deploy-name] [--debug]`."
                     ),
                 ),
                 PrereqSpec(
@@ -203,7 +203,7 @@ def _build_spec() -> CliSpec:
                     success_message="Dependency available: daylily-auth-cognito",
                     failure_message=(
                         "Missing dependency: daylily-auth-cognito. "
-                        "Re-run `source ./activate <deploy-name>`."
+                        "Re-run `source ./activate [deploy-name] [--debug]`."
                     ),
                 ),
             ],
