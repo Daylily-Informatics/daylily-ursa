@@ -8,7 +8,12 @@ from urllib.parse import parse_qs, urlparse
 
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
-from daylily_cognito import SessionPrincipal, configure_session_middleware, store_session_principal
+from unittest.mock import AsyncMock
+from daylily_auth_cognito import (
+    SessionPrincipal,
+    configure_session_middleware,
+    store_session_principal,
+)
 
 from daylib_ursa.auth.dependencies import CognitoAuthProvider, build_web_session_config
 from daylib_ursa.auth import CurrentUser
@@ -169,15 +174,17 @@ def _login_user(
 
     client.app.state.auth_provider = SimpleNamespace(resolve_access_token=_resolve_access_token)
     monkeypatch.setattr(
-        "daylily_cognito.web_session.build_authorization_url",
+        "daylily_auth_cognito.browser.session.build_authorization_url",
         _mock_cognito_login_url,
     )
     monkeypatch.setattr(
-        "daylily_cognito.web_session.exchange_authorization_code",
-        lambda **_kwargs: {
-            "id_token": "id-token-123",
-            "access_token": "access-token-456",
-        },
+        "daylily_auth_cognito.browser.session.exchange_authorization_code_async",
+        AsyncMock(
+            return_value={
+                "id_token": "id-token-123",
+                "access_token": "access-token-456",
+            }
+        ),
     )
     login_response = client.get("/auth/login?next=/usage", follow_redirects=False)
     assert login_response.status_code == 302
@@ -279,7 +286,7 @@ def test_auth_login_redirects_to_cognito(monkeypatch):
     client = _test_client(_app_with_gui(settings))
 
     monkeypatch.setattr(
-        "daylily_cognito.web_session.build_authorization_url",
+        "daylily_auth_cognito.browser.session.build_authorization_url",
         _mock_cognito_login_url,
     )
     response = client.get("/auth/login?next=/usage", follow_redirects=False)
@@ -298,14 +305,14 @@ def test_auth_callback_persists_session_and_redirects(monkeypatch):
     )
     client = _test_client(_app_with_gui(settings))
     monkeypatch.setattr(
-        "daylily_cognito.web_session.build_authorization_url",
+        "daylily_auth_cognito.browser.session.build_authorization_url",
         _mock_cognito_login_url,
     )
     login_response = client.get("/auth/login?next=/usage", follow_redirects=False)
     state = parse_qs(urlparse(login_response.headers["location"]).query)["state"][0]
     monkeypatch.setattr(
-        "daylily_cognito.web_session.exchange_authorization_code",
-        lambda **_kwargs: {"id_token": "token-123"},
+        "daylily_auth_cognito.browser.session.exchange_authorization_code_async",
+        AsyncMock(return_value={"id_token": "token-123"}),
     )
     response = client.get(f"/auth/callback?code=auth-code&state={state}", follow_redirects=False)
 
@@ -336,14 +343,14 @@ def test_auth_callback_rejects_disallowed_email_domain(monkeypatch):
     )
     client = _test_client(_app_with_gui(settings))
     monkeypatch.setattr(
-        "daylily_cognito.web_session.build_authorization_url",
+        "daylily_auth_cognito.browser.session.build_authorization_url",
         _mock_cognito_login_url,
     )
     login_response = client.get("/auth/login?next=/usage", follow_redirects=False)
     state = parse_qs(urlparse(login_response.headers["location"]).query)["state"][0]
     monkeypatch.setattr(
-        "daylily_cognito.web_session.exchange_authorization_code",
-        lambda **_kwargs: {"id_token": "token-123"},
+        "daylily_auth_cognito.browser.session.exchange_authorization_code_async",
+        AsyncMock(return_value={"id_token": "token-123"}),
     )
     client.app.state.auth_provider = SimpleNamespace(
         resolve_access_token=lambda _token, **_kwargs: CurrentUser(
@@ -590,15 +597,17 @@ def test_auth_callback_passes_paired_access_token_for_id_token_verification(monk
     client = _test_client(app)
 
     monkeypatch.setattr(
-        "daylily_cognito.web_session.build_authorization_url",
+        "daylily_auth_cognito.browser.session.build_authorization_url",
         _mock_cognito_login_url,
     )
     monkeypatch.setattr(
-        "daylily_cognito.web_session.exchange_authorization_code",
-        lambda **_kwargs: {
-            "id_token": "id-token-123",
-            "access_token": "access-token-456",
-        },
+        "daylily_auth_cognito.browser.session.exchange_authorization_code_async",
+        AsyncMock(
+            return_value={
+                "id_token": "id-token-123",
+                "access_token": "access-token-456",
+            }
+        ),
     )
     captured: dict[str, str | None] = {}
     monkeypatch.setattr(

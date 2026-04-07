@@ -27,12 +27,12 @@ URSA_LEGACY_REBIND_VARS=(
 )
 URSA_REQUIRED_DISTRIBUTIONS=(
     "daylily-tapdb==4.1.1"
-    "daylily-cognito==1.2.0"
-    "cli-core-yo>=1.3.1"
+    "daylily-auth-cognito==2.0.1"
+    "cli-core-yo==1.3.1"
 )
 URSA_REQUIRED_IMPORTS=(
     "daylily_tapdb:daylily-tapdb"
-    "daylily_cognito:daylily-cognito"
+    "daylily_auth_cognito:daylily-auth-cognito"
     "cli_core_yo:cli-core-yo"
     "fastapi:fastapi"
     "pydantic_settings:pydantic-settings"
@@ -465,7 +465,7 @@ activate_main() {
     printf "    ${CYAN}ursa quality${NC}  Linting and validation helpers\n"
     printf "    ${CYAN}ursa config${NC}   Configuration helpers\n"
     printf "    ${CYAN}tapdb${NC}         Shared DB/runtime lifecycle where documented\n"
-    printf "    ${CYAN}daycog${NC}        Cognito/SSO management via daylily-cognito\n"
+    printf "    ${CYAN}daycog${NC}        Cognito/SSO management via daylily-auth-cognito\n"
     printf "\n"
     printf "  ${BOLD}Quick Start:${NC}\n"
     printf "    ursa --help\n"

@@ -141,7 +141,9 @@ def start(
         cli_output.print_rich("     - us-east-1[/dim]")
     else:
         regions = ursa_config.get_allowed_regions()
-        cli_output.print_rich(f"[green]✓[/green]  Ursa config loaded: [cyan]{len(regions)} regions[/cyan]")
+        cli_output.print_rich(
+            f"[green]✓[/green]  Ursa config loaded: [cyan]{len(regions)} regions[/cyan]"
+        )
 
     # Build command
     cmd = [sys.executable, "-m", "daylib_ursa.workset_monitor_cli", str(config)]
@@ -159,6 +161,7 @@ def start(
     if background:
         log_file = _get_log_file()
         log_f = open(log_file, "w", buffering=1)  # Line-buffered
+        pid_file = _pid_file()
 
         # Set PYTHONUNBUFFERED for immediate output
         env = os.environ.copy()
@@ -186,7 +189,7 @@ def start(
                         cli_output.print_rich(f"   {line}")
             raise typer.Exit(1)
 
-        PID_FILE.write_text(str(proc.pid))
+        pid_file.write_text(str(proc.pid))
         cli_output.print_rich(f"[green]✓[/green]  Monitor started (PID {proc.pid})")
         cli_output.print_rich(f"   Config: [dim]{config}[/dim]")
         cli_output.print_rich(f"   Logs: [dim]{log_file}[/dim]")
@@ -219,10 +222,10 @@ def stop():
         else:
             os.kill(pid, signal.SIGKILL)
 
-        PID_FILE.unlink(missing_ok=True)
+        _pid_file().unlink(missing_ok=True)
         cli_output.print_rich(f"[green]✓[/green]  Monitor stopped (was PID {pid})")
     except ProcessLookupError:
-        PID_FILE.unlink(missing_ok=True)
+        _pid_file().unlink(missing_ok=True)
         cli_output.print_rich("[yellow]⚠[/yellow]  Monitor was not running")
     except PermissionError:
         cli_output.print_rich(f"[red]✗[/red]  Permission denied stopping PID {pid}")
@@ -262,7 +265,7 @@ def logs(
 ):
     """View and follow workset monitor logs (Ctrl+C to stop)."""
     if all_logs:
-        log_files = sorted(LOG_DIR.glob("monitor_*.log"), reverse=True)
+        log_files = sorted(_log_dir().glob("monitor_*.log"), reverse=True)
         if not log_files:
             cli_output.print_rich("[yellow]⚠[/yellow]  No log files found.")
             return
@@ -306,7 +309,7 @@ def grep_logs(
         ursa monitor grep 'failed' -C 3
     """
     if all_logs:
-        log_files = sorted(LOG_DIR.glob("monitor_*.log"), reverse=True)
+        log_files = sorted(_log_dir().glob("monitor_*.log"), reverse=True)
     else:
         latest = _get_latest_log()
         log_files = [latest] if latest else []

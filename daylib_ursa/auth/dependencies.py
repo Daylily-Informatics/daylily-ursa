@@ -12,15 +12,15 @@ from botocore.exceptions import ClientError
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from daylily_cognito import (
+from daylily_auth_cognito import (
     CognitoWebSessionConfig,
     SessionPrincipal,
     clear_session_principal as clear_web_session_principal,
     load_session_principal,
     store_session_principal,
 )
-from daylily_cognito.jwks import JWKSCache
-from daylily_cognito.tokens import decode_jwt_unverified, verify_jwt_claims
+from daylily_auth_cognito.runtime.jwks import JWKSCache
+from daylily_auth_cognito.runtime.tokens import decode_jwt_unverified, verify_jwt_claims
 
 from daylib_ursa.auth.rbac import Permission, Role, can_write, has_permission, has_role
 

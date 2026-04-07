@@ -6,11 +6,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlencode
 
-from daylily_cognito import (
-    CognitoWebAuthError,
-    complete_cognito_callback,
-    start_cognito_login,
-)
+from daylily_auth_cognito import complete_cognito_callback, start_cognito_login
+from daylily_auth_cognito.browser.session import CognitoWebAuthError
 from fastapi import FastAPI, Form, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles

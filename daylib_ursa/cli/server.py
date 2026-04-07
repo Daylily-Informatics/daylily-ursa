@@ -19,7 +19,6 @@ from cli_core_yo.server import (
     latest_log,
     list_logs,
     new_log_path,
-    source_env_file,
     stop_pid,
     write_pid,
 )
@@ -302,10 +301,6 @@ def start(
 
     _ensure_dir()
 
-    # Source .env file
-    if source_env_file(PROJECT_ROOT / ".env"):
-        cli_output.print_rich("[dim]Loaded .env file[/dim]")
-
     settings = get_settings()
     host, port = _resolved_server_host_port(port=port, host=host)
 
@@ -358,7 +353,9 @@ def start(
         cli_output.print_rich("     - us-east-1[/dim]")
     else:
         regions = ursa_config.get_allowed_regions()
-        cli_output.print_rich(f"[green]✓[/green]  Ursa config loaded: [cyan]{len(regions)} regions[/cyan]")
+        cli_output.print_rich(
+            f"[green]✓[/green]  Ursa config loaded: [cyan]{len(regions)} regions[/cyan]"
+        )
 
     # Build command (package-safe: uses module execution, not repo-relative bin/)
     cmd = [

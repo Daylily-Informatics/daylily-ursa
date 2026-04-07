@@ -36,7 +36,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from daylily_cognito import configure_session_middleware
+from daylily_auth_cognito import configure_session_middleware
 
 from daylib_ursa import __version__
 from daylib_ursa.analysis_store import (

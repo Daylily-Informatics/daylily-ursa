@@ -13,7 +13,7 @@ GOOGLE_CLIENT_JSON="${GOOGLE_CLIENT_JSON:-$DEFAULT_GOOGLE_CLIENT_JSON}"
 
 if ! command -v daycog >/dev/null 2>&1; then
   echo "daycog is not installed or not on PATH"
-  echo "Run: source ../daylily-cognito/activate"
+  echo "Run: source ../daylily-auth-cognito/activate"
   exit 1
 fi
 
