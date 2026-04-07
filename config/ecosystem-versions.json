@@ -1,10 +1,10 @@
 {
   "schema_version": "1",
-  "last_updated": "2026-04-02",
+  "last_updated": "2026-04-07",
   "components": {
     "daylily-ursa": {
       "repo": "Daylily-Informatics/daylily-ursa",
-      "current": "0.6.2"
+      "current": "0.6.8"
     },
     "daylily-ephemeral-cluster": {
       "repo": "Daylily-Informatics/daylily-ephemeral-cluster",
@@ -16,11 +16,11 @@
     },
     "daylily-auth-cognito": {
       "repo": "Daylily-Informatics/daylily-auth-cognito",
-      "current": "0.4.1"
+      "current": "2.0.2"
     },
     "daylily-tapdb": {
       "repo": "Daylily-Informatics/daylily-tapdb",
-      "current": "3.2.2"
+      "current": "5.0.4"
     },
     "daylily-omics-references": {
       "repo": "Daylily-Informatics/daylily-omics-references",
