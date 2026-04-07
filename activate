@@ -22,11 +22,10 @@ CONDA_ENV_BASE="URSA"
 URSA_PIP_INSTALL_EXTRAS="[auth,dev]"
 URSA_LEGACY_REBIND_VARS=(
     USE_LOCAL_DAYLILY_TAPDB
-    USE_LOCAL_DAYLILY_COGNITO
 )
 URSA_REQUIRED_DISTRIBUTIONS=(
-    "daylily-tapdb==4.1.1"
-    "daylily-auth-cognito==2.0.1"
+    "daylily-tapdb==5.0.4"
+    "daylily-auth-cognito==2.0.2"
     "cli-core-yo==2.0.0"
 )
 URSA_REQUIRED_IMPORTS=(
