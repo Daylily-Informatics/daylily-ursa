@@ -22,19 +22,18 @@ from cli_core_yo.server import (
     stop_pid,
     write_pid,
 )
-from rich.console import Console
 
 from daylib_ursa.config import get_settings
 from daylib_ursa.config import DEFAULT_API_PORT
 from daylib_ursa.integrations.tapdb_runtime import export_database_url_for_target
 from daylib_ursa.ursa_config import get_config_dir
+from cli_core_yo import output as cli_output
 
 if TYPE_CHECKING:
     from cli_core_yo.registry import CommandRegistry
     from cli_core_yo.spec import CliSpec
 
 server_app = typer.Typer(help="API server management commands")
-console = Console()
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 REPO_CERTS_DIR = PROJECT_ROOT / "certs"
 
@@ -98,8 +97,8 @@ def _require_auth_dependencies() -> None:
     try:
         import jose  # noqa: F401
     except ImportError:
-        console.print("[red]✗[/red]  Authentication requested but python-jose is not installed")
-        console.print(
+        cli_output.error(" Authentication requested but python-jose is not installed")
+        cli_output.print_rich(
             "   Refresh the runtime env with: [cyan]conda env update -f environment.yaml --prune[/cyan]"
         )
         raise typer.Exit(1)
@@ -154,7 +153,7 @@ def _resolve_https_cert_paths(
     env_cert = str(os.environ.get("SSL_CERT_FILE", "")).strip()
     env_key = str(os.environ.get("SSL_KEY_FILE", "")).strip()
     if bool(env_cert) != bool(env_key):
-        console.print("[red]✗[/red]  SSL_CERT_FILE and SSL_KEY_FILE must be set together")
+        cli_output.error(" SSL_CERT_FILE and SSL_KEY_FILE must be set together")
         raise typer.Exit(1)
     try:
         resolved = resolve_https_certs(
@@ -165,7 +164,7 @@ def _resolve_https_cert_paths(
             hosts=_https_san_hosts(host),
         )
     except SystemExit as exc:
-        console.print(f"[red]✗[/red]  {exc}")
+        cli_output.print_rich(f"[red]✗[/red]  {exc}")
         raise typer.Exit(1) from exc
 
     return str(resolved.cert_path), str(resolved.key_path)
@@ -207,8 +206,8 @@ def _require_cognito_configuration(ursa_config) -> dict[str, str]:
         else:
             missing.append(label)
     if missing:
-        console.print("[red]✗[/red]  Authentication is mandatory but Cognito config is missing")
-        console.print("   Missing YAML fields: [cyan]" + ", ".join(missing) + "[/cyan]")
+        cli_output.error(" Authentication is mandatory but Cognito config is missing")
+        cli_output.print_rich("   Missing YAML fields: [cyan]" + ", ".join(missing) + "[/cyan]")
         raise typer.Exit(1)
     return resolved
 
@@ -251,7 +250,7 @@ def _run_cognito_uri_check(
             app_client_id=app_client_id,
         )
     except Exception as exc:
-        console.print(f"[yellow]⚠[/yellow]  Could not fetch Cognito app client: {exc}")
+        cli_output.print_rich(f"[yellow]⚠[/yellow]  Could not fetch Cognito app client: {exc}")
         return
 
     oauth_host = runtime_oauth_host(host)
@@ -266,11 +265,11 @@ def _run_cognito_uri_check(
         expected_client_name=REQUIRED_COGNITO_APP_CLIENT_NAME,
     )
     if errors:
-        console.print("[yellow]⚠[/yellow]  Cognito URI validation warnings:")
+        cli_output.print_rich("[yellow]⚠[/yellow]  Cognito URI validation warnings:")
         for err in errors:
-            console.print(f"   • {err}")
-        console.print(f"   Server is starting on port [cyan]{port}[/cyan]")
-        console.print("   Use [dim]--no-check-cognito-uris[/dim] to skip\n")
+            cli_output.print_rich(f"   • {err}")
+        cli_output.print_rich(f"   Server is starting on port [cyan]{port}[/cyan]")
+        cli_output.print_rich("   Use [dim]--no-check-cognito-uris[/dim] to skip\n")
 
 
 @server_app.command("start")
@@ -308,13 +307,13 @@ def start(
     # Check if already running
     pid = _get_pid()
     if pid:
-        console.print(f"[yellow]⚠[/yellow]  Server already running (PID {pid})")
+        cli_output.print_rich(f"[yellow]⚠[/yellow]  Server already running (PID {pid})")
         protocol = "https" if _runtime_scheme() == "https" else "http"
-        console.print(f"   URL: [cyan]{protocol}://{host}:{port}[/cyan]")
+        cli_output.print_rich(f"   URL: [cyan]{protocol}://{host}:{port}[/cyan]")
         return
 
     if not ssl and (cert or key):
-        console.print("[red]✗[/red]  --cert and --key cannot be used with --no-ssl")
+        cli_output.error(" --cert and --key cannot be used with --no-ssl")
         raise typer.Exit(1)
 
     # Resolve AWS profile from env or config when explicitly provided.
@@ -345,16 +344,18 @@ def start(
     # Check config file for region configuration
     if not ursa_config.is_configured:
         config_file_path = get_config_file_path()
-        console.print(f"[yellow]⚠[/yellow]  No regions configured in {config_file_path}")
-        console.print("   Cluster discovery requires region definitions.")
-        console.print(f"   Create [cyan]{config_file_path}[/cyan] with:")
-        console.print("")
-        console.print("[dim]   regions:")
-        console.print("     - us-west-2")
-        console.print("     - us-east-1[/dim]")
+        cli_output.print_rich(f"[yellow]⚠[/yellow]  No regions configured in {config_file_path}")
+        cli_output.print_rich("   Cluster discovery requires region definitions.")
+        cli_output.print_rich(f"   Create [cyan]{config_file_path}[/cyan] with:")
+        cli_output.print_rich("")
+        cli_output.print_rich("[dim]   regions:")
+        cli_output.print_rich("     - us-west-2")
+        cli_output.print_rich("     - us-east-1[/dim]")
     else:
         regions = ursa_config.get_allowed_regions()
-        console.print(f"[green]✓[/green]  Ursa config loaded: [cyan]{len(regions)} regions[/cyan]")
+        cli_output.print_rich(
+            f"[green]✓[/green]  Ursa config loaded: [cyan]{len(regions)} regions[/cyan]"
+        )
 
     # Build command (package-safe: uses module execution, not repo-relative bin/)
     cmd = [
@@ -402,7 +403,7 @@ def start(
     if reload:
         cmd.append("--reload")
         background = False  # Reload requires foreground
-        console.print("[dim]Auto-reload enabled (foreground mode)[/dim]")
+        cli_output.print_rich("[dim]Auto-reload enabled (foreground mode)[/dim]")
 
     if background:
         log_file = new_log_path(_log_dir())
@@ -421,28 +422,28 @@ def start(
         if proc.poll() is not None:
             _clear_runtime_meta()
             log_f.close()
-            console.print("[red]✗[/red]  Server failed to start. Check logs:")
-            console.print(f"   [dim]{log_file}[/dim]")
+            cli_output.error(" Server failed to start. Check logs:")
+            cli_output.print_rich(f"   [dim]{log_file}[/dim]")
             # Show last few lines of error
             if log_file.exists():
                 content = log_file.read_text().strip()
                 if content:
-                    console.print("\n[dim]--- Last error ---[/dim]")
+                    cli_output.print_rich("\n[dim]--- Last error ---[/dim]")
                     for line in content.split("\n")[-10:]:
-                        console.print(f"   {line}")
+                        cli_output.print_rich(f"   {line}")
             raise typer.Exit(1)
 
         write_pid(_pid_file(), proc.pid)
         _write_runtime_meta(ssl_enabled=ssl)
-        console.print(f"[green]✓[/green]  Server started (PID {proc.pid})")
-        console.print(f"   URL: [cyan]{protocol}://{host}:{port}[/cyan]")
-        console.print(f"   Logs: [dim]{log_file}[/dim]")
+        cli_output.print_rich(f"[green]✓[/green]  Server started (PID {proc.pid})")
+        cli_output.print_rich(f"   URL: [cyan]{protocol}://{host}:{port}[/cyan]")
+        cli_output.print_rich(f"   Logs: [dim]{log_file}[/dim]")
     else:
         _write_runtime_meta(ssl_enabled=ssl)
-        console.print(
+        cli_output.print_rich(
             f"[green]✓[/green]  Starting server on [cyan]{protocol}://{host}:{port}[/cyan]"
         )
-        console.print("   Press Ctrl+C to stop\n")
+        cli_output.print_rich("   Press Ctrl+C to stop\n")
         try:
             result = subprocess.run(cmd, cwd=PROJECT_ROOT, env=env)
             if result.returncode != 0:
@@ -450,7 +451,7 @@ def start(
                 raise typer.Exit(result.returncode)
         except KeyboardInterrupt:
             _clear_runtime_meta()
-            console.print("\n[yellow]⚠[/yellow]  Server stopped")
+            cli_output.print_rich("\n[yellow]⚠[/yellow]  Server stopped")
         else:
             _clear_runtime_meta()
 
@@ -461,12 +462,12 @@ def stop():
     stopped, msg = stop_pid(_pid_file())
     if stopped:
         _clear_runtime_meta()
-        console.print(f"[green]✓[/green]  {msg}")
+        cli_output.print_rich(f"[green]✓[/green]  {msg}")
     elif "Permission" in msg:
-        console.print(f"[red]✗[/red]  {msg}")
+        cli_output.print_rich(f"[red]✗[/red]  {msg}")
         raise typer.Exit(1)
     else:
-        console.print(f"[yellow]⚠[/yellow]  {msg}")
+        cli_output.print_rich(f"[yellow]⚠[/yellow]  {msg}")
 
 
 @server_app.command("status")
@@ -478,12 +479,12 @@ def status():
         log_file = latest_log(_log_dir())
         dh = display_host(host)
         protocol = _runtime_scheme()
-        console.print(f"[green]●[/green]  Server is [green]running[/green] (PID {pid})")
-        console.print(f"   URL: [cyan]{protocol}://{dh}:{port}[/cyan]")
+        cli_output.print_rich(f"[green]●[/green]  Server is [green]running[/green] (PID {pid})")
+        cli_output.print_rich(f"   URL: [cyan]{protocol}://{dh}:{port}[/cyan]")
         if log_file:
-            console.print(f"   Logs: [dim]{log_file}[/dim]")
+            cli_output.print_rich(f"   Logs: [dim]{log_file}[/dim]")
     else:
-        console.print("[dim]○[/dim]  Server is [dim]not running[/dim]")
+        cli_output.print_rich("[dim]○[/dim]  Server is [dim]not running[/dim]")
 
 
 @server_app.command("logs")
@@ -495,24 +496,24 @@ def logs(
     if all_logs:
         log_entries = list_logs(_log_dir())
         if not log_entries:
-            console.print("[yellow]⚠[/yellow]  No log files found.")
+            cli_output.print_rich("[yellow]⚠[/yellow]  No log files found.")
             return
-        console.print(f"[bold]Server log files ({len(log_entries)}):[/bold]")
+        cli_output.print_rich(f"[bold]Server log files ({len(log_entries)}):[/bold]")
         for lf in log_entries[:20]:
             size = lf.stat().st_size
-            console.print(f"  {lf.name}  [dim]({size:,} bytes)[/dim]")
+            cli_output.print_rich(f"  {lf.name}  [dim]({size:,} bytes)[/dim]")
         return
 
     log_file = latest_log(_log_dir())
     if not log_file:
-        console.print("[yellow]⚠[/yellow]  No log file found. Start the server first.")
+        cli_output.print_rich("[yellow]⚠[/yellow]  No log file found. Start the server first.")
         return
 
-    console.print(f"[dim]Following {log_file.name} (Ctrl+C to stop)[/dim]\n")
+    cli_output.print_rich(f"[dim]Following {log_file.name} (Ctrl+C to stop)[/dim]\n")
     try:
         subprocess.run(["tail", "-f", "-n", str(lines), str(log_file)])
     except KeyboardInterrupt:
-        console.print("\n")
+        cli_output.print_rich("\n")
 
 
 @server_app.command("restart")

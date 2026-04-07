@@ -6,17 +6,16 @@ import json
 from typing import TYPE_CHECKING, Any
 
 import typer
-from rich.console import Console
 
 from daylib_ursa.config import get_settings
 from daylib_ursa.integrations.dewey_client import DeweyClient, DeweyClientError
+from cli_core_yo import output as cli_output
 
 if TYPE_CHECKING:
     from cli_core_yo.registry import CommandRegistry
     from cli_core_yo.spec import CliSpec
 
 
-console = Console()
 integrations_app = typer.Typer(help="Integration operations")
 dewey_app = typer.Typer(help="Dewey integration operations")
 integrations_app.add_typer(dewey_app, name="dewey")
@@ -25,14 +24,14 @@ integrations_app.add_typer(dewey_app, name="dewey")
 def _require_dewey_client() -> DeweyClient:
     settings = get_settings()
     if not bool(getattr(settings, "dewey_enabled", False)):
-        console.print("[red]✗[/red] Dewey integration is disabled")
-        console.print("   Set [cyan]dewey_enabled=true[/cyan] in Ursa configuration")
+        cli_output.error("Dewey integration is disabled")
+        cli_output.print_rich("   Set [cyan]dewey_enabled=true[/cyan] in Ursa configuration")
         raise typer.Exit(1)
     base_url = str(getattr(settings, "dewey_base_url", "") or "").strip()
     token = str(getattr(settings, "dewey_api_token", "") or "").strip()
     if not base_url or not token:
-        console.print("[red]✗[/red] Dewey integration is not fully configured")
-        console.print(
+        cli_output.error("Dewey integration is not fully configured")
+        cli_output.print_rich(
             "   Required settings: [cyan]dewey_base_url[/cyan], [cyan]dewey_api_token[/cyan]"
         )
         raise typer.Exit(1)
@@ -58,7 +57,7 @@ def _parse_metadata_json(metadata_json: str) -> dict[str, Any]:
 
 
 def _print_json(payload: dict[str, Any]) -> None:
-    console.print_json(data=payload)
+    cli_output.emit_json(payload)
 
 
 @dewey_app.command("resolve-artifact")
@@ -70,7 +69,7 @@ def resolve_artifact(
     try:
         _print_json(client.resolve_artifact(artifact_euid))
     except DeweyClientError as exc:
-        console.print(f"[red]✗[/red] Dewey artifact resolve failed: {exc}")
+        cli_output.print_rich(f"[red]✗[/red] Dewey artifact resolve failed: {exc}")
         raise typer.Exit(1) from exc
 
 
@@ -85,7 +84,7 @@ def resolve_artifact_set(
     try:
         _print_json(client.resolve_artifact_set(artifact_set_euid))
     except DeweyClientError as exc:
-        console.print(f"[red]✗[/red] Dewey artifact-set resolve failed: {exc}")
+        cli_output.print_rich(f"[red]✗[/red] Dewey artifact-set resolve failed: {exc}")
         raise typer.Exit(1) from exc
 
 
@@ -98,7 +97,7 @@ def get_artifact(
     try:
         _print_json(client.get_artifact(artifact_euid))
     except DeweyClientError as exc:
-        console.print(f"[red]✗[/red] Dewey artifact fetch failed: {exc}")
+        cli_output.print_rich(f"[red]✗[/red] Dewey artifact fetch failed: {exc}")
         raise typer.Exit(1) from exc
 
 
@@ -124,9 +123,9 @@ def import_artifact(
             idempotency_key=str(idempotency_key or "").strip() or None,
         )
     except DeweyClientError as exc:
-        console.print(f"[red]✗[/red] Dewey artifact import failed: {exc}")
+        cli_output.print_rich(f"[red]✗[/red] Dewey artifact import failed: {exc}")
         raise typer.Exit(1) from exc
-    console.print_json(data={"artifact_euid": artifact_euid})
+    cli_output.emit_json({"artifact_euid": artifact_euid})
 
 
 def register(registry: CommandRegistry, spec: CliSpec) -> None:

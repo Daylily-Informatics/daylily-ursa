@@ -8,14 +8,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import typer
-from rich.console import Console
+from cli_core_yo import output as cli_output
 
 if TYPE_CHECKING:
     from cli_core_yo.registry import CommandRegistry
     from cli_core_yo.spec import CliSpec
 
 quality_app = typer.Typer(help="Code quality commands")
-console = Console()
 
 
 def _get_project_root() -> Path:
@@ -36,7 +35,7 @@ def lint(
     cmd = [sys.executable, "-m", "ruff", "check", "daylib_ursa/", "tests/"]
     if fix:
         cmd.append("--fix")
-    console.print("[cyan]Running linter...[/cyan]")
+    cli_output.print_rich("[cyan]Running linter...[/cyan]")
     result = subprocess.run(cmd, cwd=project_root)
     raise typer.Exit(result.returncode)
 
@@ -50,7 +49,7 @@ def format_code(
     cmd = [sys.executable, "-m", "ruff", "format", "daylib_ursa/", "tests/"]
     if check:
         cmd.append("--check")
-    console.print(f"[cyan]{'Checking' if check else 'Formatting'} code...[/cyan]")
+    cli_output.print_rich(f"[cyan]{'Checking' if check else 'Formatting'} code...[/cyan]")
     result = subprocess.run(cmd, cwd=project_root)
     raise typer.Exit(result.returncode)
 
@@ -60,7 +59,7 @@ def typecheck():
     """Run mypy type checker."""
     project_root = _get_project_root()
     cmd = [sys.executable, "-m", "mypy", "daylib_ursa/"]
-    console.print("[cyan]Running type checker...[/cyan]")
+    cli_output.print_rich("[cyan]Running type checker...[/cyan]")
     result = subprocess.run(cmd, cwd=project_root)
     raise typer.Exit(result.returncode)
 
@@ -76,18 +75,18 @@ def check():
     ]
     failed = []
     for name, cmd in checks:
-        console.print(f"\n[cyan]Running {name}...[/cyan]")
+        cli_output.print_rich(f"\n[cyan]Running {name}...[/cyan]")
         result = subprocess.run(cmd, cwd=project_root)
         if result.returncode != 0:
             failed.append(name)
-            console.print(f"[red]✗[/red]  {name} failed")
+            cli_output.print_rich(f"[red]✗[/red]  {name} failed")
         else:
-            console.print(f"[green]✓[/green]  {name} passed")
+            cli_output.print_rich(f"[green]✓[/green]  {name} passed")
     if failed:
-        console.print(f"\n[red]✗[/red]  {len(failed)} check(s) failed: {', '.join(failed)}")
+        cli_output.print_rich(f"\n[red]✗[/red]  {len(failed)} check(s) failed: {', '.join(failed)}")
         raise typer.Exit(1)
     else:
-        console.print("\n[green]✓[/green]  All quality checks passed")
+        cli_output.print_rich("\n[green]✓[/green]  All quality checks passed")
 
 
 def register(registry: CommandRegistry, spec: CliSpec) -> None:

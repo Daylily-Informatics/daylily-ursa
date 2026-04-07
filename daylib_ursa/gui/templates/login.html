@@ -35,7 +35,7 @@
                 </div>
                 {% endif %}
                 <div class="toolbar">
-                    <a class="btn btn-primary" href="{{ auth_primary_href|default(cognito_login_url) }}">
+                    <a class="btn btn-primary" href="{{ auth_primary_href|default(cognito_login_url) }}" data-testid="app-login-link">
                         <i class="fa-solid fa-right-to-bracket"></i> {{ auth_primary_label|default("Sign In with Cognito") }}
                     </a>
                 </div>

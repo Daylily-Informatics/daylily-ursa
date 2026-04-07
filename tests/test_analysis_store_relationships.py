@@ -4,7 +4,7 @@ from contextlib import contextmanager
 from types import SimpleNamespace
 import uuid
 
-from daylib_ursa.analysis_store import AnalysisStore, RunResolution
+from daylib_ursa.analysis_store import AnalysisStore, ReviewState, RunResolution
 
 TENANT_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
 
@@ -17,13 +17,20 @@ class _FakeBackend:
     @contextmanager
     def session_scope(self, *, commit: bool):
         _ = commit
-        yield object()
+        yield SimpleNamespace(flush=lambda: None)
 
     def ensure_templates(self, session) -> None:
         _ = session
 
     def find_instance_by_external_id(self, session, *, template_code, key, value):
         _ = (session, template_code, key, value)
+        return None
+
+    def find_instance_by_euid(self, session, *, template_code, value, for_update=False):
+        _ = (session, template_code, for_update)
+        for created_template_code, _name, instance in self.created:
+            if created_template_code == template_code and str(instance.euid) == value:
+                return instance
         return None
 
     def create_instance(self, session, template_code, name, *, json_addl, bstatus, tenant_id=None):
@@ -51,6 +58,36 @@ class _FakeBackend:
             for source, child, rel in self.lineages
             if source is parent and rel == relationship_type
         ]
+
+
+class _WrappedContextBackend(_FakeBackend):
+    def create_instance(self, session, template_code, name, *, json_addl, bstatus, tenant_id=None):
+        payload = dict(json_addl)
+        if template_code == "integration/reference/sequenced-assignment-context/1.0/":
+            payload = {"properties": payload}
+        return super().create_instance(
+            session,
+            template_code,
+            name,
+            json_addl=payload,
+            bstatus=bstatus,
+            tenant_id=tenant_id,
+        )
+
+
+class _WrappedAnalysisBackend(_FakeBackend):
+    def create_instance(self, session, template_code, name, *, json_addl, bstatus, tenant_id=None):
+        payload = dict(json_addl)
+        if template_code == "workflow/analysis/run-linked/1.0/":
+            payload = {"properties": payload}
+        return super().create_instance(
+            session,
+            template_code,
+            name,
+            json_addl=payload,
+            bstatus=bstatus,
+            tenant_id=tenant_id,
+        )
 
 
 def test_ingest_analysis_keeps_relationship_truth_on_context_reference():
@@ -106,3 +143,72 @@ def test_ingest_analysis_keeps_relationship_truth_on_context_reference():
     assert record.run_euid == "RUN-1"
     assert record.tenant_id == TENANT_ID
     assert record.atlas_test_fulfillment_item_euid == "TPC-1"
+
+
+def test_ingest_analysis_reads_wrapped_context_payloads():
+    store = AnalysisStore.__new__(AnalysisStore)
+    store.backend = _WrappedContextBackend()
+
+    record = store.ingest_analysis(
+        resolution=RunResolution(
+            run_euid="RUN-2",
+            flowcell_id="FLOW-2",
+            lane="2",
+            library_barcode="LIB-2",
+            sequenced_library_assignment_euid="SQA-2",
+            tenant_id=TENANT_ID,
+            atlas_trf_euid="TRF-2",
+            atlas_test_euid="TST-2",
+            atlas_test_fulfillment_item_euid="TPC-2",
+        ),
+        analysis_type="somatic",
+        internal_bucket="analysis-bucket",
+        idempotency_key="idem-2",
+    )
+
+    assert record.run_euid == "RUN-2"
+    assert record.flowcell_id == "FLOW-2"
+    assert record.sequenced_library_assignment_euid == "SQA-2"
+    assert record.tenant_id == TENANT_ID
+    assert record.atlas_test_fulfillment_item_euid == "TPC-2"
+
+
+def test_wrapped_analysis_payload_updates_survive_review_and_return():
+    store = AnalysisStore.__new__(AnalysisStore)
+    store.backend = _WrappedAnalysisBackend()
+
+    record = store.ingest_analysis(
+        resolution=RunResolution(
+            run_euid="RUN-3",
+            flowcell_id="FLOW-3",
+            lane="3",
+            library_barcode="LIB-3",
+            sequenced_library_assignment_euid="SQA-3",
+            tenant_id=TENANT_ID,
+            atlas_trf_euid="TRF-3",
+            atlas_test_euid="TST-3",
+            atlas_test_fulfillment_item_euid="TPC-3",
+        ),
+        analysis_type="wgs",
+        internal_bucket="analysis-bucket",
+        idempotency_key="idem-3",
+    )
+
+    reviewed = store.set_review_state(
+        record.analysis_euid,
+        review_state=ReviewState.APPROVED,
+        reviewer="qa@example.com",
+    )
+
+    assert reviewed.review_state == ReviewState.APPROVED.value
+    assert reviewed.state == "REVIEWED"
+
+    returned = store.mark_returned(
+        record.analysis_euid,
+        atlas_return={"fulfillment_output_euid": "RES-1"},
+        idempotency_key="return-1",
+    )
+
+    assert returned.review_state == ReviewState.APPROVED.value
+    assert returned.state == "RETURNED"
+    assert returned.atlas_return["fulfillment_output_euid"] == "RES-1"
