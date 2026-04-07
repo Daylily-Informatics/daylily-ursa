@@ -24,7 +24,7 @@ dependencies:
       - sqlalchemy>=2.0.0
       - cli-core-yo==2.0.0
       - daylily-auth-cognito==2.0.1
-      - daylily-tapdb==4.1.1
+      - daylily-tapdb==5.0.0
       - fastapi>=0.104.0
       - uvicorn[standard]>=0.24.0
       - pydantic>=2.0.0
@@ -45,6 +45,7 @@ dependencies:
       - pytest-cov>=4.1.0
       - pytest-playwright>=0.4.4
       - playwright>=1.42.0
+      - build>=1.2.0
       - moto>=4.2.0
       - black>=23.0.0
       - ruff>=0.1.0

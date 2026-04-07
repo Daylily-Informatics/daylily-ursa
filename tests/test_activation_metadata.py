@@ -23,7 +23,7 @@ def test_pyproject_uses_requested_internal_package_versions() -> None:
 
     assert "cli-core-yo==2.0.0" in dependencies
     assert "daylily-auth-cognito==2.0.1" in dependencies
-    assert "daylily-tapdb==4.1.1" in dependencies
+    assert "daylily-tapdb==5.0.0" in dependencies
     assert "daylily-ephemeral-cluster==0.7.614" in cluster_extra
 
 
