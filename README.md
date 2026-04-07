@@ -108,6 +108,8 @@ Useful checks:
 ```bash
 source ./activate <deploy-name>
 ursa --help
+ursa --json version
+ursa server --help
 pytest -q
 ```
 

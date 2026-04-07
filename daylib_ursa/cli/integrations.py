@@ -7,6 +7,11 @@ from typing import TYPE_CHECKING, Any
 
 import typer
 
+from daylib_ursa.cli._registry_v2 import (
+    REQUIRED_JSON,
+    REQUIRED_MUTATING_JSON,
+    register_group_commands,
+)
 from daylib_ursa.config import get_settings
 from daylib_ursa.integrations.dewey_client import DeweyClient, DeweyClientError
 from cli_core_yo import output as cli_output
@@ -131,4 +136,14 @@ def import_artifact(
 def register(registry: CommandRegistry, spec: CliSpec) -> None:
     """cli-core-yo plugin: register integrations command group."""
     _ = spec
-    registry.add_typer_app(None, integrations_app, "integrations", "Integration operations")
+    register_group_commands(
+        registry,
+        "integrations/dewey",
+        "Dewey integration operations",
+        [
+            ("resolve-artifact", resolve_artifact, REQUIRED_JSON),
+            ("resolve-artifact-set", resolve_artifact_set, REQUIRED_JSON),
+            ("get-artifact", get_artifact, REQUIRED_JSON),
+            ("import-artifact", import_artifact, REQUIRED_MUTATING_JSON),
+        ],
+    )

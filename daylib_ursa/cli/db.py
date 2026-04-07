@@ -11,6 +11,11 @@ if TYPE_CHECKING:
 import typer
 from rich.console import Console
 
+from daylib_ursa.cli._registry_v2 import (
+    REQUIRED_MUTATING,
+    REQUIRED_MUTATING_INTERACTIVE,
+    register_group_commands,
+)
 from daylib_ursa.analysis_store import AnalysisStore
 from daylib_ursa.config import get_settings
 from daylib_ursa.integrations.tapdb_runtime import (
@@ -278,4 +283,15 @@ def nuke(
 
 def register(registry: CommandRegistry, spec: CliSpec) -> None:
     """Register the db command group."""
-    registry.add_typer_app(None, db_app, "db", "TapDB lifecycle and overlay commands")
+    _ = spec
+    register_group_commands(
+        registry,
+        "db",
+        "TapDB lifecycle and overlay commands",
+        [
+            ("build", build, REQUIRED_MUTATING),
+            ("seed", seed, REQUIRED_MUTATING),
+            ("reset", reset, REQUIRED_MUTATING_INTERACTIVE),
+            ("nuke", nuke, REQUIRED_MUTATING_INTERACTIVE),
+        ],
+    )

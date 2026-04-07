@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING
 import typer
 from cli_core_yo import output as cli_output
 
+from daylib_ursa.cli._registry_v2 import REQUIRED_LONG_RUNNING, register_group_commands
+
 if TYPE_CHECKING:
     from cli_core_yo.registry import CommandRegistry
     from cli_core_yo.spec import CliSpec
@@ -87,4 +89,13 @@ def all_checks():
 def register(registry: CommandRegistry, spec: CliSpec) -> None:
     """cli-core-yo plugin: register test command group."""
     _ = spec
-    registry.add_typer_app(None, test_app, "test", "Test execution commands")
+    register_group_commands(
+        registry,
+        "test",
+        "Test execution commands",
+        [
+            ("run", run, REQUIRED_LONG_RUNNING),
+            ("cov", coverage, REQUIRED_LONG_RUNNING),
+            ("all", all_checks, REQUIRED_LONG_RUNNING),
+        ],
+    )
