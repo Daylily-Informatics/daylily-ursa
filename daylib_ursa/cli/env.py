@@ -52,10 +52,12 @@ def status():
 
     from cli_core_yo import ccyo_out
     from cli_core_yo.runtime import get_context
+    from daylib_ursa.ursa_config import get_config_file_path
 
     conda_env = os.environ.get("CONDA_DEFAULT_ENV", "")
     aws_profile = os.environ.get("AWS_PROFILE", "")
     aws_region = os.environ.get("AWS_REGION", "")
+    config_path = get_config_file_path()
     aws_region_source = "env" if aws_region else None
     if not aws_region:
         try:
@@ -65,17 +67,16 @@ def status():
             if ursa_config.aws_region:
                 aws_region = ursa_config.aws_region
                 aws_region_source = "config"
-        except Exception:
+        except ValueError:
             pass
-    env_file = Path.cwd() / ".env"
-
     data = {
         "python_version": _sys.version.split()[0],
         "conda_env": conda_env or None,
         "aws_profile": aws_profile or None,
         "aws_region": aws_region or None,
         "aws_region_source": aws_region_source,
-        "env_file_exists": env_file.exists(),
+        "config_path": str(config_path),
+        "config_exists": config_path.exists(),
     }
 
     if get_context().json_mode:
@@ -98,7 +99,10 @@ def status():
     else:
         table.add_row("AWS Region", "[yellow]Not configured[/yellow]")
     table.add_row(
-        ".env file", "[green]Found[/green]" if env_file.exists() else "[yellow]Not found[/yellow]"
+        "Config file",
+        f"[green]{config_path}[/green]"
+        if config_path.exists()
+        else f"[yellow]{config_path} (not found)[/yellow]",
     )
 
     console.print(table)
@@ -131,68 +135,6 @@ def status():
             console.print(f"  [green]✓[/green] {tool} ({path})")
         else:
             console.print(f"  [red]✗[/red] {tool} (not found)")
-
-
-@env_app.command("generate")
-def generate(
-    force: bool = typer.Option(False, "--force", "-f", help="Overwrite existing .env file"),
-):
-    """Generate .env file template."""
-    env_file = Path.cwd() / ".env"
-
-    if env_file.exists() and not force:
-        console.print("[yellow]⚠[/yellow]  .env file already exists")
-        console.print("   Use --force to overwrite")
-        return
-
-    template = """# Ursa Configuration
-# ==================
-# This file is loaded by 'ursa server start' and other commands.
-# For multi-region configuration, use ~/.config/ursa-<deployment>/ursa-config-<deployment>.yaml instead.
-
-# ========== AWS Configuration ==========
-# Regions are configured in ~/.config/ursa-<deployment>/ursa-config-<deployment>.yaml
-# Do NOT use AWS_DEFAULT_REGION - regions must be explicit per API call
-
-# Regions to scan for ParallelCluster instances (comma-separated)
-URSA_ALLOWED_REGIONS=us-west-2
-
-# ========== Server Configuration ==========
-# Host/port and TapDB namespace should normally be configured in
-# ~/.config/ursa-<deployment>/ursa-config-<deployment>.yaml, not here.
-# HTTPS is required for GUI/API startup.
-# Resolution order for `ursa server start`:
-#   1. --cert / --key
-#   2. SSL_CERT_FILE / SSL_KEY_FILE
-#   3. shared Dayhoff deployment certs under ~/.local/state/dayhoff/<deploy>/certs
-#   4. repo-local certs/ fallback
-#   5. mkcert generation into the shared Dayhoff cert dir
-# Use `ursa server start --no-ssl` to run HTTP only.
-
-# ========== Authentication ==========
-# Set to 'true' to enable Cognito authentication
-ENABLE_AUTH=true
-
-# Cognito settings (required if ENABLE_AUTH=true)
-# Run 'daycog setup --client-name ursa' from daylily-cognito to create, or set manually
-# COGNITO_USER_POOL_ID=us-west-2_xxxxxxxxx
-# COGNITO_APP_CLIENT_ID=xxxxxxxxxxxxxxxxxxxxxxxxxx
-# COGNITO_APP_CLIENT_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxxx
-# COGNITO_DOMAIN=your-domain-prefix.auth.us-west-2.amazoncognito.com
-
-# ========== S3 Configuration ==========
-# Secrets and one-off overrides may live here.
-# Example:
-# URSA_INTERNAL_OUTPUT_BUCKET=your-bucket-name
-
-# ========== Optional ==========
-# Whitelist domains for user registration (comma-separated)
-# WHITELIST_DOMAINS=example.com,company.org
-"""
-
-    env_file.write_text(template)
-    console.print("[green]✓[/green]  Created .env file")
-    console.print("   Edit it to configure your settings")
 
 
 @env_app.command("clean")
@@ -235,7 +177,6 @@ def register(registry: CommandRegistry, spec: CliSpec) -> None:
     """cli-core-yo plugin: extend the built-in env group."""
     _ = spec
     registry.add_command("env", "validate", validate, help_text="Validate Ursa configuration file.")
-    registry.add_command("env", "generate", generate, help_text="Generate a local .env template.")
     registry.add_command(
         "env", "clean", clean, help_text="Remove cached files and build artifacts."
     )

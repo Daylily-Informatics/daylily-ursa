@@ -2,6 +2,8 @@
 
 Ursa defaults to Google-enabled Cognito setup using:
 
+The shared Cognito boundary is now `daylily-auth-cognito` 2.0: browser/session helpers live in `browser.session`, Hosted UI exchange is async in the web path, and user-pool/app-client lifecycle stays in `daycog` via `admin.*`.
+
 - OAuth client JSON:
   `~/.config/google_oauth/client_secret_2_95843944781-d1831sfs0ic2ggmp6t404b958v1nqn40.apps.googleusercontent.com.json`
 - Cognito pool/client:
@@ -12,7 +14,7 @@ Ursa defaults to Google-enabled Cognito setup using:
 ## One-command setup
 
 ```bash
-source ../daylily-cognito/activate
+source ../daylily-auth-cognito/activate
 ./scripts/setup_cognito_google_default.sh
 ```
 

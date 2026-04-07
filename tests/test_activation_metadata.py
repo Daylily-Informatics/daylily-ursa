@@ -22,7 +22,7 @@ def test_pyproject_uses_requested_internal_package_versions() -> None:
     cluster_extra = pyproject["project"]["optional-dependencies"]["cluster"]
 
     assert "cli-core-yo>=1.3.1" in dependencies
-    assert "daylily-cognito==1.2.0" in dependencies
+    assert "daylily-auth-cognito==2.0.0" in dependencies
     assert "daylily-tapdb==4.1.1" in dependencies
     assert "daylily-ephemeral-cluster==0.7.614" in cluster_extra
 
@@ -68,7 +68,7 @@ def test_activate_bootstraps_local_ursa_repo_only() -> None:
     )
     assert "ensure_local_ursa_checkout()" not in activate_script
     assert "../daylily-tapdb" not in activate_script
-    assert "../daylily-cognito" not in activate_script
+    assert "../daylily-auth-cognito" not in activate_script
     assert "../cli-core-yo" not in activate_script
     assert "--no-deps" not in activate_script
     assert ".venv" not in activate_script

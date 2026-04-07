@@ -334,25 +334,16 @@ def test_get_pid_clears_non_ursa_process(
     assert not pid_file.exists()
 
 
-def test_source_env_file_reads_key_values(
+def test_server_start_ignores_repo_root_dotenv(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    from cli_core_yo.server import source_env_file
-
     env_file = tmp_path / ".env"
     env_file.write_text("X=1\nY='two'\n# comment\n", encoding="utf-8")
+
+    monkeypatch.setattr(server_cli, "PROJECT_ROOT", tmp_path)
     monkeypatch.delenv("X", raising=False)
     monkeypatch.delenv("Y", raising=False)
-
-    assert source_env_file(env_file) is True
-    assert os.environ["X"] == "1"
-    assert os.environ["Y"] == "two"
-
-
-def test_server_start_sources_repo_root_env_file(monkeypatch: pytest.MonkeyPatch) -> None:
-    seen: dict[str, Path] = {}
-
     monkeypatch.setattr(server_cli, "_ensure_dir", lambda: None)
     monkeypatch.setattr(server_cli, "get_settings", lambda: SimpleNamespace())
     monkeypatch.setattr(
@@ -360,15 +351,40 @@ def test_server_start_sources_repo_root_env_file(monkeypatch: pytest.MonkeyPatch
     )
     monkeypatch.setattr(server_cli, "_get_pid", lambda: 12345)
 
-    def _fake_source_env_file(path: Path) -> bool:
-        seen["path"] = path
-        return False
+    server_cli.start(
+        port=8913,
+        host="0.0.0.0",
+        ssl=False,
+        cert=None,
+        key=None,
+        reload=False,
+        background=True,
+        check_cognito_uris=False,
+    )
 
-    monkeypatch.setattr(server_cli, "source_env_file", _fake_source_env_file)
+    assert "X" not in os.environ
+    assert "Y" not in os.environ
 
-    server_cli.start()
 
-    assert seen["path"] == server_cli.PROJECT_ROOT / ".env"
+def test_settings_ignore_repo_root_dotenv(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from daylib_ursa import config as config_module
+
+    (tmp_path / ".env").write_text(
+        "AWS_PROFILE=from-dotenv\nURSA_ALLOWED_REGIONS=eu-central-1\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("AWS_PROFILE", raising=False)
+    monkeypatch.setenv("URSA_INTERNAL_OUTPUT_BUCKET", "test-bucket")
+    config_module.get_settings.cache_clear()
+
+    settings = config_module.Settings()
+
+    assert settings.aws_profile is None
+    assert settings.ursa_allowed_regions == "us-west-2"
 
 
 def test_resolved_server_host_port_prefers_settings_over_legacy_env(

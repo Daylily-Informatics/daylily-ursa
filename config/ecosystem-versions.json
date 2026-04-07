@@ -14,8 +14,8 @@
       "repo": "Daylily-Informatics/daylily-omics-analysis",
       "current": "0.7.602"
     },
-    "daylily-cognito": {
-      "repo": "Daylily-Informatics/daylily-cognito",
+    "daylily-auth-cognito": {
+      "repo": "Daylily-Informatics/daylily-auth-cognito",
       "current": "0.4.1"
     },
     "daylily-tapdb": {

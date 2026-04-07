@@ -19,7 +19,6 @@ from cli_core_yo.server import (
     latest_log,
     list_logs,
     new_log_path,
-    source_env_file,
     stop_pid,
     write_pid,
 )
@@ -302,10 +301,6 @@ def start(
     check_cognito_uris = _option_default(check_cognito_uris, True)
 
     _ensure_dir()
-
-    # Source .env file
-    if source_env_file(PROJECT_ROOT / ".env"):
-        console.print("[dim]Loaded .env file[/dim]")
 
     settings = get_settings()
     host, port = _resolved_server_host_port(port=port, host=host)
