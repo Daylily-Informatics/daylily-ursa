@@ -15,6 +15,14 @@ import typer
 from daylib_ursa.ursa_config import get_config_dir, _resolve_deployment_code
 from cli_core_yo import output as cli_output
 
+from daylib_ursa.cli._registry_v2 import (
+    REQUIRED,
+    REQUIRED_LONG_RUNNING,
+    REQUIRED_MUTATING,
+    REQUIRED_MUTATING_LONG_RUNNING,
+    register_group_commands,
+)
+
 if TYPE_CHECKING:
     from cli_core_yo.registry import CommandRegistry
     from cli_core_yo.spec import CliSpec
@@ -343,4 +351,15 @@ def grep_logs(
 def register(registry: CommandRegistry, spec: CliSpec) -> None:
     """cli-core-yo plugin: register monitor command group."""
     _ = spec
-    registry.add_typer_app(None, monitor_app, "monitor", "Workset monitor management")
+    register_group_commands(
+        registry,
+        "monitor",
+        "Workset monitor management",
+        [
+            ("start", start, REQUIRED_MUTATING_LONG_RUNNING),
+            ("stop", stop, REQUIRED_MUTATING),
+            ("status", status, REQUIRED),
+            ("logs", logs, REQUIRED_LONG_RUNNING),
+            ("grep", grep_logs, REQUIRED),
+        ],
+    )

@@ -11,6 +11,8 @@ import typer
 from rich.table import Table
 from cli_core_yo import output as cli_output
 
+from daylib_ursa.cli._registry_v2 import EXEMPT, EXEMPT_MUTATING
+
 if TYPE_CHECKING:
     from cli_core_yo.registry import CommandRegistry
     from cli_core_yo.spec import CliSpec
@@ -175,7 +177,17 @@ def clean():
 def register(registry: CommandRegistry, spec: CliSpec) -> None:
     """cli-core-yo plugin: extend the built-in env group."""
     _ = spec
-    registry.add_command("env", "validate", validate, help_text="Validate Ursa configuration file.")
     registry.add_command(
-        "env", "clean", clean, help_text="Remove cached files and build artifacts."
+        "env",
+        "validate",
+        validate,
+        help_text="Validate Ursa configuration file.",
+        policy=EXEMPT,
+    )
+    registry.add_command(
+        "env",
+        "clean",
+        clean,
+        help_text="Remove cached files and build artifacts.",
+        policy=EXEMPT_MUTATING,
     )

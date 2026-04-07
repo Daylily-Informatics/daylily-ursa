@@ -8,14 +8,25 @@ from pathlib import Path
 
 import yaml
 from cli_core_yo.app import create_app, run
-from cli_core_yo.spec import CliSpec, ConfigSpec, EnvSpec, PluginSpec, XdgSpec
+from cli_core_yo.spec import (
+    BackendDetectSpec,
+    BackendValidationSpec,
+    CliSpec,
+    ConfigSpec,
+    EnvSpec,
+    ExecutionBackendSpec,
+    PluginSpec,
+    PolicySpec,
+    PrereqSpec,
+    RuntimeSpec,
+    XdgSpec,
+)
 
+from daylib_ursa.cli._registry_v2 import URSA_RUNTIME_TAG
 from daylib_ursa.integrations.tapdb_runtime import (
     DEFAULT_AWS_PROFILE,
     DEFAULT_AWS_REGION,
     DEFAULT_TAPDB_DATABASE_NAME,
-    TapDBRuntimeError,
-    ensure_tapdb_version,
 )
 from daylib_ursa.config import build_default_config_template
 from daylib_ursa.ursa_config import _resolve_deployment_code
@@ -104,13 +115,6 @@ def _ursa_info_hook() -> list[tuple[str, str]]:
     return rows
 
 
-def _ensure_tapdb_dependency() -> None:
-    try:
-        ensure_tapdb_version()
-    except TapDBRuntimeError as exc:
-        raise SystemExit(f"Ursa CLI startup failed. Details: {exc}") from exc
-
-
 def _build_spec() -> CliSpec:
     return CliSpec(
         prog_name="ursa",
@@ -120,6 +124,7 @@ def _build_spec() -> CliSpec:
         xdg=XdgSpec(
             app_dir_name=f"ursa-{_resolve_deployment_code()}",
         ),
+        policy=PolicySpec(),
         config=ConfigSpec(
             xdg_relative_path=f"ursa-config-{_resolve_deployment_code()}.yaml",
             template_bytes=build_default_config_template(),
@@ -130,6 +135,78 @@ def _build_spec() -> CliSpec:
             project_root_env_var="URSA_PROJECT_ROOT",
             activate_script_name="activate <deploy-name>",
             deactivate_script_name="ursa_deactivate",
+            preferred_backend="ursa-conda",
+        ),
+        runtime=RuntimeSpec(
+            supported_backends=[
+                ExecutionBackendSpec(
+                    name="ursa-conda",
+                    kind="conda",
+                    entry_guidance="source ./activate <deploy-name>",
+                    detect=BackendDetectSpec(env_vars=("CONDA_PREFIX",)),
+                    validation=BackendValidationSpec(env_vars=("CONDA_PREFIX",)),
+                )
+            ],
+            default_backend="ursa-conda",
+            guard_mode="enforced",
+            prereqs=[
+                PrereqSpec(
+                    key="ursa-conda-active-env",
+                    kind="env_var",
+                    value="CONDA_DEFAULT_ENV",
+                    help="Activate Ursa with source ./activate <deploy-name>.",
+                    applies_to_backends={"ursa-conda"},
+                    tags={URSA_RUNTIME_TAG},
+                    success_message="Deployment-scoped conda environment is active.",
+                    failure_message=(
+                        "Ursa CLI requires an active deployment-scoped conda environment. "
+                        "Run `source ./activate <deploy-name>`."
+                    ),
+                ),
+                PrereqSpec(
+                    key="ursa-conda-env-name",
+                    kind="command_probe",
+                    value=(
+                        sys.executable,
+                        "-c",
+                        "import os, sys; env = os.environ.get('CONDA_DEFAULT_ENV', '').strip(); "
+                        "sys.exit(0 if env and '-' in env else 1)",
+                    ),
+                    help="Use a deployment-scoped conda environment such as URSA-local2.",
+                    applies_to_backends={"ursa-conda"},
+                    tags={URSA_RUNTIME_TAG},
+                    success_message="Deployment-scoped conda environment name is valid.",
+                    failure_message=(
+                        "Ursa CLI requires a deployment-scoped conda environment name with '-'. "
+                        "Run `source ./activate <deploy-name>`."
+                    ),
+                ),
+                PrereqSpec(
+                    key="ursa-daylily-tapdb",
+                    kind="python_import",
+                    value="daylily_tapdb",
+                    help="Install daylily-tapdb into the active Ursa environment.",
+                    applies_to_backends={"ursa-conda"},
+                    tags={URSA_RUNTIME_TAG},
+                    success_message="Dependency available: daylily-tapdb",
+                    failure_message=(
+                        "Missing dependency: daylily-tapdb. Re-run `source ./activate <deploy-name>`."
+                    ),
+                ),
+                PrereqSpec(
+                    key="ursa-daylily-auth-cognito",
+                    kind="python_import",
+                    value="daylily_auth_cognito",
+                    help="Install daylily-auth-cognito into the active Ursa environment.",
+                    applies_to_backends={"ursa-conda"},
+                    tags={URSA_RUNTIME_TAG},
+                    success_message="Dependency available: daylily-auth-cognito",
+                    failure_message=(
+                        "Missing dependency: daylily-auth-cognito. "
+                        "Re-run `source ./activate <deploy-name>`."
+                    ),
+                ),
+            ],
         ),
         plugins=PluginSpec(
             explicit=[
@@ -150,45 +227,6 @@ spec = _build_spec()
 
 app = create_app(spec)
 
-_SKIP_CONDA_ENV_CHECK_FLAG = "--skip-conda-env-check"
-_CONDA_ENV_CHECK_EXEMPT_COMMANDS = frozenset({"version", "info", "env", "help"})
-
-
-def _strip_skip_conda_env_check_flag(args: list[str]) -> tuple[list[str], bool]:
-    filtered = [arg for arg in args if arg != _SKIP_CONDA_ENV_CHECK_FLAG]
-    return filtered, len(filtered) != len(args)
-
-
-def _command_requires_conda_env_check(args: list[str]) -> bool:
-    if not args or "--help" in args or "-h" in args:
-        return False
-    for arg in args:
-        if not arg or arg.startswith("-"):
-            continue
-        return arg not in _CONDA_ENV_CHECK_EXEMPT_COMMANDS
-    return False
-
-
-def _enforce_conda_env_contract(args: list[str]) -> None:
-    if not _command_requires_conda_env_check(args):
-        return
-    active_env = os.environ.get("CONDA_DEFAULT_ENV", "").strip()
-    if not active_env:
-        raise SystemExit(
-            "Ursa CLI requires an active deployment-scoped conda environment. "
-            "Activate an env named like 'URSA-local2', or pass "
-            "--skip-conda-env-check to override."
-        )
-    if "-" not in active_env:
-        raise SystemExit(
-            f"Ursa CLI requires a deployment-scoped conda environment name with '-'. "
-            f"Current CONDA_DEFAULT_ENV='{active_env}'. Pass --skip-conda-env-check to override."
-        )
-
 
 def main() -> None:
-    _ensure_tapdb_dependency()
-    args, skip_conda_env_check = _strip_skip_conda_env_check_flag(sys.argv[1:])
-    if not skip_conda_env_check:
-        _enforce_conda_env_contract(args)
-    raise SystemExit(run(_build_spec(), args))
+    raise SystemExit(run(spec))

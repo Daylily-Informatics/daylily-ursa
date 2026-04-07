@@ -23,6 +23,13 @@ from cli_core_yo.server import (
     write_pid,
 )
 
+from daylib_ursa.cli._registry_v2 import (
+    REQUIRED,
+    REQUIRED_LONG_RUNNING,
+    REQUIRED_MUTATING,
+    REQUIRED_MUTATING_LONG_RUNNING,
+    register_group_commands,
+)
 from daylib_ursa.config import get_settings
 from daylib_ursa.config import DEFAULT_API_PORT
 from daylib_ursa.integrations.tapdb_runtime import export_database_url_for_target
@@ -538,4 +545,15 @@ def restart(
 def register(registry: CommandRegistry, spec: CliSpec) -> None:
     """cli-core-yo plugin: register server command group."""
     _ = spec
-    registry.add_typer_app(None, server_app, "server", "API server management")
+    register_group_commands(
+        registry,
+        "server",
+        "API server management",
+        [
+            ("start", start, REQUIRED_MUTATING_LONG_RUNNING),
+            ("stop", stop, REQUIRED_MUTATING),
+            ("status", status, REQUIRED),
+            ("logs", logs, REQUIRED_LONG_RUNNING),
+            ("restart", restart, REQUIRED_MUTATING_LONG_RUNNING),
+        ],
+    )

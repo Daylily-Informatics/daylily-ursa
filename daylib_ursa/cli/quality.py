@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING
 import typer
 from cli_core_yo import output as cli_output
 
+from daylib_ursa.cli._registry_v2 import REQUIRED_LONG_RUNNING, register_group_commands
+
 if TYPE_CHECKING:
     from cli_core_yo.registry import CommandRegistry
     from cli_core_yo.spec import CliSpec
@@ -92,4 +94,14 @@ def check():
 def register(registry: CommandRegistry, spec: CliSpec) -> None:
     """cli-core-yo plugin: register quality command group."""
     _ = spec
-    registry.add_typer_app(None, quality_app, "quality", "Code quality commands")
+    register_group_commands(
+        registry,
+        "quality",
+        "Code quality commands",
+        [
+            ("lint", lint, REQUIRED_LONG_RUNNING),
+            ("format", format_code, REQUIRED_LONG_RUNNING),
+            ("typecheck", typecheck, REQUIRED_LONG_RUNNING),
+            ("check", check, REQUIRED_LONG_RUNNING),
+        ],
+    )
