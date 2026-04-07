@@ -22,7 +22,7 @@ dependencies:
       - boto3>=1.26.0
       - pyyaml>=6.0
       - sqlalchemy>=2.0.0
-      - cli-core-yo==2.0.0
+      - cli-core-yo==0.5.2
       - daylily-auth-cognito==2.0.1
       - daylily-tapdb==3.2.3
       - fastapi>=0.104.0
