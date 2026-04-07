@@ -8,7 +8,7 @@ from pathlib import Path
 
 import yaml
 from cli_core_yo.app import create_app, run
-from cli_core_yo.spec import CliSpec, ConfigSpec, EnvSpec, PluginSpec, PolicySpec, XdgSpec
+from cli_core_yo.spec import CliSpec, ConfigSpec, EnvSpec, PluginSpec, XdgSpec
 
 from daylib_ursa.integrations.tapdb_runtime import (
     DEFAULT_AWS_PROFILE,
@@ -120,7 +120,6 @@ def _build_spec() -> CliSpec:
         xdg=XdgSpec(
             app_dir_name=f"ursa-{_resolve_deployment_code()}",
         ),
-        policy=PolicySpec(),
         config=ConfigSpec(
             xdg_relative_path=f"ursa-config-{_resolve_deployment_code()}.yaml",
             template_bytes=build_default_config_template(),
