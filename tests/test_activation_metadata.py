@@ -38,7 +38,7 @@ def test_activate_bootstraps_local_ursa_repo_only() -> None:
     activate_script = (Path(__file__).resolve().parents[1] / "activate").read_text(encoding="utf-8")
 
     assert 'CONDA_ENV_BASE="URSA"' in activate_script
-    assert "_URSA_DEPLOY_NAME_MAX_SUFFIX_LENGTH=8" in activate_script
+    assert "_URSA_DEPLOY_NAME_MAX_SUFFIX_LENGTH=9" in activate_script
     assert 'CONDA_ENV_NAME="${CONDA_ENV_BASE}-${CONDA_ENV_DEPLOYMENT_CODE}"' in activate_script
     assert "source ./activate [deploy-name] [--debug]" in activate_script
     assert "parse_activate_args()" in activate_script
@@ -49,6 +49,7 @@ def test_activate_bootstraps_local_ursa_repo_only() -> None:
     assert "register_activation_return_trap()" in activate_script
     assert "cleanup_failed_activation()" in activate_script
     assert 'if ! validate_deploy_name "${CONDA_ENV_DEPLOYMENT_CODE}"; then' in activate_script
+    assert "deploy-name must match ^[A-Za-z0-9-]{3,9}$" in activate_script
     assert 'export URSA_DEPLOYMENT_CODE="${CONDA_ENV_DEPLOYMENT_CODE}"' in activate_script
     assert 'export DEPLOYMENT_CODE="${CONDA_ENV_DEPLOYMENT_CODE}"' in activate_script
     assert 'export LSMC_DEPLOYMENT_CODE="${CONDA_ENV_DEPLOYMENT_CODE}"' in activate_script
