@@ -442,7 +442,7 @@ def run_tapdb_cli(
     child_env["AWS_PROFILE"] = runtime_env["aws_profile"]
     child_env["AWS_REGION"] = runtime_env["aws_region"]
     child_env["AWS_DEFAULT_REGION"] = runtime_env["aws_region"]
-    child_env["MERIDIAN_DOMAIN_CODE"] = os.environ.get("MERIDIAN_DOMAIN_CODE", "R")
+    child_env["MERIDIAN_DOMAIN_CODE"] = os.environ.get("MERIDIAN_DOMAIN_CODE", "Z")
     child_env["TAPDB_APP_CODE"] = os.environ.get("TAPDB_APP_CODE", "R")
     child_env.setdefault("PYTHONSAFEPATH", "1")
     result = subprocess.run(

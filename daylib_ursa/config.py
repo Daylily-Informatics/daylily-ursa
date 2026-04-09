@@ -178,7 +178,7 @@ regions:
 #   tapdb --config ~/.config/tapdb/local/ursa/tapdb-config.yaml --env dev bootstrap local
 #
 # Explicit env contract for TapDB/Meridian subprocesses:
-# MERIDIAN_DOMAIN_CODE=R
+# MERIDIAN_DOMAIN_CODE=Z
 # TAPDB_APP_CODE=R
 tapdb_client_id: local
 tapdb_database_name: ursa

@@ -170,7 +170,7 @@ def test_run_tapdb_cli_exports_explicit_identity_env(monkeypatch) -> None:
         "/tmp/ursa-tapdb.yaml",
     ]
     assert captured["cmd"][5:7] == ["--env", "dev"]
-    assert captured["env"]["MERIDIAN_DOMAIN_CODE"] == "R"
+    assert captured["env"]["MERIDIAN_DOMAIN_CODE"] == "Z"
     assert captured["env"]["TAPDB_APP_CODE"] == "R"
 
 
