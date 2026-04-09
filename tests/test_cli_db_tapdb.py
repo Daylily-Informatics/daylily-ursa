@@ -24,7 +24,7 @@ def _settings() -> SimpleNamespace:
 def test_build_local_uses_tapdb_bootstrap_then_overlay(monkeypatch):
     events: list[tuple[str, object]] = []
 
-    monkeypatch.setattr(db_cli, "ensure_tapdb_version", lambda: "3.0.9")
+    monkeypatch.setattr(db_cli, "ensure_tapdb_version", lambda: "5.1.0")
     monkeypatch.setattr(db_cli, "get_settings", _settings)
     monkeypatch.setattr(
         db_cli,
@@ -45,9 +45,7 @@ def test_build_local_uses_tapdb_bootstrap_then_overlay(monkeypatch):
     monkeypatch.setattr(
         db_cli,
         "_apply_ursa_overlay",
-        lambda *, start_step, total_steps: events.append(
-            ("overlay", (start_step, total_steps))
-        ),
+        lambda *, start_step, total_steps: events.append(("overlay", (start_step, total_steps))),
     )
 
     db_cli.build(
@@ -66,7 +64,7 @@ def test_build_local_uses_tapdb_bootstrap_then_overlay(monkeypatch):
 
 
 def test_build_aurora_requires_cluster(monkeypatch):
-    monkeypatch.setattr(db_cli, "ensure_tapdb_version", lambda: "3.0.9")
+    monkeypatch.setattr(db_cli, "ensure_tapdb_version", lambda: "5.1.0")
     monkeypatch.setattr(db_cli, "get_settings", _settings)
 
     with pytest.raises(db_cli.typer.Exit) as exc_info:
@@ -104,9 +102,7 @@ def test_reset_uses_tapdb_delete_then_bootstrap_then_overlay(monkeypatch):
     monkeypatch.setattr(
         db_cli,
         "_apply_ursa_overlay",
-        lambda *, start_step, total_steps: events.append(
-            ("overlay", (start_step, total_steps))
-        ),
+        lambda *, start_step, total_steps: events.append(("overlay", (start_step, total_steps))),
     )
 
     db_cli.reset(
@@ -141,9 +137,7 @@ def test_seed_prepares_database_url_before_overlay(monkeypatch):
     monkeypatch.setattr(
         db_cli,
         "_apply_ursa_overlay",
-        lambda *, start_step, total_steps: events.append(
-            ("overlay", (start_step, total_steps))
-        ),
+        lambda *, start_step, total_steps: events.append(("overlay", (start_step, total_steps))),
     )
 
     db_cli.seed(
@@ -184,7 +178,7 @@ def test_nuke_routes_destructive_action_through_tapdb(monkeypatch):
 
 
 def test_build_rejects_invalid_target(monkeypatch):
-    monkeypatch.setattr(db_cli, "ensure_tapdb_version", lambda: "3.0.9")
+    monkeypatch.setattr(db_cli, "ensure_tapdb_version", lambda: "5.1.0")
     monkeypatch.setattr(db_cli, "get_settings", _settings)
 
     with pytest.raises(db_cli.typer.Exit) as exc_info:

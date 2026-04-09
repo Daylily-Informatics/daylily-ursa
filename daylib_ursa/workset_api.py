@@ -84,8 +84,10 @@ from daylib_ursa.observability import (
     build_db_health_payload,
     build_endpoint_health_payload,
     build_health_payload,
+    build_healthz_payload,
     build_my_health_payload,
     build_obs_services_payload,
+    build_readyz_payload,
     install_sqlalchemy_observability,
 )
 from daylib_ursa.resource_store import (
@@ -1703,25 +1705,28 @@ def create_app(
         return {"keypairs": keypairs, "buckets": buckets}
 
     @app.get("/healthz", tags=["health"])
-    async def healthz() -> dict[str, str]:
-        return {
-            "status": "ok",
-            "service": "ursa",
-            "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-        }
+    async def healthz(request: Request) -> dict[str, Any]:
+        return build_healthz_payload(
+            request,
+            settings=settings,
+            app_version=__version__,
+            started_at=app.state.observability.started_at,
+        )
 
     @app.get("/readyz", tags=["health"])
-    async def readyz() -> JSONResponse:
+    async def readyz(request: Request) -> JSONResponse:
         database = _database_probe()
-        status_code = 200 if database["status"] in {"ok", "unknown"} else 503
+        ready = str(database.get("status") or "") == "ok"
         return JSONResponse(
-            status_code=status_code,
-            content={
-                "status": "ok" if status_code == 200 else "degraded",
-                "service": "ursa",
-                "database": database,
-                "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-            },
+            status_code=200 if ready else 503,
+            content=build_readyz_payload(
+                request,
+                settings=settings,
+                app_version=__version__,
+                started_at=app.state.observability.started_at,
+                database_check=database,
+                ready=ready,
+            ),
         )
 
     @app.get("/health", tags=["observability"])
@@ -2079,7 +2084,8 @@ def create_app(
     @app.post("/api/v1/analyses/{analysis_euid}/return", response_model=AnalysisResponse)
     async def return_analysis_result(
         analysis_euid: str,
-        request: AnalysisReturnRequest,
+        payload: AnalysisReturnRequest,
+        request: Request,
         actor: RequireAuth,
         idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
     ) -> AnalysisResponse:
@@ -2142,11 +2148,12 @@ def create_app(
                 lane=record.lane,
                 library_barcode=record.library_barcode,
                 analysis_type=record.analysis_type,
-                result_status=request.result_status,
+                result_status=payload.result_status,
                 review_state=record.review_state,
-                result_payload=request.result_payload,
+                result_payload=payload.result_payload,
                 artifacts=atlas_artifacts,
                 idempotency_key=str(idempotency_key),
+                request_id=str(getattr(request.state, "request_id", "") or ""),
             )
             record_observed_dependency("atlas")
         except AtlasResultClientError as exc:
@@ -2156,7 +2163,7 @@ def create_app(
             analysis_euid,
             atlas_return={
                 **atlas_response,
-                "result_status": request.result_status,
+                "result_status": payload.result_status,
                 "returned_by_user_id": actor.user_id,
             },
             idempotency_key=str(idempotency_key),

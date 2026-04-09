@@ -103,7 +103,7 @@ def test_tapdb_env_for_target_uses_explicit_defaults(monkeypatch) -> None:
 
 
 def test_export_database_url_for_target_sets_runtime_environment(monkeypatch) -> None:
-    monkeypatch.setattr(tapdb_runtime, "ensure_tapdb_version", lambda *_args, **_kwargs: "3.0.9")
+    monkeypatch.setattr(tapdb_runtime, "ensure_tapdb_version", lambda *_args, **_kwargs: "5.1.0")
     monkeypatch.setattr(
         tapdb_runtime,
         "_get_tapdb_db_config_for_env",
@@ -137,7 +137,7 @@ def test_export_database_url_for_target_sets_runtime_environment(monkeypatch) ->
 def test_run_tapdb_cli_exports_explicit_identity_env(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
-    monkeypatch.setattr(tapdb_runtime, "ensure_tapdb_version", lambda: "3.0.9")
+    monkeypatch.setattr(tapdb_runtime, "ensure_tapdb_version", lambda: "5.1.0")
     monkeypatch.setattr(
         tapdb_runtime,
         "_resolve_tapdb_config_path",

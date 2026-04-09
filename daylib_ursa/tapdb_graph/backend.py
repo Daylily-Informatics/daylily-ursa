@@ -1,4 +1,4 @@
-"""Ursa ↔ TapDB adapter built on the TapDB 3.x runtime surface."""
+"""Ursa ↔ TapDB adapter built on the TapDB 5.x runtime surface."""
 
 from __future__ import annotations
 
@@ -121,9 +121,7 @@ class TapDBBackend:
             or DEFAULT_TAPDB_DATABASE_NAME
         )
         resolved_tapdb_env = (
-            tapdb_env
-            or str(getattr(settings, "tapdb_env", "") or "").strip()
-            or None
+            tapdb_env or str(getattr(settings, "tapdb_env", "") or "").strip() or None
         )
         resolved_app_username = (
             app_username

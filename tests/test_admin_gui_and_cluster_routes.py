@@ -156,7 +156,7 @@ class DummyAuthProvider:
             raise AuthError("Invalid authentication token")
         return CurrentUser(
             sub=ADMIN_USER_ID,
-            email="alice@example.com",
+            email="alice@lsmc.com",
             name="Alice Example",
             tenant_id=TENANT_ID,
             roles=[Role.ADMIN.value] if self.admin else [Role.READ_ONLY.value],
@@ -177,7 +177,7 @@ class DummyUserDirectory:
                 site_id="SITE-1",
                 site_name="Seattle",
                 roles=(Role.EXTERNAL_USER.value,),
-                email="bob@example.com",
+                email="bob@lsmc.bio",
                 display_name="Bob Example",
                 is_active=True,
             )
@@ -188,7 +188,7 @@ class DummyUserDirectory:
             return None
         return CurrentUser(
             sub=SECONDARY_USER_ID,
-            email="bob@example.com",
+            email="bob@lsmc.bio",
             name="Bob Example",
             tenant_id=TENANT_ID,
             roles=[Role.EXTERNAL_USER.value],

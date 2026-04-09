@@ -14,6 +14,8 @@ def base_url() -> str:
 
 @pytest.fixture(scope="session")
 def e2e_credentials():
+    if not os.getenv("E2E_USER_PASSWORD", "").strip():
+        pytest.skip("Set E2E_USER_PASSWORD to run Ursa Playwright e2e tests.")
     return ensure_test_user()
 
 

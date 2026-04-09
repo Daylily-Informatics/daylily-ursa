@@ -5,6 +5,8 @@ import re
 from pathlib import Path
 from unittest.mock import patch
 
+from fastapi import FastAPI
+
 from daylib_ursa.config import Settings
 from daylib_ursa.workset_api import create_app
 
@@ -20,20 +22,37 @@ class DummyBloomClient:
         raise AssertionError("not used")
 
 
-def _settings() -> Settings:
+def _settings(*, mount_enabled: bool = False) -> Settings:
     return Settings(
         cors_origins="*",
         ursa_internal_api_key="ursa-test-key",
         bloom_base_url="https://bloom.example",
         atlas_base_url="https://atlas.example",
         ursa_internal_output_bucket="ursa-internal",
-        ursa_tapdb_mount_enabled=False,
+        ursa_tapdb_mount_enabled=mount_enabled,
     )
 
 
 def _create_test_app():
     with patch("daylib_ursa.workset_api.RegionAwareS3Client", return_value=object()):
         return create_app(DummyStore(), bloom_client=DummyBloomClient(), settings=_settings())
+
+
+def _runtime_inventory(app) -> tuple[set[tuple[str, str]], set[str]]:
+    methods = {"GET", "POST", "PUT", "PATCH", "DELETE"}
+    routes: set[tuple[str, str]] = set()
+    mounts: set[str] = set()
+    for route in app.routes:
+        path = str(getattr(route, "path", "") or "").strip()
+        if not path:
+            continue
+        route_methods = {method for method in getattr(route, "methods", set()) if method in methods}
+        if route_methods:
+            routes.update((method, path) for method in route_methods)
+            continue
+        if getattr(route, "app", None) is not None:
+            mounts.add(path)
+    return routes, mounts
 
 
 def test_public_routes_are_versioned_and_legacy_customer_routes_are_absent() -> None:
@@ -153,3 +172,33 @@ def test_all_decorated_routes_have_direct_request_coverage() -> None:
     )
 
     assert missing == []
+
+
+def test_runtime_route_inventory_covers_docs_static_and_tapdb_mount_boundaries() -> None:
+    tapdb_admin_app = FastAPI()
+
+    @tapdb_admin_app.get("/")
+    async def tapdb_root():
+        return {"tapdb": "ok"}
+
+    with patch("daylib_ursa.tapdb_mount._load_tapdb_admin_app", return_value=tapdb_admin_app):
+        with patch("daylib_ursa.workset_api.RegionAwareS3Client", return_value=object()):
+            app = create_app(
+                DummyStore(),
+                bloom_client=DummyBloomClient(),
+                settings=_settings(mount_enabled=True),
+            )
+
+    routes, mounts = _runtime_inventory(app)
+
+    assert {
+        ("GET", "/openapi.json"),
+        ("GET", "/docs"),
+        ("GET", "/docs/oauth2-redirect"),
+        ("GET", "/redoc"),
+    }.issubset(routes)
+    assert {"/ui/static", "/admin/tapdb"}.issubset(mounts)
+
+    # Mounted static and TapDB children are owned by those mounted apps, not Ursa's route table.
+    assert not any(path.startswith("/ui/static/") for _method, path in routes)
+    assert not any(path.startswith("/admin/tapdb/") for _method, path in routes)

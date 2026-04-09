@@ -448,7 +448,7 @@ class Settings(BaseSettings):
     )
     atlas_internal_api_key: Optional[str] = Field(
         default=None,
-        description="Atlas internal API key used by Ursa result return",
+        description="Atlas integration bearer token used by Ursa result return",
     )
     atlas_verify_ssl: bool = Field(
         default=True,

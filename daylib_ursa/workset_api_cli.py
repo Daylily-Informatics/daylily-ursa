@@ -70,8 +70,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     bloom_token = str(settings.bloom_api_token or "").strip()
     if not bloom_token:
         raise ValueError("BLOOM_API_TOKEN is required for authenticated Ursa->Bloom integration")
-    atlas_api_key = str(settings.atlas_internal_api_key or "").strip()
-    if not atlas_api_key:
+    atlas_token = str(settings.atlas_internal_api_key or "").strip()
+    if not atlas_token:
         raise ValueError(
             "ATLAS_INTERNAL_API_KEY is required for authenticated Ursa->Atlas integration"
         )
@@ -95,7 +95,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
     atlas_client = AtlasResultClient(
         base_url=settings.atlas_base_url,
-        api_key=atlas_api_key,
+        token=atlas_token,
         verify_ssl=settings.atlas_verify_ssl,
     )
     dewey_client = None
