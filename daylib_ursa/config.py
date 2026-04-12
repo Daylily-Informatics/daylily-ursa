@@ -81,6 +81,7 @@ def _yaml_seed_from_ursa_config() -> dict[str, object]:
         "deployment_name": cfg.deployment_name,
         "deployment_color": cfg.deployment_color,
         "deployment_is_production": cfg.deployment_is_production,
+        "ui_show_environment_chrome": cfg.ui_show_environment_chrome,
     }
     return {key: value for key, value in seeded.items() if value is not None}
 
@@ -214,6 +215,8 @@ deployment:
   name: ""
   color: ""
   is_production: false
+
+ui_show_environment_chrome: true
 """.encode("utf-8")
 
 
@@ -400,7 +403,11 @@ class Settings(BaseSettings):
     )
     deployment_is_production: bool = Field(
         default=False,
-        description="Whether this deployment should hide non-production chrome",
+        description="Whether this deployment is considered production-like",
+    )
+    ui_show_environment_chrome: bool = Field(
+        default=True,
+        description="Show deployment and region chrome in the GUI",
     )
 
     # ========== Demo Mode ==========

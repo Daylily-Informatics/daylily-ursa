@@ -72,15 +72,23 @@ def get_config_file_path() -> Path:
     return get_config_dir() / f"ursa-config-{deployment}.yaml"
 
 
-def _stable_deployment_color_hex(name: str) -> str:
+def _stable_color_hex(name: str, *, hue_shift: int = 0, lightness: float, saturation: float) -> str:
     digest = hashlib.sha256(name.encode("utf-8")).digest()
-    hue = int.from_bytes(digest[:8], "big") % 360
-    red, green, blue = colorsys.hls_to_rgb(hue / 360.0, 0.46, 0.72)
+    hue = (int.from_bytes(digest[:8], "big") + hue_shift) % 360
+    red, green, blue = colorsys.hls_to_rgb(hue / 360.0, lightness, saturation)
     return "#{:02x}{:02x}{:02x}".format(
         round(red * 255),
         round(green * 255),
         round(blue * 255),
     )
+
+
+def _stable_deployment_color_hex(name: str) -> str:
+    return _stable_color_hex(name, lightness=0.46, saturation=0.72)
+
+
+def _stable_region_color_hex(name: str) -> str:
+    return _stable_color_hex(name, hue_shift=180, lightness=0.62, saturation=0.45)
 
 
 def _resolve_deployment_chrome(
@@ -90,13 +98,12 @@ def _resolve_deployment_chrome(
     fallback_name: str | None = None,
 ) -> dict[str, object]:
     resolved_name = str(name or "").strip() or str(fallback_name or "").strip()
-    resolved_color = str(color or "").strip()
-    if not resolved_color:
-        resolved_color = (
-            _stable_deployment_color_hex(resolved_name)
-            if resolved_name
-            else DEFAULT_DEPLOYMENT_BANNER_COLOR
-        )
+    _ = color
+    resolved_color = (
+        _stable_deployment_color_hex(resolved_name)
+        if resolved_name
+        else DEFAULT_DEPLOYMENT_BANNER_COLOR
+    )
     return {
         "name": resolved_name,
         "color": resolved_color,
@@ -142,6 +149,7 @@ VALID_FIELDS = {
     "dewey_verify_ssl": (bool, "Verify Dewey TLS certificates"),
     "whitelist_domains": (str, "Allowed email domains for registration/login"),
     "deployment": (dict, "Deployment metadata for non-production UI chrome"),
+    "ui_show_environment_chrome": (bool, "Toggle GUI deployment and region chrome"),
 }
 
 
@@ -377,10 +385,13 @@ class UrsaConfig:
     """Deployment name shown in non-production UI chrome."""
 
     deployment_color: str = ""
-    """Deployment banner color shown in non-production UI chrome."""
+    """Deployment banner color derived from deployment name."""
 
     deployment_is_production: bool = False
-    """Whether deployment chrome should be hidden."""
+    """Whether this deployment is considered production-like."""
+
+    ui_show_environment_chrome: bool = True
+    """Whether deployment and region chrome should render in the GUI."""
 
     _config_path: Optional[Path] = None
     """Path where config was loaded from."""
@@ -491,6 +502,7 @@ class UrsaConfig:
         dewey_api_token = data.get("dewey_api_token")
         dewey_verify_ssl = data.get("dewey_verify_ssl")
         whitelist_domains = os.environ.get("WHITELIST_DOMAINS") or data.get("whitelist_domains")
+        ui_show_environment_chrome = data.get("ui_show_environment_chrome")
 
         deployment_chrome = _resolve_deployment_chrome(
             name=str(deployment.get("name") or ""),
@@ -531,6 +543,9 @@ class UrsaConfig:
             deployment_name=str(deployment_chrome["name"]),
             deployment_color=str(deployment_chrome["color"]),
             deployment_is_production=bool(deployment_chrome["is_production"]),
+            ui_show_environment_chrome=bool(
+                True if ui_show_environment_chrome is None else ui_show_environment_chrome
+            ),
             _config_path=path,
             _region_map=region_map,
         )

@@ -85,3 +85,6 @@ deployment:
   name: ""
   color: ""
   is_production: false
+
+# Show deployment and region bars across every GUI page unless explicitly disabled
+ui_show_environment_chrome: true

@@ -5,10 +5,13 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import io
+from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
+from daylib_ursa import __version__
 from daylib_ursa.analysis_store import AnalysisRecord, AnalysisState, ReviewState
 from daylib_ursa.auth import (
     AtlasUserDirectoryEntry,
@@ -498,10 +501,15 @@ def _settings() -> Settings:
         aws_profile="",
         cors_origins="*",
         ursa_internal_api_key="ursa-test-key",
+        session_secret_key="ursa-session-secret",
+        cognito_app_client_secret="ursa-cognito-secret",
         bloom_base_url="https://bloom.example",
         atlas_base_url="https://atlas.example",
         ursa_internal_output_bucket="ursa-internal",
         ursa_tapdb_mount_enabled=False,
+        deployment_name="inflec3",
+        day_aws_region="us-west-2",
+        ui_show_environment_chrome=True,
     )
 
 
@@ -510,7 +518,15 @@ def _create_test_app(*, admin: bool = True):
     auth_provider = DummyAuthProvider(admin=admin)
     user_directory = DummyUserDirectory()
     resources = MemoryResourceStore()
-    with patch("daylib_ursa.workset_api.RegionAwareS3Client", return_value=object()):
+    with (
+        patch("daylib_ursa.workset_api.RegionAwareS3Client", return_value=object()),
+        patch(
+            "daylib_ursa.gui_app.get_ursa_config",
+            return_value=SimpleNamespace(
+                config_path=Path("/opt/dayhoff/repo/.dayhoff/deployments/inflec3/config/ursa.yaml")
+            ),
+        ),
+    ):
         app = create_app(
             DummyAnalysisStore(),
             bloom_client=object(),
@@ -520,10 +536,19 @@ def _create_test_app(*, admin: bool = True):
             token_service=UserTokenService(backend=backend, user_lookup=user_directory.get_user),
             settings=_settings(),
         )
+    app.state.ursa_config = SimpleNamespace(
+        config_path=Path("/opt/dayhoff/repo/.dayhoff/deployments/inflec3/config/ursa.yaml")
+    )
     app.state.cluster_service = DummyClusterService()
     app.state.cluster_job_manager = DummyClusterJobManager(resources)
     app.state.s3_client = DummyS3Client()
     return app, resources
+
+
+def test_create_app_uses_package_version() -> None:
+    app, _resources = _create_test_app(admin=True)
+
+    assert app.version == __version__
 
 
 def test_admin_routes_cover_me_user_search_client_tokens_and_clusters() -> None:
@@ -701,6 +726,7 @@ def test_gui_routes_cover_remaining_pages_and_logout() -> None:
         admin_client_detail_page = client.get(
             f"/admin/clients/{registration.json()['client_registration_euid']}"
         )
+        admin_config_page = client.get("/admin/config")
         logout = client.get("/auth/logout", follow_redirects=False)
 
     assert worksets_page.status_code == 200
@@ -735,6 +761,12 @@ def test_gui_routes_cover_remaining_pages_and_logout() -> None:
     assert "dewey-client" in admin_clients_page.text
     assert admin_client_detail_page.status_code == 200
     assert "Client dewey-client" in admin_client_detail_page.text
+    assert admin_config_page.status_code == 200
+    assert "Configuration" in admin_config_page.text
+    assert (
+        "/opt/dayhoff/repo/.dayhoff/deployments/inflec3/config/ursa.yaml" in admin_config_page.text
+    )
+    assert "<redacted>" in admin_config_page.text
     assert logout.status_code == 303
     assert logout.headers["location"] == "/auth/error?reason=cognito_logout_misconfigured"
 
@@ -770,6 +802,7 @@ def test_gui_routes_use_session_auth_and_gate_admin_pages() -> None:
         token_detail_page = client.get(f"/tokens/{user_token.json()['token_euid']}")
         cluster_job_page = client.get(f"/clusters/jobs/{cluster_job.json()['job_euid']}")
         admin_page = client.get("/admin/tokens")
+        admin_config_page = client.get("/admin/config")
 
     assert redirect.status_code == 303
     assert redirect.headers["location"].startswith("/login")
@@ -790,6 +823,8 @@ def test_gui_routes_use_session_auth_and_gate_admin_pages() -> None:
     assert cluster_job_page.status_code == 200
     assert "Cluster Job" in cluster_job_page.text
     assert admin_page.status_code == 200
+    assert admin_config_page.status_code == 200
+    assert "Configuration" in admin_config_page.text
 
 
 def test_gui_admin_pages_reject_non_admin_sessions() -> None:

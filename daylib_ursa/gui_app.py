@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import subprocess
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlencode
@@ -33,23 +34,192 @@ from daylib_ursa.observability import (
     build_health_payload,
     build_obs_services_payload,
 )
+from daylib_ursa.ursa_config import (
+    _stable_deployment_color_hex,
+    _stable_region_color_hex,
+    get_ursa_config,
+)
 
 LOGGER = logging.getLogger(__name__)
+_SENSITIVE_CONFIG_TOKENS = (
+    "secret",
+    "token",
+    "password",
+    "passwd",
+    "key",
+    "credential",
+    "private",
+    "signing",
+    "session",
+    "cookie",
+    "authorization",
+    "client_secret",
+    "api_key",
+    "access_key",
+    "secret_key",
+)
+
+
+def _run_git_command(repo_root: Path, *args: str) -> str:
+    completed = subprocess.run(
+        ["git", "-C", str(repo_root), *args],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return str(completed.stdout or "").strip()
+
+
+def _resolve_git_metadata(repo_root: Path) -> dict[str, str]:
+    metadata = {"branch": "unavailable", "tag": "unreleased", "commit": "unavailable"}
+    try:
+        branch = _run_git_command(repo_root, "rev-parse", "--abbrev-ref", "HEAD")
+        if branch:
+            metadata["branch"] = "detached" if branch == "HEAD" else branch
+        metadata["commit"] = (
+            _run_git_command(repo_root, "rev-parse", "--short", "HEAD") or "unavailable"
+        )
+        try:
+            tag = _run_git_command(repo_root, "describe", "--tags", "--exact-match")
+        except subprocess.CalledProcessError:
+            tag = ""
+        if tag:
+            metadata["tag"] = tag
+    except (OSError, subprocess.CalledProcessError):
+        return metadata
+    return metadata
+
+
+def _is_sensitive_config_path(path: str) -> bool:
+    lowered = str(path or "").lower()
+    return any(token in lowered for token in _SENSITIVE_CONFIG_TOKENS)
+
+
+def _format_config_value(value: Any) -> str:
+    if value is None:
+        return "<unset>"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, (dict, list, tuple)):
+        return json.dumps(value, indent=2, sort_keys=True, default=str)
+    return str(value)
+
+
+def _flatten_effective_config(
+    value: Any,
+    *,
+    prefix: str = "",
+    rows: list[dict[str, str]] | None = None,
+) -> list[dict[str, str]]:
+    rows = [] if rows is None else rows
+    if prefix and _is_sensitive_config_path(prefix):
+        rows.append({"path": prefix, "value": "<redacted>" if value else "<unset>"})
+        return rows
+    if isinstance(value, dict):
+        if prefix:
+            rows.append({"path": prefix, "value": _format_config_value(value)})
+        for key in sorted(value.keys(), key=str):
+            child_prefix = f"{prefix}.{key}" if prefix else str(key)
+            _flatten_effective_config(value[key], prefix=child_prefix, rows=rows)
+        return rows
+    if isinstance(value, list):
+        if prefix:
+            rows.append({"path": prefix, "value": _format_config_value(value) if value else "[]"})
+        for index, item in enumerate(value):
+            child_prefix = f"{prefix}.{index}" if prefix else str(index)
+            _flatten_effective_config(item, prefix=child_prefix, rows=rows)
+        return rows
+    if prefix:
+        rows.append({"path": prefix, "value": _format_config_value(value)})
+    return rows
+
+
+def _safe_settings_snapshot(settings: Any, *, config_path: Path | None = None) -> dict[str, Any]:
+    effective = {}
+    if hasattr(settings, "model_dump"):
+        effective = dict(settings.model_dump(mode="json", exclude_none=False))
+    else:
+        effective = {
+            key: getattr(settings, key)
+            for key in dir(settings)
+            if not key.startswith("_") and not callable(getattr(settings, key))
+        }
+    region_value = (
+        getattr(settings, "day_aws_region", "")
+        or getattr(settings, "get_effective_region", lambda: "")()
+        or ""
+    )
+    effective["build_version"] = __version__
+    effective["config_path"] = str(config_path or "")
+    effective["environment"] = str(getattr(settings, "daylily_env", "") or "")
+    effective["deployment"] = dict(getattr(settings, "deployment", {}) or {})
+    effective["region"] = str(region_value)
+    return effective
+
+
+def _build_environment_chrome(settings: Any) -> dict[str, Any]:
+    deployment_name = str(getattr(settings, "deployment_name", "") or "").strip()
+    region_name = str(
+        getattr(settings, "day_aws_region", "")
+        or getattr(settings, "get_effective_region", lambda: "")()
+        or ""
+    ).strip()
+    return {
+        "show": bool(getattr(settings, "ui_show_environment_chrome", True)),
+        "deployment": {
+            "name": deployment_name,
+            "color": _stable_deployment_color_hex(deployment_name) if deployment_name else "",
+        },
+        "region": {
+            "name": region_name,
+            "color": _stable_region_color_hex(region_name) if region_name else "",
+        },
+    }
 
 
 def mount_gui(app: FastAPI) -> None:
     gui_root = Path(__file__).resolve().parent / "gui"
+    repo_root = Path(__file__).resolve().parents[1]
     templates = Jinja2Templates(directory=str(gui_root / "templates"))
     static_root = gui_root / "static"
     if static_root.is_dir():
         app.mount("/ui/static", StaticFiles(directory=str(static_root)), name="ui-static")
 
-    def _deployment_context() -> dict[str, object]:
+    app.state.ursa_config = getattr(app.state, "ursa_config", None) or get_ursa_config()
+    git_meta = _resolve_git_metadata(repo_root)
+
+    def _config_source():
+        cfg = getattr(app.state, "ursa_config", None)
+        if cfg is None:
+            cfg = get_ursa_config()
+            app.state.ursa_config = cfg
+        return cfg
+
+    def _config_path() -> Path | None:
+        cfg = _config_source()
+        path = getattr(cfg, "config_path", None)
+        return path if isinstance(path, Path) else None
+
+    def _environment_chrome_context() -> dict[str, object]:
         settings = getattr(app.state, "settings", None)
+        deployment_name = str(getattr(settings, "deployment_name", "") or "").strip()
+        region_name = str(
+            getattr(settings, "day_aws_region", "")
+            or getattr(settings, "get_effective_region", lambda: "")()
+            or ""
+        ).strip()
         return {
-            "name": str(getattr(settings, "deployment_name", "") or ""),
-            "color": str(getattr(settings, "deployment_color", "#AFEEEE") or "#AFEEEE"),
-            "is_production": bool(getattr(settings, "deployment_is_production", False)),
+            "show": bool(getattr(settings, "ui_show_environment_chrome", True)),
+            "deployment": {
+                "name": deployment_name,
+                "color": _stable_deployment_color_hex(deployment_name) if deployment_name else "",
+            },
+            "region": {
+                "name": region_name,
+                "color": _stable_region_color_hex(region_name) if region_name else "",
+            },
         }
 
     def _next_path(raw_value: str | None) -> str:
@@ -250,10 +420,27 @@ def mount_gui(app: FastAPI) -> None:
             "active_page": active_page,
             "secondary_page": secondary_page,
             "page_data_json": json.dumps(context or {}, default=_json_default),
-            "deployment": _deployment_context(),
+            "environment_chrome": _environment_chrome_context(),
+            "git_meta": git_meta,
+            "app_version": __version__,
         }
         template_context.update(context or {})
         return templates.TemplateResponse(request, template_name, template_context)
+
+    def _admin_config_context() -> dict[str, Any]:
+        settings = getattr(app.state, "settings", None)
+        if settings is None:
+            raise HTTPException(status_code=503, detail="Settings are not configured")
+        config_snapshot = _safe_settings_snapshot(settings, config_path=_config_path())
+        rows = _flatten_effective_config(config_snapshot)
+        rows.sort(key=lambda item: item["path"])
+        return {
+            "config_path": str(_config_path() or ""),
+            "effective_config_rows": rows,
+            "ui_show_environment_chrome": bool(
+                getattr(settings, "ui_show_environment_chrome", True)
+            ),
+        }
 
     def _json_text(value: Any) -> str:
         def _json_default(inner: Any):
@@ -598,7 +785,9 @@ def mount_gui(app: FastAPI) -> None:
                 "next_path": _next_path(next),
                 "cognito_login_url": _cognito_login_path(next),
                 "error": _auth_error_message(reason),
-                "deployment": _deployment_context(),
+                "environment_chrome": _environment_chrome_context(),
+                "git_meta": git_meta,
+                "app_version": __version__,
             },
         )
 
@@ -644,7 +833,9 @@ def mount_gui(app: FastAPI) -> None:
                     "next_path": _next_path(next_path),
                     "cognito_login_url": _cognito_login_path(next_path),
                     "error": "Authentication token is required",
-                    "deployment": _deployment_context(),
+                    "environment_chrome": _environment_chrome_context(),
+                    "git_meta": git_meta,
+                    "app_version": __version__,
                 },
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
@@ -663,7 +854,9 @@ def mount_gui(app: FastAPI) -> None:
                     "next_path": _next_path(next_path),
                     "cognito_login_url": _cognito_login_path(next_path),
                     "error": str(exc),
-                    "deployment": _deployment_context(),
+                    "environment_chrome": _environment_chrome_context(),
+                    "git_meta": git_meta,
+                    "app_version": __version__,
                 },
                 status_code=status.HTTP_401_UNAUTHORIZED,
             )
@@ -698,7 +891,9 @@ def mount_gui(app: FastAPI) -> None:
                 "auth_card_copy": message,
                 "auth_primary_href": "/auth/login",
                 "auth_primary_label": "Return to Sign In",
-                "deployment": _deployment_context(),
+                "environment_chrome": _environment_chrome_context(),
+                "git_meta": git_meta,
+                "app_version": __version__,
             },
             status_code=status.HTTP_403_FORBIDDEN,
         )
@@ -1204,6 +1399,25 @@ def mount_gui(app: FastAPI) -> None:
             secondary_page="admin_observability",
             admin_only=True,
             context=context,
+        )
+
+    @app.get("/admin/config", response_class=HTMLResponse)
+    async def admin_config_page(request: Request):
+        actor = _session_actor(request)
+        if actor is None:
+            return RedirectResponse(
+                url=f"/login?next={request.url.path}", status_code=status.HTTP_303_SEE_OTHER
+            )
+        if not actor.is_admin:
+            raise HTTPException(status_code=403, detail="Admin privileges are required")
+        return _render_page(
+            request,
+            template_name="admin_config.html",
+            page_title="Configuration",
+            active_page="tools",
+            secondary_page="admin_config",
+            admin_only=True,
+            context=_admin_config_context(),
         )
 
     @app.get("/admin/anomalies", response_class=HTMLResponse)

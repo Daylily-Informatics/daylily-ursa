@@ -16,8 +16,13 @@
     {% block extra_head %}{% endblock %}
 </head>
 <body>
-    {% if deployment and not deployment.is_production and deployment.name %}
-    <div style="height:18px;line-height:18px;background:{{ deployment.color }};color:#ffffff;text-align:center;font-size:11px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;">{{ deployment.name|upper }}</div>
+    {% if environment_chrome and environment_chrome.show and environment_chrome.deployment.name %}
+    <div class="environment-bar environment-bar-deployment" style="background:{{ environment_chrome.deployment.color }};" title="Deployment {{ environment_chrome.deployment.name }}">
+        {{ environment_chrome.deployment.name|upper }}
+    </div>
+    {% endif %}
+    {% if environment_chrome and environment_chrome.show and environment_chrome.region.name %}
+    <div class="environment-bar environment-bar-region" style="background:{{ environment_chrome.region.color }};" title="Region {{ environment_chrome.region.name }}"></div>
     {% endif %}
     <header class="header">
         <div class="container">
@@ -87,6 +92,7 @@
                     {% if actor.is_admin %}
                     <li><a href="/admin/tokens" class="secondary-link {% if secondary_page == 'admin_tokens' %}active{% endif %}">Admin Tokens</a></li>
                     <li><a href="/admin/clients" class="secondary-link {% if secondary_page == 'admin_clients' %}active{% endif %}">Client Registrations</a></li>
+                    <li><a href="/admin/config" class="secondary-link {% if secondary_page == 'admin_config' %}active{% endif %}">Config</a></li>
                     <li><a href="/admin/anomalies" class="secondary-link {% if secondary_page == 'admin_anomalies' %}active{% endif %}">Anomalies</a></li>
                     <li><a href="/admin/observability" class="secondary-link {% if secondary_page == 'admin_observability' %}active{% endif %}">Observability</a></li>
                     {% endif %}
@@ -142,6 +148,11 @@
             </div>
             <div class="footer-bottom">
                 <p>&copy; Ursa</p>
+                <div class="footer-meta">
+                    <span>Branch: {{ git_meta.branch if git_meta is defined else "unavailable" }}</span>
+                    <span>Tag: {{ git_meta.tag if git_meta is defined else "unreleased" }}</span>
+                    <span>Commit: {{ git_meta.commit if git_meta is defined else "unavailable" }}</span>
+                </div>
             </div>
         </div>
     </footer>

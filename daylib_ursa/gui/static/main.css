@@ -163,6 +163,28 @@ pre, code {
     border-top: 1px solid rgba(255, 255, 255, 0.08);
 }
 
+.environment-bar {
+    width: 100%;
+    color: rgba(255, 255, 255, 0.92);
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+}
+
+.environment-bar-deployment {
+    min-height: 18px;
+    padding: 0.2rem 1rem;
+}
+
+.environment-bar-region {
+    min-height: 4px;
+}
+
 .secondary-nav .container {
     display: flex;
     align-items: center;
@@ -827,6 +849,19 @@ input[type="radio"] {
     padding-top: 1rem;
     border-top: 1px solid rgba(255, 255, 255, 0.08);
     font-size: 0.85rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+}
+
+.footer-meta {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    flex-wrap: wrap;
+    font-family: var(--font-mono);
 }
 
 .user-menu {

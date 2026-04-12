@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1 class="page-title">Configuration</h1>
+        <p class="page-subtitle">Active Ursa config path plus a sanitized view of the effective runtime configuration.</p>
+    </div>
+</div>
+
+<section class="grid grid-2" style="margin-bottom: 1rem;">
+    <article class="card">
+        <h2 class="card-title">Active Config</h2>
+        <p class="small">File path: <span class="mono">{{ config_path or "unavailable" }}</span></p>
+        <p class="small">Environment chrome: <strong>{{ "enabled" if ui_show_environment_chrome else "disabled" }}</strong></p>
+        <p class="small">Build version: <span class="mono">{{ app_version }}</span></p>
+    </article>
+    <article class="card">
+        <h2 class="card-title">Redaction Policy</h2>
+        <p class="small">Secret-like keys are rendered as <code>&lt;redacted&gt;</code>. Empty secret values render as <code>&lt;unset&gt;</code>.</p>
+    </article>
+</section>
+
+<section class="card">
+    <div class="card-header">
+        <h2 class="card-title">Effective Config Rows</h2>
+    </div>
+    <div class="table-container">
+        <table>
+            <thead>
+                <tr><th>Key</th><th>Value</th></tr>
+            </thead>
+            <tbody>
+                {% for row in effective_config_rows %}
+                <tr>
+                    <td class="mono">{{ row.path }}</td>
+                    <td class="mono" style="white-space: pre-wrap;">{{ row.value }}</td>
+                </tr>
+                {% else %}
+                <tr><td colspan="2" class="text-muted">No config rows available.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+{% endblock %}

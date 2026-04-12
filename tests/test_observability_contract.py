@@ -9,6 +9,7 @@ import jsonschema
 import pytest
 from fastapi.testclient import TestClient
 
+from daylib_ursa import __version__
 from daylib_ursa import observability as observability_module
 from tests.test_admin_gui_and_cluster_routes import ADMIN_USER_ID, _create_test_app
 
@@ -31,6 +32,10 @@ def _validate(name: str, payload: dict[str, Any]) -> None:
 @pytest.fixture(autouse=True)
 def _stub_schema_drift(monkeypatch: pytest.MonkeyPatch) -> None:
     observability_module._SCHEMA_DRIFT_CACHE.clear()
+    monkeypatch.setenv(
+        "DAYHOFF_PROJECT_ROOT",
+        str(Path(__file__).resolve().parents[6]),
+    )
     monkeypatch.setattr(
         observability_module,
         "run_tapdb_schema_drift_check",
@@ -96,6 +101,7 @@ def test_observability_contract_endpoints_match_shared_frame() -> None:
         _validate(schema_name, payload)
         assert payload["service"] == "ursa"
         assert payload["contract_version"] == "v3"
+        assert payload["build"]["version"] == __version__
 
 
 def test_my_health_matches_shared_schema_for_authenticated_user() -> None:

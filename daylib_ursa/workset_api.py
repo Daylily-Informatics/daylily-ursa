@@ -102,6 +102,7 @@ from daylib_ursa.resource_store import (
 )
 from daylib_ursa.s3_utils import RegionAwareS3Client, normalize_bucket_name
 from daylib_ursa.tapdb_mount import mount_tapdb_admin
+from daylib_ursa.ursa_config import get_ursa_config
 
 LOGGER = logging.getLogger("daylily.ursa.api")
 
@@ -1029,13 +1030,14 @@ def create_app(
     app = FastAPI(
         title="Daylily Ursa Backend API",
         description="Versioned backend APIs for analyses, worksets, manifests, tokens, and admin surfaces",
-        version="5.0.0",
+        version=__version__,
     )
     app.state.store = store
     app.state.bloom_client = bloom_client
     app.state.atlas_client = atlas_client
     app.state.dewey_client = dewey_client
     app.state.settings = settings
+    app.state.ursa_config = get_ursa_config()
     app.state.s3_client = s3_client or RegionAwareS3Client(
         default_region=settings.get_effective_region(),
         profile=settings.aws_profile,

@@ -11,6 +11,7 @@ from sqlalchemy import String, cast, or_
 
 from daylily_tapdb import generic_instance, generic_instance_lineage, utc_now_iso
 
+from daylib_ursa import __version__
 from daylib_ursa.integrations.tapdb_runtime import (
     DEFAULT_TAPDB_CLIENT_ID,
     DEFAULT_TAPDB_DATABASE_NAME,
@@ -288,7 +289,7 @@ class TapDBBackend:
             category="generic",
             type="lineage",
             subtype="instance_lineage",
-            version="1.0.0",
+            version=__version__,
             bstatus="active",
             parent_instance_uid=parent.uid,
             child_instance_uid=child.uid,

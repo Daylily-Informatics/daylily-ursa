@@ -4,6 +4,7 @@ import base64
 import json
 import uuid
 from types import SimpleNamespace
+from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from fastapi import FastAPI, Request
@@ -28,6 +29,7 @@ from daylib_ursa.ursa_config import (
     DEFAULT_DEPLOYMENT_BANNER_COLOR,
     _resolve_deployment_chrome,
     _stable_deployment_color_hex,
+    _stable_region_color_hex,
 )
 
 
@@ -64,7 +66,7 @@ cognito_callback_url: https://localhost:8914/auth/callback
 cognito_logout_url: https://localhost:8914/login
 deployment:
   name: staging
-  color: "#124e78"
+  color: "#ff00ff"
   is_production: false
 """.strip(),
         encoding="utf-8",
@@ -91,7 +93,7 @@ deployment:
     assert settings.ursa_portal_default_customer_id == "77777777-7777-7777-7777-777777777777"
     assert settings.deployment == {
         "name": "staging",
-        "color": "#124e78",
+        "color": _stable_deployment_color_hex("staging"),
         "is_production": False,
     }
 
@@ -105,15 +107,18 @@ def test_default_config_template_emits_secret_and_domain_defaults() -> None:
     assert "auto_provision_allowed_domains:" in template
     assert "  - lsmc.com" in template
     assert "whitelist_domains: lsmc.com,lsmc.bio,lsmc.life,daylilyinformatics.com" in template
+    assert "ui_show_environment_chrome: true" in template
 
 
-def _app_with_gui(settings):
+def _app_with_gui(settings, *, config_path: Path | None = None):
     app = FastAPI()
     app.state.server_instance_id = "test-server"
     configure_session_middleware(
         app, build_web_session_config(settings, app.state.server_instance_id)
     )
     app.state.settings = settings
+    if config_path is not None:
+        app.state.ursa_config = SimpleNamespace(config_path=config_path)
     app.state.identity_client = SimpleNamespace(resolve_access_token=lambda _token: None)
     app.state.auth_provider = SimpleNamespace(
         resolve_access_token=lambda _token, **_kwargs: CurrentUser(
@@ -123,6 +128,40 @@ def _app_with_gui(settings):
             tenant_id=uuid.UUID("11111111-1111-1111-1111-111111111111"),
             roles=["ADMIN"],
         )
+    )
+    app.state.store = SimpleNamespace(
+        list_analyses=lambda **_kwargs: [],
+        get_analysis=lambda _analysis_euid: None,
+    )
+    app.state.resource_store = SimpleNamespace(
+        list_worksets=lambda **_kwargs: [],
+        list_manifests=lambda **_kwargs: [],
+        list_linked_buckets=lambda **_kwargs: [],
+        list_cluster_jobs=lambda **_kwargs: [],
+        backend=None,
+    )
+    app.state.token_service = SimpleNamespace(
+        list_tokens=lambda **_kwargs: [],
+        backend=None,
+    )
+    app.state.cluster_service = SimpleNamespace(
+        get_all_clusters_with_status=lambda **_kwargs: [],
+        get_region_for_cluster=lambda _cluster_name: "us-west-2",
+        get_cluster_by_name=lambda _cluster_name, force_refresh=False: None,
+        describe_cluster=lambda _cluster_name, _region: None,
+    )
+    app.state.observability = SimpleNamespace(
+        obs_services_snapshot=lambda: ({}, []),
+        health_snapshot=lambda: {},
+        api_health=lambda: ({}, []),
+        endpoint_health=lambda offset=0, limit=25: (
+            {},
+            {"total": 0, "offset": offset, "limit": limit, "items": []},
+        ),
+        db_health=lambda: ({}, {}),
+        auth_health=lambda: ({}, {}),
+        projection=lambda **_kwargs: SimpleNamespace(model_dump=lambda: {}),
+        record_db_query=lambda **_kwargs: None,
     )
     mount_gui(app)
 
@@ -203,12 +242,19 @@ def _decode_session_cookie(client: TestClient) -> dict[str, object]:
     return json.loads(base64.b64decode(payload))
 
 
-def test_login_page_renders_banner_and_favicon():
+def test_login_page_renders_banner_footer_and_favicon(monkeypatch):
+    monkeypatch.setattr(
+        "daylib_ursa.gui_app._resolve_git_metadata",
+        lambda _repo_root: {
+            "branch": "codex/daylily-ursa-gui-chrome-scm",
+            "tag": "v1.2.3",
+            "commit": "abc1234",
+        },
+    )
     settings = get_settings_for_testing(
         ursa_internal_output_bucket="ursa-internal",
         deployment_name="staging",
-        deployment_color="#124e78",
-        deployment_is_production=False,
+        day_aws_region="us-west-2",
         cognito_domain="ursa.auth.us-west-2.amazoncognito.com",
         cognito_app_client_id="client-123",
         cognito_callback_url="https://localhost:8913/auth/callback",
@@ -220,10 +266,104 @@ def test_login_page_renders_banner_and_favicon():
 
     assert response.status_code == 200
     assert "STAGING" in response.text
-    assert "#124e78" in response.text
+    assert _stable_deployment_color_hex("staging") in response.text
+    assert _stable_region_color_hex("us-west-2") in response.text
     assert "/ui/static/favicon.svg" in response.text
     assert "Sign In with Cognito" in response.text
     assert "/auth/login?next=/" in response.text
+    assert "Branch: codex/daylily-ursa-gui-chrome-scm" in response.text
+    assert "Tag: v1.2.3" in response.text
+    assert "Commit: abc1234" in response.text
+
+
+def test_dashboard_renders_environment_chrome_and_footer_metadata(monkeypatch):
+    monkeypatch.setattr(
+        "daylib_ursa.gui_app._resolve_git_metadata",
+        lambda _repo_root: {
+            "branch": "codex/daylily-ursa-gui-chrome-scm",
+            "tag": "v1.2.3",
+            "commit": "abc1234",
+        },
+    )
+    settings = get_settings_for_testing(
+        ursa_internal_output_bucket="ursa-internal",
+        deployment_name="inflec3",
+        day_aws_region="us-east-1",
+        cognito_domain="ursa.auth.us-west-2.amazoncognito.com",
+        cognito_app_client_id="client-123",
+        cognito_callback_url="https://localhost:8913/auth/callback",
+        cognito_logout_url="https://localhost:8913/login",
+    )
+    client = _test_client(_app_with_gui(settings))
+
+    _login_user(monkeypatch, client)
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert "INFLEC3" in response.text
+    assert _stable_deployment_color_hex("inflec3") in response.text
+    assert _stable_region_color_hex("us-east-1") in response.text
+    assert "Branch: codex/daylily-ursa-gui-chrome-scm" in response.text
+    assert "Tag: v1.2.3" in response.text
+    assert "Commit: abc1234" in response.text
+
+
+def test_environment_chrome_can_be_disabled_via_config(monkeypatch):
+    settings = get_settings_for_testing(
+        ursa_internal_output_bucket="ursa-internal",
+        deployment_name="inflec3",
+        day_aws_region="us-east-1",
+        ui_show_environment_chrome=False,
+        cognito_domain="ursa.auth.us-west-2.amazoncognito.com",
+        cognito_app_client_id="client-123",
+        cognito_callback_url="https://localhost:8913/auth/callback",
+        cognito_logout_url="https://localhost:8913/login",
+    )
+    client = _test_client(_app_with_gui(settings))
+
+    response = client.get("/login")
+
+    assert response.status_code == 200
+    assert "environment-bar" not in response.text
+    assert _stable_deployment_color_hex("inflec3") not in response.text
+    assert _stable_region_color_hex("us-east-1") not in response.text
+
+
+def test_admin_config_page_shows_active_config_path_and_redacts_secrets(monkeypatch):
+    monkeypatch.setattr(
+        "daylib_ursa.gui_app._resolve_git_metadata",
+        lambda _repo_root: {
+            "branch": "codex/daylily-ursa-gui-chrome-scm",
+            "tag": "v1.2.3",
+            "commit": "abc1234",
+        },
+    )
+    config_path = Path("/opt/dayhoff/repo/.dayhoff/deployments/inflec3/config/ursa-config.yaml")
+    settings = get_settings_for_testing(
+        ursa_internal_output_bucket="ursa-internal",
+        deployment_name="inflec3",
+        day_aws_region="us-west-2",
+        session_secret_key="super-secret",
+        cognito_app_client_secret="cognito-secret",
+        cognito_domain="ursa.auth.us-west-2.amazoncognito.com",
+        cognito_app_client_id="client-123",
+        cognito_callback_url="https://localhost:8913/auth/callback",
+        cognito_logout_url="https://localhost:8913/login",
+    )
+    client = _test_client(_app_with_gui(settings, config_path=config_path))
+
+    _login_user(monkeypatch, client)
+    response = client.get("/admin/config")
+
+    assert response.status_code == 200
+    assert "Configuration" in response.text
+    assert str(config_path) in response.text
+    assert "ui_show_environment_chrome" in response.text
+    assert "enabled" in response.text
+    assert "build_version" in response.text
+    assert "<redacted>" in response.text
+    assert "super-secret" not in response.text
+    assert "cognito-secret" not in response.text
 
 
 def test_deployment_settings_fall_back_to_deployment_code(monkeypatch):
@@ -248,12 +388,10 @@ def test_deployment_settings_fall_back_to_deployment_code(monkeypatch):
     }
 
 
-def test_prod_deployment_name_hides_banner() -> None:
+def test_prod_deployment_name_uses_stable_color_and_marks_production() -> None:
     settings = get_settings_for_testing(
         ursa_internal_output_bucket="ursa-internal",
         deployment_name="production",
-        deployment_color="",
-        deployment_is_production=False,
         cognito_domain="ursa.auth.us-west-2.amazoncognito.com",
         cognito_app_client_id="client-123",
         cognito_callback_url="https://localhost:8913/auth/callback",
