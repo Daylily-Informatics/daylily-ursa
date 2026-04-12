@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from importlib.metadata import PackageNotFoundError, version as package_version
 import logging
 import uuid
 from dataclasses import dataclass
@@ -11,7 +12,6 @@ from sqlalchemy import String, cast, or_
 
 from daylily_tapdb import generic_instance, generic_instance_lineage, utc_now_iso
 
-from daylib_ursa import __version__
 from daylib_ursa.integrations.tapdb_runtime import (
     DEFAULT_TAPDB_CLIENT_ID,
     DEFAULT_TAPDB_DATABASE_NAME,
@@ -21,6 +21,11 @@ from daylib_ursa.integrations.tapdb_runtime import (
 )
 
 _log = logging.getLogger(__name__)
+
+try:
+    _PACKAGE_VERSION = package_version("daylily-ursa")
+except PackageNotFoundError:  # pragma: no cover - editable/reduced test envs
+    _PACKAGE_VERSION = "0.0.0"
 
 
 @dataclass(frozen=True)
@@ -289,7 +294,7 @@ class TapDBBackend:
             category="generic",
             type="lineage",
             subtype="instance_lineage",
-            version=__version__,
+            version=_PACKAGE_VERSION,
             bstatus="active",
             parent_instance_uid=parent.uid,
             child_instance_uid=child.uid,

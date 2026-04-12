@@ -22,7 +22,7 @@ from daylib_ursa.domain_access import (
 from daylib_ursa.ursa_config import _resolve_deployment_chrome, _resolve_deployment_code
 
 DEFAULT_API_HOST = "0.0.0.0"
-DEFAULT_API_PORT = 8914
+DEFAULT_API_PORT = 8913
 DEFAULT_BLOOM_BASE_URL = "https://localhost:8001"
 DEFAULT_ATLAS_BASE_URL = "https://localhost:8000"
 DEFAULT_URSA_COGNITO_CALLBACK_URL = f"https://localhost:{DEFAULT_API_PORT}/auth/callback"
@@ -190,7 +190,7 @@ ursa_internal_output_bucket: your-ursa-output-bucket
 
 # API/UI bind settings
 api_host: 0.0.0.0
-api_port: 8914
+api_port: 8913
 
 # Peer service URLs
 bloom_base_url: https://localhost:8912
@@ -207,8 +207,8 @@ dewey_verify_ssl: true
 # cognito_app_client_id: xxxxxxxxxxxxxxxxxxxxxxxxxx
 # cognito_region: us-west-2  # AWS region where Cognito User Pool is deployed
 # cognito_domain: your-domain-prefix.auth.us-west-2.amazoncognito.com
-# cognito_callback_url: https://localhost:8914/auth/callback
-# cognito_logout_url: https://localhost:8914/login
+# cognito_callback_url: https://localhost:8913/auth/callback
+# cognito_logout_url: https://localhost:8913/login
 
 # Non-production deployment chrome
 deployment:
@@ -268,6 +268,10 @@ class Settings(BaseSettings):
     tapdb_database_name: str = Field(
         default="ursa",
         description="TapDB namespace / database name",
+    )
+    tapdb_config_path: str = Field(
+        default="",
+        description="Explicit TapDB config path",
     )
     tapdb_env: str = Field(
         default="dev",

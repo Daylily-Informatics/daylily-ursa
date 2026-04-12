@@ -409,6 +409,7 @@ activate_main() {
     _URSA_TAPDB_DATABASE_NAME="ursa"
     _URSA_TAPDB_ENV="dev"
     _URSA_RUNTIME_TAPDB_CONFIG_PATH="$(prepare_tapdb_config_path "${_URSA_TAPDB_CLIENT_ID}" "${_URSA_TAPDB_DATABASE_NAME}")"
+    export TAPDB_CONFIG_PATH="${_URSA_RUNTIME_TAPDB_CONFIG_PATH}"
 
     require_tool "conda env" "aws" || return 1
     require_tool "conda env" "pcluster" || return 1

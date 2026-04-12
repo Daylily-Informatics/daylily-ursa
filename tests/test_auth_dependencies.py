@@ -129,8 +129,8 @@ def test_settings_whitelist_domains_default_to_base_four() -> None:
         ursa_internal_output_bucket="ursa-internal",
         cognito_domain="https://auth.example.com",
         cognito_app_client_id="client-1",
-        cognito_callback_url="https://localhost:8914/auth/callback",
-        cognito_logout_url="https://localhost:8914/login",
+        cognito_callback_url="https://localhost:8913/auth/callback",
+        cognito_logout_url="https://localhost:8913/login",
     )
 
     assert settings.get_whitelist_domains() == [

@@ -62,8 +62,8 @@ cognito_app_client_id: yaml-client
 cognito_app_client_secret: yaml-secret
 cognito_domain: yaml.auth.us-west-2.amazoncognito.com
 cognito_region: us-west-2
-cognito_callback_url: https://localhost:8914/auth/callback
-cognito_logout_url: https://localhost:8914/login
+cognito_callback_url: https://localhost:8913/auth/callback
+cognito_logout_url: https://localhost:8913/login
 deployment:
   name: staging
   color: "#ff00ff"
@@ -87,8 +87,8 @@ deployment:
     assert settings.cognito_app_client_secret == "yaml-secret"
     assert settings.cognito_domain == "yaml.auth.us-west-2.amazoncognito.com"
     assert settings.cognito_region == "us-west-2"
-    assert settings.cognito_callback_url == "https://localhost:8914/auth/callback"
-    assert settings.cognito_logout_url == "https://localhost:8914/login"
+    assert settings.cognito_callback_url == "https://localhost:8913/auth/callback"
+    assert settings.cognito_logout_url == "https://localhost:8913/login"
     assert settings.dewey_api_token == "dewey-dev-token"
     assert settings.ursa_portal_default_customer_id == "77777777-7777-7777-7777-777777777777"
     assert settings.deployment == {

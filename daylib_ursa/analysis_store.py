@@ -11,17 +11,27 @@ import uuid
 try:
     from daylib_ursa.tapdb_graph import TapDBBackend, from_json_addl, utc_now_iso
     from daylib_ursa.tapdb_templates import seed_ursa_templates
-    from daylily_tapdb import generic_instance
 except ImportError:  # pragma: no cover - import-time compatibility for reduced test envs
     TapDBBackend = Any  # type: ignore[assignment]
-    generic_instance = Any  # type: ignore[assignment]
     seed_ursa_templates = None  # type: ignore[assignment]
 
     def from_json_addl(instance) -> dict[str, Any]:
-        return dict(getattr(instance, "json_addl", {}) or {})
+        raw = dict(getattr(instance, "json_addl", {}) or {})
+        properties = raw.get("properties")
+        if isinstance(properties, dict):
+            merged = dict(raw)
+            merged.update(properties)
+            return merged
+        return raw
 
     def utc_now_iso() -> str:
         return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+try:
+    from daylily_tapdb import generic_instance
+except ImportError:  # pragma: no cover - typing-only compatibility for reduced test envs
+    generic_instance = Any  # type: ignore[assignment]
 
 
 class AnalysisState(str, Enum):

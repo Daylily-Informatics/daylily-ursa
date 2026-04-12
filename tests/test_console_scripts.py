@@ -65,8 +65,8 @@ def test_ursa_server_start_uses_packaged_entrypoint(
         cognito_app_client_id = "test-app-client"
         cognito_region = "us-west-2"
         cognito_domain = "ursa-auth"
-        cognito_callback_url = "https://localhost:8914/auth/callback"
-        cognito_logout_url = "https://localhost:8914/login"
+        cognito_callback_url = "https://localhost:8913/auth/callback"
+        cognito_logout_url = "https://localhost:8913/login"
 
         def get_allowed_regions(self):
             return ["us-west-2"]
@@ -163,8 +163,8 @@ def test_ursa_server_start_command_uses_module_entrypoint_and_profile(
         cognito_app_client_id = "test-app-client"
         cognito_region = "us-west-2"
         cognito_domain = "ursa-auth"
-        cognito_callback_url = "https://localhost:8914/auth/callback"
-        cognito_logout_url = "https://localhost:8914/login"
+        cognito_callback_url = "https://localhost:8913/auth/callback"
+        cognito_logout_url = "https://localhost:8913/login"
 
         def get_allowed_regions(self):
             return ["us-west-2"]
@@ -244,6 +244,9 @@ def test_ursa_config_template_bytes_are_fresh() -> None:
     assert "default_tenant_id: 00000000-0000-0000-0000-000000000000" in text
     assert "auto_provision_allowed_domains:" in text
     assert "whitelist_domains: lsmc.com,lsmc.bio,lsmc.life,daylilyinformatics.com" in text
+    assert "api_port: 8913" in text
+    assert "cognito_callback_url: https://localhost:8913/auth/callback" in text
+    assert "cognito_logout_url: https://localhost:8913/login" in text
 
 
 def test_ursa_server_start_allows_ambient_credentials(monkeypatch):
@@ -257,8 +260,8 @@ def test_ursa_server_start_allows_ambient_credentials(monkeypatch):
         cognito_app_client_id = "test-app-client"
         cognito_region = "us-west-2"
         cognito_domain = "ursa-auth"
-        cognito_callback_url = "https://localhost:8914/auth/callback"
-        cognito_logout_url = "https://localhost:8914/login"
+        cognito_callback_url = "https://localhost:8913/auth/callback"
+        cognito_logout_url = "https://localhost:8913/login"
 
         def get_allowed_regions(self):
             return ["us-west-2"]

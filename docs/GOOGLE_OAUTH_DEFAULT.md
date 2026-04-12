@@ -25,7 +25,7 @@ applies the Ursa-specific default wiring on top of the `daycog` workflow.
 
 ```bash
 AWS_PROFILE=lsmc AWS_REGION=us-west-2 \
-POOL_NAME=daylily-ursa-users CLIENT_NAME=ursa PORT=8914 \
+POOL_NAME=daylily-ursa-users CLIENT_NAME=ursa PORT=8913 \
 GOOGLE_CLIENT_JSON=/path/to/client_secret.json \
 ./scripts/setup_cognito_google_default.sh
 ```
