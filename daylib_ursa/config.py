@@ -176,12 +176,12 @@ regions:
 # =============================================================================
 # Ursa reads its TapDB namespace/runtime from this YAML file.
 # Bootstrap the matching namespace with:
-#   tapdb --config ~/.config/tapdb/local/ursa/tapdb-config.yaml --env dev config init --env dev --db-port dev=5541 --ui-port dev=8916
+#   tapdb --config ~/.config/tapdb/local/ursa/tapdb-config.yaml --env dev config init --owner-repo-name ursa --domain-code Z --domain-registry-path ~/.config/tapdb/domain_code_registry.json --prefix-ownership-registry-path ~/.config/tapdb/prefix_ownership_registry.json --db-port dev=5541 --ui-port dev=8916
 #   tapdb --config ~/.config/tapdb/local/ursa/tapdb-config.yaml --env dev bootstrap local
 #
 # Explicit env contract for TapDB/Meridian subprocesses:
 # MERIDIAN_DOMAIN_CODE=Z
-# TAPDB_APP_CODE=R
+# TAPDB_OWNER_REPO=ursa
 tapdb_client_id: local
 tapdb_database_name: ursa
 tapdb_env: dev

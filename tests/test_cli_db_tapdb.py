@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+import tomllib
+from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
@@ -11,12 +13,23 @@ from daylib_ursa.cli import app
 from daylib_ursa.cli import db as db_cli
 
 
+def _tapdb_dependency_spec() -> str:
+    pyproject = tomllib.loads(
+        (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text(encoding="utf-8")
+    )
+    for dependency in pyproject["project"]["dependencies"]:
+        if dependency.startswith("daylily-tapdb"):
+            return dependency
+    raise AssertionError("daylily-tapdb dependency missing from pyproject.toml")
+
+
 def _settings() -> SimpleNamespace:
     return SimpleNamespace(
         database_target="local",
         aws_profile="lsmc",
         tapdb_database_name="ursa",
         tapdb_client_id="local",
+        tapdb_config_path="/tmp/ursa-tapdb.yaml",
         get_effective_region=lambda: "us-west-2",
     )
 
@@ -24,7 +37,7 @@ def _settings() -> SimpleNamespace:
 def test_build_local_uses_tapdb_bootstrap_then_overlay(monkeypatch):
     events: list[tuple[str, object]] = []
 
-    monkeypatch.setattr(db_cli, "ensure_tapdb_version", lambda: "5.1.0")
+    monkeypatch.setattr(db_cli, "ensure_tapdb_version", lambda: _tapdb_dependency_spec())
     monkeypatch.setattr(db_cli, "get_settings", _settings)
     monkeypatch.setattr(
         db_cli,
@@ -64,7 +77,7 @@ def test_build_local_uses_tapdb_bootstrap_then_overlay(monkeypatch):
 
 
 def test_build_aurora_requires_cluster(monkeypatch):
-    monkeypatch.setattr(db_cli, "ensure_tapdb_version", lambda: "5.1.0")
+    monkeypatch.setattr(db_cli, "ensure_tapdb_version", lambda: _tapdb_dependency_spec())
     monkeypatch.setattr(db_cli, "get_settings", _settings)
 
     with pytest.raises(db_cli.typer.Exit) as exc_info:
@@ -178,7 +191,7 @@ def test_nuke_routes_destructive_action_through_tapdb(monkeypatch):
 
 
 def test_build_rejects_invalid_target(monkeypatch):
-    monkeypatch.setattr(db_cli, "ensure_tapdb_version", lambda: "5.1.0")
+    monkeypatch.setattr(db_cli, "ensure_tapdb_version", lambda: _tapdb_dependency_spec())
     monkeypatch.setattr(db_cli, "get_settings", _settings)
 
     with pytest.raises(db_cli.typer.Exit) as exc_info:

@@ -1,4 +1,4 @@
-"""Ursa ↔ TapDB adapter built on the TapDB 5.x runtime surface."""
+"""Ursa ↔ TapDB adapter built on the TapDB 6.x runtime surface."""
 
 from __future__ import annotations
 
@@ -139,6 +139,7 @@ class TapDBBackend:
             namespace=resolved_namespace,
             tapdb_env=resolved_tapdb_env,
             app_username=resolved_app_username,
+            config_path=str(getattr(settings, "tapdb_config_path", "") or ""),
         )
         self._conn = self.bundle.connection
         self._tm = self.bundle.template_manager

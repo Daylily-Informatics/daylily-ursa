@@ -10,7 +10,12 @@ from daylily_tapdb import (
     seed_templates,
     validate_template_configs,
 )
-from daylily_tapdb.euid import resolve_client_scoped_core_prefix
+from daylib_ursa.integrations.tapdb_runtime import (
+    DEFAULT_TAPDB_DOMAIN_CODE,
+    DEFAULT_TAPDB_DOMAIN_REGISTRY_PATH,
+    DEFAULT_TAPDB_OWNER_REPO,
+    DEFAULT_TAPDB_PREFIX_REGISTRY_PATH,
+)
 
 
 def template_config_root() -> Path:
@@ -20,7 +25,6 @@ def template_config_root() -> Path:
 
 def seed_ursa_templates(session) -> None:
     """Load the canonical Ursa JSON template pack through TapDB."""
-    core_prefix = resolve_client_scoped_core_prefix("R")
     config_dirs = resolve_seed_config_dirs(template_config_root())
     templates, issues = validate_template_configs(config_dirs, strict=True)
     errors = [issue for issue in issues if issue.level == "error"]
@@ -32,5 +36,8 @@ def seed_ursa_templates(session) -> None:
         templates,
         overwrite=True,
         core_config_dir=find_tapdb_core_config_dir(),
-        core_instance_prefix=core_prefix,
+        domain_code=DEFAULT_TAPDB_DOMAIN_CODE,
+        owner_repo_name=DEFAULT_TAPDB_OWNER_REPO,
+        domain_registry_path=DEFAULT_TAPDB_DOMAIN_REGISTRY_PATH,
+        prefix_registry_path=DEFAULT_TAPDB_PREFIX_REGISTRY_PATH,
     )

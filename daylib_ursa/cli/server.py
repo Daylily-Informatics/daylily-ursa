@@ -391,7 +391,7 @@ def start(
         if key.startswith("TAPDB_"):
             env.pop(key, None)
     env["MERIDIAN_DOMAIN_CODE"] = "Z"
-    env["TAPDB_APP_CODE"] = "R"
+    env["TAPDB_OWNER_REPO"] = "ursa"
     env["PYTHONUNBUFFERED"] = "1"
     env["ENABLE_AUTH"] = "true"
 
@@ -405,6 +405,7 @@ def start(
             client_id=settings.tapdb_client_id,
             namespace=settings.tapdb_database_name,
             tapdb_env=settings.tapdb_env,
+            config_path=settings.tapdb_config_path,
         )
 
     if reload:

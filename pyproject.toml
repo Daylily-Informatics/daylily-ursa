@@ -20,7 +20,7 @@ dependencies = [
     # Cognito auth library
     "daylily-auth-cognito==2.0.2",
     # TapDB graph persistence
-    "daylily-tapdb==5.1.0",
+    "daylily-tapdb==6.0.1",
     "daylily-omics-analysis>=0.7.639",
     "fastapi>=0.104.0",
     "uvicorn[standard]>=0.24.0",

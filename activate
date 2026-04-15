@@ -24,10 +24,10 @@ URSA_LEGACY_REBIND_VARS=(
     USE_LOCAL_DAYLILY_TAPDB
 )
 URSA_REQUIRED_DISTRIBUTIONS=(
-    "daylily-tapdb==5.1.0"
     "daylily-auth-cognito==2.0.2"
     "daylily-ephemeral-cluster==2.0.2"
     "cli-core-yo==2.0.0"
+    "meridian-euid==0.4.2"
 )
 URSA_REQUIRED_IMPORTS=(
     "daylily_tapdb:daylily-tapdb"
@@ -42,6 +42,24 @@ URSA_REQUIRED_IMPORTS=(
     "mypy:mypy"
     "jose:python-jose[cryptography]"
 )
+
+tapdb_dependency_spec_from_pyproject() {
+    project_root="$1"
+    python - "${project_root}/pyproject.toml" <<'PY'
+import sys
+import tomllib
+
+with open(sys.argv[1], "rb") as fh:
+    pyproject = tomllib.load(fh)
+
+for dependency in pyproject["project"]["dependencies"]:
+    if dependency.startswith("daylily-tapdb"):
+        print(dependency)
+        raise SystemExit(0)
+
+raise SystemExit("daylily-tapdb dependency missing from pyproject.toml")
+PY
+}
 
 sanitize_deployment_code() {
     raw_value="$1"
@@ -108,7 +126,7 @@ export URSA_DEPLOYMENT_CODE="${CONDA_ENV_DEPLOYMENT_CODE}"
 export DEPLOYMENT_CODE="${CONDA_ENV_DEPLOYMENT_CODE}"
 export LSMC_DEPLOYMENT_CODE="${CONDA_ENV_DEPLOYMENT_CODE}"
 export MERIDIAN_DOMAIN_CODE="${MERIDIAN_DOMAIN_CODE:-Z}"
-export TAPDB_APP_CODE="${TAPDB_APP_CODE:-R}"
+export TAPDB_OWNER_REPO="${TAPDB_OWNER_REPO:-ursa}"
 CONDA_ENV_NAME="${CONDA_ENV_BASE}-${CONDA_ENV_DEPLOYMENT_CODE}"
 
 log_info() {
@@ -273,6 +291,11 @@ unset _URSA_SCRIPT_PATH
 
 ENV_FILE="${SCRIPT_DIR}/environment.yaml"
 BIN_DIR="${SCRIPT_DIR}/bin"
+URSA_TAPDB_PACKAGE_SPEC="$(tapdb_dependency_spec_from_pyproject "${SCRIPT_DIR}")"
+URSA_REQUIRED_DISTRIBUTIONS=(
+    "${URSA_TAPDB_PACKAGE_SPEC}"
+    "${URSA_REQUIRED_DISTRIBUTIONS[@]}"
+)
 
 distribution_is_editable_from_repo() {
     dist_name="$1"
@@ -471,7 +494,7 @@ activate_main() {
     printf "  ${CYAN}Ursa Config:${NC}      %s\n" "${URSA_CONFIG_FILE}"
     printf "  ${CYAN}TapDB Runtime:${NC}    from deployment-scoped Ursa config\n"
     printf "  ${CYAN}MERIDIAN_DOMAIN_CODE:${NC} %s\n" "${MERIDIAN_DOMAIN_CODE}"
-    printf "  ${CYAN}TAPDB_APP_CODE:${NC}      %s\n" "${TAPDB_APP_CODE}"
+    printf "  ${CYAN}TAPDB_OWNER_REPO:${NC}   %s\n" "${TAPDB_OWNER_REPO}"
     printf "\n"
     printf "  ${BOLD}Command Groups:${NC}\n"
     printf "    ${CYAN}ursa server${NC}   API server management\n"

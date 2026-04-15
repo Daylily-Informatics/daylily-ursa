@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 import sys
+import tomllib
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -20,6 +21,16 @@ from daylib_ursa.tapdb_graph.backend import (
     to_action_history_entry,
     utc_now_iso,
 )
+
+
+def _tapdb_dependency_spec() -> str:
+    pyproject = tomllib.loads(
+        (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text(encoding="utf-8")
+    )
+    for dependency in pyproject["project"]["dependencies"]:
+        if dependency.startswith("daylily-tapdb"):
+            return dependency
+    raise AssertionError("daylily-tapdb dependency missing from pyproject.toml")
 
 
 def test_backend_adapter_reexports_tapdb_surface_without_legacy_inheritance() -> None:
@@ -103,7 +114,9 @@ def test_tapdb_env_for_target_uses_explicit_defaults(monkeypatch) -> None:
 
 
 def test_export_database_url_for_target_sets_runtime_environment(monkeypatch) -> None:
-    monkeypatch.setattr(tapdb_runtime, "ensure_tapdb_version", lambda *_args, **_kwargs: "5.1.0")
+    monkeypatch.setattr(
+        tapdb_runtime, "ensure_tapdb_version", lambda *_args, **_kwargs: _tapdb_dependency_spec()
+    )
     monkeypatch.setattr(
         tapdb_runtime,
         "_get_tapdb_db_config_for_env",
@@ -137,7 +150,7 @@ def test_export_database_url_for_target_sets_runtime_environment(monkeypatch) ->
 def test_run_tapdb_cli_exports_explicit_identity_env(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
-    monkeypatch.setattr(tapdb_runtime, "ensure_tapdb_version", lambda: "5.1.0")
+    monkeypatch.setattr(tapdb_runtime, "ensure_tapdb_version", lambda: _tapdb_dependency_spec())
     monkeypatch.setattr(
         tapdb_runtime,
         "_resolve_tapdb_config_path",
@@ -171,25 +184,23 @@ def test_run_tapdb_cli_exports_explicit_identity_env(monkeypatch) -> None:
     ]
     assert captured["cmd"][5:7] == ["--env", "dev"]
     assert captured["env"]["MERIDIAN_DOMAIN_CODE"] == "Z"
-    assert captured["env"]["TAPDB_APP_CODE"] == "R"
+    assert captured["env"]["TAPDB_OWNER_REPO"] == "ursa"
 
 
-def test_resolve_tapdb_config_path_prefers_deployment_scoped_user_config(
-    monkeypatch, tmp_path
-) -> None:
-    scoped = tmp_path / ".config" / "tapdb" / "local" / "ursa-local2" / "tapdb-config.yaml"
-    scoped.parent.mkdir(parents=True, exist_ok=True)
-    scoped.write_text("meta: {}\n", encoding="utf-8")
-
-    monkeypatch.delenv("TAPDB_CONFIG_PATH", raising=False)
-    monkeypatch.delenv("URSA_DEPLOYMENT_CODE", raising=False)
-    monkeypatch.delenv("LSMC_DEPLOYMENT_CODE", raising=False)
-    monkeypatch.setenv("DEPLOYMENT_CODE", "local2")
-    monkeypatch.setattr(tapdb_runtime.Path, "home", classmethod(lambda cls: tmp_path))
-
+def test_resolve_tapdb_config_path_requires_explicit_path() -> None:
     resolved = tapdb_runtime._resolve_tapdb_config_path(namespace="ursa", client_id="local")
 
-    assert resolved == str(scoped)
+    assert resolved is None
+
+
+def test_resolve_tapdb_config_path_returns_explicit_path() -> None:
+    resolved = tapdb_runtime._resolve_tapdb_config_path(
+        namespace="ursa",
+        client_id="local",
+        config_path="/tmp/ursa-tapdb.yaml",
+    )
+
+    assert resolved == "/tmp/ursa-tapdb.yaml"
 
 
 def test_repo_ships_tapdb_config_template() -> None:
@@ -200,6 +211,12 @@ def test_repo_ships_tapdb_config_template() -> None:
     assert payload["meta"]["config_version"] == 3
     assert payload["meta"]["client_id"] == "local"
     assert payload["meta"]["database_name"] == "ursa"
+    assert payload["meta"]["owner_repo_name"] == "ursa"
+    assert payload["meta"]["domain_registry_path"] == "~/.config/tapdb/domain_code_registry.json"
+    assert (
+        payload["meta"]["prefix_ownership_registry_path"]
+        == "~/.config/tapdb/prefix_ownership_registry.json"
+    )
     assert payload["environments"]["dev"]["port"] == "5588"
     assert payload["environments"]["dev"]["database"] == "tapdb_ursa_dev"
     assert payload["environments"]["dev"]["audit_log_euid_prefix"] == "RGX"

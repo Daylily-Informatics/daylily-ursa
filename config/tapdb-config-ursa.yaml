@@ -2,10 +2,12 @@ meta:
   config_version: 3
   client_id: local
   database_name: ursa
-  euid_client_code: R
+  owner_repo_name: ursa
+  domain_registry_path: ~/.config/tapdb/domain_code_registry.json
+  prefix_ownership_registry_path: ~/.config/tapdb/prefix_ownership_registry.json
   # Explicit env contract for TapDB/Meridian subprocesses:
   # MERIDIAN_DOMAIN_CODE=Z
-  # TAPDB_APP_CODE=R
+  # TAPDB_OWNER_REPO=ursa
 environments:
   dev:
     engine_type: local

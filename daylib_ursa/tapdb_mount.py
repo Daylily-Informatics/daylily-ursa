@@ -15,7 +15,6 @@ from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from daylib_ursa.config import Settings
-from daylib_ursa.integrations.tapdb_runtime import _resolve_tapdb_config_path
 
 LOGGER = logging.getLogger("daylily.tapdb_mount")
 _URSA_TAPDB_SCOPE_USER_KEY = "ursa_tapdb_user"
@@ -197,15 +196,6 @@ def mount_tapdb_admin(
     tapdb_config_path = str(
         getattr(settings, "tapdb_config_path", "") or os.environ.get("TAPDB_CONFIG_PATH") or ""
     ).strip()
-    if not tapdb_config_path:
-        tapdb_config_path = (
-            _resolve_tapdb_config_path(
-                namespace=settings.tapdb_database_name,
-                client_id=settings.tapdb_client_id,
-                config_path="",
-            )
-            or ""
-        )
 
     resolved_loader = loader or _load_tapdb_admin_app
     try:

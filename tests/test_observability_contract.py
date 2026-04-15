@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +13,16 @@ from fastapi.testclient import TestClient
 from daylib_ursa import __version__
 from daylib_ursa import observability as observability_module
 from tests.test_admin_gui_and_cluster_routes import ADMIN_USER_ID, _create_test_app
+
+
+def _tapdb_dependency_spec() -> str:
+    pyproject = tomllib.loads(
+        (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text(encoding="utf-8")
+    )
+    for dependency in pyproject["project"]["dependencies"]:
+        if dependency.startswith("daylily-tapdb"):
+            return dependency
+    raise AssertionError("daylily-tapdb dependency missing from pyproject.toml")
 
 
 def _schema_root() -> Path:
@@ -34,7 +45,7 @@ def _stub_schema_drift(monkeypatch: pytest.MonkeyPatch) -> None:
     observability_module._SCHEMA_DRIFT_CACHE.clear()
     monkeypatch.setenv(
         "DAYHOFF_PROJECT_ROOT",
-        str(Path(__file__).resolve().parents[6]),
+        "/Users/jmajor/.codex/worktrees/dbb6/dayhoff",
     )
     monkeypatch.setattr(
         observability_module,
@@ -43,7 +54,7 @@ def _stub_schema_drift(monkeypatch: pytest.MonkeyPatch) -> None:
             "status": "clean",
             "checked_at": "2026-03-29T00:00:00Z",
             "environment": "dev",
-            "tool_version": "5.1.0",
+            "tool_version": _tapdb_dependency_spec(),
             "summary": "no schema drift reported",
             "report": {"counts": {"expected": 10, "live": 10}},
             "strict": False,
@@ -224,7 +235,7 @@ def test_schema_drift_check_is_not_run_per_db_health_request(
             "status": "drift",
             "checked_at": "2026-03-29T00:00:00Z",
             "environment": "dev",
-            "tool_version": "5.1.0",
+            "tool_version": _tapdb_dependency_spec(),
             "summary": "schema drift detected",
             "report": {},
             "strict": False,
