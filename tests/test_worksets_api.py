@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 from types import SimpleNamespace
 import uuid
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -386,6 +387,114 @@ def _auth_headers() -> dict[str, str]:
     return {"Authorization": "Bearer atlas-token"}
 
 
+def _workflow_catalog_payload() -> dict:
+    return {
+        "schema_version": "1",
+        "catalog_version": "1.0.0",
+        "repository": "daylily-omics-analysis",
+        "repository_ref": "0.7.640.dev0",
+        "display_name": "Daylily Omics Analysis",
+        "workflows": [
+            {
+                "workflow_id": "germline_wgs_snv",
+                "display_name": "Germline WGS SNV",
+                "description": "Example",
+                "targets": ["produce_alignstats", "produce_snv_concordances"],
+                "supported_genome_builds": ["hg38"],
+                "default_genome_build": "hg38",
+                "supported_execution_profiles": ["slurm", "local"],
+                "default_execution_profile": "slurm",
+                "required_inputs": [
+                    {
+                        "input_id": "workset_manifest",
+                        "label": "Workset manifest",
+                        "description": "Manifest",
+                        "required": True,
+                    }
+                ],
+                "options": [
+                    {
+                        "option_id": "jobs",
+                        "label": "Parallel jobs",
+                        "description": "Example",
+                        "type": "integer",
+                        "default": 10,
+                        "required": False,
+                        "minimum": 1,
+                        "maximum": 500,
+                        "choices": [],
+                    }
+                ],
+            }
+        ],
+    }
+
+
+def _workflow_preview_payload(*, valid: bool = True) -> dict:
+    return {
+        "valid": valid,
+        "repository": "daylily-omics-analysis",
+        "repository_ref": "0.7.640.dev0",
+        "catalog_version": "1.0.0",
+        "workflow_id": "germline_wgs_snv",
+        "display_name": "Germline WGS SNV",
+        "argv": [
+            "dy-r",
+            "produce_alignstats",
+            "produce_snv_concordances",
+            "-p",
+            "-k",
+            "-j",
+            "10",
+            "--config",
+            "genome_build=hg38",
+            "aligners=['bwa2a']",
+            "dedupers=['dppl']",
+            "snv_callers=['sentd']",
+        ]
+        if valid
+        else [],
+        "shell_preview": "source dyoainit && dy-a slurm hg38 && dy-r produce_alignstats produce_snv_concordances -p -k -j 10 --config genome_build=hg38 aligners=['bwa2a'] dedupers=['dppl'] snv_callers=['sentd']"
+        if valid
+        else "",
+        "summary": {
+            "pipeline_type": "Germline WGS SNV",
+            "workflow_id": "germline_wgs_snv",
+            "description": "Example",
+            "genome_build": "hg38",
+            "execution_profile": "slurm",
+            "targets": ["produce_alignstats", "produce_snv_concordances"],
+            "sample_count": 2,
+            "input_mode": "uploaded_manifest",
+            "required_inputs": [
+                {"input_id": "workset_manifest", "label": "Workset manifest", "required": True}
+            ],
+        },
+        "normalized_spec": {
+            "workflow_id": "germline_wgs_snv",
+            "genome_build": "hg38",
+            "execution_profile": "slurm",
+            "options": {
+                "jobs": 10,
+                "aligners": ["bwa2a"],
+                "dedupers": ["dppl"],
+                "snv_callers": ["sentd"],
+                "print_commands": True,
+                "keep_going": True,
+            },
+            "input_context": {
+                "provided_inputs": ["workset_manifest"],
+                "sample_count": 2,
+                "input_mode": "uploaded_manifest",
+            },
+        },
+        "validation_errors": []
+        if valid
+        else ["Workset manifest is required for Germline WGS SNV."],
+        "warnings": [],
+    }
+
+
 def test_workset_and_manifest_routes_use_versioned_user_api() -> None:
     dewey = DummyDeweyClient()
     app = _create_test_app(resource_store=MemoryResourceStore(), dewey_client=dewey)
@@ -421,6 +530,150 @@ def test_workset_and_manifest_routes_use_versioned_user_api() -> None:
     )
     assert clusters.status_code == 200
     assert clusters.json() == {"items": []}
+
+
+def test_workflow_catalog_and_preview_routes_use_versioned_user_api() -> None:
+    app = _create_test_app(resource_store=MemoryResourceStore(), dewey_client=DummyDeweyClient())
+
+    with (
+        patch(
+            "daylib_ursa.workset_api.load_workflow_catalog_snapshot",
+            return_value=_workflow_catalog_payload(),
+        ),
+        patch(
+            "daylib_ursa.workset_api.preview_workflow_command",
+            return_value=_workflow_preview_payload(),
+        ),
+        TestClient(app) as client,
+    ):
+        catalog = client.get("/api/v1/worksets/workflow-catalog", headers=_auth_headers())
+        preview = client.post(
+            "/api/v1/worksets/command-preview",
+            headers=_auth_headers(),
+            json={
+                "repository": "daylily-omics-analysis",
+                "workflow_id": "germline_wgs_snv",
+                "genome_build": "hg38",
+                "execution_profile": "slurm",
+                "options": {
+                    "jobs": 10,
+                    "aligners": ["bwa2a"],
+                    "dedupers": ["dppl"],
+                    "snv_callers": ["sentd"],
+                },
+                "input_context": {
+                    "provided_inputs": ["workset_manifest"],
+                    "sample_count": 2,
+                    "input_mode": "uploaded_manifest",
+                },
+            },
+        )
+
+    assert catalog.status_code == 200, catalog.text
+    assert catalog.json()["repository"] == "daylily-omics-analysis"
+    assert catalog.json()["workflows"][0]["workflow_id"] == "germline_wgs_snv"
+    assert catalog.json()["workflows"][0]["targets"] == [
+        "produce_alignstats",
+        "produce_snv_concordances",
+    ]
+    assert preview.status_code == 200, preview.text
+    assert preview.json()["valid"] is True
+    assert preview.json()["argv"][0] == "dy-r"
+    assert preview.json()["summary"]["targets"] == [
+        "produce_alignstats",
+        "produce_snv_concordances",
+    ]
+
+
+def test_workset_create_canonicalizes_analysis_command_metadata() -> None:
+    app = _create_test_app(resource_store=MemoryResourceStore(), dewey_client=DummyDeweyClient())
+
+    with (
+        patch(
+            "daylib_ursa.workset_api.preview_workflow_command",
+            return_value=_workflow_preview_payload(),
+        ),
+        TestClient(app) as client,
+    ):
+        created = client.post(
+            "/api/v1/worksets",
+            headers=_auth_headers(),
+            json={
+                "name": "Tumor batch",
+                "artifact_set_euids": ["AS-1"],
+                "metadata": {
+                    "workset_type": "ruo",
+                    "priority": "normal",
+                    "analysis_command": {
+                        "repository": "daylily-omics-analysis",
+                        "workflow_id": "germline_wgs_snv",
+                        "genome_build": "hg38",
+                        "execution_profile": "slurm",
+                        "options": {
+                            "jobs": 10,
+                            "aligners": ["bwa2a"],
+                            "dedupers": ["dppl"],
+                            "snv_callers": ["sentd"],
+                        },
+                        "input_context": {
+                            "provided_inputs": ["workset_manifest"],
+                            "sample_count": 2,
+                            "input_mode": "uploaded_manifest",
+                        },
+                    },
+                },
+            },
+        )
+
+    assert created.status_code == 201, created.text
+    body = created.json()
+    assert body["metadata"]["pipeline_type"] == "Germline WGS SNV"
+    assert body["metadata"]["reference_genome"] == "hg38"
+    assert body["metadata"]["analysis_repository"] == "daylily-omics-analysis"
+    assert body["metadata"]["analysis_workflow_id"] == "germline_wgs_snv"
+    assert body["metadata"]["analysis_command"]["workflow_id"] == "germline_wgs_snv"
+    assert body["metadata"]["analysis_command"]["spec"]["options"]["aligners"] == ["bwa2a"]
+    assert body["metadata"]["analysis_command"]["argv"][0] == "dy-r"
+    assert body["metadata"]["analysis_command"]["shell_preview"].startswith(
+        "source dyoainit && dy-a slurm hg38 && dy-r "
+    )
+    assert body["metadata"]["analysis_command"]["created_at"].endswith("Z")
+
+
+def test_workset_create_rejects_invalid_analysis_command_metadata() -> None:
+    app = _create_test_app(resource_store=MemoryResourceStore(), dewey_client=DummyDeweyClient())
+
+    with (
+        patch(
+            "daylib_ursa.workset_api.preview_workflow_command",
+            return_value=_workflow_preview_payload(valid=False),
+        ),
+        TestClient(app) as client,
+    ):
+        created = client.post(
+            "/api/v1/worksets",
+            headers=_auth_headers(),
+            json={
+                "name": "Tumor batch",
+                "artifact_set_euids": ["AS-1"],
+                "metadata": {
+                    "analysis_command": {
+                        "repository": "daylily-omics-analysis",
+                        "workflow_id": "germline_wgs_snv",
+                        "genome_build": "hg38",
+                        "execution_profile": "slurm",
+                        "options": {},
+                        "input_context": {},
+                    },
+                },
+            },
+        )
+
+    assert created.status_code == 400
+    assert created.json()["detail"]["message"] == "Analysis command validation failed"
+    assert created.json()["detail"]["validation_errors"] == [
+        "Workset manifest is required for Germline WGS SNV."
+    ]
 
 
 def test_manifest_rejects_artifacts_outside_resolved_dewey_set() -> None:

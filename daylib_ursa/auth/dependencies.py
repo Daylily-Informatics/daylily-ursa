@@ -20,7 +20,7 @@ from daylily_auth_cognito import (
     store_session_principal,
 )
 from daylily_auth_cognito.runtime.jwks import JWKSCache
-from daylily_auth_cognito.runtime.tokens import decode_jwt_unverified, verify_jwt_claims
+from daylily_auth_cognito.runtime.tokens import verify_jwt_claims
 
 from daylib_ursa.auth.rbac import Permission, Role, can_write, has_permission, has_role
 
@@ -367,6 +367,20 @@ def _request_web_session_config(request: Request) -> CognitoWebSessionConfig:
     return build_web_session_config(settings, server_instance_id)
 
 
+def _decode_unverified_claims(token: str) -> dict[str, Any]:
+    try:
+        from jose import JWTError, jwt
+    except ImportError as exc:  # pragma: no cover - environment issue
+        raise AuthError(
+            "python-jose is required for JWT decoding. Install with: pip install 'python-jose[cryptography]'"
+        ) from exc
+
+    try:
+        return jwt.get_unverified_claims(token)
+    except JWTError as exc:
+        raise AuthError("Invalid authentication token") from exc
+
+
 class CognitoAuthProvider:
     """Local Cognito/JWKS-backed bearer token resolver."""
 
@@ -445,7 +459,7 @@ class CognitoAuthProvider:
         if not self.configured:
             raise AuthError("Cognito authentication is not configured")
         try:
-            unverified_claims = decode_jwt_unverified(token)
+            unverified_claims = _decode_unverified_claims(token)
             if str(unverified_claims.get("token_use") or "").strip().lower() == "id":
                 claims = self._verify_id_token_claims(
                     token,

@@ -24,7 +24,7 @@
                 <p class="text-muted mb-0">Link a new S3 bucket to browse inputs, upload data, and compose manifests.</p>
             </div>
             <div class="d-flex gap-sm flex-wrap">
-                <button class="btn btn-primary" type="button" onclick="showModal('link-bucket-modal')">
+                <button class="btn btn-primary" type="button" onclick="openLinkBucketModal()">
                     <i class="fas fa-plus"></i> Link New Bucket
                 </button>
                 <a href="/manifests" class="btn btn-outline">
@@ -33,6 +33,22 @@
             </div>
         </div>
     </div>
+
+    {% if actor.is_admin %}
+    <div class="card mb-xl">
+        <div class="d-flex justify-between align-center flex-wrap gap-lg">
+            <div>
+                <h3 class="card-title"><i class="fas fa-list"></i> List Buckets</h3>
+                <p class="text-muted mb-0">Return the equivalent of <code>aws s3 ls</code> for the active AWS profile and feed the selected bucket into the link flow.</p>
+            </div>
+            <button class="btn btn-outline" type="button" onclick="listAdminBuckets()">
+                <i class="fas fa-cloud"></i> List Buckets
+            </button>
+        </div>
+        <p class="text-muted mt-md mb-0">AWS profile in use: <code>{{ admin_bucket_profile }}</code></p>
+        <div id="admin-bucket-results" class="bucket-discovery-results d-none mt-lg"></div>
+    </div>
+    {% endif %}
 
     <div class="card mb-xl">
         <h3 class="card-title"><i class="fas fa-database"></i> Linked Buckets</h3>
@@ -122,7 +138,7 @@
             <div class="empty-state-icon"><i class="fas fa-database"></i></div>
             <h4 class="empty-state-title">No buckets linked</h4>
             <p class="empty-state-text">Link an S3 bucket to start browsing and composing manifest inputs.</p>
-            <button class="btn btn-primary" type="button" onclick="showModal('link-bucket-modal')">
+            <button class="btn btn-primary" type="button" onclick="openLinkBucketModal()">
                 <i class="fas fa-plus"></i> Link First Bucket
             </button>
         </div>
@@ -273,13 +289,61 @@
 .remediation-steps { margin: 0; padding-left: var(--spacing-lg); color: #856404; }
 .input-with-button { display: flex; gap: var(--spacing-sm); }
 .input-with-button .form-control { flex: 1; }
-.validation-results-box { background: var(--color-gray-100); border-radius: var(--radius-md); padding: var(--spacing-md); }
+.validation-results-box { background: var(--color-gray-100); border: 1px solid var(--color-gray-200); border-radius: var(--radius-md); padding: var(--spacing-md); }
+.validation-results-box.validation-success { background: rgba(0, 217, 166, 0.08); border-color: rgba(0, 217, 166, 0.28); }
+.validation-results-box.validation-error { background: rgba(220, 53, 69, 0.06); border-color: rgba(220, 53, 69, 0.22); }
+.validation-summary-meta { display: flex; flex-wrap: wrap; gap: var(--spacing-sm); margin-top: var(--spacing-sm); }
+.validation-check-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--spacing-sm); margin-top: var(--spacing-md); }
+.validation-check-card { background: rgba(255, 255, 255, 0.72); border: 1px solid var(--color-gray-300); border-radius: var(--radius-md); padding: var(--spacing-md); }
+.validation-check-pass { border-color: rgba(0, 217, 166, 0.28); }
+.validation-check-fail { border-color: rgba(220, 53, 69, 0.22); }
+.validation-check-skipped { border-color: rgba(255, 193, 7, 0.28); }
+.validation-check-header { display: flex; justify-content: space-between; align-items: center; gap: var(--spacing-sm); margin-bottom: var(--spacing-xs); }
+.validation-check-title { font-weight: 600; display: inline-flex; align-items: center; gap: var(--spacing-xs); }
+.validation-check-detail { color: var(--color-gray-600); font-size: 0.875rem; }
+.validation-remediation-title { font-weight: 600; margin-bottom: var(--spacing-xs); color: #8d1a28; }
+.bucket-discovery-results { border-top: 1px solid var(--color-gray-200); padding-top: var(--spacing-lg); }
+.bucket-discovery-meta { color: var(--color-gray-600); margin-bottom: var(--spacing-md); }
+.bucket-discovery-table td:last-child,
+.bucket-discovery-table th:last-child { text-align: right; }
+@media (max-width: 780px) {
+    .validation-check-grid { grid-template-columns: 1fr; }
+}
 </style>
 {% endblock %}
 
 {% block extra_js %}
 <script>
 let currentBucketId = null;
+const pageData = UrsaPortal.parsePageData();
+const linkedBucketNames = new Set(
+    (pageData.buckets || [])
+        .map((bucket) => String(bucket.bucket_name || '').trim())
+        .filter(Boolean)
+);
+
+function resetBucketValidationResults() {
+    const box = document.getElementById('bucket-validation-results');
+    const content = document.getElementById('validation-content');
+    if (box) {
+        box.classList.add('d-none');
+        box.classList.remove('validation-success', 'validation-error');
+    }
+    if (content) {
+        content.innerHTML = '';
+    }
+}
+
+function openLinkBucketModal(bucketName = '', displayName = '') {
+    const form = document.getElementById('link-bucket-form');
+    form?.reset();
+    document.getElementById('bucket-name').value = bucketName;
+    document.getElementById('bucket-display-name').value = displayName || bucketName;
+    document.getElementById('bucket-type').value = 'secondary';
+    document.getElementById('bucket-read-only').checked = false;
+    resetBucketValidationResults();
+    showModal('link-bucket-modal');
+}
 
 function bucketPayload(prefix = 'bucket') {
     const isEdit = prefix === 'edit';
@@ -302,19 +366,207 @@ function bucketPayload(prefix = 'bucket') {
 function renderValidationResult(result) {
     const box = document.getElementById('bucket-validation-results');
     const content = document.getElementById('validation-content');
+    const readOnlyRequested = !!document.getElementById('bucket-read-only')?.checked;
+    const writeStatus = readOnlyRequested
+        ? {
+            badgeClass: 'badge-warning',
+            cardClass: 'validation-check-skipped',
+            badgeLabel: 'Not Required',
+            icon: 'minus',
+            detail: 'Write access is not required because this bucket will be linked as read-only.',
+        }
+        : result.can_write
+            ? {
+                badgeClass: 'badge-success',
+                cardClass: 'validation-check-pass',
+                badgeLabel: 'Pass',
+                icon: 'check',
+                detail: 'Ursa can create and remove a validation object in the selected bucket or prefix.',
+            }
+            : {
+                badgeClass: 'badge-error',
+                cardClass: 'validation-check-fail',
+                badgeLabel: 'Fail',
+                icon: 'xmark',
+                detail: 'Ursa could not create and remove a validation object in the selected bucket or prefix.',
+            };
+
+    const checks = [
+        {
+            name: 'Read',
+            passed: result.can_read,
+            detail: result.can_read
+                ? 'Ursa can read bucket contents through the selected prefix.'
+                : 'Ursa could not read bucket contents through the selected prefix.',
+        },
+        {
+            name: 'List',
+            passed: result.can_list,
+            detail: result.can_list
+                ? 'Ursa can enumerate objects for bucket browsing and manifest inputs.'
+                : 'Ursa could not enumerate objects for bucket browsing and manifest inputs.',
+        },
+    ];
+
+    box.classList.remove('d-none', 'validation-success', 'validation-error');
+    box.classList.add(result.is_validated ? 'validation-success' : 'validation-error');
     box.classList.remove('d-none');
     content.innerHTML = `
-        <div class="validation-summary">
-            <p><strong>Region:</strong> ${escapeHtml(result.region || 'Unknown')}</p>
-            <p><strong>Status:</strong> ${result.is_validated ? 'Validated' : 'Needs attention'}</p>
+        <div class="alert ${result.is_validated ? 'alert-success' : 'alert-error'} mb-0">
+            <i class="fas fa-${result.is_validated ? 'circle-check' : 'triangle-exclamation'}"></i>
+            <div>
+                <strong>${result.is_validated ? 'Validation passed' : 'Validation failed'}</strong>
+                <div>
+                    ${result.is_validated
+                        ? `Ursa confirmed the required access${readOnlyRequested ? ' for a read-only bucket link' : ''}.`
+                        : 'Ursa could not confirm the required bucket access. Fix the failed checks before linking this bucket.'}
+                </div>
+            </div>
         </div>
-        <div class="validation-details">
-            <div class="validation-item"><span class="label">Read</span><span>${result.can_read ? 'Yes' : 'No'}</span></div>
-            <div class="validation-item"><span class="label">Write</span><span>${result.can_write ? 'Yes' : 'No'}</span></div>
-            <div class="validation-item"><span class="label">List</span><span>${result.can_list ? 'Yes' : 'No'}</span></div>
+        <div class="validation-summary-meta">
+            <span class="badge ${result.is_validated ? 'badge-success' : 'badge-error'}">
+                ${result.is_validated ? 'Ready to Link' : 'Access Missing'}
+            </span>
+            <span class="badge badge-outline">Region: ${escapeHtml(result.region || 'Unknown')}</span>
+            ${readOnlyRequested ? '<span class="badge badge-warning">Read-only Requested</span>' : ''}
         </div>
-        ${result.remediation_steps?.length ? `<ol class="remediation-list">${result.remediation_steps.map((step) => `<li>${escapeHtml(step)}</li>`).join('')}</ol>` : ''}
+        <div class="validation-check-grid">
+            ${checks.map((check) => `
+                <div class="validation-check-card ${check.passed ? 'validation-check-pass' : 'validation-check-fail'}">
+                    <div class="validation-check-header">
+                        <span class="validation-check-title">
+                            <i class="fas fa-${check.passed ? 'check' : 'xmark'} ${check.passed ? 'text-success' : 'text-error'}"></i>
+                            ${check.name}
+                        </span>
+                        <span class="badge ${check.passed ? 'badge-success' : 'badge-error'}">${check.passed ? 'Pass' : 'Fail'}</span>
+                    </div>
+                    <div class="validation-check-detail">${check.detail}</div>
+                </div>
+            `).join('')}
+            <div class="validation-check-card ${writeStatus.cardClass}">
+                <div class="validation-check-header">
+                    <span class="validation-check-title">
+                        <i class="fas fa-${writeStatus.icon} ${writeStatus.badgeClass === 'badge-success' ? 'text-success' : writeStatus.badgeClass === 'badge-error' ? 'text-error' : 'text-warning'}"></i>
+                        Write
+                    </span>
+                    <span class="badge ${writeStatus.badgeClass}">${writeStatus.badgeLabel}</span>
+                </div>
+                <div class="validation-check-detail">${writeStatus.detail}</div>
+            </div>
+        </div>
+        ${!result.is_validated && result.remediation_steps?.length ? `
+            <div class="remediation-box mt-md">
+                <div class="validation-remediation-title">
+                    <i class="fas fa-wrench"></i> What to fix
+                </div>
+                <ol class="remediation-steps mb-0">
+                    ${result.remediation_steps.map((step) => `<li>${escapeHtml(step)}</li>`).join('')}
+                </ol>
+            </div>
+        ` : ''}
     `;
+}
+
+function formatBucketCreatedAt(value) {
+    if (!value) {
+        return 'Unknown';
+    }
+    const createdAt = new Date(value);
+    if (Number.isNaN(createdAt.getTime())) {
+        return escapeHtml(value);
+    }
+    return escapeHtml(createdAt.toLocaleString());
+}
+
+function renderAdminBuckets(payload) {
+    const results = document.getElementById('admin-bucket-results');
+    if (!results) {
+        return;
+    }
+    const buckets = Array.isArray(payload?.buckets) ? payload.buckets : [];
+    const profile = escapeHtml(payload?.profile || 'default');
+    if (!buckets.length) {
+        results.innerHTML = `
+            <p class="bucket-discovery-meta">AWS profile: <code>${profile}</code></p>
+            <div class="empty-state">
+                <div class="empty-state-icon"><i class="fas fa-cloud"></i></div>
+                <h4 class="empty-state-title">No buckets available</h4>
+                <p class="empty-state-text">The active AWS profile did not return any S3 buckets.</p>
+            </div>
+        `;
+        results.classList.remove('d-none');
+        return;
+    }
+
+    const rows = buckets
+        .map((bucket) => {
+            const bucketName = String(bucket.bucket_name || '').trim();
+            if (!bucketName) {
+                return '';
+            }
+            const isLinked = linkedBucketNames.has(bucketName);
+            return `
+                <tr>
+                    <td><code>s3://${escapeHtml(bucketName)}</code></td>
+                    <td>${formatBucketCreatedAt(bucket.created_at)}</td>
+                    <td>
+                        ${isLinked
+                            ? '<span class="badge badge-success">Linked</span>'
+                            : '<span class="badge badge-outline">Available</span>'}
+                    </td>
+                    <td>
+                        <button
+                            class="btn btn-sm btn-outline"
+                            type="button"
+                            data-link-bucket-name="${escapeHtml(bucketName)}"
+                            ${isLinked ? 'disabled' : ''}
+                        >
+                            ${isLinked ? 'Linked' : 'Link'}
+                        </button>
+                    </td>
+                </tr>
+            `;
+        })
+        .join('');
+
+    results.innerHTML = `
+        <p class="bucket-discovery-meta">AWS profile: <code>${profile}</code></p>
+        <div class="table-container">
+            <table class="bucket-discovery-table">
+                <thead>
+                    <tr>
+                        <th>Bucket</th>
+                        <th>Created</th>
+                        <th>Status</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody>${rows}</tbody>
+            </table>
+        </div>
+    `;
+    results.classList.remove('d-none');
+    results.querySelectorAll('[data-link-bucket-name]').forEach((button) => {
+        if (button.disabled) {
+            return;
+        }
+        button.addEventListener('click', () => {
+            const bucketName = button.getAttribute('data-link-bucket-name') || '';
+            openLinkBucketModal(bucketName, bucketName);
+        });
+    });
+}
+
+async function listAdminBuckets() {
+    showLoading('Listing S3 buckets...');
+    try {
+        const payload = await UrsaPortal.apiRequest('/api/v1/admin/s3-buckets');
+        renderAdminBuckets(payload);
+    } catch (error) {
+        showToast('error', error.message);
+    } finally {
+        hideLoading();
+    }
 }
 
 async function validateBucketBeforeLink() {

@@ -21,6 +21,7 @@ dependencies = [
     "daylily-auth-cognito==2.0.2",
     # TapDB graph persistence
     "daylily-tapdb==5.1.0",
+    "daylily-omics-analysis>=0.7.639",
     "fastapi>=0.104.0",
     "uvicorn[standard]>=0.24.0",
     "pydantic>=2.0.0",
@@ -61,7 +62,7 @@ dev = [
 
 # Cluster integration (optional - for workset_monitor cluster operations)
 cluster = [
-    "daylily-ephemeral-cluster==0.7.614",
+    "daylily-ephemeral-cluster==2.0.2",
 ]
 
 [project.scripts]

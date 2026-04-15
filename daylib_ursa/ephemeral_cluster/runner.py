@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from importlib import metadata as importlib_metadata
 import json
 import os
 import secrets
@@ -15,6 +16,8 @@ from typing import Any, Dict, List, Optional, cast
 import yaml  # type: ignore[import-untyped]
 
 _DAYLILY_EC_BIN_ENV = "URSA_DAYLILY_EC_BIN"
+DAYLILY_EC_DISTRIBUTION = "daylily-ephemeral-cluster"
+REQUIRED_DAYLILY_EC_VERSION = "2.0.2"
 
 
 def _now_iso() -> str:
@@ -64,6 +67,28 @@ class ClusterCreateJob:
     status: str
 
 
+def require_daylily_ec_version() -> str:
+    try:
+        installed = importlib_metadata.version(DAYLILY_EC_DISTRIBUTION)
+    except importlib_metadata.PackageNotFoundError as exc:
+        raise RuntimeError(
+            f"{DAYLILY_EC_DISTRIBUTION} is not installed. "
+            f"Install {DAYLILY_EC_DISTRIBUTION}=={REQUIRED_DAYLILY_EC_VERSION} in the active Ursa environment."
+        ) from exc
+    if installed != REQUIRED_DAYLILY_EC_VERSION:
+        raise RuntimeError(
+            f"{DAYLILY_EC_DISTRIBUTION} version mismatch: expected "
+            f"{REQUIRED_DAYLILY_EC_VERSION}, found {installed}."
+        )
+    return installed
+
+
+def require_daylily_ec_runtime() -> Path:
+    path = resolve_daylily_ec()
+    require_daylily_ec_version()
+    return path
+
+
 def resolve_daylily_ec() -> Path:
     """Resolve the daylily-ec CLI binary used to create ephemeral clusters."""
     override = os.environ.get(_DAYLILY_EC_BIN_ENV, "").strip()
@@ -110,6 +135,12 @@ def write_generated_ec_config(
         config["ephemeral_cluster"]["config"]["budget_email"] = ["USESETVALUE", "", contact_email]
 
     dest.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+    require_daylily_ec_version()
+    from daylily_ec.config.triplets import ensure_required_keys, load_config, write_config
+
+    cfg = load_config(dest)
+    ensure_required_keys(cfg)
+    write_config(cfg, dest)
     return dest
 
 
@@ -210,7 +241,9 @@ def _build_command_env(
     return env
 
 
-def _summarize_process_output(result: subprocess.CompletedProcess[str], *, max_chars: int = 4000) -> str:
+def _summarize_process_output(
+    result: subprocess.CompletedProcess[str], *, max_chars: int = 4000
+) -> str:
     output = (result.stderr or "").strip() or (result.stdout or "").strip()
     if not output:
         return f"exit code {result.returncode}"
@@ -244,7 +277,7 @@ def run_preflight_sync(
     cwd: Optional[Path] = None,
 ) -> subprocess.CompletedProcess[str]:
     """Run daylily-ec preflight synchronously in the same runtime used for create."""
-    daylily_ec_path = resolve_daylily_ec()
+    daylily_ec_path = require_daylily_ec_runtime()
     command = _build_preflight_command(
         daylily_ec_path=daylily_ec_path,
         region_az=region_az,
@@ -280,7 +313,7 @@ def start_create_job(
     debug: bool,
 ) -> ClusterCreateJob:
     """Start a background cluster create job and return its metadata."""
-    daylily_ec_path = resolve_daylily_ec()
+    daylily_ec_path = require_daylily_ec_runtime()
     job_id = _new_job_id()
 
     jobs_dir = _jobs_dir()
@@ -401,7 +434,7 @@ def run_create_sync(
     cwd: Optional[Path] = None,
 ) -> subprocess.CompletedProcess[str]:
     """Run daylily-ec synchronously for monitor-driven cluster creation."""
-    daylily_ec_path = resolve_daylily_ec()
+    daylily_ec_path = require_daylily_ec_runtime()
     resolved_config_path = Path(config_path).expanduser()
     if not resolved_config_path.is_absolute():
         resolved_config_path = (Path.cwd() / resolved_config_path).resolve()

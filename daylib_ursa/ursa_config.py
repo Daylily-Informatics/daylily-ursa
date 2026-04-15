@@ -72,6 +72,58 @@ def get_config_file_path() -> Path:
     return get_config_dir() / f"ursa-config-{deployment}.yaml"
 
 
+def parse_regions_csv(regions_csv: str) -> List[str]:
+    """Normalize a comma-separated region list into unique region names."""
+    seen: set[str] = set()
+    regions: List[str] = []
+    for raw_value in str(regions_csv or "").split(","):
+        normalized = str(raw_value or "").strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        regions.append(normalized)
+    if not regions:
+        raise ValueError("At least one AWS region is required")
+    return regions
+
+
+def update_config_regions(
+    *,
+    regions: List[str],
+    config_path: Optional[Path] = None,
+) -> "UrsaConfig":
+    """Persist the configured scan regions while preserving existing region-specific options."""
+    normalized_regions = parse_regions_csv(",".join(regions))
+    path = config_path or get_config_file_path()
+    if not path.exists():
+        raise FileNotFoundError(f"Ursa config file not found: {path}")
+
+    payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    if not isinstance(payload, dict):
+        raise ValueError(f"Ursa config must be a YAML mapping: {path}")
+
+    preserved_entries: Dict[str, object] = {}
+    for entry in list(payload.get("regions") or []):
+        if isinstance(entry, str):
+            region_name = str(entry or "").strip()
+            if region_name and region_name not in preserved_entries:
+                preserved_entries[region_name] = region_name
+            continue
+        if isinstance(entry, dict):
+            for raw_region_name, region_options in entry.items():
+                region_name = str(raw_region_name or "").strip()
+                if region_name and region_name not in preserved_entries:
+                    preserved_entries[region_name] = {region_name: region_options}
+                break
+
+    payload["regions"] = [
+        preserved_entries.get(region_name, region_name) for region_name in normalized_regions
+    ]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+    return UrsaConfig.load(path)
+
+
 def _stable_color_hex(name: str, *, hue_shift: int = 0, lightness: float, saturation: float) -> str:
     digest = hashlib.sha256(name.encode("utf-8")).digest()
     hue = (int.from_bytes(digest[:8], "big") + hue_shift) % 360

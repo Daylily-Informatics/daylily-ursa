@@ -1,18 +1,18 @@
 {
   "schema_version": "1",
-  "last_updated": "2026-04-07",
+  "last_updated": "2026-04-15",
   "components": {
     "daylily-ursa": {
       "repo": "Daylily-Informatics/daylily-ursa",
-      "current": "0.6.8"
+      "current": "0.6.15"
     },
     "daylily-ephemeral-cluster": {
       "repo": "Daylily-Informatics/daylily-ephemeral-cluster",
-      "current": "0.7.601"
+      "current": "2.0.2"
     },
     "daylily-omics-analysis": {
       "repo": "Daylily-Informatics/daylily-omics-analysis",
-      "current": "0.7.602"
+      "current": "0.7.639"
     },
     "daylily-auth-cognito": {
       "repo": "Daylily-Informatics/daylily-auth-cognito",
@@ -31,8 +31,8 @@
     {
       "date": "2026-03-03",
       "ursa": "0.1.7",
-      "ephemeral_cluster": "0.7.601",
-      "omics_analysis": "0.7.602",
+      "ephemeral_cluster": "2.0.2",
+      "omics_analysis": "0.7.639",
       "cognito": "0.1.24",
       "tapdb": "0.1.21",
       "omics_references": "0.3.1",
@@ -41,8 +41,8 @@
     {
       "date": "2026-03-04",
       "ursa": "0.1.7",
-      "ephemeral_cluster": "0.7.601",
-      "omics_analysis": "0.7.602",
+      "ephemeral_cluster": "2.0.2",
+      "omics_analysis": "0.7.639",
       "cognito": "0.1.24",
       "tapdb": "0.1.27",
       "omics_references": "0.3.1",
@@ -51,8 +51,8 @@
     {
       "date": "2026-03-04",
       "ursa": "0.1.7",
-      "ephemeral_cluster": "0.7.601",
-      "omics_analysis": "0.7.602",
+      "ephemeral_cluster": "2.0.2",
+      "omics_analysis": "0.7.639",
       "cognito": "0.1.24",
       "tapdb": "0.1.28",
       "omics_references": "0.3.1",
@@ -61,8 +61,8 @@
     {
       "date": "2026-03-08",
       "ursa": "0.1.7",
-      "ephemeral_cluster": "0.7.601",
-      "omics_analysis": "0.7.602",
+      "ephemeral_cluster": "2.0.2",
+      "omics_analysis": "0.7.639",
       "cognito": "0.1.24",
       "tapdb": "0.1.35",
       "omics_references": "0.3.1",
@@ -71,8 +71,8 @@
     {
       "date": "2026-03-24",
       "ursa": "0.2.5",
-      "ephemeral_cluster": "0.7.601",
-      "omics_analysis": "0.7.602",
+      "ephemeral_cluster": "2.0.2",
+      "omics_analysis": "0.7.639",
       "cognito": "0.1.24",
       "tapdb": "3.0.2",
       "omics_references": "0.3.1",
@@ -81,8 +81,8 @@
     {
       "date": "2026-03-27",
       "ursa": "0.2.12",
-      "ephemeral_cluster": "0.7.601",
-      "omics_analysis": "0.7.602",
+      "ephemeral_cluster": "2.0.2",
+      "omics_analysis": "0.7.639",
       "cognito": "0.1.30",
       "tapdb": "3.0.6",
       "omics_references": "0.3.1",
@@ -91,8 +91,8 @@
     {
       "date": "2026-04-02",
       "ursa": "0.6.2",
-      "ephemeral_cluster": "0.7.601",
-      "omics_analysis": "0.7.602",
+      "ephemeral_cluster": "2.0.2",
+      "omics_analysis": "0.7.639",
       "cognito": "0.4.1",
       "tapdb": "3.2.2",
       "omics_references": "0.3.1",
@@ -101,8 +101,8 @@
     {
       "date": "2026-03-29",
       "ursa": "0.2.18",
-      "ephemeral_cluster": "0.7.601",
-      "omics_analysis": "0.7.602",
+      "ephemeral_cluster": "2.0.2",
+      "omics_analysis": "0.7.639",
       "cognito": "0.1.30",
       "tapdb": "3.0.9",
       "omics_references": "0.3.1",

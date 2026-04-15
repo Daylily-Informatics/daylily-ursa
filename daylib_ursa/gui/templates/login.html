@@ -23,6 +23,7 @@
     <main class="login-shell">
         <section class="login-card" style="display: grid; gap: 2rem; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));">
             <div>
+                <img class="auth-logo" src="/ui/static/favicon.svg" alt="Ursa">
                 <p class="page-subtitle" style="text-transform: uppercase; letter-spacing: 0.12em; font-size: 0.75rem;">{{ auth_badge|default("Authentication Required") }}</p>
                 <h1 class="page-title">{{ auth_title|default("Ursa PR19 Portal") }}</h1>
                 <p class="page-subtitle">{{ auth_description|default("Restore the legacy shell on top of the current Atlas-backed Ursa backend.") }}</p>
@@ -51,7 +52,10 @@
         <div class="container">
             <div class="footer-content">
                 <div class="footer-brand">
-                    <div class="footer-logo">Ursa</div>
+                    <div class="footer-logo">
+                        <img class="footer-logo-icon" src="/ui/static/favicon.svg" alt="" aria-hidden="true">
+                        Ursa
+                    </div>
                     <p>PR19 shell restored on current Ursa routes, with Dewey-backed manifests and linked-bucket workflows.</p>
                 </div>
                 <div>

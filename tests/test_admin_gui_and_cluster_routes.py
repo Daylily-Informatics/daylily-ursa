@@ -244,6 +244,19 @@ class DummyAnalysisStore:
 
 class MemoryResourceStore:
     def __init__(self) -> None:
+        analysis_command = {
+            "repository": "daylily-omics-analysis",
+            "repository_ref": "0.7.640.dev0",
+            "workflow_id": "germline_wgs_snv",
+            "display_name": "Germline WGS SNV",
+            "spec": {"genome_build": "hg38", "execution_profile": "slurm"},
+            "shell_preview": "source dyoainit && dy-a slurm hg38 && dy-r produce_alignstats produce_snv_concordances -p -k -j 10 --config genome_build=hg38 aligners=['bwa2a'] dedupers=['dppl'] snv_callers=['sentd']",
+            "summary": {
+                "pipeline_type": "Germline WGS SNV",
+                "genome_build": "hg38",
+                "execution_profile": "slurm",
+            },
+        }
         self.worksets: dict[str, WorksetRecord] = {
             "WS-1": WorksetRecord(
                 workset_euid="WS-1",
@@ -252,7 +265,7 @@ class MemoryResourceStore:
                 owner_user_id=ADMIN_USER_ID,
                 state="ACTIVE",
                 artifact_set_euids=["AS-1"],
-                metadata={},
+                metadata={"analysis_command": analysis_command},
                 created_at="2026-03-25T00:00:00Z",
                 updated_at="2026-03-25T00:00:00Z",
                 manifests=[],
@@ -309,7 +322,7 @@ class MemoryResourceStore:
             owner_user_id=ADMIN_USER_ID,
             state="ACTIVE",
             artifact_set_euids=["AS-1"],
-            metadata={},
+            metadata={"analysis_command": analysis_command},
             created_at="2026-03-25T00:00:00Z",
             updated_at="2026-03-25T00:05:00Z",
             manifests=[self.manifests["MF-1"]],
@@ -436,21 +449,38 @@ class DummyClusterInfo:
 
 
 class DummyClusterService:
+    def __init__(
+        self,
+        clusters: list[DummyClusterInfo] | None = None,
+        regions: list[str] | None = None,
+    ) -> None:
+        self._clusters = list(clusters or [DummyClusterInfo("cluster-1", "us-west-2")])
+        derived_regions = [cluster.region for cluster in self._clusters if cluster.region]
+        self.regions = list(regions or derived_regions or ["us-west-2"])
+
     def get_all_clusters_with_status(
         self, *, force_refresh: bool = False, fetch_ssh_status: bool = False
     ):
         _ = (force_refresh, fetch_ssh_status)
-        return [DummyClusterInfo("cluster-1", "us-west-2")]
+        return list(self._clusters)
 
     def get_region_for_cluster(self, cluster_name: str):
-        _ = cluster_name
-        return "us-west-2"
+        for cluster in self._clusters:
+            if cluster.cluster_name == cluster_name:
+                return cluster.region
+        return self.regions[0] if self.regions else "us-west-2"
 
     def get_cluster_by_name(self, cluster_name: str, force_refresh: bool = False):
         _ = force_refresh
-        return DummyClusterInfo(cluster_name, "us-west-2")
+        for cluster in self._clusters:
+            if cluster.cluster_name == cluster_name:
+                return cluster
+        return DummyClusterInfo(cluster_name, self.get_region_for_cluster(cluster_name))
 
     def describe_cluster(self, cluster_name: str, region: str):
+        for cluster in self._clusters:
+            if cluster.cluster_name == cluster_name and cluster.region == region:
+                return cluster
         return DummyClusterInfo(cluster_name, region)
 
     def fetch_headnode_status(self, cluster):
@@ -494,6 +524,39 @@ class DummyS3Client:
     def get_object(self, Bucket: str, Key: str, **kwargs):  # noqa: N803
         _ = (Bucket, Key, kwargs)
         return {"Body": io.BytesIO(b"alpha\nbeta\n")}
+
+
+class DummyAdminBucketSession:
+    def __init__(self, **kwargs) -> None:
+        self.kwargs = kwargs
+
+    def client(self, service_name: str, region_name: str | None = None):
+        _ = region_name
+        if service_name == "ec2":
+            return SimpleNamespace(
+                describe_key_pairs=lambda: {"KeyPairs": [{"KeyName": "omics-key"}]},
+                describe_availability_zones=lambda Filters=None: {
+                    "AvailabilityZones": [
+                        {"ZoneName": "us-west-2a"},
+                        {"ZoneName": "us-west-2b"},
+                    ]
+                },
+            )
+        assert service_name == "s3"
+        return SimpleNamespace(
+            list_buckets=lambda: {
+                "Buckets": [
+                    {
+                        "Name": "omics-secondary",
+                        "CreationDate": datetime(2026, 3, 26, 12, 30, tzinfo=timezone.utc),
+                    },
+                    {
+                        "Name": "omics-primary",
+                        "CreationDate": datetime(2026, 3, 25, 9, 15, tzinfo=timezone.utc),
+                    },
+                ]
+            }
+        )
 
 
 def _settings() -> Settings:
@@ -545,6 +608,16 @@ def _create_test_app(*, admin: bool = True):
     return app, resources
 
 
+def _verification_result(
+    *, has_failures: bool = False, failing_partitions: list[str] | None = None
+):
+    partitions = [
+        SimpleNamespace(partition=partition, status="FAIL")
+        for partition in list(failing_partitions or [])
+    ]
+    return SimpleNamespace(has_failures=has_failures, partitions=partitions)
+
+
 def test_create_app_uses_package_version() -> None:
     app, _resources = _create_test_app(admin=True)
 
@@ -553,8 +626,16 @@ def test_create_app_uses_package_version() -> None:
 
 def test_admin_routes_cover_me_user_search_client_tokens_and_clusters() -> None:
     app, resources = _create_test_app(admin=True)
+    app.state.settings.aws_profile = "lsmc"
 
-    with TestClient(app) as client:
+    with (
+        TestClient(app) as client,
+        patch("daylib_ursa.workset_api.boto3.Session", DummyAdminBucketSession),
+        patch(
+            "daylib_ursa.workset_api.run_cluster_partition_verification",
+            return_value=_verification_result(),
+        ),
+    ):
         me = client.get("/api/v1/me", headers={"Authorization": "Bearer atlas-token"})
         users = client.get("/api/v1/admin/users", headers={"Authorization": "Bearer atlas-token"})
         registration = client.post(
@@ -632,6 +713,9 @@ def test_admin_routes_cover_me_user_search_client_tokens_and_clusters() -> None:
             "/api/v1/clusters/create-options?region=us-west-2",
             headers={"Authorization": "Bearer atlas-token"},
         )
+        admin_bucket_list = client.get(
+            "/api/v1/admin/s3-buckets", headers={"Authorization": "Bearer atlas-token"}
+        )
         cluster_detail = client.get(
             "/api/v1/clusters/cluster-1?region=us-west-2",
             headers={"Authorization": "Bearer atlas-token"},
@@ -669,7 +753,18 @@ def test_admin_routes_cover_me_user_search_client_tokens_and_clusters() -> None:
     assert cluster_job_detail.status_code == 200
     assert cluster_job_detail.json()["job_euid"] == cluster_job.json()["job_euid"]
     assert cluster_create_options.status_code == 200
-    assert sorted(cluster_create_options.json().keys()) == ["buckets", "keypairs"]
+    assert sorted(cluster_create_options.json().keys()) == [
+        "availability_zones",
+        "buckets",
+        "keypairs",
+    ]
+    assert cluster_create_options.json()["availability_zones"] == ["us-west-2a", "us-west-2b"]
+    assert admin_bucket_list.status_code == 200
+    assert admin_bucket_list.json()["profile"] == "lsmc"
+    assert [item["bucket_name"] for item in admin_bucket_list.json()["buckets"]] == [
+        "omics-primary",
+        "omics-secondary",
+    ]
     assert cluster_detail.status_code == 200
     assert cluster_delete.status_code == 200
     assert cluster_delete.json()["result"]["status"] == "DELETE_IN_PROGRESS"
@@ -679,7 +774,13 @@ def test_admin_routes_cover_me_user_search_client_tokens_and_clusters() -> None:
 def test_gui_routes_cover_remaining_pages_and_logout() -> None:
     app, _resources = _create_test_app(admin=True)
 
-    with TestClient(app) as client:
+    with (
+        TestClient(app) as client,
+        patch(
+            "daylib_ursa.workset_api.run_cluster_partition_verification",
+            return_value=_verification_result(),
+        ),
+    ):
         client.post(
             "/login",
             data={"access_token": "atlas-token", "next_path": "/"},
@@ -733,8 +834,14 @@ def test_gui_routes_cover_remaining_pages_and_logout() -> None:
     assert "Tumor Batch" in worksets_page.text
     assert worksets_new_page.status_code == 200
     assert "Create Workset" in worksets_new_page.text
+    assert "Analysis Repository" in worksets_new_page.text
+    assert "Execution Profile" in worksets_new_page.text
+    assert "Command Preview" in worksets_new_page.text
+    assert "CLI Help Smoke Test" in worksets_new_page.text
     assert workset_detail_page.status_code == 200
     assert "Workset Tumor Batch" in workset_detail_page.text
+    assert "Analysis Command" in workset_detail_page.text
+    assert "Germline WGS SNV" in workset_detail_page.text
     assert manifests_page.status_code == 200
     assert "Manifest One" in manifests_page.text
     assert manifest_detail_page.status_code == 200
@@ -753,6 +860,14 @@ def test_gui_routes_cover_remaining_pages_and_logout() -> None:
     assert "session token" in token_detail_page.text
     assert clusters_page.status_code == 200
     assert "cluster-1" in clusters_page.text
+    assert 'list="cc-region-options"' in clusters_page.text
+    assert 'value="us-east-1"' in clusters_page.text
+    assert 'value="us-east-2"' in clusters_page.text
+    assert 'value="ap-south-1"' in clusters_page.text
+    assert 'value="eu-central-1"' in clusters_page.text
+    assert "Availability Zone" in clusters_page.text
+    assert "Verify Partition Instances" in clusters_page.text
+    assert "Calculate Spot Pricing Per Partition" in clusters_page.text
     assert cluster_detail_page.status_code == 200
     assert "Cluster cluster-1" in cluster_detail_page.text
     assert cluster_job_page.status_code == 200
@@ -771,10 +886,82 @@ def test_gui_routes_cover_remaining_pages_and_logout() -> None:
     assert logout.headers["location"] == "/auth/error?reason=cognito_logout_misconfigured"
 
 
+def test_cluster_scan_regions_update_refreshes_runtime_service() -> None:
+    app, _resources = _create_test_app(admin=True)
+    app.state.settings.aws_profile = "lsmc"
+
+    updated_config = SimpleNamespace(
+        get_allowed_regions=lambda: ["us-west-2", "us-east-1", "eu-central-1"],
+        config_path=Path("/opt/dayhoff/repo/.dayhoff/deployments/inflec3/config/ursa.yaml"),
+        aws_profile="lsmc",
+    )
+
+    with (
+        TestClient(app) as client,
+        patch("daylib_ursa.workset_api.update_config_regions", return_value=updated_config),
+    ):
+        response = client.post(
+            "/api/v1/clusters/scan-regions",
+            headers={"Authorization": "Bearer atlas-token"},
+            json={"regions_csv": "us-west-2, us-east-1, eu-central-1"},
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["regions"] == ["us-west-2", "us-east-1", "eu-central-1"]
+    assert response.json()["regions_csv"] == "us-west-2,us-east-1,eu-central-1"
+    assert app.state.settings.ursa_allowed_regions == "us-west-2,us-east-1,eu-central-1"
+    assert app.state.cluster_service.regions == ["us-west-2", "us-east-1", "eu-central-1"]
+    assert app.state.cluster_job_manager.cluster_service is app.state.cluster_service
+
+
+def test_clusters_page_groups_regions_and_surfaces_pending_create_jobs() -> None:
+    app, resources = _create_test_app(admin=True)
+    app.state.cluster_service = DummyClusterService(
+        clusters=[
+            DummyClusterInfo("lsmc-20260413", "us-west-2"),
+            DummyClusterInfo("cluster-east", "us-east-1"),
+        ],
+        regions=["us-west-2", "us-east-1", "eu-central-1"],
+    )
+    app.state.cluster_job_manager.cluster_service = app.state.cluster_service
+    resources.add_cluster_job(
+        cluster_name="test-del-me",
+        owner_user_id=ADMIN_USER_ID,
+        sponsor_user_id=ADMIN_USER_ID,
+    )
+
+    with TestClient(app) as client:
+        client.post(
+            "/login",
+            data={"access_token": "atlas-token", "next_path": "/clusters"},
+            follow_redirects=False,
+        )
+        response = client.get("/clusters")
+
+    assert response.status_code == 200
+    assert "Cluster Scan Regions" in response.text
+    assert 'value="us-west-2,us-east-1,eu-central-1"' in response.text
+    assert "Scanning regions: <strong>us-west-2, us-east-1, eu-central-1</strong>" in response.text
+    assert "Create Jobs In Flight" in response.text
+    assert "test-del-me" in response.text
+    assert "lsmc-20260413" in response.text
+    assert "cluster-east" in response.text
+    assert "us-west-2" in response.text
+    assert "us-east-1" in response.text
+    assert "eu-central-1" in response.text
+    assert "1 create job in flight." in response.text
+
+
 def test_gui_routes_use_session_auth_and_gate_admin_pages() -> None:
     app, _resources = _create_test_app(admin=True)
 
-    with TestClient(app) as client:
+    with (
+        TestClient(app) as client,
+        patch(
+            "daylib_ursa.workset_api.run_cluster_partition_verification",
+            return_value=_verification_result(),
+        ),
+    ):
         redirect = client.get("/", follow_redirects=False)
         login_page = client.get("/login")
         login = client.post(
@@ -801,6 +988,7 @@ def test_gui_routes_use_session_auth_and_gate_admin_pages() -> None:
         session_me = client.get("/api/v1/me")
         token_detail_page = client.get(f"/tokens/{user_token.json()['token_euid']}")
         cluster_job_page = client.get(f"/clusters/jobs/{cluster_job.json()['job_euid']}")
+        admin_home = client.get("/admin", follow_redirects=False)
         admin_page = client.get("/admin/tokens")
         admin_config_page = client.get("/admin/config")
 
@@ -814,6 +1002,9 @@ def test_gui_routes_use_session_auth_and_gate_admin_pages() -> None:
     assert "Usage Summary" in usage_page.text
     assert buckets_page.status_code == 200
     assert "S3 Bucket Management" in buckets_page.text
+    assert 'href="/admin"' in dashboard.text
+    assert "Admin Access" in dashboard.text
+    assert "List Buckets" in buckets_page.text
     assert user_token.status_code == 201
     assert cluster_job.status_code == 202
     assert session_me.status_code == 200
@@ -822,9 +1013,145 @@ def test_gui_routes_use_session_auth_and_gate_admin_pages() -> None:
     assert "session token" in token_detail_page.text
     assert cluster_job_page.status_code == 200
     assert "Cluster Job" in cluster_job_page.text
+    assert admin_home.status_code == 303
+    assert admin_home.headers["location"] == "/admin/tokens"
     assert admin_page.status_code == 200
     assert admin_config_page.status_code == 200
     assert "Configuration" in admin_config_page.text
+
+
+def test_cluster_create_blocks_when_partition_verification_fails() -> None:
+    app, resources = _create_test_app(admin=True)
+
+    with (
+        TestClient(app) as client,
+        patch(
+            "daylib_ursa.workset_api.run_cluster_partition_verification",
+            return_value=_verification_result(
+                has_failures=True,
+                failing_partitions=["i192bigmem"],
+            ),
+        ),
+    ):
+        response = client.post(
+            "/api/v1/clusters",
+            headers={"Authorization": "Bearer atlas-token"},
+            json={
+                "cluster_name": "cluster-2",
+                "region": "us-west-2",
+                "region_az": "us-west-2d",
+                "ssh_key_name": "omics-key",
+                "s3_bucket_name": "ursa-bucket",
+            },
+        )
+
+    assert response.status_code == 400
+    assert (
+        response.json()["detail"]
+        == "Create blocked because partition verification found no current Spot availability for: i192bigmem."
+    )
+    assert resources.cluster_jobs == {}
+
+
+def test_cluster_partition_prechecks_cover_pass_warn_fail_and_pricing() -> None:
+    app, _resources = _create_test_app(admin=True)
+    snapshot = {
+        "captured_at": "2026-04-15T18:00:00Z",
+        "cluster_config_path": "/tmp/prod_cluster.yaml",
+        "points": [
+            {
+                "region": "us-west-2",
+                "availability_zone": "us-west-2a",
+                "partition": "i8",
+                "instance_type": "c7i.2xlarge",
+                "hourly_spot_price": 0.42,
+            },
+            {
+                "region": "us-west-2",
+                "availability_zone": "us-west-2a",
+                "partition": "i192",
+                "instance_type": "c7i.48xlarge",
+                "hourly_spot_price": 8.4,
+            },
+            {
+                "region": "us-west-2",
+                "availability_zone": "us-west-2a",
+                "partition": "i192",
+                "instance_type": "m7i.48xlarge",
+                "hourly_spot_price": 9.6,
+            },
+            {
+                "region": "us-west-2",
+                "availability_zone": "us-west-2b",
+                "partition": "i192bigmem",
+                "instance_type": "r7i.48xlarge",
+                "hourly_spot_price": 12.1,
+            },
+        ],
+    }
+
+    with (
+        TestClient(app) as client,
+        patch(
+            "daylib_ursa.workset_api.load_daylily_partition_instance_types",
+            return_value=(
+                Path("/tmp/prod_cluster.yaml"),
+                {
+                    "i8": ["c7i.2xlarge", "m7i.2xlarge"],
+                    "i192": ["c7i.48xlarge", "m7i.48xlarge"],
+                    "i192bigmem": ["r7i.48xlarge"],
+                },
+            ),
+        ),
+        patch(
+            "daylib_ursa.workset_api.collect_daylily_cluster_pricing_snapshot",
+            return_value=snapshot,
+        ),
+    ):
+        verification = client.post(
+            "/api/v1/clusters/verify-partitions",
+            headers={"Authorization": "Bearer atlas-token"},
+            json={"region": "us-west-2", "region_az": "us-west-2a"},
+        )
+        pricing = client.post(
+            "/api/v1/clusters/partition-pricing",
+            headers={"Authorization": "Bearer atlas-token"},
+            json={"region": "us-west-2"},
+        )
+
+    assert verification.status_code == 200, verification.text
+    assert verification.json()["has_failures"] is True
+    assert [item["status"] for item in verification.json()["partitions"]] == [
+        "WARN",
+        "PASS",
+        "FAIL",
+    ]
+    assert verification.json()["partitions"][0]["missing_instance_types"] == ["m7i.2xlarge"]
+    assert verification.json()["partitions"][1]["spot_available_instance_types"] == [
+        "c7i.48xlarge",
+        "m7i.48xlarge",
+    ]
+    assert verification.json()["partitions"][2]["summary"].startswith(
+        "No configured instance types"
+    )
+
+    assert pricing.status_code == 200, pricing.text
+    assert pricing.json()["captured_at"] == "2026-04-15T18:00:00Z"
+    assert pricing.json()["availability_zones"] == ["us-west-2a", "us-west-2b"]
+    assert [item["partition"] for item in pricing.json()["partitions"]] == [
+        "i8",
+        "i192",
+        "i192bigmem",
+    ]
+    assert pricing.json()["partitions"][0]["availability_zones"][0]["count"] == 1
+    assert pricing.json()["partitions"][0]["availability_zones"][0]["mean"] == 0.42
+    assert pricing.json()["partitions"][0]["availability_zones"][1]["count"] == 0
+    assert pricing.json()["partitions"][1]["availability_zones"][0]["count"] == 2
+    assert pricing.json()["partitions"][1]["availability_zones"][0]["median"] == 9.0
+    assert pricing.json()["partitions"][1]["availability_zones"][0]["min"] == 8.4
+    assert pricing.json()["partitions"][1]["availability_zones"][0]["max"] == 9.6
+    assert pricing.json()["partitions"][2]["availability_zones"][0]["count"] == 0
+    assert pricing.json()["partitions"][2]["availability_zones"][1]["mean"] == 12.1
 
 
 def test_gui_admin_pages_reject_non_admin_sessions() -> None:
@@ -832,6 +1159,15 @@ def test_gui_admin_pages_reject_non_admin_sessions() -> None:
 
     with TestClient(app) as client:
         client.post("/login", data={"access_token": "atlas-token", "next_path": "/"})
+        dashboard = client.get("/")
+        buckets_page = client.get("/buckets")
+        admin_home = client.get("/admin", follow_redirects=False)
         response = client.get("/admin/tokens", follow_redirects=False)
 
+    assert dashboard.status_code == 200
+    assert 'href="/admin"' not in dashboard.text
+    assert "Admin Access" not in dashboard.text
+    assert buckets_page.status_code == 200
+    assert "List Buckets" not in buckets_page.text
+    assert admin_home.status_code == 403
     assert response.status_code == 403

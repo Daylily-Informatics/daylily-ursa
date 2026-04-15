@@ -269,6 +269,9 @@ def test_login_page_renders_banner_footer_and_favicon(monkeypatch):
     assert _stable_deployment_color_hex("staging") in response.text
     assert _stable_region_color_hex("us-west-2") in response.text
     assert "/ui/static/favicon.svg" in response.text
+    assert 'class="auth-logo"' in response.text
+    assert 'class="footer-logo-icon"' in response.text
+    assert response.text.count("/ui/static/favicon.svg") >= 3
     assert "Sign In with Cognito" in response.text
     assert "/auth/login?next=/" in response.text
     assert "Branch: codex/daylily-ursa-gui-chrome-scm" in response.text
@@ -303,6 +306,10 @@ def test_dashboard_renders_environment_chrome_and_footer_metadata(monkeypatch):
     assert "INFLEC3" in response.text
     assert _stable_deployment_color_hex("inflec3") in response.text
     assert _stable_region_color_hex("us-east-1") in response.text
+    assert 'class="logo-mark"' in response.text
+    assert 'class="dashboard-brand-icon"' in response.text
+    assert 'class="footer-logo-icon"' in response.text
+    assert response.text.count("/ui/static/favicon.svg") >= 4
     assert "Branch: codex/daylily-ursa-gui-chrome-scm" in response.text
     assert "Tag: v1.2.3" in response.text
     assert "Commit: abc1234" in response.text
@@ -750,7 +757,7 @@ def test_auth_callback_passes_paired_access_token_for_id_token_verification(monk
     captured: dict[str, str | None] = {}
     monkeypatch.setattr(
         auth_dependencies,
-        "decode_jwt_unverified",
+        "_decode_unverified_claims",
         lambda _token: {"token_use": "id"},
     )
 

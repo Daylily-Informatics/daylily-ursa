@@ -49,6 +49,7 @@ def _yaml_seed_from_ursa_config() -> dict[str, object]:
 
     seeded = {
         "aws_profile": cfg.aws_profile,
+        "ursa_allowed_regions": ",".join(getattr(cfg, "get_allowed_regions", lambda: [])()),
         "ursa_portal_default_customer_id": cfg.ursa_portal_default_customer_id,
         "cognito_group_role_map": cfg.cognito_group_role_map,
         # Missing YAML allowlists should use the existing empty-string sentinel,

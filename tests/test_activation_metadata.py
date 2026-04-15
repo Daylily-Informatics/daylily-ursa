@@ -3,6 +3,8 @@ from __future__ import annotations
 import tomllib
 from pathlib import Path
 
+from daylib_ursa.ephemeral_cluster.runner import REQUIRED_DAYLILY_EC_VERSION
+
 
 def _load_pyproject() -> str:
     pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
@@ -24,7 +26,17 @@ def test_pyproject_uses_requested_internal_package_versions() -> None:
     assert "cli-core-yo==2.0.0" in dependencies
     assert "daylily-auth-cognito==2.0.2" in dependencies
     assert "daylily-tapdb==5.1.0" in dependencies
-    assert "daylily-ephemeral-cluster==0.7.614" in cluster_extra
+    assert "daylily-ephemeral-cluster==2.0.2" in cluster_extra
+
+
+def test_daylily_ec_pin_is_aligned_across_runtime_and_bootstrap() -> None:
+    pyproject = tomllib.loads(_load_pyproject())
+    cluster_extra = pyproject["project"]["optional-dependencies"]["cluster"]
+    activate_script = (Path(__file__).resolve().parents[1] / "activate").read_text(encoding="utf-8")
+
+    assert REQUIRED_DAYLILY_EC_VERSION == "2.0.2"
+    assert f"daylily-ephemeral-cluster=={REQUIRED_DAYLILY_EC_VERSION}" in cluster_extra
+    assert f'"daylily-ephemeral-cluster=={REQUIRED_DAYLILY_EC_VERSION}"' in activate_script
 
 
 def test_activate_bootstraps_local_ursa_repo_only() -> None:
@@ -54,10 +66,13 @@ def test_activate_bootstraps_local_ursa_repo_only() -> None:
     assert "pre-commit install --hook-type pre-commit --hook-type pre-push" in activate_script
     assert "URSA_REQUIRED_IMPORTS=(" in activate_script
     assert '"daylily_tapdb:daylily-tapdb"' in activate_script
+    assert '"daylily_ec:daylily-ephemeral-cluster"' in activate_script
+    assert '"daylily_omics_analysis:daylily-omics-analysis"' in activate_script
     assert '"pytest:pytest"' in activate_script
-    assert 'URSA_PIP_INSTALL_EXTRAS="[auth,dev]"' in activate_script
+    assert 'URSA_PIP_INSTALL_EXTRAS="[auth,cluster,dev]"' in activate_script
     assert 'python -m pip install -e "$install_target" -q' in activate_script
     assert 'install_target="${SCRIPT_DIR}${URSA_PIP_INSTALL_EXTRAS}"' in activate_script
+    assert "Installing local Ursa checkout with auth+cluster+dev extras" in activate_script
     assert "env_created=0" in activate_script
     assert "env_created=1" in activate_script
     assert 'if [ "${env_created}" -eq 1 ]; then' in activate_script

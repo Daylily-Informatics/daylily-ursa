@@ -1,5 +1,47 @@
 {% extends "base.html" %}
 
+{% block extra_head %}
+<style>
+    .cluster-precheck-results {
+        margin-top: 1.5rem;
+        padding-top: 1rem;
+        border-top: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .cluster-precheck-header {
+        margin-bottom: 1rem;
+    }
+
+    .cluster-precheck-chart {
+        position: relative;
+        height: 320px;
+        margin-top: 1rem;
+    }
+
+    .cluster-precheck-summary th,
+    .cluster-precheck-summary td {
+        white-space: nowrap;
+    }
+
+    .cluster-precheck-detail {
+        white-space: normal;
+        min-width: 16rem;
+    }
+
+    .cluster-region-section + .cluster-region-section {
+        margin-top: 2rem;
+    }
+
+    .cluster-region-header {
+        margin-bottom: 1rem;
+    }
+
+    .cluster-job-card {
+        border-style: dashed;
+    }
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="container">
     <div class="page-header d-flex justify-between align-center flex-wrap gap-lg">
@@ -20,6 +62,45 @@
     </div>
 
     {% if is_admin %}
+    <div class="card mb-xl">
+        <div class="card-header d-flex justify-between align-center flex-wrap gap-md">
+            <div>
+                <h3 class="card-title" style="margin-bottom: 0.25rem;">
+                    <i class="fas fa-globe"></i> Cluster Scan Regions
+                </h3>
+                <div class="text-sm text-muted">Controls which AWS regions Ursa scans for live ParallelCluster inventory.</div>
+            </div>
+            <span class="badge badge-outline">Profile {{ aws_profile_label }}</span>
+        </div>
+        <div class="card-body">
+            <div class="grid grid-2 gap-lg">
+                <div>
+                    <label class="form-label">Scanned Regions CSV</label>
+                    <input
+                        class="form-input"
+                        id="cluster-scan-regions-csv"
+                        type="text"
+                        value="{{ scan_regions_csv }}"
+                        placeholder="us-west-2,us-east-1,eu-central-1"
+                        autocomplete="off"
+                        spellcheck="false"
+                    >
+                    <div class="text-sm text-muted mt-xs">Existing region-specific SSH settings are preserved for unchanged regions.</div>
+                </div>
+                <div>
+                    <label class="form-label">Current Regions</label>
+                    <div class="text-sm">{{ regions | join(', ') if regions else '—' }}</div>
+                    <div class="text-sm text-muted mt-xs">Refresh the page after saving to rescan with the new region set.</div>
+                </div>
+            </div>
+            <div class="d-flex gap-md mt-md flex-wrap">
+                <button class="btn btn-outline" type="button" onclick="saveClusterScanRegions()" id="cluster-scan-regions-save-btn">
+                    <i class="fas fa-floppy-disk"></i> Save Scan Regions
+                </button>
+            </div>
+        </div>
+    </div>
+
     <details class="card mb-xl" id="create-cluster-panel" {% if create_mode %}open{% endif %}>
         <summary class="card-header cursor-pointer d-flex justify-between align-center">
             <div>
@@ -34,20 +115,28 @@
             <div class="grid grid-2 gap-lg">
                 <div>
                     <label class="form-label">Region</label>
-                    <select class="form-select" id="cc-region">
-                        <option value="">Select region</option>
-                        {% for r in regions %}
-                        <option value="{{ r }}" {% if prefill_region == r %}selected{% endif %}>{{ r }}</option>
+                    <input
+                        class="form-input"
+                        id="cc-region"
+                        type="text"
+                        list="cc-region-options"
+                        value="{{ prefill_region }}"
+                        placeholder="us-west-2"
+                        autocomplete="off"
+                        spellcheck="false"
+                        onchange="handleClusterRegionChange()"
+                    >
+                    <datalist id="cc-region-options">
+                        {% for r in create_regions %}
+                        <option value="{{ r }}"></option>
                         {% endfor %}
-                    </select>
+                    </datalist>
+                    <div class="text-sm text-muted mt-xs">Choose a suggested region or type another AWS region.</div>
                 </div>
                 <div>
-                    <label class="form-label">Availability Zone Suffix</label>
-                    <select class="form-select" id="cc-az-suffix">
-                        <option value="a">a</option>
-                        <option value="b">b</option>
-                        <option value="c">c</option>
-                        <option value="d">d</option>
+                    <label class="form-label">Availability Zone</label>
+                    <select class="form-select" id="cc-region-az" onchange="handleClusterRegionAzChange()">
+                        <option value="">Select availability zone</option>
                     </select>
                 </div>
                 <div>
@@ -85,12 +174,20 @@
             </div>
             <div class="d-flex gap-md mt-md flex-wrap">
                 <button class="btn btn-outline" type="button" onclick="loadCreateOptions()" id="cc-load-options-btn">
-                    <i class="fas fa-cloud-download-alt"></i> Load Keypairs & Buckets
+                    <i class="fas fa-cloud-download-alt"></i> Load Region Options
+                </button>
+                <button class="btn btn-outline" type="button" onclick="verifyPartitionInstances()" id="cc-verify-btn">
+                    <i class="fas fa-shield-halved"></i> Verify Partition Instances
+                </button>
+                <button class="btn btn-outline" type="button" onclick="calculatePartitionPricing()" id="cc-pricing-btn">
+                    <i class="fas fa-chart-column"></i> Calculate Spot Pricing Per Partition
                 </button>
                 <button class="btn btn-primary" type="button" onclick="createCluster()" id="cc-submit-btn">
                     <i class="fas fa-play"></i> Start Create Job
                 </button>
             </div>
+            <section class="cluster-precheck-results d-none" id="cc-verification-results"></section>
+            <section class="cluster-precheck-results d-none" id="cc-pricing-results"></section>
         </div>
     </details>
     {% endif %}
@@ -164,8 +261,8 @@
         <div class="stat-card">
             <div class="card-icon warning"><i class="fas fa-microchip"></i></div>
             <div>
-                <div class="stat-value" id="headnodes-running">{{ clusters | selectattr('head_node') | selectattr('head_node.state', 'equalto', 'running') | list | length }}</div>
-                <div class="stat-label">Headnodes Active</div>
+                <div class="stat-value" id="active-create-jobs">{{ active_create_jobs_count }}</div>
+                <div class="stat-label">Create Jobs In Flight</div>
             </div>
         </div>
     </div>
@@ -175,74 +272,136 @@
         Scanning regions: <strong>{{ regions | join(', ') }}</strong>
     </div>
 
-    {% if clusters %}
-    <div class="grid grid-2 mb-xl" id="clusters-grid">
-        {% for cluster in clusters %}
-        <div class="card cluster-card" data-status="{{ cluster.cluster_status }}" data-region="{{ cluster.region }}">
-            <div class="card-header d-flex justify-between align-center">
+    {% if cluster_regions %}
+        {% for region_group in cluster_regions %}
+        <section class="cluster-region-section">
+            <div class="cluster-region-header d-flex justify-between align-center flex-wrap gap-md">
                 <div>
                     <h3 class="card-title" style="margin-bottom: 0.25rem;">
-                        <i class="fas fa-server"></i> {{ cluster.cluster_name }}
+                        <i class="fas fa-globe"></i> {{ region_group.region }}
                     </h3>
-                    <span class="badge badge-outline">{{ cluster.region }}</span>
+                    <div class="text-sm text-muted">{{ region_group.live_count }} live cluster{{ '' if region_group.live_count == 1 else 's' }}, {{ region_group.pending_count }} create job{{ '' if region_group.pending_count == 1 else 's' }} in flight.</div>
                 </div>
-                <div class="d-flex gap-sm">
-                    <button class="btn btn-sm btn-outline" type="button" onclick="window.location.assign('/clusters/{{ cluster.cluster_name }}?region={{ cluster.region }}')">
-                        <i class="fas fa-eye"></i>
-                    </button>
-                    <button class="btn btn-sm btn-danger" type="button" onclick="deleteCluster('{{ cluster.cluster_name }}', '{{ cluster.region }}')">
-                        <i class="fas fa-trash"></i>
-                    </button>
-                    <span class="badge badge-{{ 'success' if cluster.cluster_status == 'CREATE_COMPLETE' else 'warning' if 'IN_PROGRESS' in cluster.cluster_status else 'error' if 'FAILED' in cluster.cluster_status else 'secondary' }}">
-                        {{ cluster.cluster_status }}
-                    </span>
+                <div class="d-flex gap-sm flex-wrap">
+                    <span class="badge badge-outline">{{ region_group.region }}</span>
+                    {% if region_group.pending_count %}
+                    <span class="badge badge-warning">{{ region_group.pending_count }} creating</span>
+                    {% endif %}
                 </div>
             </div>
-            <div class="card-body">
-                {% if cluster.head_node %}
-                <div class="mb-md">
-                    <h4 class="text-sm text-muted mb-sm">Head Node</h4>
-                    <div class="d-flex flex-wrap gap-md">
+
+            {% if region_group.pending_jobs or region_group.clusters %}
+            <div class="grid grid-2 mb-xl">
+                {% for job in region_group.pending_jobs %}
+                <div class="card cluster-card cluster-job-card" data-region="{{ job.region }}" data-job-state="{{ job.state }}">
+                    <div class="card-header d-flex justify-between align-center">
                         <div>
-                            <span class="text-muted text-xs">Instance Type</span>
-                            <div class="text-sm"><code>{{ cluster.head_node.instance_type }}</code></div>
+                            <h3 class="card-title" style="margin-bottom: 0.25rem;">
+                                <i class="fas fa-spinner fa-spin"></i> {{ job.cluster_name }}
+                            </h3>
+                            <span class="badge badge-outline">{{ job.region }}</span>
                         </div>
-                        <div>
-                            <span class="text-muted text-xs">State</span>
-                            <div class="text-sm"><span class="badge badge-{{ 'success' if cluster.head_node.state == 'running' else 'warning' }}">{{ cluster.head_node.state }}</span></div>
+                        <div class="d-flex gap-sm">
+                            <a class="btn btn-sm btn-outline" href="/clusters/jobs/{{ job.job_euid }}">
+                                <i class="fas fa-eye"></i>
+                            </a>
+                            <span class="badge badge-warning">{{ job.state }}</span>
                         </div>
-                        {% if cluster.head_node.public_ip %}
+                    </div>
+                    <div class="card-body">
+                        <div class="grid grid-2 gap-md">
+                            <div>
+                                <span class="text-muted text-xs">Create Job</span>
+                                <div><a class="mono" href="/clusters/jobs/{{ job.job_euid }}">{{ job.job_euid }}</a></div>
+                            </div>
+                            <div>
+                                <span class="text-muted text-xs">Region/AZ</span>
+                                <div>{{ job.region_az or job.region }}</div>
+                            </div>
+                            <div>
+                                <span class="text-muted text-xs">State</span>
+                                <div><span class="badge badge-warning">{{ job.state }}</span></div>
+                            </div>
+                            <div>
+                                <span class="text-muted text-xs">Queued</span>
+                                <div>{{ job.created_at[:19] if job.created_at else '—' }}</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+
+                {% for cluster in region_group.clusters %}
+                <div class="card cluster-card" data-status="{{ cluster.cluster_status }}" data-region="{{ cluster.region }}">
+                    <div class="card-header d-flex justify-between align-center">
                         <div>
-                            <span class="text-muted text-xs">Public IP</span>
-                            <div class="text-sm"><code>{{ cluster.head_node.public_ip }}</code></div>
+                            <h3 class="card-title" style="margin-bottom: 0.25rem;">
+                                <i class="fas fa-server"></i> {{ cluster.cluster_name }}
+                            </h3>
+                            <span class="badge badge-outline">{{ cluster.region }}</span>
+                        </div>
+                        <div class="d-flex gap-sm">
+                            <button class="btn btn-sm btn-outline" type="button" onclick="window.location.assign('/clusters/{{ cluster.cluster_name }}?region={{ cluster.region }}')">
+                                <i class="fas fa-eye"></i>
+                            </button>
+                            <button class="btn btn-sm btn-danger" type="button" onclick="deleteCluster('{{ cluster.cluster_name }}', '{{ cluster.region }}')">
+                                <i class="fas fa-trash"></i>
+                            </button>
+                            <span class="badge badge-{{ 'success' if cluster.cluster_status == 'CREATE_COMPLETE' else 'warning' if 'IN_PROGRESS' in cluster.cluster_status else 'error' if 'FAILED' in cluster.cluster_status else 'secondary' }}">
+                                {{ cluster.cluster_status }}
+                            </span>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        {% if cluster.head_node %}
+                        <div class="mb-md">
+                            <h4 class="text-sm text-muted mb-sm">Head Node</h4>
+                            <div class="d-flex flex-wrap gap-md">
+                                <div>
+                                    <span class="text-muted text-xs">Instance Type</span>
+                                    <div class="text-sm"><code>{{ cluster.head_node.instance_type }}</code></div>
+                                </div>
+                                <div>
+                                    <span class="text-muted text-xs">State</span>
+                                    <div class="text-sm"><span class="badge badge-{{ 'success' if cluster.head_node.state == 'running' else 'warning' }}">{{ cluster.head_node.state }}</span></div>
+                                </div>
+                                {% if cluster.head_node.public_ip %}
+                                <div>
+                                    <span class="text-muted text-xs">Public IP</span>
+                                    <div class="text-sm"><code>{{ cluster.head_node.public_ip }}</code></div>
+                                </div>
+                                {% endif %}
+                            </div>
                         </div>
                         {% endif %}
-                    </div>
-                </div>
-                {% endif %}
 
-                <div class="grid grid-2 gap-md">
-                    <div>
-                        <span class="text-muted text-xs">Compute Fleet</span>
-                        <div><span class="badge badge-outline">{{ cluster.compute_fleet_status }}</span></div>
-                    </div>
-                    <div>
-                        <span class="text-muted text-xs">Scheduler</span>
-                        <div>{{ cluster.scheduler_type or 'slurm' }}</div>
-                    </div>
-                    <div>
-                        <span class="text-muted text-xs">Created</span>
-                        <div>{{ cluster.creation_time[:19] if cluster.creation_time else '—' }}</div>
-                    </div>
-                    <div>
-                        <span class="text-muted text-xs">Updated</span>
-                        <div>{{ cluster.last_updated_time[:19] if cluster.last_updated_time else '—' }}</div>
+                        <div class="grid grid-2 gap-md">
+                            <div>
+                                <span class="text-muted text-xs">Compute Fleet</span>
+                                <div><span class="badge badge-outline">{{ cluster.compute_fleet_status }}</span></div>
+                            </div>
+                            <div>
+                                <span class="text-muted text-xs">Scheduler</span>
+                                <div>{{ cluster.scheduler_type or 'slurm' }}</div>
+                            </div>
+                            <div>
+                                <span class="text-muted text-xs">Created</span>
+                                <div>{{ cluster.creation_time[:19] if cluster.creation_time else '—' }}</div>
+                            </div>
+                            <div>
+                                <span class="text-muted text-xs">Updated</span>
+                                <div>{{ cluster.last_updated_time[:19] if cluster.last_updated_time else '—' }}</div>
+                            </div>
+                        </div>
                     </div>
                 </div>
+                {% endfor %}
             </div>
-        </div>
+            {% else %}
+            <div class="mb-xl text-muted text-sm">No live clusters or in-flight create jobs in {{ region_group.region }}.</div>
+            {% endif %}
+        </section>
         {% endfor %}
-    </div>
     {% else %}
     <div class="empty-state">
         <div class="empty-state-icon"><i class="fas fa-server"></i></div>
@@ -254,7 +413,36 @@
 {% endblock %}
 
 {% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/@sgratzl/chartjs-chart-boxplot@4.4.4/build/index.umd.min.js"></script>
 <script>
+let clusterVerificationState = null;
+let clusterPricingChart = null;
+
+function clusterActionErrorMessage(error, fallback) {
+    const message = String(error?.message || '').trim();
+    return message || fallback;
+}
+
+async function withClusterButtonBusy(buttonId, loadingMessage, action) {
+    const button = document.getElementById(buttonId);
+    const originalHtml = button?.innerHTML || '';
+    const originalDisabled = button?.disabled || false;
+    if (button) {
+        button.disabled = true;
+        button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Working...';
+    }
+    showLoading(loadingMessage);
+    try {
+        return await action();
+    } finally {
+        hideLoading();
+        if (button) {
+            button.disabled = originalDisabled;
+            button.innerHTML = originalHtml;
+        }
+    }
+}
+
 function toggleCreateClusterPanel() {
     const panel = document.getElementById('create-cluster-panel');
     if (!panel) return;
@@ -269,72 +457,508 @@ function syncManualField(selectId, inputId) {
     }
 }
 
-async function refreshClusters() {
-    await UrsaPortal.apiRequest('/api/v1/clusters?refresh=true');
-    window.location.reload();
+function selectedClusterRegion() {
+    return document.getElementById('cc-region')?.value.trim() || '';
 }
 
-async function loadCreateOptions() {
-    const region = document.getElementById('cc-region')?.value || '';
+function selectedClusterRegionAz() {
+    return document.getElementById('cc-region-az')?.value || '';
+}
+
+function setSelectOptions(selectId, placeholder, values, selectedValue = '') {
+    const selectEl = document.getElementById(selectId);
+    if (!selectEl) return;
+    const currentValue = selectedValue || selectEl.value || '';
+    selectEl.innerHTML = `<option value="">${escapeHtml(placeholder)}</option>` + (values || []).map((value) => `
+        <option value="${escapeHtml(value)}">${escapeHtml(value)}</option>
+    `).join('');
+    if (currentValue && (values || []).includes(currentValue)) {
+        selectEl.value = currentValue;
+    }
+}
+
+function destroyClusterPricingChart() {
+    if (clusterPricingChart) {
+        clusterPricingChart.destroy();
+        clusterPricingChart = null;
+    }
+}
+
+function updateCreateButtonState() {
+    const submitButton = document.getElementById('cc-submit-btn');
+    if (!submitButton) return;
+    const appliesToCurrentSelection = Boolean(
+        clusterVerificationState
+        && clusterVerificationState.region === selectedClusterRegion()
+        && clusterVerificationState.region_az === selectedClusterRegionAz()
+    );
+    submitButton.disabled = Boolean(appliesToCurrentSelection && clusterVerificationState.has_failures);
+}
+
+function clearClusterVerificationResults() {
+    clusterVerificationState = null;
+    const container = document.getElementById('cc-verification-results');
+    if (container) {
+        container.classList.add('d-none');
+        container.innerHTML = '';
+    }
+    updateCreateButtonState();
+}
+
+function clearClusterPricingResults() {
+    destroyClusterPricingChart();
+    const container = document.getElementById('cc-pricing-results');
+    if (container) {
+        container.classList.add('d-none');
+        container.innerHTML = '';
+    }
+}
+
+function clearClusterPrechecks() {
+    clearClusterVerificationResults();
+    clearClusterPricingResults();
+}
+
+function handleClusterRegionChange() {
+    clearClusterPrechecks();
+    setSelectOptions('cc-region-az', 'Select availability zone', []);
+    const region = selectedClusterRegion();
+    if (!region) {
+        return;
+    }
+    loadCreateOptions(false).catch(() => {});
+}
+
+function handleClusterRegionAzChange() {
+    clearClusterPrechecks();
+}
+
+async function refreshClusters() {
+    try {
+        await UrsaPortal.apiRequest('/api/v1/clusters?refresh=true');
+        window.location.reload();
+    } catch (error) {
+        showToast('error', clusterActionErrorMessage(error, 'Failed to refresh clusters'));
+    }
+}
+
+async function saveClusterScanRegions() {
+    const input = document.getElementById('cluster-scan-regions-csv');
+    const regionsCsv = input?.value.trim() || '';
+    await withClusterButtonBusy('cluster-scan-regions-save-btn', 'Saving cluster scan regions...', async () => {
+        try {
+            const result = await UrsaPortal.apiRequest('/api/v1/clusters/scan-regions', {
+                method: 'POST',
+                body: {
+                    regions_csv: regionsCsv,
+                },
+            });
+            showToast('success', `Updated cluster scan regions to ${result.regions.join(', ')}`);
+            window.location.reload();
+        } catch (error) {
+            showToast('error', clusterActionErrorMessage(error, 'Failed to update cluster scan regions'));
+        }
+    });
+}
+
+async function loadCreateOptions(showSuccess = true, showErrors = true) {
+    const region = selectedClusterRegion();
     if (!region) {
         showToast('error', 'Select a region first');
         return;
     }
-    const payload = await UrsaPortal.apiRequest(`/api/v1/clusters/create-options?region=${encodeURIComponent(region)}`);
-    const keySelect = document.getElementById('cc-ssh-key-select');
-    const bucketSelect = document.getElementById('cc-s3-bucket-select');
-    keySelect.innerHTML = '<option value="">Select keypair (or type below)</option>' + (payload.keypairs || []).map((key) => `<option value="${escapeHtml(key)}">${escapeHtml(key)}</option>`).join('');
-    bucketSelect.innerHTML = '<option value="">Select bucket (or type below)</option>' + (payload.buckets || []).map((bucket) => `<option value="${escapeHtml(bucket)}">${escapeHtml(bucket)}</option>`).join('');
-    showToast('success', 'Cluster create options loaded');
+    const run = async () => {
+        try {
+            const payload = await UrsaPortal.apiRequest(`/api/v1/clusters/create-options?region=${encodeURIComponent(region)}`);
+            setSelectOptions('cc-ssh-key-select', 'Select keypair (or type below)', payload.keypairs || []);
+            setSelectOptions('cc-s3-bucket-select', 'Select bucket (or type below)', payload.buckets || []);
+            setSelectOptions(
+                'cc-region-az',
+                'Select availability zone',
+                payload.availability_zones || [],
+                selectedClusterRegionAz(),
+            );
+            clearClusterPrechecks();
+            if (showSuccess) {
+                showToast('success', 'Region options loaded');
+            }
+        } catch (error) {
+            if (showErrors) {
+                showToast('error', clusterActionErrorMessage(error, 'Failed to load region options'));
+            }
+        }
+    };
+    if (showErrors) {
+        await withClusterButtonBusy('cc-load-options-btn', 'Loading region options...', run);
+        return;
+    }
+    await run();
+}
+
+function formatSpotStat(value) {
+    if (value === null || value === undefined) {
+        return '—';
+    }
+    return Number(value).toFixed(4);
+}
+
+const CLUSTER_PRICING_PALETTE = [
+    { backgroundColor: 'rgba(0, 217, 166, 0.2)', borderColor: '#00d9a6', outlierColor: '#e94560' },
+    { backgroundColor: 'rgba(255, 184, 0, 0.2)', borderColor: '#ffb800', outlierColor: '#e94560' },
+    { backgroundColor: 'rgba(67, 33, 202, 0.2)', borderColor: '#4321ca', outlierColor: '#e94560' },
+    { backgroundColor: 'rgba(233, 69, 96, 0.18)', borderColor: '#e94560', outlierColor: '#00d9a6' },
+    { backgroundColor: 'rgba(46, 196, 182, 0.18)', borderColor: '#2ec4b6', outlierColor: '#4321ca' },
+];
+
+function clusterPricingPalette(index) {
+    return CLUSTER_PRICING_PALETTE[index % CLUSTER_PRICING_PALETTE.length];
+}
+
+function requireRegion() {
+    const region = selectedClusterRegion();
+    if (!region) {
+        showToast('error', 'Select a region first');
+        return null;
+    }
+    return region;
+}
+
+function requireRegionAndAz() {
+    const region = selectedClusterRegion();
+    const regionAz = selectedClusterRegionAz();
+    if (!region || !regionAz) {
+        showToast('error', 'Select a region and availability zone first');
+        return null;
+    }
+    return { region, regionAz };
+}
+
+function renderPartitionVerification(result) {
+    const container = document.getElementById('cc-verification-results');
+    if (!container) return;
+
+    const failCount = (result.partitions || []).filter((item) => item.status === 'FAIL').length;
+    const warnCount = (result.partitions || []).filter((item) => item.status === 'WARN').length;
+    const passCount = (result.partitions || []).filter((item) => item.status === 'PASS').length;
+
+    container.innerHTML = `
+        <div class="cluster-precheck-header d-flex justify-between align-center flex-wrap gap-md">
+            <div>
+                <h4 class="card-title" style="margin-bottom: 0.25rem;">Partition Instance Verification</h4>
+                <div class="text-sm text-muted">Current Spot availability for ${escapeHtml(result.region_az)} using ${escapeHtml(result.cluster_config_path)}.</div>
+            </div>
+            <div class="d-flex gap-sm flex-wrap">
+                <span class="badge badge-success">${passCount} PASS</span>
+                <span class="badge badge-warning">${warnCount} WARN</span>
+                <span class="badge badge-error">${failCount} FAIL</span>
+            </div>
+        </div>
+        <div class="table-wrapper">
+            <table class="table cluster-precheck-summary">
+                <thead>
+                    <tr>
+                        <th>Partition</th>
+                        <th>Status</th>
+                        <th>Available</th>
+                        <th>Missing</th>
+                        <th class="cluster-precheck-detail">Summary</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${(result.partitions || []).map((item) => `
+                        <tr>
+                            <td><strong>${escapeHtml(item.partition)}</strong></td>
+                            <td><span class="badge badge-${item.status === 'PASS' ? 'success' : item.status === 'WARN' ? 'warning' : 'error'}">${escapeHtml(item.status)}</span></td>
+                            <td>${escapeHtml((item.spot_available_instance_types || []).join(', ') || '—')}</td>
+                            <td>${escapeHtml((item.missing_instance_types || []).join(', ') || '—')}</td>
+                            <td class="cluster-precheck-detail">${escapeHtml(item.summary)}</td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        </div>
+    `;
+    container.classList.remove('d-none');
+}
+
+async function verifyPartitionInstances() {
+    const selection = requireRegionAndAz();
+    if (!selection) return;
+    await withClusterButtonBusy('cc-verify-btn', 'Verifying partition instances...', async () => {
+        try {
+            const result = await runPartitionVerification(selection, true);
+            if (result.has_failures) {
+                return;
+            }
+        } catch (error) {
+            showToast('error', clusterActionErrorMessage(error, 'Partition verification failed'));
+        }
+    });
+}
+
+async function runPartitionVerification(selection, showSuccessToast = false) {
+    const result = await UrsaPortal.apiRequest('/api/v1/clusters/verify-partitions', {
+        method: 'POST',
+        body: {
+            region: selection.region,
+            region_az: selection.regionAz,
+        },
+    });
+    clusterVerificationState = result;
+    renderPartitionVerification(result);
+    updateCreateButtonState();
+    if (result.has_failures) {
+        showToast('error', 'Verification found blocking partition failures');
+    } else if (showSuccessToast) {
+        showToast('success', 'Partition verification completed');
+    }
+    return result;
+}
+
+function findPartitionPricingZone(partition, availabilityZone) {
+    return (partition.availability_zones || []).find((item) => item.availability_zone === availabilityZone) || null;
+}
+
+function flattenPartitionPricingRows(result) {
+    const rows = [];
+    (result.partitions || []).forEach((partition) => {
+        (partition.availability_zones || []).forEach((availabilityZone) => {
+            rows.push({
+                partition: partition.partition,
+                availability_zone: availabilityZone.availability_zone,
+                count: availabilityZone.count ?? 0,
+                min: availabilityZone.min,
+                q1: availabilityZone.q1,
+                median: availabilityZone.median,
+                mean: availabilityZone.mean,
+                q3: availabilityZone.q3,
+                max: availabilityZone.max,
+                points: availabilityZone.points || [],
+            });
+        });
+    });
+    return rows;
+}
+
+function renderPartitionPricingChart(partitions, availabilityZones) {
+    destroyClusterPricingChart();
+    const canvas = document.getElementById('cc-pricing-chart');
+    if (!canvas || typeof Chart === 'undefined' || !(availabilityZones || []).length) {
+        return;
+    }
+    clusterPricingChart = new Chart(canvas, {
+        type: 'boxplot',
+        data: {
+            labels: partitions.map((item) => item.partition),
+            datasets: availabilityZones.map((availabilityZone, index) => {
+                const palette = clusterPricingPalette(index);
+                return {
+                    type: 'boxplot',
+                    label: availabilityZone,
+                    data: partitions.map((partition) => {
+                        const zone = findPartitionPricingZone(partition, availabilityZone);
+                        return (zone?.points || []).map((point) => point.hourly_spot_price);
+                    }),
+                    backgroundColor: palette.backgroundColor,
+                    borderColor: palette.borderColor,
+                    borderWidth: 1.5,
+                    outlierColor: palette.outlierColor,
+                };
+            }),
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: {
+                mode: 'index',
+                intersect: false,
+            },
+            scales: {
+                y: {
+                    title: {
+                        display: true,
+                        text: 'USD / hour',
+                    },
+                },
+            },
+            plugins: {
+                legend: {
+                    position: 'bottom',
+                },
+                tooltip: {
+                    callbacks: {
+                        afterBody(items) {
+                            const item = items && items[0];
+                            if (!item) return [];
+                            const partition = partitions[item.dataIndex];
+                            const availabilityZone = availabilityZones[item.datasetIndex];
+                            const zone = findPartitionPricingZone(partition, availabilityZone);
+                            if (!zone) return [];
+                            return [
+                                `Count: ${zone.count ?? 0}`,
+                                `Mean: ${formatSpotStat(zone.mean)}`,
+                                `Median: ${formatSpotStat(zone.median)}`,
+                                `Min: ${formatSpotStat(zone.min)}`,
+                                `Max: ${formatSpotStat(zone.max)}`,
+                            ];
+                        },
+                    },
+                },
+            },
+        },
+    });
+}
+
+function renderPartitionPricing(result) {
+    const container = document.getElementById('cc-pricing-results');
+    if (!container) return;
+    const pricingRows = flattenPartitionPricingRows(result);
+    const pricingSummary = result.availability_zones && result.availability_zones.length
+        ? `Hourly Spot price distribution for ${escapeHtml(result.region)} across ${escapeHtml(String(result.availability_zones.length))} availability zone${result.availability_zones.length === 1 ? '' : 's'} using ${escapeHtml(result.cluster_config_path)}.`
+        : `No Spot price data was returned for ${escapeHtml(result.region)} using ${escapeHtml(result.cluster_config_path)}.`;
+    container.innerHTML = `
+        <div class="cluster-precheck-header d-flex justify-between align-center flex-wrap gap-md">
+            <div>
+                <h4 class="card-title" style="margin-bottom: 0.25rem;">Partition Spot Pricing</h4>
+                <div class="text-sm text-muted">${pricingSummary}</div>
+            </div>
+            <span class="badge badge-outline">${escapeHtml(result.captured_at || '')}</span>
+        </div>
+        <div class="table-wrapper">
+            <table class="table cluster-precheck-summary">
+                <thead>
+                    <tr>
+                        <th>Partition</th>
+                        <th>AZ</th>
+                        <th>Count</th>
+                        <th>Mean</th>
+                        <th>Median</th>
+                        <th>Min</th>
+                        <th>Max</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${pricingRows.length ? pricingRows.map((item) => `
+                        <tr>
+                            <td><strong>${escapeHtml(item.partition)}</strong></td>
+                            <td>${escapeHtml(item.availability_zone)}</td>
+                            <td>${escapeHtml(String(item.count ?? 0))}</td>
+                            <td>${escapeHtml(formatSpotStat(item.mean))}</td>
+                            <td>${escapeHtml(formatSpotStat(item.median))}</td>
+                            <td>${escapeHtml(formatSpotStat(item.min))}</td>
+                            <td>${escapeHtml(formatSpotStat(item.max))}</td>
+                        </tr>
+                    `).join('') : `
+                        <tr>
+                            <td colspan="7" class="text-muted">No Spot price data available for the selected region.</td>
+                        </tr>
+                    `}
+                </tbody>
+            </table>
+        </div>
+        ${pricingRows.length ? `
+            <div class="cluster-precheck-chart">
+                <canvas id="cc-pricing-chart"></canvas>
+            </div>
+        ` : ''}
+    `;
+    container.classList.remove('d-none');
+    renderPartitionPricingChart(result.partitions || [], result.availability_zones || []);
+}
+
+async function calculatePartitionPricing() {
+    const region = requireRegion();
+    if (!region) return;
+    await withClusterButtonBusy('cc-pricing-btn', 'Calculating partition spot pricing...', async () => {
+        try {
+            const result = await UrsaPortal.apiRequest('/api/v1/clusters/partition-pricing', {
+                method: 'POST',
+                body: {
+                    region,
+                },
+            });
+            renderPartitionPricing(result);
+            showToast('success', 'Partition spot pricing calculated');
+        } catch (error) {
+            showToast('error', clusterActionErrorMessage(error, 'Partition pricing calculation failed'));
+        }
+    });
 }
 
 async function createCluster() {
-    const region = document.getElementById('cc-region')?.value || '';
-    const azSuffix = document.getElementById('cc-az-suffix')?.value || '';
-    const clusterName = document.getElementById('cc-cluster-name')?.value.trim() || '';
-    const sshKeyName = document.getElementById('cc-ssh-key')?.value.trim() || '';
-    const s3BucketName = document.getElementById('cc-s3-bucket')?.value.trim() || '';
-    if (!region || !clusterName || !sshKeyName || !s3BucketName) {
-        showToast('error', 'Region, cluster name, SSH key, and S3 bucket are required');
-        return;
-    }
-    const payload = await UrsaPortal.apiRequest('/api/v1/clusters', {
-        method: 'POST',
-        body: {
-            cluster_name: clusterName,
-            region_az: `${region}${azSuffix}`,
-            ssh_key_name: sshKeyName,
-            s3_bucket_name: s3BucketName,
-            owner_user_id: document.getElementById('cc-owner-user-id')?.value.trim() || null,
-            pass_on_warn: document.getElementById('cc-pass-on-warn')?.checked || false,
-            debug: document.getElementById('cc-debug')?.checked || false,
-        },
+    await withClusterButtonBusy('cc-submit-btn', 'Starting cluster create job...', async () => {
+        try {
+            const region = selectedClusterRegion();
+            const regionAz = selectedClusterRegionAz();
+            const clusterName = document.getElementById('cc-cluster-name')?.value.trim() || '';
+            const sshKeyName = document.getElementById('cc-ssh-key')?.value.trim() || '';
+            const s3BucketName = document.getElementById('cc-s3-bucket')?.value.trim() || '';
+            if (!region || !regionAz || !clusterName || !sshKeyName || !s3BucketName) {
+                showToast('error', 'Region, availability zone, cluster name, SSH key, and S3 bucket are required');
+                return;
+            }
+            const verification = await runPartitionVerification({ region, regionAz }, false);
+            if (verification.has_failures) {
+                showToast('error', 'Create blocked until partition verification passes for the selected region and availability zone');
+                return;
+            }
+            const payload = await UrsaPortal.apiRequest('/api/v1/clusters', {
+                method: 'POST',
+                body: {
+                    cluster_name: clusterName,
+                    region,
+                    region_az: regionAz,
+                    ssh_key_name: sshKeyName,
+                    s3_bucket_name: s3BucketName,
+                    owner_user_id: document.getElementById('cc-owner-user-id')?.value.trim() || null,
+                    pass_on_warn: document.getElementById('cc-pass-on-warn')?.checked || false,
+                    debug: document.getElementById('cc-debug')?.checked || false,
+                },
+            });
+            window.location.assign(`/clusters/jobs/${encodeURIComponent(payload.job_euid)}`);
+        } catch (error) {
+            showToast('error', clusterActionErrorMessage(error, 'Failed to start cluster creation'));
+        }
     });
-    window.location.assign(`/clusters/jobs/${encodeURIComponent(payload.job_euid)}`);
 }
 
 async function refreshCreateJobs() {
-    const jobs = await UrsaPortal.apiRequest('/api/v1/clusters/jobs');
-    const tbody = document.getElementById('cluster-create-jobs-tbody');
-    tbody.innerHTML = jobs.length ? jobs.map((job) => `
-        <tr>
-            <td><a href="/clusters/jobs/${encodeURIComponent(job.job_euid)}" class="mono">${escapeHtml(job.job_euid)}</a></td>
-            <td>${escapeHtml(job.cluster_name)}</td>
-            <td>${escapeHtml(job.region_az)}</td>
-            <td><span class="badge badge-${escapeHtml(String(job.state || '').toLowerCase().replace(/_/g, '-'))}">${escapeHtml(job.state)}</span></td>
-            <td>${job.return_code ?? '—'}</td>
-            <td>${escapeHtml(String(job.created_at || '').slice(0, 19))}</td>
-            <td><a href="/clusters/jobs/${encodeURIComponent(job.job_euid)}" class="btn btn-outline btn-sm">View</a></td>
-        </tr>
-    `).join('') : '<tr><td colspan="7" class="text-muted">No create jobs yet.</td></tr>';
+    try {
+        const jobs = await UrsaPortal.apiRequest('/api/v1/clusters/jobs');
+        const tbody = document.getElementById('cluster-create-jobs-tbody');
+        tbody.innerHTML = jobs.length ? jobs.map((job) => `
+            <tr>
+                <td><a href="/clusters/jobs/${encodeURIComponent(job.job_euid)}" class="mono">${escapeHtml(job.job_euid)}</a></td>
+                <td>${escapeHtml(job.cluster_name)}</td>
+                <td>${escapeHtml(job.region_az)}</td>
+                <td><span class="badge badge-${escapeHtml(String(job.state || '').toLowerCase().replace(/_/g, '-'))}">${escapeHtml(job.state)}</span></td>
+                <td>${job.return_code ?? '—'}</td>
+                <td>${escapeHtml(String(job.created_at || '').slice(0, 19))}</td>
+                <td><a href="/clusters/jobs/${encodeURIComponent(job.job_euid)}" class="btn btn-outline btn-sm">View</a></td>
+            </tr>
+        `).join('') : '<tr><td colspan="7" class="text-muted">No create jobs yet.</td></tr>';
+    } catch (error) {
+        showToast('error', clusterActionErrorMessage(error, 'Failed to refresh cluster jobs'));
+    }
 }
 
 async function deleteCluster(clusterName, region) {
     if (!confirm(`Delete cluster ${clusterName} in ${region}?`)) return;
-    await UrsaPortal.apiRequest(`/api/v1/clusters/${encodeURIComponent(clusterName)}?region=${encodeURIComponent(region)}`, {
-        method: 'DELETE',
-    });
-    window.location.reload();
+    try {
+        await UrsaPortal.apiRequest(`/api/v1/clusters/${encodeURIComponent(clusterName)}?region=${encodeURIComponent(region)}`, {
+            method: 'DELETE',
+        });
+        window.location.reload();
+    } catch (error) {
+        showToast('error', clusterActionErrorMessage(error, `Failed to delete cluster ${clusterName}`));
+    }
 }
+
+document.addEventListener('DOMContentLoaded', () => {
+    updateCreateButtonState();
+    if (selectedClusterRegion()) {
+        loadCreateOptions(false, false).catch(() => {});
+    }
+});
 </script>
 {% endblock %}

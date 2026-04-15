@@ -16,17 +16,17 @@
         <h4 style="margin-top: 0; color: #fff;"><i class="fas fa-lightbulb text-warning"></i> Quick Start Guide</h4>
         <p style="margin-bottom: var(--spacing-sm); color: #c8d4db;">A <strong>workset</strong> is a batch of analysis inputs processed together. Use this page to capture the operational metadata, then attach either a saved manifest or a TSV you upload here.</p>
         <ol style="margin: 0; padding-left: var(--spacing-lg); line-height: 1.8; color: #c8d4db;">
-            <li>Name the workset and select the pipeline metadata.</li>
+            <li>Name the workset and select a workflow from the packaged analysis catalog.</li>
             <li>Choose a saved manifest or upload a <code>stage_samples.tsv</code> file.</li>
             <li>Set priority, notifications, and cluster preferences.</li>
-            <li>Submit once the cost estimate and sample preview look right.</li>
+            <li>Review the exact composed command before you submit the workset.</li>
         </ol>
     </div>
 
     <form id="workset-form">
         <div class="card">
             <h3 class="card-title"><span class="badge badge-in-progress">1</span> Basic Information</h3>
-            <p class="text-muted mb-lg">Identify the workset and capture pipeline metadata. These values are stored with the current Ursa workset record.</p>
+            <p class="text-muted mb-lg">Identify the workset and select the analysis workflow Ursa should fix onto the workset record at submit time.</p>
 
             <div class="form-group">
                 <label for="workset_name" class="form-label">Workset Name</label>
@@ -34,27 +34,51 @@
                 <p class="form-text">Use a stable descriptive name. This becomes the current Ursa workset name.</p>
             </div>
 
+            <div class="grid grid-3">
+                <div class="form-group">
+                    <label for="analysis_repository" class="form-label">Analysis Repository</label>
+                    <input
+                        type="text"
+                        id="analysis_repository"
+                        name="analysis_repository"
+                        class="form-control"
+                        value="{{ workflow_catalog.repository }}"
+                        readonly
+                    >
+                    <p class="form-text">Source-of-truth for workflow options and command rendering.</p>
+                </div>
+                <div class="form-group">
+                    <label for="workflow_id" class="form-label">Workflow</label>
+                    <select id="workflow_id" name="workflow_id" class="form-control form-select" required>
+                        <option value="">Select workflow...</option>
+                        {% for workflow in workflow_catalog.workflows %}
+                        <option value="{{ workflow.workflow_id }}">{{ workflow.display_name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="execution_profile" class="form-label">Execution Profile</label>
+                    <select id="execution_profile" name="execution_profile" class="form-control form-select" required></select>
+                </div>
+            </div>
+
             <div class="grid grid-2">
                 <div class="form-group">
-                    <label for="pipeline_type" class="form-label">Pipeline Type</label>
-                    <select id="pipeline_type" name="pipeline_type" class="form-control form-select" required>
-                        <option value="">Select pipeline...</option>
-                        <option value="test_help">Test Help</option>
-                        <option value="germline_wgs_snv">Germline WGS SNV Only</option>
-                        <option value="germline_wgs_snv_sv">Germline WGS SNV + SV</option>
-                        <option value="germline_wgs_kitchensink">Germline WGS Kitchensink</option>
-                    </select>
+                    <label for="reference_genome" class="form-label">Genome Build</label>
+                    <select id="reference_genome" name="reference_genome" class="form-control form-select" required></select>
                 </div>
                 <div class="form-group">
-                    <label for="reference_genome" class="form-label">Reference Genome</label>
-                    <select id="reference_genome" name="reference_genome" class="form-control form-select" required>
-                        <option value="">Select reference...</option>
-                        <option value="GRCh38">GRCh38</option>
-                        <option value="GRCh37">GRCh37</option>
-                        <option value="T2T-CHM13">T2T-CHM13</option>
-                        <option value="GRCm39">GRCm39</option>
-                    </select>
+                    <label class="form-label">Workflow Summary</label>
+                    <div id="workflow-summary" style="border: 1px solid var(--color-gray-300); border-radius: var(--radius-sm); padding: var(--spacing-md); min-height: 100%; background: rgba(15, 27, 35, 0.36);">
+                        <p class="text-muted mb-0">Select a workflow to see its supported genome builds, required inputs, and target set.</p>
+                    </div>
                 </div>
+            </div>
+
+            <div class="form-group" id="workflow-options-group">
+                <label class="form-label">Workflow Options</label>
+                <div id="workflow-options" class="grid grid-2"></div>
+                <p class="form-text">These options are validated server-side and stored as the canonical analysis command spec.</p>
             </div>
 
             <div class="form-group">
@@ -205,8 +229,47 @@
             </div>
         </div>
 
+        <div class="card">
+            <h3 class="card-title"><span class="badge badge-in-progress">4</span> Command Preview</h3>
+            <p class="text-muted mb-lg">Ursa validates the selected workflow and stores the exact rendered command on the workset when you submit.</p>
+
+            <div id="command-preview-errors" class="d-none"></div>
+            <div id="command-preview-warnings" class="d-none"></div>
+
+            <div class="grid grid-4" style="margin-bottom: var(--spacing-md);">
+                <div>
+                    <div class="stat-value text-accent" id="preview-target-count">0</div>
+                    <div class="stat-label">Targets</div>
+                </div>
+                <div>
+                    <div class="stat-value" id="preview-profile">—</div>
+                    <div class="stat-label">Execution</div>
+                </div>
+                <div>
+                    <div class="stat-value" id="preview-genome">—</div>
+                    <div class="stat-label">Genome</div>
+                </div>
+                <div>
+                    <div class="stat-value" id="preview-input-mode">—</div>
+                    <div class="stat-label">Input Mode</div>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label class="form-label">Exact Command</label>
+                <pre id="command-preview-shell" class="json-block" style="margin: 0; min-height: 120px;">Select a workflow and attach a manifest to compose a command.</pre>
+            </div>
+
+            <div class="form-group mb-0">
+                <label class="form-label">Targets</label>
+                <div id="command-preview-targets" class="d-flex gap-sm flex-wrap">
+                    <span class="text-muted">No targets composed yet.</span>
+                </div>
+            </div>
+        </div>
+
         <div class="card" id="cost-estimate">
-            <h3 class="card-title"><i class="fas fa-calculator"></i> Cost Estimate</h3>
+            <h3 class="card-title"><span class="badge badge-in-progress">5</span> Cost Estimate</h3>
             <p class="text-muted mb-lg">Operational estimate only. No account or billing model is restored here.</p>
             <div class="grid grid-4">
                 <div>
@@ -242,9 +305,15 @@
 <script>
 (() => {
     const pageData = UrsaPortal.parsePageData();
+    const workflowCatalog = pageData.workflow_catalog || null;
+    const workflows = Array.isArray(workflowCatalog?.workflows) ? workflowCatalog.workflows : [];
+    const workflowById = new Map(workflows.map((workflow) => [workflow.workflow_id, workflow]));
     let uploadedManifestText = '';
     let uploadedManifestRows = [];
     let selectedManifestDetail = null;
+    let latestPreview = null;
+    let previewTimer = null;
+    let previewRequestId = 0;
 
     function splitManifestLine(line, delimiter) {
         return line.split(delimiter).map((value) => value.trim());
@@ -264,6 +333,18 @@
             return row;
         });
         return { headers, rows };
+    }
+
+    function currentSampleCount() {
+        if (uploadedManifestRows.length) return uploadedManifestRows.length;
+        if (!selectedManifestDetail) return 0;
+        const artifactCount = Array.isArray(selectedManifestDetail.artifact_euids)
+            ? selectedManifestDetail.artifact_euids.length
+            : 0;
+        if (artifactCount > 0) return artifactCount;
+        return Array.isArray(selectedManifestDetail.input_references)
+            ? selectedManifestDetail.input_references.length
+            : 0;
     }
 
     function renderManifestPreview(headers, rows) {
@@ -286,10 +367,11 @@
         )).join('');
         rowCount.textContent = String(rows.length);
         updateEstimate();
+        schedulePreview();
     }
 
     function updateEstimate() {
-        const sampleCount = uploadedManifestRows.length || (selectedManifestDetail?.artifact_euids?.length || 0);
+        const sampleCount = currentSampleCount();
         const priority = document.getElementById('priority')?.value || 'normal';
         const multiplier = priority === 'high' ? 2 : priority === 'low' ? 0.6 : 1;
         const computeHours = sampleCount * 3;
@@ -318,14 +400,16 @@
             selectedManifestDetail = null;
             preview?.classList.add('d-none');
             updateEstimate();
+            schedulePreview();
             return;
         }
         selectedManifestDetail = await UrsaPortal.apiRequest(`/api/v1/manifests/${encodeURIComponent(manifestId)}`);
         preview?.classList.remove('d-none');
         document.getElementById('saved-manifest-name').textContent = selectedManifestDetail.name;
-        document.getElementById('saved-manifest-sample-count').textContent = `${selectedManifestDetail.artifact_euids.length} references`;
+        document.getElementById('saved-manifest-sample-count').textContent = `${currentSampleCount()} references`;
         document.getElementById('saved-manifest-created').textContent = `Created ${selectedManifestDetail.created_at}`;
         updateEstimate();
+        schedulePreview();
     }
 
     function manifestInputReferencesFromRows(rows) {
@@ -363,13 +447,309 @@
         await UrsaPortal.apiRequest('/api/v1/manifests', { method: 'POST', body: payload });
     }
 
+    function currentWorkflow() {
+        return workflowById.get(document.getElementById('workflow_id')?.value || '') || null;
+    }
+
+    function setSelectOptions(selectId, values, selectedValue) {
+        const select = document.getElementById(selectId);
+        if (!select) return;
+        select.innerHTML = values.map((value) => (
+            `<option value="${escapeHtml(value)}"${value === selectedValue ? ' selected' : ''}>${escapeHtml(value)}</option>`
+        )).join('');
+    }
+
+    function renderWorkflowSummary(workflow) {
+        const el = document.getElementById('workflow-summary');
+        if (!el) return;
+        if (!workflow) {
+            el.innerHTML = '<p class="text-muted mb-0">Select a workflow to see its supported genome builds, required inputs, and target set.</p>';
+            return;
+        }
+        const requiredInputs = Array.isArray(workflow.required_inputs) && workflow.required_inputs.length
+            ? workflow.required_inputs.map((item) => `<span class="badge badge-secondary">${escapeHtml(item.label)}</span>`).join(' ')
+            : '<span class="text-muted">No required inputs</span>';
+        const targets = Array.isArray(workflow.targets) ? workflow.targets : [];
+        el.innerHTML = `
+            <p style="margin: 0 0 var(--spacing-sm) 0;"><strong>${escapeHtml(workflow.display_name)}</strong></p>
+            <p class="text-muted" style="margin: 0 0 var(--spacing-sm) 0;">${escapeHtml(workflow.description || '')}</p>
+            <div class="d-flex gap-sm flex-wrap" style="margin-bottom: var(--spacing-sm);">
+                ${workflow.supported_genome_builds.map((build) => `<span class="badge badge-secondary">${escapeHtml(build)}</span>`).join('')}
+            </div>
+            <div class="d-flex gap-sm flex-wrap" style="margin-bottom: var(--spacing-sm);">
+                ${workflow.supported_execution_profiles.map((profile) => `<span class="badge badge-secondary">${escapeHtml(profile)}</span>`).join('')}
+            </div>
+            <div style="margin-bottom: var(--spacing-sm);">${requiredInputs}</div>
+            <p class="text-muted mb-0">${targets.length} target${targets.length === 1 ? '' : 's'} in the base workflow definition.</p>
+        `;
+    }
+
+    function optionFieldHtml(option) {
+        const optionId = `workflow-option-${option.option_id}`;
+        const description = option.description ? `<p class="form-text">${escapeHtml(option.description)}</p>` : '';
+        if (option.type === 'boolean') {
+            const checked = option.default ? ' checked' : '';
+            return `
+                <div class="form-group" data-workflow-option="${escapeHtml(option.option_id)}">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="${escapeHtml(optionId)}"${checked}>
+                        <span><strong>${escapeHtml(option.label)}</strong></span>
+                    </label>
+                    ${description}
+                </div>
+            `;
+        }
+        if (option.type === 'integer') {
+            const min = Number.isInteger(option.minimum) ? ` min="${option.minimum}"` : '';
+            const max = Number.isInteger(option.maximum) ? ` max="${option.maximum}"` : '';
+            const value = option.default ?? '';
+            return `
+                <div class="form-group" data-workflow-option="${escapeHtml(option.option_id)}">
+                    <label for="${escapeHtml(optionId)}" class="form-label">${escapeHtml(option.label)}</label>
+                    <input type="number" id="${escapeHtml(optionId)}" class="form-control" value="${escapeHtml(String(value))}"${min}${max}>
+                    ${description}
+                </div>
+            `;
+        }
+        if (option.type === 'enum') {
+            const selected = String(option.default || '');
+            return `
+                <div class="form-group" data-workflow-option="${escapeHtml(option.option_id)}">
+                    <label for="${escapeHtml(optionId)}" class="form-label">${escapeHtml(option.label)}</label>
+                    <select id="${escapeHtml(optionId)}" class="form-control form-select">
+                        ${(option.choices || []).map((choice) => (
+                            `<option value="${escapeHtml(choice.value)}"${choice.value === selected ? ' selected' : ''}>${escapeHtml(choice.label)}</option>`
+                        )).join('')}
+                    </select>
+                    ${description}
+                </div>
+            `;
+        }
+        if (option.type === 'multi_enum') {
+            const defaults = new Set(Array.isArray(option.default) ? option.default : []);
+            return `
+                <div class="form-group" data-workflow-option="${escapeHtml(option.option_id)}">
+                    <label class="form-label">${escapeHtml(option.label)}</label>
+                    <div class="d-flex gap-sm flex-wrap">
+                        ${(option.choices || []).map((choice) => `
+                            <label class="checkbox-label" style="border: 1px solid var(--color-gray-300); border-radius: var(--radius-sm); padding: 0.5rem 0.75rem;">
+                                <input type="checkbox" value="${escapeHtml(choice.value)}"${defaults.has(choice.value) ? ' checked' : ''}>
+                                <span>${escapeHtml(choice.label)}</span>
+                            </label>
+                        `).join('')}
+                    </div>
+                    ${description}
+                </div>
+            `;
+        }
+        return '';
+    }
+
+    function renderWorkflowOptions(workflow) {
+        const container = document.getElementById('workflow-options');
+        if (!container) return;
+        if (!workflow) {
+            container.innerHTML = '<p class="text-muted mb-0">Select a workflow to see its configurable options.</p>';
+            return;
+        }
+        container.innerHTML = (workflow.options || []).map(optionFieldHtml).join('');
+        container.querySelectorAll('input, select').forEach((element) => {
+            element.addEventListener('change', schedulePreview);
+            element.addEventListener('input', schedulePreview);
+        });
+    }
+
+    function collectWorkflowOptions() {
+        const workflow = currentWorkflow();
+        if (!workflow) return {};
+        const values = {};
+        (workflow.options || []).forEach((option) => {
+            const optionId = `workflow-option-${option.option_id}`;
+            if (option.type === 'boolean') {
+                values[option.option_id] = Boolean(document.getElementById(optionId)?.checked);
+                return;
+            }
+            if (option.type === 'integer') {
+                const value = document.getElementById(optionId)?.value;
+                values[option.option_id] = value === '' ? option.default : Number(value);
+                return;
+            }
+            if (option.type === 'enum') {
+                values[option.option_id] = document.getElementById(optionId)?.value || option.default || '';
+                return;
+            }
+            if (option.type === 'multi_enum') {
+                values[option.option_id] = Array.from(
+                    document.querySelectorAll(`[data-workflow-option="${option.option_id}"] input[type="checkbox"]:checked`)
+                ).map((item) => item.value);
+            }
+        });
+        return values;
+    }
+
+    function currentInputContext() {
+        const hasUploadedManifest = uploadedManifestRows.length > 0;
+        const hasSavedManifest = Boolean(selectedManifestDetail);
+        return {
+            provided_inputs: hasUploadedManifest || hasSavedManifest ? ['workset_manifest'] : [],
+            sample_count: currentSampleCount(),
+            input_mode: hasUploadedManifest ? 'uploaded_manifest' : hasSavedManifest ? 'saved_manifest' : 'none',
+        };
+    }
+
+    function renderPreview(preview) {
+        latestPreview = preview;
+        const errorsEl = document.getElementById('command-preview-errors');
+        const warningsEl = document.getElementById('command-preview-warnings');
+        const shellEl = document.getElementById('command-preview-shell');
+        const targetsEl = document.getElementById('command-preview-targets');
+        const targets = Array.isArray(preview.summary?.targets) ? preview.summary.targets : [];
+
+        document.getElementById('preview-target-count').textContent = String(targets.length || 0);
+        document.getElementById('preview-profile').textContent = preview.summary?.execution_profile || '—';
+        document.getElementById('preview-genome').textContent = preview.summary?.genome_build || '—';
+        document.getElementById('preview-input-mode').textContent = preview.summary?.input_mode || '—';
+
+        if (errorsEl) {
+            if (Array.isArray(preview.validation_errors) && preview.validation_errors.length) {
+                errorsEl.classList.remove('d-none');
+                errorsEl.innerHTML = `
+                    <div class="alert alert-error" style="margin-bottom: var(--spacing-md);">
+                        <i class="fa-solid fa-triangle-exclamation"></i>
+                        <div>${preview.validation_errors.map((item) => escapeHtml(item)).join('<br>')}</div>
+                    </div>
+                `;
+            } else {
+                errorsEl.classList.add('d-none');
+                errorsEl.innerHTML = '';
+            }
+        }
+
+        if (warningsEl) {
+            if (Array.isArray(preview.warnings) && preview.warnings.length) {
+                warningsEl.classList.remove('d-none');
+                warningsEl.innerHTML = `
+                    <div class="alert" style="margin-bottom: var(--spacing-md); background: rgba(239, 180, 56, 0.12); border-color: rgba(239, 180, 56, 0.4);">
+                        <i class="fa-solid fa-circle-info"></i>
+                        <div>${preview.warnings.map((item) => escapeHtml(item)).join('<br>')}</div>
+                    </div>
+                `;
+            } else {
+                warningsEl.classList.add('d-none');
+                warningsEl.innerHTML = '';
+            }
+        }
+
+        if (shellEl) {
+            shellEl.textContent = preview.shell_preview || 'The current selection is not valid yet.';
+        }
+
+        if (targetsEl) {
+            targetsEl.innerHTML = targets.length
+                ? targets.map((target) => `<span class="badge badge-secondary">${escapeHtml(target)}</span>`).join('')
+                : '<span class="text-muted">No targets composed yet.</span>';
+        }
+    }
+
+    async function refreshCommandPreview() {
+        const workflow = currentWorkflow();
+        if (!workflow) {
+            renderPreview({
+                summary: {},
+                validation_errors: [],
+                warnings: [],
+                shell_preview: 'Select a workflow and attach a manifest to compose a command.',
+                valid: false,
+            });
+            return null;
+        }
+        const requestId = ++previewRequestId;
+        const preview = await UrsaPortal.apiRequest('/api/v1/worksets/command-preview', {
+            method: 'POST',
+            body: {
+                repository: document.getElementById('analysis_repository')?.value || workflowCatalog?.repository || '',
+                workflow_id: workflow.workflow_id,
+                genome_build: document.getElementById('reference_genome')?.value || '',
+                execution_profile: document.getElementById('execution_profile')?.value || '',
+                options: collectWorkflowOptions(),
+                input_context: currentInputContext(),
+            },
+        });
+        if (requestId === previewRequestId) {
+            renderPreview(preview);
+        }
+        return preview;
+    }
+
+    function schedulePreview() {
+        window.clearTimeout(previewTimer);
+        previewTimer = window.setTimeout(() => {
+            refreshCommandPreview().catch((error) => {
+                renderPreview({
+                    summary: {},
+                    validation_errors: [error.message || 'Unable to compose the analysis command.'],
+                    warnings: [],
+                    shell_preview: '',
+                    valid: false,
+                });
+            });
+        }, 150);
+    }
+
+    function syncWorkflowSelectors() {
+        const workflow = currentWorkflow();
+        renderWorkflowSummary(workflow);
+        renderWorkflowOptions(workflow);
+        if (!workflow) {
+            setSelectOptions('execution_profile', [], '');
+            setSelectOptions('reference_genome', [], '');
+            schedulePreview();
+            return;
+        }
+        const currentExecutionProfile = document.getElementById('execution_profile')?.value || '';
+        const currentGenomeBuild = document.getElementById('reference_genome')?.value || '';
+        const selectedExecutionProfile = workflow.supported_execution_profiles.includes(currentExecutionProfile)
+            ? currentExecutionProfile
+            : (workflow.default_execution_profile || workflow.supported_execution_profiles[0]);
+        const selectedGenomeBuild = workflow.supported_genome_builds.includes(currentGenomeBuild)
+            ? currentGenomeBuild
+            : (workflow.default_genome_build || workflow.supported_genome_builds[0]);
+        setSelectOptions('execution_profile', workflow.supported_execution_profiles || [], selectedExecutionProfile);
+        setSelectOptions('reference_genome', workflow.supported_genome_builds || [], selectedGenomeBuild);
+        schedulePreview();
+    }
+
+    function buildAnalysisCommandSpec() {
+        const workflow = currentWorkflow();
+        if (!workflow) return null;
+        return {
+            repository: document.getElementById('analysis_repository')?.value || workflowCatalog?.repository || '',
+            workflow_id: workflow.workflow_id,
+            genome_build: document.getElementById('reference_genome')?.value || '',
+            execution_profile: document.getElementById('execution_profile')?.value || '',
+            options: collectWorkflowOptions(),
+            input_context: currentInputContext(),
+        };
+    }
+
     async function submitWorkset(event) {
         event.preventDefault();
         const form = document.getElementById('workset-form');
         const formData = new FormData(form);
+        const analysisCommand = buildAnalysisCommandSpec();
+        const preview = await refreshCommandPreview();
+        if (!analysisCommand || !preview || !preview.valid) {
+            renderPreview(preview || {
+                summary: {},
+                validation_errors: ['Fix the analysis command validation errors before submitting the workset.'],
+                warnings: [],
+                shell_preview: '',
+                valid: false,
+            });
+            return;
+        }
         const metadata = {
-            pipeline_type: formData.get('pipeline_type'),
-            reference_genome: formData.get('reference_genome'),
+            analysis_command: analysisCommand,
             workset_type: formData.get('workset_type'),
             priority: formData.get('priority'),
             notification_email: formData.get('notification_email'),
@@ -377,7 +757,7 @@
             cluster_region: formData.get('cluster_region'),
             enable_qc: formData.get('enable_qc') === 'on',
             archive_results: formData.get('archive_results') === 'on',
-            sample_count: uploadedManifestRows.length || (selectedManifestDetail?.artifact_euids?.length || 0),
+            sample_count: currentSampleCount(),
         };
         const artifactSetEuids = selectedManifestDetail?.artifact_set_euid ? [selectedManifestDetail.artifact_set_euid] : [];
         showLoading('Creating workset...');
@@ -412,6 +792,15 @@
                 });
             }
             window.location.assign(`/worksets/${encodeURIComponent(created.workset_euid)}`);
+        } catch (error) {
+            renderPreview({
+                summary: preview?.summary || {},
+                validation_errors: [error.message || 'Failed to submit the workset.'],
+                warnings: preview?.warnings || [],
+                shell_preview: preview?.shell_preview || '',
+                valid: false,
+            });
+            return;
         } finally {
             hideLoading();
         }
@@ -438,7 +827,14 @@
 
     document.getElementById('refresh-manifests-btn')?.addEventListener('click', refreshManifestList);
     document.getElementById('priority')?.addEventListener('change', updateEstimate);
+    document.getElementById('workflow_id')?.addEventListener('change', syncWorkflowSelectors);
+    document.getElementById('execution_profile')?.addEventListener('change', schedulePreview);
+    document.getElementById('reference_genome')?.addEventListener('change', schedulePreview);
     document.getElementById('workset-form')?.addEventListener('submit', submitWorkset);
+    if (workflows.length && document.getElementById('workflow_id')?.value === '') {
+        document.getElementById('workflow_id').value = workflows[0].workflow_id;
+    }
+    syncWorkflowSelectors();
     updateEstimate();
 })();
 </script>

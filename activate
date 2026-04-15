@@ -19,18 +19,21 @@ BOLD='\033[1m'
 NC='\033[0m'
 
 CONDA_ENV_BASE="URSA"
-URSA_PIP_INSTALL_EXTRAS="[auth,dev]"
+URSA_PIP_INSTALL_EXTRAS="[auth,cluster,dev]"
 URSA_LEGACY_REBIND_VARS=(
     USE_LOCAL_DAYLILY_TAPDB
 )
 URSA_REQUIRED_DISTRIBUTIONS=(
     "daylily-tapdb==5.1.0"
     "daylily-auth-cognito==2.0.2"
+    "daylily-ephemeral-cluster==2.0.2"
     "cli-core-yo==2.0.0"
 )
 URSA_REQUIRED_IMPORTS=(
     "daylily_tapdb:daylily-tapdb"
     "daylily_auth_cognito:daylily-auth-cognito"
+    "daylily_ec:daylily-ephemeral-cluster"
+    "daylily_omics_analysis:daylily-omics-analysis"
     "cli_core_yo:cli-core-yo"
     "fastapi:fastapi"
     "pydantic_settings:pydantic-settings"
@@ -287,7 +290,7 @@ distribution_is_editable_from_repo() {
 
 bootstrap_local_ursa_repo() {
     install_target="${SCRIPT_DIR}${URSA_PIP_INSTALL_EXTRAS}"
-    log_info "Installing local Ursa checkout with auth+dev extras..."
+    log_info "Installing local Ursa checkout with auth+cluster+dev extras..."
     if ! python -m pip install -e "$install_target" -q; then
         fail_activate "Failed to install local Ursa checkout from ${SCRIPT_DIR}"
         return 1

@@ -208,6 +208,10 @@ JSON
     monkeypatch.setenv("URSA_DAYLILY_EC_BIN", str(daylily_ec))
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
     monkeypatch.setenv("HOME", str(home_dir))
+    monkeypatch.setattr(
+        "daylib_ursa.ephemeral_cluster.runner.require_daylily_ec_version",
+        lambda: "2.0.2",
+    )
 
     store = MemoryResourceStore()
     job = store.create_cluster_job(

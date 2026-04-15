@@ -1,0 +1,42 @@
+- generic [active] [ref=e1]:
+  - generic "Deployment inflec3" [ref=e2]: INFLEC3
+  - generic "Region us-west-2" [ref=e3]
+  - main [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e6]:
+        - img "Ursa" [ref=e7]
+        - paragraph [ref=e8]: Authentication Required
+        - heading "Ursa PR19 Portal" [level=1] [ref=e9]
+        - paragraph [ref=e10]: Restore the legacy shell on top of the current Atlas-backed Ursa backend.
+      - generic [ref=e11]:
+        - paragraph [ref=e12]: Access
+        - heading "Sign In" [level=2] [ref=e13]
+        - paragraph [ref=e14]: Sign in through Cognito Hosted UI to access the Ursa operator portal.
+        - link " Sign In with Cognito" [ref=e16] [cursor=pointer]:
+          - /url: /auth/login?next=/clusters
+          - generic [ref=e17]: 
+          - text: Sign In with Cognito
+  - contentinfo [ref=e18]:
+    - generic [ref=e19]:
+      - generic [ref=e20]:
+        - generic [ref=e21]:
+          - generic [ref=e22]:
+            - img [ref=e23]
+            - text: Ursa
+          - paragraph [ref=e24]: PR19 shell restored on current Ursa routes, with Dewey-backed manifests and linked-bucket workflows.
+        - generic [ref=e25]:
+          - heading "Git" [level=4] [ref=e26]
+          - list [ref=e27]:
+            - listitem [ref=e28]: "Branch: 0-6-14-back-to-the-future"
+            - listitem [ref=e29]: "Tag: 0.6.13"
+            - listitem [ref=e30]: "Commit: 685109f"
+        - generic [ref=e31]:
+          - heading "Access" [level=4] [ref=e32]
+          - list [ref=e33]:
+            - listitem [ref=e34]:
+              - link "Sign In" [ref=e35] [cursor=pointer]:
+                - /url: /auth/login?next=/clusters
+            - listitem [ref=e36]:
+              - link "Cognito" [ref=e37] [cursor=pointer]:
+                - /url: /auth/login?next=/
+      - paragraph [ref=e39]: © Ursa
