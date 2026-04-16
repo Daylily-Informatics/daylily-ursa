@@ -19,21 +19,17 @@ BOLD='\033[1m'
 NC='\033[0m'
 
 CONDA_ENV_BASE="URSA"
-URSA_PIP_INSTALL_EXTRAS="[auth,cluster,dev]"
 URSA_LEGACY_REBIND_VARS=(
     USE_LOCAL_DAYLILY_TAPDB
 )
 URSA_REQUIRED_DISTRIBUTIONS=(
-    "daylily-auth-cognito==2.0.3"
-    "daylily-ephemeral-cluster==2.0.2"
-    "cli-core-yo==2.0.0"
+    "daylily-auth-cognito==2.1.1"
+    "cli-core-yo==2.1.0"
     "meridian-euid==0.4.2"
 )
 URSA_REQUIRED_IMPORTS=(
     "daylily_tapdb:daylily-tapdb"
     "daylily_auth_cognito:daylily-auth-cognito"
-    "daylily_ec:daylily-ephemeral-cluster"
-    "daylily_omics_analysis:daylily-omics-analysis"
     "cli_core_yo:cli-core-yo"
     "fastapi:fastapi"
     "pydantic_settings:pydantic-settings"
@@ -43,21 +39,24 @@ URSA_REQUIRED_IMPORTS=(
     "jose:python-jose[cryptography]"
 )
 
-tapdb_dependency_spec_from_pyproject() {
+dependency_spec_from_pyproject() {
     project_root="$1"
-    python - "${project_root}/pyproject.toml" <<'PY'
+    dependency_name="$2"
+    python - "${project_root}/pyproject.toml" "${dependency_name}" <<'PY'
 import sys
 import tomllib
 
 with open(sys.argv[1], "rb") as fh:
     pyproject = tomllib.load(fh)
 
+dependency_name = sys.argv[2]
+
 for dependency in pyproject["project"]["dependencies"]:
-    if dependency.startswith("daylily-tapdb"):
+    if dependency.startswith(dependency_name):
         print(dependency)
         raise SystemExit(0)
 
-raise SystemExit("daylily-tapdb dependency missing from pyproject.toml")
+raise SystemExit(f"{dependency_name} dependency missing from pyproject.toml")
 PY
 }
 
@@ -225,11 +224,18 @@ match = re.match(
     r'^([A-Za-z0-9_.-]+)(?:\[[^]]+\])?(?:\s*(==)\s*([^,;\s]+))?$',
     spec,
 )
-if not match:
+direct_match = re.match(
+    r'^([A-Za-z0-9_.-]+)\s*@\s*.+@([^/#?;\s]+)$',
+    spec,
+)
+if direct_match:
+    name = direct_match.group(1)
+    required_version = direct_match.group(2)
+elif match:
+    name = match.group(1)
+    required_version = match.group(3)
+else:
     sys.exit(1)
-
-name = match.group(1)
-required_version = match.group(3)
 
 try:
     installed_version = importlib.metadata.version(name)
@@ -251,10 +257,13 @@ import sys
 
 spec = sys.argv[1].strip()
 match = re.match(r'^([A-Za-z0-9_.-]+)(?:\[[^]]+\])?(?:\s*(?:==|!=|<=|>=|<|>|~=|===).*)?$', spec)
-if not match:
+direct_match = re.match(r'^([A-Za-z0-9_.-]+)\s*@\s*.+$', spec)
+if direct_match:
+    print(direct_match.group(1))
+elif match:
+    print(match.group(1))
+else:
     sys.exit(1)
-
-print(match.group(1))
 PY
 }
 
@@ -291,7 +300,7 @@ unset _URSA_SCRIPT_PATH
 
 ENV_FILE="${SCRIPT_DIR}/environment.yaml"
 BIN_DIR="${SCRIPT_DIR}/bin"
-URSA_TAPDB_PACKAGE_SPEC="$(tapdb_dependency_spec_from_pyproject "${SCRIPT_DIR}")"
+URSA_TAPDB_PACKAGE_SPEC="$(dependency_spec_from_pyproject "${SCRIPT_DIR}" "daylily-tapdb")"
 URSA_REQUIRED_DISTRIBUTIONS=(
     "${URSA_TAPDB_PACKAGE_SPEC}"
     "${URSA_REQUIRED_DISTRIBUTIONS[@]}"
@@ -312,8 +321,8 @@ distribution_is_editable_from_repo() {
 }
 
 bootstrap_local_ursa_repo() {
-    install_target="${SCRIPT_DIR}${URSA_PIP_INSTALL_EXTRAS}"
-    log_info "Installing local Ursa checkout with auth+cluster+dev extras..."
+    install_target="${SCRIPT_DIR}"
+    log_info "Installing local Ursa checkout..."
     if ! python -m pip install -e "$install_target" -q; then
         fail_activate "Failed to install local Ursa checkout from ${SCRIPT_DIR}"
         return 1
