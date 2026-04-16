@@ -34,7 +34,7 @@ def test_pyproject_uses_requested_internal_package_versions() -> None:
     tapdb_spec = _tapdb_dependency_spec()
 
     assert "cli-core-yo==2.0.0" in dependencies
-    assert "daylily-auth-cognito==2.0.2" in dependencies
+    assert "daylily-auth-cognito==2.0.3" in dependencies
     assert tapdb_spec.startswith("daylily-tapdb==")
     assert "daylily-ephemeral-cluster==2.0.2" in cluster_extra
 

@@ -164,7 +164,7 @@ def test_claims_to_current_user_maps_external_admin_group() -> None:
 def test_settings_whitelist_domains_default_to_base_four() -> None:
     settings = Settings(
         ursa_internal_output_bucket="ursa-internal",
-        cognito_domain="https://auth.example.com",
+        cognito_domain="auth.example.com",
         cognito_app_client_id="client-1",
         cognito_callback_url="https://localhost:8913/auth/callback",
         cognito_logout_url="https://localhost:8913/login",
@@ -178,6 +178,30 @@ def test_settings_whitelist_domains_default_to_base_four() -> None:
     ]
     assert settings.is_domain_whitelisted("user@lsmc.bio") is True
     assert settings.is_domain_whitelisted("user@gmail.com") is False
+
+
+def test_settings_rejects_schemeful_cognito_domain() -> None:
+    with pytest.raises(ValueError, match="must be a bare host"):
+        Settings(
+            ursa_internal_output_bucket="ursa-internal",
+            cognito_domain="https://auth.example.com",
+            cognito_app_client_id="client-1",
+            cognito_callback_url="https://localhost:8913/auth/callback",
+            cognito_logout_url="https://localhost:8913/login",
+        )
+
+
+def test_build_web_session_config_requires_cognito_domain() -> None:
+    settings = Settings(
+        ursa_internal_output_bucket="ursa-internal",
+        cognito_domain=None,
+        cognito_app_client_id="client-1",
+        cognito_callback_url="https://localhost:8913/auth/callback",
+        cognito_logout_url="https://localhost:8913/login",
+    )
+
+    with pytest.raises(AuthError, match="Cognito domain is required"):
+        auth_dependencies.build_web_session_config(settings, "server-123")
 
 
 def test_cognito_auth_provider_rejects_id_token_with_wrong_audience(monkeypatch) -> None:

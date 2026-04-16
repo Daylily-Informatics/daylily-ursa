@@ -18,9 +18,9 @@ dependencies = [
     "sqlalchemy>=2.0.0",
     "cli-core-yo==2.0.0",
     # Cognito auth library
-    "daylily-auth-cognito==2.0.2",
+    "daylily-auth-cognito==2.0.3",
     # TapDB graph persistence
-    "daylily-tapdb==6.0.1",
+    "daylily-tapdb==6.0.2",
     "daylily-omics-analysis>=0.7.639",
     "fastapi>=0.104.0",
     "uvicorn[standard]>=0.24.0",

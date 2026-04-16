@@ -11,9 +11,10 @@ import os
 import secrets
 from functools import lru_cache
 from typing import List, Optional
+from urllib.parse import urlparse
 
 from pydantic import Field, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
 from daylib_ursa.domain_access import (
     APPROVED_WEB_DOMAIN_SUFFIXES,
@@ -84,7 +85,14 @@ def _yaml_seed_from_ursa_config() -> dict[str, object]:
         "deployment_is_production": cfg.deployment_is_production,
         "ui_show_environment_chrome": cfg.ui_show_environment_chrome,
     }
-    return {key: value for key, value in seeded.items() if value is not None}
+    filtered: dict[str, object] = {}
+    for key, value in seeded.items():
+        if value is None:
+            continue
+        if isinstance(value, str) and not value.strip():
+            continue
+        filtered[key] = value
+    return filtered
 
 
 def _require_https_url(value: str, *, field_name: str) -> str:
@@ -103,6 +111,24 @@ def _validate_optional_https_url(value: str, *, field_name: str) -> str:
     if not normalized.startswith("https://"):
         raise ValueError(f"{field_name} must use an absolute https:// URL")
     return normalized.rstrip("/")
+
+
+def _require_bare_cognito_domain(value: str | None, *, field_name: str) -> str:
+    normalized = str(value or "").strip()
+    if not normalized:
+        raise ValueError(f"{field_name} must not be empty")
+    parsed = urlparse(normalized)
+    if parsed.scheme or parsed.netloc or parsed.path != normalized:
+        raise ValueError(
+            f"{field_name} must be a bare host like example.auth.us-west-2.amazoncognito.com"
+        )
+    if any(ch.isspace() for ch in normalized) or any(
+        ch in normalized for ch in (":", "/", "?", "#", "@")
+    ):
+        raise ValueError(
+            f"{field_name} must be a bare host like example.auth.us-west-2.amazoncognito.com"
+        )
+    return normalized
 
 
 def normalize_bucket_name(bucket: Optional[str]) -> Optional[str]:
@@ -674,6 +700,16 @@ class Settings(BaseSettings):
             return None
         return _validate_optional_https_url(v, field_name=str(info.field_name))
 
+    @field_validator("cognito_domain")
+    @classmethod
+    def validate_cognito_domain(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        normalized = str(v or "").strip()
+        if not normalized:
+            return None
+        return _require_bare_cognito_domain(normalized, field_name="cognito_domain")
+
     @field_validator("cognito_group_role_map", mode="before")
     @classmethod
     def validate_cognito_group_role_map(cls, value: object) -> dict[str, str]:
@@ -724,6 +760,26 @@ class Settings(BaseSettings):
         self.deployment_color = str(deployment["color"])
         self.deployment_is_production = bool(deployment["is_production"])
         return self
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        def service_config_settings() -> dict[str, object]:
+            return _yaml_seed_from_ursa_config()
+
+        return (
+            init_settings,
+            env_settings,
+            service_config_settings,
+            dotenv_settings,
+            file_secret_settings,
+        )
 
     def get_cors_origins(self) -> List[str]:
         """Get list of CORS origins from comma-separated string.
@@ -888,7 +944,7 @@ def get_settings() -> Settings:
     Settings are loaded once and cached for the lifetime of the application.
     Use this function as a FastAPI dependency.
     """
-    return Settings(**_yaml_seed_from_ursa_config())
+    return Settings()
 
 
 def clear_settings_cache() -> None:
@@ -905,8 +961,7 @@ def get_settings_for_testing(**overrides) -> Settings:
 
     This bypasses the cache, allowing tests to use custom configuration.
     """
-    payload = _yaml_seed_from_ursa_config()
-    payload.update(overrides)
+    payload = dict(overrides)
     if payload.get("ursa_portal_default_customer_id") is None:
         payload.pop("ursa_portal_default_customer_id", None)
     return Settings(**payload)

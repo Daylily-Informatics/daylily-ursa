@@ -23,6 +23,7 @@ from daylily_auth_cognito.runtime.jwks import JWKSCache
 from daylily_auth_cognito.runtime.tokens import verify_jwt_claims
 
 from daylib_ursa.auth.rbac import Permission, Role, can_write, has_permission, has_role
+from daylib_ursa.config import _require_bare_cognito_domain
 
 security = HTTPBearer(auto_error=False)
 
@@ -312,19 +313,24 @@ def clear_session_user(request: Request) -> None:
 def build_web_session_config(settings: Any, server_instance_id: str) -> CognitoWebSessionConfig:
     callback_url = str(getattr(settings, "cognito_callback_url", "") or "").strip()
     logout_url = str(getattr(settings, "cognito_logout_url", "") or "").strip() or callback_url
-    public_base_url = ""
-    if callback_url:
-        callback_parts = urlparse(callback_url)
-        if callback_parts.scheme and callback_parts.netloc:
-            public_base_url = f"{callback_parts.scheme}://{callback_parts.netloc}"
-    if not public_base_url:
-        public_base_url = "http://localhost"
-    effective_callback_url = callback_url or f"{public_base_url}/auth/callback"
+    if not callback_url:
+        raise AuthError("Cognito callback URL is required")
+    callback_parts = urlparse(callback_url)
+    if not callback_parts.scheme or not callback_parts.netloc:
+        raise AuthError("Cognito callback URL must be an absolute URL")
+    public_base_url = f"{callback_parts.scheme}://{callback_parts.netloc}"
+    effective_callback_url = callback_url
     effective_logout_url = logout_url or f"{public_base_url}/auth/logout"
-    effective_domain = str(getattr(settings, "cognito_domain", "") or "").strip() or "localhost"
-    effective_client_id = (
-        str(getattr(settings, "cognito_app_client_id", "") or "").strip() or "ursa-local-client"
-    )
+    raw_domain = str(getattr(settings, "cognito_domain", "") or "").strip()
+    if not raw_domain:
+        raise AuthError("Cognito domain is required")
+    try:
+        effective_domain = _require_bare_cognito_domain(raw_domain, field_name="cognito_domain")
+    except ValueError as exc:
+        raise AuthError(str(exc)) from exc
+    effective_client_id = str(getattr(settings, "cognito_app_client_id", "") or "").strip()
+    if not effective_client_id:
+        raise AuthError("Cognito app client ID is required")
 
     return CognitoWebSessionConfig(
         domain=effective_domain,

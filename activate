@@ -24,7 +24,7 @@ URSA_LEGACY_REBIND_VARS=(
     USE_LOCAL_DAYLILY_TAPDB
 )
 URSA_REQUIRED_DISTRIBUTIONS=(
-    "daylily-auth-cognito==2.0.2"
+    "daylily-auth-cognito==2.0.3"
     "daylily-ephemeral-cluster==2.0.2"
     "cli-core-yo==2.0.0"
     "meridian-euid==0.4.2"

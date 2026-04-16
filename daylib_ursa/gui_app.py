@@ -27,6 +27,7 @@ from daylib_ursa.auth import (
     session_principal_from_current_user,
 )
 from daylib_ursa.cluster_jobs import region_from_region_az
+from daylib_ursa.config import _require_bare_cognito_domain
 from daylib_ursa.observability import (
     build_api_health_payload,
     build_auth_health_payload,
@@ -245,14 +246,12 @@ def mount_gui(app: FastAPI) -> None:
     def _cognito_settings() -> dict[str, str]:
         settings = getattr(app.state, "settings", None)
         values = {
-            "domain": str(getattr(settings, "cognito_domain", "") or "").strip().rstrip("/"),
+            "domain": str(getattr(settings, "cognito_domain", "") or "").strip(),
             "client_id": str(getattr(settings, "cognito_app_client_id", "") or "").strip(),
             "client_secret": str(getattr(settings, "cognito_app_client_secret", "") or "").strip(),
             "callback_url": str(getattr(settings, "cognito_callback_url", "") or "").strip(),
             "logout_url": str(getattr(settings, "cognito_logout_url", "") or "").strip(),
         }
-        if values["domain"].startswith("https://"):
-            values["domain"] = values["domain"][len("https://") :]
         missing = [
             key for key in ("domain", "client_id", "callback_url", "logout_url") if not values[key]
         ]
@@ -261,6 +260,16 @@ def mount_gui(app: FastAPI) -> None:
                 status_code=503,
                 detail=f"Cognito authentication is not configured: missing {', '.join(missing)}",
             )
+        try:
+            values["domain"] = _require_bare_cognito_domain(
+                values["domain"],
+                field_name="cognito_domain",
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail=f"Cognito authentication is not configured: {exc}",
+            ) from exc
         return values
 
     def _web_session_config():

@@ -33,7 +33,7 @@ from daylib_ursa.ursa_config import (
 )
 
 
-def test_get_settings_reads_cognito_and_deployment_from_yaml_not_env(tmp_path, monkeypatch):
+def test_get_settings_reads_cognito_from_env_over_yaml(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("URSA_DEPLOYMENT_CODE", "local")
     config_dir = tmp_path / ".config" / "ursa-local"
@@ -75,20 +75,23 @@ deployment:
     monkeypatch.setattr("daylib_ursa.ursa_config._global_config", None)
     monkeypatch.setenv("COGNITO_USER_POOL_ID", "env-pool")
     monkeypatch.setenv("COGNITO_APP_CLIENT_ID", "env-client")
+    monkeypatch.setenv("COGNITO_APP_CLIENT_SECRET", "env-secret")
     monkeypatch.setenv("COGNITO_DOMAIN", "env.example.com")
     monkeypatch.setenv("COGNITO_REGION", "eu-west-1")
+    monkeypatch.setenv("COGNITO_CALLBACK_URL", "https://env.example.com/auth/callback")
+    monkeypatch.setenv("COGNITO_LOGOUT_URL", "https://env.example.com/login")
     monkeypatch.setenv("URSA_INTERNAL_OUTPUT_BUCKET", "ursa-internal")
 
     clear_settings_cache()
     settings = get_settings()
 
-    assert settings.cognito_user_pool_id == "yaml-pool"
-    assert settings.cognito_app_client_id == "yaml-client"
-    assert settings.cognito_app_client_secret == "yaml-secret"
-    assert settings.cognito_domain == "yaml.auth.us-west-2.amazoncognito.com"
-    assert settings.cognito_region == "us-west-2"
-    assert settings.cognito_callback_url == "https://localhost:8913/auth/callback"
-    assert settings.cognito_logout_url == "https://localhost:8913/login"
+    assert settings.cognito_user_pool_id == "env-pool"
+    assert settings.cognito_app_client_id == "env-client"
+    assert settings.cognito_app_client_secret == "env-secret"
+    assert settings.cognito_domain == "env.example.com"
+    assert settings.cognito_region == "eu-west-1"
+    assert settings.cognito_callback_url == "https://env.example.com/auth/callback"
+    assert settings.cognito_logout_url == "https://env.example.com/login"
     assert settings.dewey_api_token == "dewey-dev-token"
     assert settings.ursa_portal_default_customer_id == "77777777-7777-7777-7777-777777777777"
     assert settings.deployment == {
