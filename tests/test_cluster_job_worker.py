@@ -7,6 +7,7 @@ from pathlib import Path
 
 from daylib_ursa.cluster_jobs import ClusterJobManager, run_cluster_create_job
 from daylib_ursa.cluster_service import ClusterService
+from daylib_ursa.ephemeral_cluster.runner import REQUIRED_DAYLILY_EC_VERSION
 from daylib_ursa.resource_store import ClusterJobEventRecord, ClusterJobRecord
 
 TENANT_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
@@ -210,7 +211,7 @@ JSON
     monkeypatch.setenv("HOME", str(home_dir))
     monkeypatch.setattr(
         "daylib_ursa.ephemeral_cluster.runner.require_daylily_ec_version",
-        lambda: "2.0.2",
+        lambda: REQUIRED_DAYLILY_EC_VERSION,
     )
 
     store = MemoryResourceStore()

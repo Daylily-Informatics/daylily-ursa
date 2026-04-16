@@ -26,7 +26,7 @@ cluster:
   template_path: config/cluster-configs/example.yaml
   # Contact email exported for cluster creation when not present in template overrides.
   contact_email: you@email.com
-  repo_tag: main
+  repo_tag: 0.7.641
   preferred_availability_zone: us-east-1a
   auto_teardown: false
   idle_teardown_minutes: 20
@@ -64,7 +64,7 @@ pipeline:
   # IMPORTANT: {output_dir} must be used for --output-dir to match where monitor looks for fsx_export.yaml
   export_command: daylily-export-fsx-to-s3-from-local --cluster {cluster} --target-uri analysis_results/ubuntu/{workdir_name} --region {region} --profile {profile} --output-dir {output_dir} --verbose
   # Command executed before entering the pipeline directory on the head node.
-  login_shell_init: echo Ready2run 
+  login_shell_init: echo Ready2run
   # Prefix used when generating tmux session names for launched pipelines.
   tmux_session_prefix: daylily
   # Shell invoked at the end of the tmux command to keep the session alive for inspection.
@@ -72,7 +72,7 @@ pipeline:
 
 
 # optional if you want the monitor to fetch your repo/branch on the headnode
-day-clone: "--repo Daylily-Informatics/daylily-omics-analysis --branch main"
+day-clone: "--repo Daylily-Informatics/daylily-omics-analysis --branch 0.7.641"
 
 # required: appended to run_prefix
 dy-r: "--name runme14 --samples config/samples.tsv --outdir results/runme14 --profile slurm --jobs 192 --rerun-incomplete"

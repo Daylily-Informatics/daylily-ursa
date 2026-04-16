@@ -176,6 +176,14 @@ VALID_FIELDS = {
     "tapdb_client_id": (str, "TapDB client identifier"),
     "tapdb_database_name": (str, "TapDB namespace / database name"),
     "tapdb_env": (str, "TapDB environment selector"),
+    "tapdb_domain_registry_path": (
+        str,
+        "Explicit TapDB domain registry path",
+    ),
+    "tapdb_prefix_ownership_registry_path": (
+        str,
+        "Explicit TapDB prefix ownership registry path",
+    ),
     "cognito_region": (str, "AWS region for Cognito"),
     "cognito_user_pool_id": (str, "Cognito User Pool ID"),
     "cognito_app_client_id": (str, "Cognito App Client ID"),
@@ -370,6 +378,12 @@ class UrsaConfig:
     tapdb_env: Optional[str] = None
     """TapDB environment selector read from YAML config."""
 
+    tapdb_domain_registry_path: Optional[str] = None
+    """Explicit TapDB domain registry path read from YAML config."""
+
+    tapdb_prefix_ownership_registry_path: Optional[str] = None
+    """Explicit TapDB prefix ownership registry path read from YAML config."""
+
     cognito_user_pool_id: Optional[str] = None
     """Cognito User Pool ID read from YAML config."""
 
@@ -533,6 +547,8 @@ class UrsaConfig:
         tapdb_client_id = data.get("tapdb_client_id")
         tapdb_database_name = data.get("tapdb_database_name")
         tapdb_env = data.get("tapdb_env")
+        tapdb_domain_registry_path = data.get("tapdb_domain_registry_path")
+        tapdb_prefix_ownership_registry_path = data.get("tapdb_prefix_ownership_registry_path")
         cognito_user_pool_id = data.get("cognito_user_pool_id")
         cognito_app_client_id = data.get("cognito_app_client_id")
         cognito_app_client_secret = data.get("cognito_app_client_secret")
@@ -571,6 +587,8 @@ class UrsaConfig:
             tapdb_client_id=tapdb_client_id,
             tapdb_database_name=tapdb_database_name,
             tapdb_env=tapdb_env,
+            tapdb_domain_registry_path=tapdb_domain_registry_path,
+            tapdb_prefix_ownership_registry_path=tapdb_prefix_ownership_registry_path,
             cognito_user_pool_id=cognito_user_pool_id,
             cognito_app_client_id=cognito_app_client_id,
             cognito_app_client_secret=cognito_app_client_secret,

@@ -12,6 +12,7 @@ import secrets
 from functools import lru_cache
 from typing import List, Optional
 from urllib.parse import urlparse
+from pathlib import Path
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
@@ -28,6 +29,10 @@ DEFAULT_BLOOM_BASE_URL = "https://localhost:8001"
 DEFAULT_ATLAS_BASE_URL = "https://localhost:8000"
 DEFAULT_URSA_COGNITO_CALLBACK_URL = f"https://localhost:{DEFAULT_API_PORT}/auth/callback"
 DEFAULT_URSA_COGNITO_LOGOUT_URL = f"https://localhost:{DEFAULT_API_PORT}/login"
+DEFAULT_TAPDB_DOMAIN_REGISTRY_PATH = Path.home() / ".config" / "tapdb" / "domain_code_registry.json"
+DEFAULT_TAPDB_PREFIX_REGISTRY_PATH = (
+    Path.home() / ".config" / "tapdb" / "prefix_ownership_registry.json"
+)
 DEFAULT_COGNITO_ALLOWED_EMAIL_DOMAINS = (
     "lsmc.com",
     "lsmc.bio",
@@ -63,6 +68,16 @@ def _yaml_seed_from_ursa_config() -> dict[str, object]:
         "tapdb_client_id": cfg.tapdb_client_id,
         "tapdb_database_name": cfg.tapdb_database_name,
         "tapdb_env": cfg.tapdb_env,
+        "tapdb_domain_registry_path": getattr(
+            cfg,
+            "tapdb_domain_registry_path",
+            str(DEFAULT_TAPDB_DOMAIN_REGISTRY_PATH),
+        ),
+        "tapdb_prefix_ownership_registry_path": getattr(
+            cfg,
+            "tapdb_prefix_ownership_registry_path",
+            str(DEFAULT_TAPDB_PREFIX_REGISTRY_PATH),
+        ),
         "cognito_user_pool_id": cfg.cognito_user_pool_id,
         "cognito_app_client_id": cfg.cognito_app_client_id,
         "cognito_app_client_secret": cfg.cognito_app_client_secret,
@@ -211,6 +226,8 @@ regions:
 tapdb_client_id: local
 tapdb_database_name: ursa
 tapdb_env: dev
+tapdb_domain_registry_path: ~/.config/tapdb/domain_code_registry.json
+tapdb_prefix_ownership_registry_path: ~/.config/tapdb/prefix_ownership_registry.json
 
 # Required runtime storage bucket
 ursa_internal_output_bucket: your-ursa-output-bucket
@@ -303,6 +320,14 @@ class Settings(BaseSettings):
     tapdb_env: str = Field(
         default="dev",
         description="TapDB environment selector",
+    )
+    tapdb_domain_registry_path: str = Field(
+        default=str(DEFAULT_TAPDB_DOMAIN_REGISTRY_PATH),
+        description="Explicit TapDB domain registry path",
+    )
+    tapdb_prefix_ownership_registry_path: str = Field(
+        default=str(DEFAULT_TAPDB_PREFIX_REGISTRY_PATH),
+        description="Explicit TapDB prefix ownership registry path",
     )
     ursa_cost_monitor_regions: str = Field(
         default="us-west-2",

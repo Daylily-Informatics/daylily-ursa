@@ -17,7 +17,33 @@ import yaml  # type: ignore[import-untyped]
 
 _DAYLILY_EC_BIN_ENV = "URSA_DAYLILY_EC_BIN"
 DAYLILY_EC_DISTRIBUTION = "daylily-ephemeral-cluster"
-REQUIRED_DAYLILY_EC_VERSION = "2.0.2"
+REQUIRED_DAYLILY_EC_VERSION = "2.0.3"
+REQUIRED_DAYLILY_EC_CONFIG_KEYS = [
+    "allowed_budget_users",
+    "auto_delete_fsx",
+    "budget_amount",
+    "budget_email",
+    "cluster_name",
+    "cluster_template_yaml",
+    "delete_local_root",
+    "enable_detailed_monitoring",
+    "enforce_budget",
+    "fsx_fs_size",
+    "global_allowed_budget_users",
+    "global_budget_amount",
+    "headnode_instance_type",
+    "heartbeat_email",
+    "heartbeat_schedule",
+    "heartbeat_scheduler_role_arn",
+    "iam_policy_arn",
+    "max_count_128I",
+    "max_count_192I",
+    "max_count_8I",
+    "private_subnet_id",
+    "public_subnet_id",
+    "s3_bucket_name",
+    "spot_instance_allocation_strategy",
+]
 
 
 def _now_iso() -> str:
@@ -38,6 +64,11 @@ def _atomic_write_json(path: Path, data: Dict[str, Any]) -> None:
 
 def _read_json(path: Path) -> Dict[str, Any]:
     return cast(Dict[str, Any], json.loads(path.read_text(encoding="utf-8")))
+
+
+def _ensure_required_triplets(config: Dict[str, list[str]]) -> None:
+    for key in REQUIRED_DAYLILY_EC_CONFIG_KEYS:
+        config.setdefault(key, ["PROMPTUSER", "", ""])
 
 
 def _job_base_dir() -> Path:
@@ -131,16 +162,11 @@ def write_generated_ec_config(
             }
         }
     }
+    triplets = cast(Dict[str, list[str]], config["ephemeral_cluster"]["config"])
     if contact_email:
-        config["ephemeral_cluster"]["config"]["budget_email"] = ["USESETVALUE", "", contact_email]
-
+        triplets["budget_email"] = ["USESETVALUE", "", contact_email]
+    _ensure_required_triplets(triplets)
     dest.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
-    require_daylily_ec_version()
-    from daylily_ec.config.triplets import ensure_required_keys, load_config, write_config
-
-    cfg = load_config(dest)
-    ensure_required_keys(cfg)
-    write_config(cfg, dest)
     return dest
 
 

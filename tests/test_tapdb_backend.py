@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import inspect
+import json
 import sys
 import tomllib
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 import yaml
 
 from daylib_ursa.integrations import tapdb_runtime
@@ -21,6 +23,7 @@ from daylib_ursa.tapdb_graph.backend import (
     to_action_history_entry,
     utc_now_iso,
 )
+from daylib_ursa.tapdb_templates import claim_ursa_template_prefixes
 
 
 def _tapdb_dependency_spec() -> str:
@@ -220,3 +223,52 @@ def test_repo_ships_tapdb_config_template() -> None:
     assert payload["environments"]["dev"]["port"] == "5588"
     assert payload["environments"]["dev"]["database"] == "tapdb_ursa_dev"
     assert payload["environments"]["dev"]["audit_log_euid_prefix"] == "RGX"
+
+
+def test_claim_ursa_template_prefixes_initializes_missing_registry(tmp_path: Path) -> None:
+    domain_registry = tmp_path / "domain_code_registry.json"
+    prefix_registry = tmp_path / "prefix_ownership_registry.json"
+    domain_registry.write_text(
+        json.dumps({"version": "0.4.0", "domains": {"Z": {"name": "localhost"}}}) + "\n",
+        encoding="utf-8",
+    )
+
+    claimed = claim_ursa_template_prefixes(
+        [{"instance_prefix": "RGX"}],
+        domain_code="Z",
+        owner_repo_name="ursa",
+        domain_registry_path=domain_registry,
+        prefix_registry_path=prefix_registry,
+    )
+
+    assert claimed == ["RGX"]
+    payload = json.loads(prefix_registry.read_text(encoding="utf-8"))
+    assert payload["ownership"]["Z"]["RGX"]["issuer_app_code"] == "ursa"
+
+
+def test_claim_ursa_template_prefixes_rejects_conflict(tmp_path: Path) -> None:
+    domain_registry = tmp_path / "domain_code_registry.json"
+    prefix_registry = tmp_path / "prefix_ownership_registry.json"
+    domain_registry.write_text(
+        json.dumps({"version": "0.4.0", "domains": {"Z": {"name": "localhost"}}}) + "\n",
+        encoding="utf-8",
+    )
+    prefix_registry.write_text(
+        json.dumps(
+            {
+                "version": "0.4.0",
+                "ownership": {"Z": {"RGX": {"issuer_app_code": "other-repo"}}},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeError, match="claimed by 'other-repo'"):
+        claim_ursa_template_prefixes(
+            [{"instance_prefix": "RGX"}],
+            domain_code="Z",
+            owner_repo_name="ursa",
+            domain_registry_path=domain_registry,
+            prefix_registry_path=prefix_registry,
+        )

@@ -42,9 +42,13 @@ def _settings(**overrides: object) -> Settings:
 
 
 def test_require_daylily_ec_version_accepts_required_version(monkeypatch) -> None:
-    monkeypatch.setattr(runner.importlib_metadata, "version", lambda _name: "2.0.2")
+    monkeypatch.setattr(
+        runner.importlib_metadata,
+        "version",
+        lambda _name: runner.REQUIRED_DAYLILY_EC_VERSION,
+    )
 
-    assert runner.require_daylily_ec_version() == "2.0.2"
+    assert runner.require_daylily_ec_version() == runner.REQUIRED_DAYLILY_EC_VERSION
 
 
 def test_require_daylily_ec_version_rejects_missing_distribution(monkeypatch) -> None:
@@ -60,12 +64,19 @@ def test_require_daylily_ec_version_rejects_missing_distribution(monkeypatch) ->
 def test_require_daylily_ec_version_rejects_mismatched_distribution(monkeypatch) -> None:
     monkeypatch.setattr(runner.importlib_metadata, "version", lambda _name: "1.9.9")
 
-    with pytest.raises(RuntimeError, match="expected 2.0.2, found 1.9.9"):
+    with pytest.raises(
+        RuntimeError,
+        match=rf"expected {runner.REQUIRED_DAYLILY_EC_VERSION}, found 1.9.9",
+    ):
         runner.require_daylily_ec_version()
 
 
 def test_write_generated_ec_config_expands_required_triplets(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr(runner, "require_daylily_ec_version", lambda: "2.0.2")
+    monkeypatch.setattr(
+        runner,
+        "require_daylily_ec_version",
+        lambda: runner.REQUIRED_DAYLILY_EC_VERSION,
+    )
     config_path = runner.write_generated_ec_config(
         dest=tmp_path / "cluster.yaml",
         cluster_name="cluster-1",
