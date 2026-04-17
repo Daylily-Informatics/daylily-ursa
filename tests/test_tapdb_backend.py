@@ -191,7 +191,7 @@ def test_run_tapdb_cli_exports_explicit_identity_env(monkeypatch) -> None:
 
 
 def test_ensure_local_tapdb_namespace_config_initializes_namespaced_config(monkeypatch, tmp_path) -> None:
-    captured: dict[str, object] = {}
+    captured: dict[str, object] = {"cmds": []}
     config_path = tmp_path / "tapdb" / "tapdb-config.yaml"
 
     monkeypatch.setattr(tapdb_runtime, "ensure_tapdb_version", lambda: _tapdb_dependency_spec())
@@ -213,7 +213,7 @@ def test_ensure_local_tapdb_namespace_config_initializes_namespaced_config(monke
     )
 
     def fake_run(cmd, *, env=None, capture_output, text):
-        captured["cmd"] = cmd
+        captured["cmds"].append(cmd)
         captured["env"] = env
         return SimpleNamespace(returncode=0, stdout="ok\n", stderr="")
 
@@ -223,35 +223,118 @@ def test_ensure_local_tapdb_namespace_config_initializes_namespaced_config(monke
 
     assert result.returncode == 0
     assert config_path.parent.is_dir()
-    assert captured["cmd"] == [
-        sys.executable,
-        "-m",
-        "daylily_tapdb.cli",
-        "--config",
-        str(config_path),
-        "config",
-        "init",
-        "--client-id",
-        "local",
-        "--database-name",
-        "ursa",
-        "--owner-repo-name",
-        "ursa",
-        "--domain-code",
-        "dev=Z",
-        "--domain-registry-path",
-        str(tmp_path / "domain.json"),
-        "--prefix-ownership-registry-path",
-        str(tmp_path / "prefix.json"),
-        "--env",
-        "dev",
-        "--db-port",
-        "dev=5588",
-        "--ui-port",
-        "dev=8918",
+    assert captured["cmds"] == [
+        [
+            sys.executable,
+            "-m",
+            "daylily_tapdb.cli",
+            "--config",
+            str(config_path),
+            "db-config",
+            "init",
+            "--client-id",
+            "local",
+            "--database-name",
+            "ursa",
+            "--owner-repo-name",
+            "ursa",
+            "--domain-code",
+            "dev=Z",
+            "--domain-registry-path",
+            str(tmp_path / "domain.json"),
+            "--prefix-ownership-registry-path",
+            str(tmp_path / "prefix.json"),
+            "--env",
+            "dev",
+            "--db-port",
+            "dev=5588",
+            "--ui-port",
+            "dev=8918",
+        ],
+        [
+            sys.executable,
+            "-m",
+            "daylily_tapdb.cli",
+            "--config",
+            str(config_path),
+            "--client-id",
+            "local",
+            "--database-name",
+            "ursa",
+            "db-config",
+            "update",
+            "--env",
+            "dev",
+            "--owner-repo-name",
+            "ursa",
+            "--domain-code",
+            "Z",
+            "--domain-registry-path",
+            str(tmp_path / "domain.json"),
+            "--prefix-ownership-registry-path",
+            str(tmp_path / "prefix.json"),
+            "--engine-type",
+            "local",
+            "--host",
+            "localhost",
+            "--port",
+            "5588",
+            "--ui-port",
+            "8918",
+            "--database",
+            "ursa",
+        ],
     ]
     assert captured["env"]["MERIDIAN_DOMAIN_CODE"] == "Z"
     assert captured["env"]["TAPDB_OWNER_REPO"] == "ursa"
+
+
+def test_ensure_local_tapdb_namespace_config_requires_explicit_config_path(monkeypatch) -> None:
+    monkeypatch.setattr(
+        tapdb_runtime,
+        "_resolve_runtime_env",
+        lambda **_kwargs: {
+            "aws_profile": "lsmc",
+            "aws_region": "us-west-2",
+            "client_id": "local",
+            "database_name": "ursa",
+            "tapdb_env": "dev",
+            "config_path": "",
+            "domain_code": "Z",
+            "owner_repo_name": "ursa",
+            "domain_registry_path": "/tmp/domain.json",
+            "prefix_registry_path": "/tmp/prefix.json",
+        },
+    )
+
+    with pytest.raises(tapdb_runtime.TapDBRuntimeError, match="TapDB config path is required"):
+        tapdb_runtime.ensure_local_tapdb_namespace_config(config_path="")
+
+
+@pytest.mark.parametrize("missing_key", ["domain_registry_path", "prefix_registry_path"])
+def test_ensure_local_tapdb_namespace_config_requires_explicit_registry_paths(
+    monkeypatch, missing_key
+) -> None:
+    runtime_env = {
+        "aws_profile": "lsmc",
+        "aws_region": "us-west-2",
+        "client_id": "local",
+        "database_name": "ursa",
+        "tapdb_env": "dev",
+        "config_path": "/tmp/ursa-tapdb.yaml",
+        "domain_code": "Z",
+        "owner_repo_name": "ursa",
+        "domain_registry_path": "/tmp/domain.json",
+        "prefix_registry_path": "/tmp/prefix.json",
+    }
+    runtime_env[missing_key] = ""
+    monkeypatch.setattr(tapdb_runtime, "_resolve_runtime_env", lambda **_kwargs: runtime_env)
+
+    with pytest.raises(
+        tapdb_runtime.TapDBRuntimeError,
+        match="domain-registry-path|prefix-ownership-registry-path",
+    ):
+        tapdb_runtime.ensure_local_tapdb_namespace_config(config_path="/tmp/ursa-tapdb.yaml")
 
 
 def test_resolve_tapdb_config_path_requires_explicit_path() -> None:
@@ -270,7 +353,7 @@ def test_resolve_tapdb_config_path_returns_explicit_path() -> None:
     assert resolved == "/tmp/ursa-tapdb.yaml"
 
 
-def test_resolved_default_identity_prefers_explicit_env_path(monkeypatch) -> None:
+def test_resolved_default_identity_uses_settings_config_and_registry_paths(monkeypatch) -> None:
     monkeypatch.setenv("TAPDB_CONFIG_PATH", "/tmp/from-env.yaml")
     monkeypatch.setenv("TAPDB_CLIENT_ID", "env-client")
     monkeypatch.setenv("TAPDB_DATABASE_NAME", "env-db")
@@ -279,21 +362,25 @@ def test_resolved_default_identity_prefers_explicit_env_path(monkeypatch) -> Non
     monkeypatch.setitem(
         sys.modules,
         "daylib_ursa.config",
-        SimpleNamespace(
-            get_settings=lambda: SimpleNamespace(
-                tapdb_client_id="yaml-client",
-                tapdb_database_name="yaml-db",
-                tapdb_env="dev",
-                tapdb_config_path="/tmp/from-yaml.yaml",
-            )
-        ),
+            SimpleNamespace(
+                get_settings=lambda: SimpleNamespace(
+                    tapdb_client_id="yaml-client",
+                    tapdb_database_name="yaml-db",
+                    tapdb_env="dev",
+                    tapdb_config_path="/tmp/from-yaml.yaml",
+                    tapdb_domain_registry_path="/tmp/domain_code_registry.json",
+                    tapdb_prefix_ownership_registry_path="/tmp/prefix_ownership_registry.json",
+                )
+            ),
     )
     try:
         assert tapdb_runtime._resolved_default_identity() == (
             "env-client",
             "env-db",
             "prod",
-            "/tmp/from-env.yaml",
+            "/tmp/from-yaml.yaml",
+            "/tmp/domain_code_registry.json",
+            "/tmp/prefix_ownership_registry.json",
         )
     finally:
         sys.modules.pop("daylib_ursa.config", None)
@@ -309,10 +396,10 @@ def test_repo_ships_tapdb_config_template() -> None:
     assert payload["meta"]["database_name"] == "ursa"
     assert payload["meta"]["owner_repo_name"] == "ursa"
     assert payload["meta"]["domain_code"] == "Z"
-    assert payload["meta"]["domain_registry_path"] == "~/.config/tapdb/domain_code_registry.json"
+    assert payload["meta"]["domain_registry_path"] == "/absolute/path/to/domain_code_registry.json"
     assert (
         payload["meta"]["prefix_ownership_registry_path"]
-        == "~/.config/tapdb/prefix_ownership_registry.json"
+        == "/absolute/path/to/prefix_ownership_registry.json"
     )
     assert payload["environments"]["dev"]["domain_code"] == "Z"
     assert payload["environments"]["dev"]["port"] == "5588"

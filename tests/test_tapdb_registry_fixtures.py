@@ -58,7 +58,7 @@ def test_ursa_settings_accept_explicit_registry_paths() -> None:
     assert settings.tapdb_prefix_ownership_registry_path == "/tmp/prefix_ownership_registry.json"
 
 
-def test_ursa_seed_prefers_registry_paths_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_ursa_seed_prefers_settings_registry_paths_over_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TAPDB_DOMAIN_REGISTRY_PATH", "/tmp/from-env-domain.json")
     monkeypatch.setenv("TAPDB_PREFIX_OWNERSHIP_REGISTRY_PATH", "/tmp/from-env-prefix.json")
     monkeypatch.setattr(
@@ -71,8 +71,25 @@ def test_ursa_seed_prefers_registry_paths_from_env(monkeypatch: pytest.MonkeyPat
 
     resolved_domain, resolved_prefix = tapdb_templates._resolve_registry_paths()
 
-    assert resolved_domain == Path("/tmp/from-env-domain.json").resolve()
-    assert resolved_prefix == Path("/tmp/from-env-prefix.json").resolve()
+    assert resolved_domain == Path("/tmp/from-settings-domain.json").resolve()
+    assert resolved_prefix == Path("/tmp/from-settings-prefix.json").resolve()
+
+
+def test_ursa_resolve_registry_paths_requires_explicit_paths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("TAPDB_DOMAIN_REGISTRY_PATH", raising=False)
+    monkeypatch.delenv("TAPDB_PREFIX_OWNERSHIP_REGISTRY_PATH", raising=False)
+    monkeypatch.setattr(
+        "daylib_ursa.config.get_settings",
+        lambda: SimpleNamespace(
+            tapdb_domain_registry_path="",
+            tapdb_prefix_ownership_registry_path="",
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="explicit registry paths"):
+        tapdb_templates._resolve_registry_paths()
 
 
 def test_ursa_claim_helper_rejects_prefix_collisions(tmp_path: Path) -> None:

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 from sqlalchemy import text
 from tempfile import NamedTemporaryFile
@@ -21,11 +20,13 @@ from daylily_tapdb import (
     seed_templates,
     validate_template_configs,
 )
+from daylib_ursa.config import (
+    DEFAULT_TAPDB_DOMAIN_REGISTRY_PATH,
+    DEFAULT_TAPDB_PREFIX_REGISTRY_PATH,
+)
 from daylib_ursa.integrations.tapdb_runtime import (
     DEFAULT_TAPDB_DOMAIN_CODE,
-    DEFAULT_TAPDB_DOMAIN_REGISTRY_PATH,
     DEFAULT_TAPDB_OWNER_REPO,
-    DEFAULT_TAPDB_PREFIX_REGISTRY_PATH,
 )
 
 _TAPDB_CORE_PREFIXES = {
@@ -102,28 +103,20 @@ def _resolve_registry_paths(
     except Exception:
         settings = None
 
-    resolved_domain_registry_path = (
-        Path(
-            domain_registry_path
-            or os.environ.get("TAPDB_DOMAIN_REGISTRY_PATH")
-            or getattr(settings, "tapdb_domain_registry_path", DEFAULT_TAPDB_DOMAIN_REGISTRY_PATH)
+    resolved_domain_source = str(
+        domain_registry_path or getattr(settings, "tapdb_domain_registry_path", "") or ""
+    ).strip()
+    resolved_prefix_source = str(
+        prefix_registry_path
+        or getattr(settings, "tapdb_prefix_ownership_registry_path", "")
+        or ""
+    ).strip()
+    if not resolved_domain_source or not resolved_prefix_source:
+        raise RuntimeError(
+            "Ursa TapDB template seeding requires explicit registry paths from settings or function arguments."
         )
-        .expanduser()
-        .resolve()
-    )
-    resolved_prefix_registry_path = (
-        Path(
-            prefix_registry_path
-            or os.environ.get("TAPDB_PREFIX_OWNERSHIP_REGISTRY_PATH")
-            or getattr(
-                settings,
-                "tapdb_prefix_ownership_registry_path",
-                DEFAULT_TAPDB_PREFIX_REGISTRY_PATH,
-            )
-        )
-        .expanduser()
-        .resolve()
-    )
+    resolved_domain_registry_path = Path(resolved_domain_source).expanduser().resolve()
+    resolved_prefix_registry_path = Path(resolved_prefix_source).expanduser().resolve()
     return resolved_domain_registry_path, resolved_prefix_registry_path
 
 
