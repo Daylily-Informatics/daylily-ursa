@@ -190,7 +190,9 @@ def test_run_tapdb_cli_exports_explicit_identity_env(monkeypatch) -> None:
     assert captured["env"]["TAPDB_OWNER_REPO"] == "ursa"
 
 
-def test_ensure_local_tapdb_namespace_config_initializes_namespaced_config(monkeypatch, tmp_path) -> None:
+def test_ensure_local_tapdb_namespace_config_initializes_namespaced_config(
+    monkeypatch, tmp_path
+) -> None:
     captured: dict[str, object] = {"cmds": []}
     config_path = tmp_path / "tapdb" / "tapdb-config.yaml"
 
@@ -362,16 +364,16 @@ def test_resolved_default_identity_uses_settings_config_and_registry_paths(monke
     monkeypatch.setitem(
         sys.modules,
         "daylib_ursa.config",
-            SimpleNamespace(
-                get_settings=lambda: SimpleNamespace(
-                    tapdb_client_id="yaml-client",
-                    tapdb_database_name="yaml-db",
-                    tapdb_env="dev",
-                    tapdb_config_path="/tmp/from-yaml.yaml",
-                    tapdb_domain_registry_path="/tmp/domain_code_registry.json",
-                    tapdb_prefix_ownership_registry_path="/tmp/prefix_ownership_registry.json",
-                )
-            ),
+        SimpleNamespace(
+            get_settings=lambda: SimpleNamespace(
+                tapdb_client_id="yaml-client",
+                tapdb_database_name="yaml-db",
+                tapdb_env="dev",
+                tapdb_config_path="/tmp/from-yaml.yaml",
+                tapdb_domain_registry_path="/tmp/domain_code_registry.json",
+                tapdb_prefix_ownership_registry_path="/tmp/prefix_ownership_registry.json",
+            )
+        ),
     )
     try:
         assert tapdb_runtime._resolved_default_identity() == (

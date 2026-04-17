@@ -58,7 +58,9 @@ def test_ursa_settings_accept_explicit_registry_paths() -> None:
     assert settings.tapdb_prefix_ownership_registry_path == "/tmp/prefix_ownership_registry.json"
 
 
-def test_ursa_seed_prefers_settings_registry_paths_over_env(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_ursa_seed_prefers_settings_registry_paths_over_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("TAPDB_DOMAIN_REGISTRY_PATH", "/tmp/from-env-domain.json")
     monkeypatch.setenv("TAPDB_PREFIX_OWNERSHIP_REGISTRY_PATH", "/tmp/from-env-prefix.json")
     monkeypatch.setattr(

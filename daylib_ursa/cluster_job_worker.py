@@ -41,7 +41,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     request_payload = dict(job.request or {})
     cluster_service = ClusterService(
         regions=settings.get_allowed_regions(),
-        aws_profile=str(request_payload.get("aws_profile") or settings.aws_profile or "").strip() or None,
+        aws_profile=str(request_payload.get("aws_profile") or settings.aws_profile or "").strip()
+        or None,
     )
     run_cluster_create_job(
         resource_store=resource_store,

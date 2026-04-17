@@ -234,9 +234,7 @@ def _resolve_runtime_env(
         default_config_path,
         default_domain_registry_path,
         default_prefix_registry_path,
-    ) = (
-        _resolved_default_identity()
-    )
+    ) = _resolved_default_identity()
     resolved_client_id = (client_id or default_client_id).strip() or default_client_id
     resolved_namespace = (namespace or default_namespace).strip() or default_namespace
     resolved_cfg_path = str(config_path or default_config_path).strip()

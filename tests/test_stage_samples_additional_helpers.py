@@ -68,7 +68,9 @@ def test_build_stage_paths_without_prefix_uses_bucket_root(monkeypatch: pytest.M
     stage = ss.build_stage_paths("/data/staged_sample_data", "s3://bucket")
 
     assert stage.remote_stage_name == "remote_stage_20260309T020304Z"
-    assert stage.remote_s3_stage == "s3://bucket/data/staged_sample_data/remote_stage_20260309T020304Z"
+    assert (
+        stage.remote_s3_stage == "s3://bucket/data/staged_sample_data/remote_stage_20260309T020304Z"
+    )
 
 
 def test_run_command_wraps_called_process_error(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -102,7 +104,9 @@ def test_aws_command_debug_prefixes_aws_and_prints(monkeypatch: pytest.MonkeyPat
 
     monkeypatch.setattr(ss, "run_command", _fake_run_command)
 
-    result = ss.aws_command(["s3", "ls", "s3://bucket"], aws_env={"AWS_PROFILE": "x"}, debug=True, capture_output=True)
+    result = ss.aws_command(
+        ["s3", "ls", "s3://bucket"], aws_env={"AWS_PROFILE": "x"}, debug=True, capture_output=True
+    )
 
     assert result.stdout == "ok"
     assert captured["command"] == ["aws", "s3", "ls", "s3://bucket"]
@@ -120,7 +124,9 @@ def test_check_path_helpers_and_validate_sources_dispatch(monkeypatch: pytest.Mo
 
     calls: list[tuple[str, str]] = []
     monkeypatch.setattr(ss, "check_s3_path", lambda uri, **_kwargs: calls.append(("s3", uri)))
-    monkeypatch.setattr(ss, "check_concordance_path", lambda path, **_kwargs: calls.append(("conc", path)))
+    monkeypatch.setattr(
+        ss, "check_concordance_path", lambda path, **_kwargs: calls.append(("conc", path))
+    )
     monkeypatch.setattr(ss, "check_local_path", lambda path: calls.append(("local", path)))
 
     ss.validate_sources(
@@ -163,7 +169,9 @@ def test_check_concordance_path_routes_fsx_and_local(monkeypatch: pytest.MonkeyP
     assert calls[1][0] == "local"
 
 
-def test_ensure_remote_stage_writable_uploads_and_cleans_temp(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_ensure_remote_stage_writable_uploads_and_cleans_temp(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     commands: list[list[str]] = []
 
     def _fake_aws_command(args, **_kwargs):
@@ -182,7 +190,11 @@ def test_ensure_remote_stage_writable_uploads_and_cleans_temp(monkeypatch: pytes
     ss.ensure_remote_stage_writable(stage, aws_env={}, debug=False)
 
     assert commands[0][0:2] == ["s3", "cp"]
-    assert commands[1] == ["s3", "rm", "s3://bucket/stage/remote_stage_20260309T020304Z/_write_test.txt"]
+    assert commands[1] == [
+        "s3",
+        "rm",
+        "s3://bucket/stage/remote_stage_20260309T020304Z/_write_test.txt",
+    ]
 
 
 def test_aws_copy_and_s3_object_helpers(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -223,7 +235,9 @@ def test_aws_copy_and_s3_object_helpers(monkeypatch: pytest.MonkeyPatch) -> None
     assert uploaded_for_cleanup == [tuple()]
 
 
-def test_ensure_s3_objects_happy_path_and_cleanup_ignores_rm_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_ensure_s3_objects_happy_path_and_cleanup_ignores_rm_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     copied: list[tuple[str, str]] = []
 
     monkeypatch.setattr(ss.uuid, "uuid4", lambda: SimpleNamespace(hex="abcdef"))
@@ -269,7 +283,9 @@ def test_multipart_concatenate_success_and_abort_paths(monkeypatch: pytest.Monke
             return SimpleNamespace(stdout=json.dumps({"UploadId": "upload-1"}))
         if args[:2] == ["s3api", "upload-part-copy"]:
             part_num = args[args.index("--part-number") + 1]
-            return SimpleNamespace(stdout=json.dumps({"CopyPartResult": {"ETag": f"etag-{part_num}"}}))
+            return SimpleNamespace(
+                stdout=json.dumps({"CopyPartResult": {"ETag": f"etag-{part_num}"}})
+            )
         return SimpleNamespace(stdout="")
 
     monkeypatch.setattr(ss, "aws_command", _aws_ok)
@@ -296,7 +312,9 @@ def test_multipart_concatenate_success_and_abort_paths(monkeypatch: pytest.Monke
     monkeypatch.setattr(ss, "aws_command", _aws_missing_etag)
 
     with pytest.raises(ss.CommandError, match="Failed to copy part"):
-        ss.multipart_concatenate(["s3://source/a"], "s3://dest-bucket/path/key", aws_env={}, debug=False)
+        ss.multipart_concatenate(
+            ["s3://source/a"], "s3://dest-bucket/path/key", aws_env={}, debug=False
+        )
 
     assert any(cmd[:2] == ["s3api", "abort-multipart-upload"] for cmd in abort_calls)
 
@@ -304,7 +322,9 @@ def test_multipart_concatenate_success_and_abort_paths(monkeypatch: pytest.Monke
         ss.multipart_concatenate([], "s3://dest-bucket/path/key", aws_env={}, debug=False)
 
 
-def test_stage_concordance_covers_all_source_shapes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_stage_concordance_covers_all_source_shapes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     calls: list[tuple[str, str, bool]] = []
     monkeypatch.setattr(
         ss,
@@ -317,21 +337,31 @@ def test_stage_concordance_covers_all_source_shapes(monkeypatch: pytest.MonkeyPa
     local_file = tmp_path / "conc_file.txt"
     local_file.write_text("x", encoding="utf-8")
 
-    assert ss.stage_concordance("na", "/fsx/ignored", "s3://ignored", aws_env={}, debug=False) == "na"
     assert (
-        ss.stage_concordance("/fsx/data/existing", "/fsx/ignored", "s3://ignored", aws_env={}, debug=False)
+        ss.stage_concordance("na", "/fsx/ignored", "s3://ignored", aws_env={}, debug=False) == "na"
+    )
+    assert (
+        ss.stage_concordance(
+            "/fsx/data/existing", "/fsx/ignored", "s3://ignored", aws_env={}, debug=False
+        )
         == "/fsx/data/existing"
     )
     assert (
-        ss.stage_concordance("s3://src/conc", "/fsx/target", "s3://dst/conc", aws_env={}, debug=False)
+        ss.stage_concordance(
+            "s3://src/conc", "/fsx/target", "s3://dst/conc", aws_env={}, debug=False
+        )
         == "/fsx/target"
     )
     assert (
-        ss.stage_concordance(str(local_dir), "/fsx/target", "s3://dst/conc", aws_env={}, debug=False)
+        ss.stage_concordance(
+            str(local_dir), "/fsx/target", "s3://dst/conc", aws_env={}, debug=False
+        )
         == "/fsx/target"
     )
     assert (
-        ss.stage_concordance(str(local_file), "/fsx/target", "s3://dst/conc", aws_env={}, debug=False)
+        ss.stage_concordance(
+            str(local_file), "/fsx/target", "s3://dst/conc", aws_env={}, debug=False
+        )
         == "/fsx/target"
     )
 
@@ -474,7 +504,9 @@ def test_process_samples_required_columns_and_blank_header_paths(tmp_path: Path)
     )
 
     with pytest.raises(ss.CommandError, match="missing a header row"):
-        ss.process_samples(no_header, stage, reference_bucket="s3://bucket/ref", aws_env={}, debug=False)
+        ss.process_samples(
+            no_header, stage, reference_bucket="s3://bucket/ref", aws_env={}, debug=False
+        )
 
     missing_cols = tmp_path / "missing_cols.tsv"
     missing_cols.write_text("RUN_ID\tSAMPLE_ID\nA\tB\n", encoding="utf-8")
@@ -489,7 +521,9 @@ def test_process_samples_required_columns_and_blank_header_paths(tmp_path: Path)
         )
 
 
-def test_main_missing_input_and_success(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys) -> None:
+def test_main_missing_input_and_success(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys
+) -> None:
     missing_args = argparse.Namespace(
         analysis_samples=str(tmp_path / "missing.tsv"),
         stage_target="/data/staged_sample_data",

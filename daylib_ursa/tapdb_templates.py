@@ -8,13 +8,6 @@ from sqlalchemy import text
 from tempfile import NamedTemporaryFile
 from typing import Any
 
-from daylily_tapdb.euid import (
-    AUDIT_LOG_PREFIX,
-    GENERIC_INSTANCE_LINEAGE_PREFIX,
-    GENERIC_TEMPLATE_PREFIX,
-    SYSTEM_MESSAGE_PREFIX,
-    SYSTEM_USER_PREFIX,
-)
 from daylily_tapdb import (
     find_tapdb_core_config_dir,
     seed_templates,
@@ -29,12 +22,16 @@ from daylib_ursa.integrations.tapdb_runtime import (
     DEFAULT_TAPDB_OWNER_REPO,
 )
 
+_URSA_GENERIC_INSTANCE_LINEAGE_PREFIX = "EDG"
+_URSA_AUDIT_LOG_PREFIX = "ADT"
+_TAPDB_CORE_TEMPLATE_PLACEHOLDER_PREFIX = "GX"
+_URSA_SYSTEM_USER_PREFIX = "SYS"
+_URSA_SYSTEM_MESSAGE_PREFIX = "MSG"
+
 _TAPDB_CORE_PREFIXES = {
-    GENERIC_TEMPLATE_PREFIX,
-    GENERIC_INSTANCE_LINEAGE_PREFIX,
-    AUDIT_LOG_PREFIX,
-    SYSTEM_USER_PREFIX,
-    SYSTEM_MESSAGE_PREFIX,
+    _TAPDB_CORE_TEMPLATE_PLACEHOLDER_PREFIX,
+    _URSA_SYSTEM_USER_PREFIX,
+    _URSA_SYSTEM_MESSAGE_PREFIX,
 }
 
 
@@ -107,9 +104,7 @@ def _resolve_registry_paths(
         domain_registry_path or getattr(settings, "tapdb_domain_registry_path", "") or ""
     ).strip()
     resolved_prefix_source = str(
-        prefix_registry_path
-        or getattr(settings, "tapdb_prefix_ownership_registry_path", "")
-        or ""
+        prefix_registry_path or getattr(settings, "tapdb_prefix_ownership_registry_path", "") or ""
     ).strip()
     if not resolved_domain_source or not resolved_prefix_source:
         raise RuntimeError(
@@ -284,14 +279,14 @@ def seed_ursa_templates(
         entity="generic_instance_lineage",
         domain_code=DEFAULT_TAPDB_DOMAIN_CODE,
         owner_repo_name=DEFAULT_TAPDB_OWNER_REPO,
-        prefix=GENERIC_INSTANCE_LINEAGE_PREFIX,
+        prefix=_URSA_GENERIC_INSTANCE_LINEAGE_PREFIX,
     )
     _ensure_identity_prefix_config(
         session,
         entity="audit_log",
         domain_code=DEFAULT_TAPDB_DOMAIN_CODE,
         owner_repo_name=DEFAULT_TAPDB_OWNER_REPO,
-        prefix=AUDIT_LOG_PREFIX,
+        prefix=_URSA_AUDIT_LOG_PREFIX,
     )
     seed_templates(
         session,
