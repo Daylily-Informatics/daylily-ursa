@@ -50,11 +50,11 @@ def test_backend_adapter_reexports_tapdb_surface_without_legacy_inheritance() ->
 def test_template_definitions_cover_phase_one_objects() -> None:
     assert len(TEMPLATE_DEFINITIONS) >= 16
     codes = {spec.template_code for spec in TEMPLATE_DEFINITIONS}
-    assert "workflow/analysis/run-linked/1.0/" in codes
-    assert "workflow/workset/gui-ready/1.0/" in codes
-    assert "data/manifest/dewey-bound/1.0/" in codes
-    assert "integration/auth/user-token/1.0/" in codes
-    assert "integration/auth/client-registration/1.0/" in codes
+    assert "RGX/analysis/run-linked/1.0/" in codes
+    assert "RGX/workset/gui-ready/1.0/" in codes
+    assert "RGX/manifest/dewey-bound/1.0/" in codes
+    assert "RGX/auth/user-token/1.0/" in codes
+    assert "RGX/auth/client-registration/1.0/" in codes
 
 
 def test_template_definitions_are_template_spec_instances() -> None:
@@ -206,6 +206,35 @@ def test_resolve_tapdb_config_path_returns_explicit_path() -> None:
     assert resolved == "/tmp/ursa-tapdb.yaml"
 
 
+def test_resolved_default_identity_prefers_explicit_env_path(monkeypatch) -> None:
+    monkeypatch.setenv("TAPDB_CONFIG_PATH", "/tmp/from-env.yaml")
+    monkeypatch.setenv("TAPDB_CLIENT_ID", "env-client")
+    monkeypatch.setenv("TAPDB_DATABASE_NAME", "env-db")
+    monkeypatch.setenv("TAPDB_ENV", "prod")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "daylib_ursa.config",
+        SimpleNamespace(
+            get_settings=lambda: SimpleNamespace(
+                tapdb_client_id="yaml-client",
+                tapdb_database_name="yaml-db",
+                tapdb_env="dev",
+                tapdb_config_path="/tmp/from-yaml.yaml",
+            )
+        ),
+    )
+    try:
+        assert tapdb_runtime._resolved_default_identity() == (
+            "env-client",
+            "env-db",
+            "prod",
+            "/tmp/from-env.yaml",
+        )
+    finally:
+        sys.modules.pop("daylib_ursa.config", None)
+
+
 def test_repo_ships_tapdb_config_template() -> None:
     template_path = Path("config/tapdb-config-ursa.yaml")
     payload = yaml.safe_load(template_path.read_text(encoding="utf-8"))
@@ -215,14 +244,17 @@ def test_repo_ships_tapdb_config_template() -> None:
     assert payload["meta"]["client_id"] == "local"
     assert payload["meta"]["database_name"] == "ursa"
     assert payload["meta"]["owner_repo_name"] == "ursa"
+    assert payload["meta"]["domain_code"] == "Z"
     assert payload["meta"]["domain_registry_path"] == "~/.config/tapdb/domain_code_registry.json"
     assert (
         payload["meta"]["prefix_ownership_registry_path"]
         == "~/.config/tapdb/prefix_ownership_registry.json"
     )
+    assert payload["environments"]["dev"]["domain_code"] == "Z"
     assert payload["environments"]["dev"]["port"] == "5588"
     assert payload["environments"]["dev"]["database"] == "tapdb_ursa_dev"
     assert payload["environments"]["dev"]["audit_log_euid_prefix"] == "RGX"
+    assert payload["environments"]["prod"]["domain_code"] == "Z"
 
 
 def test_claim_ursa_template_prefixes_initializes_missing_registry(tmp_path: Path) -> None:
@@ -272,3 +304,87 @@ def test_claim_ursa_template_prefixes_rejects_conflict(tmp_path: Path) -> None:
             domain_registry_path=domain_registry,
             prefix_registry_path=prefix_registry,
         )
+
+
+def test_backend_scopes_template_lookups_to_bundle_domain_code() -> None:
+    template_calls: list[tuple[str, dict[str, str]]] = []
+
+    class _FakeTemplateManager:
+        def get_template(self, _session, template_code: str, **kwargs):
+            template_calls.append((template_code, kwargs))
+            return None
+
+    backend = TapDBBackend(
+        bundle=SimpleNamespace(
+            connection=SimpleNamespace(domain_code="z"),
+            template_manager=_FakeTemplateManager(),
+            instance_factory=SimpleNamespace(),
+        ),
+        app_username="ursa",
+        client_id="local",
+        namespace="ursa",
+        tapdb_env="dev",
+    )
+
+    with pytest.raises(RuntimeError, match="Missing Ursa templates"):
+        backend.ensure_templates(object())
+
+    assert template_calls
+    assert {kwargs["domain_code"] for _, kwargs in template_calls} == {"Z"}
+
+
+def test_get_tapdb_bundle_scopes_instance_factory_to_runtime_domain(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(tapdb_runtime, "ensure_tapdb_version", lambda: "6.0.4")
+    monkeypatch.setattr(
+        tapdb_runtime,
+        "_resolve_runtime_env",
+        lambda **_kwargs: {
+            "tapdb_env": "dev",
+            "client_id": "local",
+            "database_name": "ursa",
+            "aws_region": "us-west-2",
+            "domain_code": "Z",
+            "owner_repo_name": "ursa",
+        },
+    )
+    monkeypatch.setattr(
+        tapdb_runtime, "_require_config_path", lambda _runtime_env: "/tmp/ursa.yaml"
+    )
+    monkeypatch.setattr(
+        tapdb_runtime,
+        "_get_tapdb_db_config_for_env",
+        lambda *_args, **_kwargs: {
+            "host": "localhost",
+            "port": "5432",
+            "user": "ursa",
+            "password": "secret",
+            "database": "tapdb_ursa_dev",
+            "engine_type": "postgres",
+        },
+    )
+
+    class _FakeConnection:
+        def __init__(self, **kwargs):
+            captured["connection_kwargs"] = kwargs
+
+    class _FakeTemplateManager:
+        def __init__(self, config_path):
+            captured["template_config_path"] = str(config_path)
+
+    class _FakeInstanceFactory:
+        def __init__(self, template_manager, *, domain_code=None):
+            captured["instance_factory_template_manager"] = template_manager
+            captured["instance_factory_domain_code"] = domain_code
+
+    monkeypatch.setattr(tapdb_runtime, "TAPDBConnection", _FakeConnection)
+    monkeypatch.setattr(tapdb_runtime, "TemplateManager", _FakeTemplateManager)
+    monkeypatch.setattr(tapdb_runtime, "InstanceFactory", _FakeInstanceFactory)
+
+    bundle = tapdb_runtime.get_tapdb_bundle()
+
+    assert captured["connection_kwargs"]["domain_code"] == "Z"
+    assert captured["template_config_path"] == "/tmp/ursa.yaml"
+    assert captured["instance_factory_domain_code"] == "Z"
+    assert bundle.connection is not None

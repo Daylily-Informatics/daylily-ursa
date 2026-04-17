@@ -3,6 +3,7 @@ meta:
   client_id: local
   database_name: ursa
   owner_repo_name: ursa
+  domain_code: Z
   domain_registry_path: ~/.config/tapdb/domain_code_registry.json
   prefix_ownership_registry_path: ~/.config/tapdb/prefix_ownership_registry.json
   # Explicit env contract for TapDB/Meridian subprocesses:
@@ -10,6 +11,7 @@ meta:
   # TAPDB_OWNER_REPO=ursa
 environments:
   dev:
+    domain_code: Z
     engine_type: local
     host: localhost
     port: '5588'
@@ -19,6 +21,7 @@ environments:
     support_email: support@lsmc.bio
     cognito_user_pool_id: ''
   prod:
+    domain_code: Z
     engine_type: aurora
     host: ursa.cluster-REPLACE.us-west-2.rds.amazonaws.com
     port: '5432'

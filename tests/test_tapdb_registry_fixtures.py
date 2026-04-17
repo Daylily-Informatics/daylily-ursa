@@ -58,6 +58,23 @@ def test_ursa_settings_accept_explicit_registry_paths() -> None:
     assert settings.tapdb_prefix_ownership_registry_path == "/tmp/prefix_ownership_registry.json"
 
 
+def test_ursa_seed_prefers_registry_paths_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TAPDB_DOMAIN_REGISTRY_PATH", "/tmp/from-env-domain.json")
+    monkeypatch.setenv("TAPDB_PREFIX_OWNERSHIP_REGISTRY_PATH", "/tmp/from-env-prefix.json")
+    monkeypatch.setattr(
+        "daylib_ursa.config.get_settings",
+        lambda: SimpleNamespace(
+            tapdb_domain_registry_path="/tmp/from-settings-domain.json",
+            tapdb_prefix_ownership_registry_path="/tmp/from-settings-prefix.json",
+        ),
+    )
+
+    resolved_domain, resolved_prefix = tapdb_templates._resolve_registry_paths()
+
+    assert resolved_domain == Path("/tmp/from-env-domain.json").resolve()
+    assert resolved_prefix == Path("/tmp/from-env-prefix.json").resolve()
+
+
 def test_ursa_claim_helper_rejects_prefix_collisions(tmp_path: Path) -> None:
     domain_registry = tmp_path / "domain_code_registry.json"
     prefix_registry = tmp_path / "prefix_ownership_registry.json"
@@ -101,15 +118,17 @@ def test_ursa_seed_prefers_explicit_registry_paths(
         encoding="utf-8",
     )
 
+    def fake_validate_template_configs(config_dirs, strict=True):
+        assert strict is True
+        resolved = [Path(item) for item in config_dirs]
+        if resolved == [Path("/tmp/core")]:
+            return ([{"instance_prefix": "SYS"}], [])
+        return ([{"instance_prefix": "RGX"}], [])
+
     monkeypatch.setattr(
         tapdb_templates,
         "validate_template_configs",
-        lambda *_args, **_kwargs: ([{"instance_prefix": "RGX"}], []),
-    )
-    monkeypatch.setattr(
-        tapdb_templates,
-        "resolve_seed_config_dirs",
-        lambda config_root: [config_root],
+        fake_validate_template_configs,
     )
     monkeypatch.setattr(
         tapdb_templates,
@@ -127,12 +146,19 @@ def test_ursa_seed_prefers_explicit_registry_paths(
     monkeypatch.setattr(
         tapdb_templates,
         "seed_templates",
-        lambda *args, **kwargs: calls.update(
+        lambda *args, **kwargs: calls.setdefault("seed_calls", []).append(
             {
-                "seed_domain_path": kwargs["domain_registry_path"],
-                "seed_prefix_path": kwargs["prefix_registry_path"],
+                "templates": args[1],
+                "owner_repo_name": kwargs["owner_repo_name"],
+                "domain_path": kwargs["domain_registry_path"],
+                "prefix_path": kwargs["prefix_registry_path"],
             }
         ),
+    )
+    monkeypatch.setattr(
+        tapdb_templates,
+        "_ensure_identity_prefix_config",
+        lambda session, **kwargs: calls.setdefault("identity_calls", []).append(kwargs),
     )
     monkeypatch.setattr(
         tapdb_templates,
@@ -155,5 +181,34 @@ def test_ursa_seed_prefers_explicit_registry_paths(
 
     assert Path(calls["claim_domain_path"]).resolve() == explicit_domain_registry.resolve()
     assert Path(calls["claim_prefix_path"]).resolve() == explicit_prefix_registry.resolve()
-    assert Path(calls["seed_domain_path"]).resolve() == explicit_domain_registry.resolve()
-    assert Path(calls["seed_prefix_path"]).resolve() == explicit_prefix_registry.resolve()
+    seed_calls = calls["seed_calls"]
+    assert len(seed_calls) == 2
+    assert seed_calls[0]["templates"] == [{"instance_prefix": "SYS"}]
+    assert seed_calls[0]["owner_repo_name"] == "daylily-tapdb"
+    assert Path(seed_calls[0]["domain_path"]).resolve() == explicit_domain_registry.resolve()
+    assert Path(seed_calls[0]["prefix_path"]).resolve() == explicit_prefix_registry.resolve()
+    assert seed_calls[1]["templates"] == [{"instance_prefix": "RGX"}]
+    assert seed_calls[1]["owner_repo_name"] == "ursa"
+    assert Path(seed_calls[1]["domain_path"]).resolve() == explicit_domain_registry.resolve()
+    assert Path(seed_calls[1]["prefix_path"]).resolve() == explicit_prefix_registry.resolve()
+    identity_calls = calls["identity_calls"]
+    assert identity_calls == [
+        {
+            "entity": "generic_template",
+            "domain_code": "Z",
+            "owner_repo_name": "ursa",
+            "prefix": "RGX",
+        },
+        {
+            "entity": "generic_instance_lineage",
+            "domain_code": "Z",
+            "owner_repo_name": "ursa",
+            "prefix": "EDG",
+        },
+        {
+            "entity": "audit_log",
+            "domain_code": "Z",
+            "owner_repo_name": "ursa",
+            "prefix": "ADT",
+        },
+    ]

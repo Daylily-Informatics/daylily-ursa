@@ -94,6 +94,7 @@ def test_activate_bootstraps_local_ursa_repo_only() -> None:
         'URSA_TAPDB_PACKAGE_SPEC="$(dependency_spec_from_pyproject "${SCRIPT_DIR}" "daylily-tapdb")"'
         in activate_script
     )
+    assert 'python - "${project_root}/pyproject.toml" "${dependency_name}"' in activate_script
     assert 'conda env create -n "$CONDA_ENV_NAME" -f "$ENV_FILE"' in activate_script
     assert 'conda activate "$CONDA_ENV_NAME"' in activate_script
     assert 'require_tool "conda env" "pre-commit"' in activate_script
@@ -111,6 +112,11 @@ def test_activate_bootstraps_local_ursa_repo_only() -> None:
     assert "env_created=1" in activate_script
     assert 'if [ "${env_created}" -eq 1 ]; then' in activate_script
     assert "if ! bootstrap_local_ursa_repo; then" in activate_script
+    assert (
+        'elif distribution_is_editable_from_repo "daylily-ursa" "${SCRIPT_DIR}"; then'
+        in activate_script
+    )
+    assert "else" in activate_script
     assert (
         'if ! distribution_is_editable_from_repo "daylily-ursa" "${SCRIPT_DIR}"; then'
         in activate_script

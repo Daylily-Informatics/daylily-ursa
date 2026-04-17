@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+from sqlalchemy import text
 from tempfile import NamedTemporaryFile
 from typing import Any
 
@@ -16,7 +18,6 @@ from daylily_tapdb.euid import (
 )
 from daylily_tapdb import (
     find_tapdb_core_config_dir,
-    resolve_seed_config_dirs,
     seed_templates,
     validate_template_configs,
 )
@@ -104,6 +105,7 @@ def _resolve_registry_paths(
     resolved_domain_registry_path = (
         Path(
             domain_registry_path
+            or os.environ.get("TAPDB_DOMAIN_REGISTRY_PATH")
             or getattr(settings, "tapdb_domain_registry_path", DEFAULT_TAPDB_DOMAIN_REGISTRY_PATH)
         )
         .expanduser()
@@ -112,6 +114,7 @@ def _resolve_registry_paths(
     resolved_prefix_registry_path = (
         Path(
             prefix_registry_path
+            or os.environ.get("TAPDB_PREFIX_OWNERSHIP_REGISTRY_PATH")
             or getattr(
                 settings,
                 "tapdb_prefix_ownership_registry_path",
@@ -181,6 +184,64 @@ def claim_ursa_template_prefixes(
     return claimed_prefixes
 
 
+def _ensure_identity_prefix_config(
+    session,
+    *,
+    entity: str,
+    domain_code: str,
+    owner_repo_name: str,
+    prefix: str,
+) -> None:
+    normalized_entity = str(entity or "").strip()
+    normalized_domain = str(domain_code or "").strip().upper()
+    normalized_owner = str(owner_repo_name or "").strip()
+    normalized_prefix = str(prefix or "").strip().upper()
+    if not normalized_entity:
+        raise ValueError("Ursa TapDB identity entity is required")
+    if not normalized_prefix:
+        raise ValueError(f"Ursa TapDB identity prefix is required for {normalized_entity!r}")
+
+    params = {
+        "entity": normalized_entity,
+        "domain_code": normalized_domain,
+        "owner_repo_name": normalized_owner,
+        "prefix": normalized_prefix,
+    }
+    existing = session.execute(
+        text(
+            """
+            SELECT prefix
+            FROM tapdb_identity_prefix_config
+            WHERE entity = :entity
+              AND domain_code = :domain_code
+              AND issuer_app_code = :owner_repo_name
+            """
+        ),
+        params,
+    ).scalar_one_or_none()
+    if existing is not None:
+        existing_prefix = str(existing or "").strip().upper()
+        if existing_prefix != normalized_prefix:
+            raise RuntimeError(
+                f"Ursa identity prefix config for entity {normalized_entity!r} in domain "
+                f"{normalized_domain!r} is already seeded with prefix {existing_prefix!r}, "
+                f"not {normalized_prefix!r}"
+            )
+        return
+
+    session.execute(
+        text(
+            """
+            INSERT INTO tapdb_identity_prefix_config(
+              entity, domain_code, issuer_app_code, prefix
+            )
+            VALUES (:entity, :domain_code, :owner_repo_name, :prefix)
+            """
+        ),
+        params,
+    )
+
+
 def seed_ursa_templates(
     session,
     *,
@@ -192,14 +253,17 @@ def seed_ursa_templates(
         domain_registry_path=domain_registry_path,
         prefix_registry_path=prefix_registry_path,
     )
-    config_dirs = resolve_seed_config_dirs(template_config_root())
-    templates, issues = validate_template_configs(config_dirs, strict=True)
-    errors = [issue for issue in issues if issue.level == "error"]
+    core_config_dir = find_tapdb_core_config_dir()
+    core_templates, core_issues = validate_template_configs([core_config_dir], strict=True)
+    client_templates, client_issues = validate_template_configs(
+        [template_config_root()], strict=True
+    )
+    errors = [issue for issue in [*core_issues, *client_issues] if issue.level == "error"]
     if errors:
         joined = "; ".join(issue.message for issue in errors)
         raise RuntimeError(f"Ursa template pack validation failed: {joined}")
     claim_ursa_template_prefixes(
-        templates,
+        client_templates,
         domain_code=DEFAULT_TAPDB_DOMAIN_CODE,
         owner_repo_name=DEFAULT_TAPDB_OWNER_REPO,
         domain_registry_path=resolved_domain_registry_path,
@@ -207,9 +271,40 @@ def seed_ursa_templates(
     )
     seed_templates(
         session,
-        templates,
+        core_templates,
         overwrite=True,
-        core_config_dir=find_tapdb_core_config_dir(),
+        core_config_dir=core_config_dir,
+        domain_code=DEFAULT_TAPDB_DOMAIN_CODE,
+        owner_repo_name="daylily-tapdb",
+        domain_registry_path=resolved_domain_registry_path,
+        prefix_registry_path=resolved_prefix_registry_path,
+    )
+    _ensure_identity_prefix_config(
+        session,
+        entity="generic_template",
+        domain_code=DEFAULT_TAPDB_DOMAIN_CODE,
+        owner_repo_name=DEFAULT_TAPDB_OWNER_REPO,
+        prefix="RGX",
+    )
+    _ensure_identity_prefix_config(
+        session,
+        entity="generic_instance_lineage",
+        domain_code=DEFAULT_TAPDB_DOMAIN_CODE,
+        owner_repo_name=DEFAULT_TAPDB_OWNER_REPO,
+        prefix=GENERIC_INSTANCE_LINEAGE_PREFIX,
+    )
+    _ensure_identity_prefix_config(
+        session,
+        entity="audit_log",
+        domain_code=DEFAULT_TAPDB_DOMAIN_CODE,
+        owner_repo_name=DEFAULT_TAPDB_OWNER_REPO,
+        prefix=AUDIT_LOG_PREFIX,
+    )
+    seed_templates(
+        session,
+        client_templates,
+        overwrite=True,
+        core_config_dir=core_config_dir,
         domain_code=DEFAULT_TAPDB_DOMAIN_CODE,
         owner_repo_name=DEFAULT_TAPDB_OWNER_REPO,
         domain_registry_path=resolved_domain_registry_path,

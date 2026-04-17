@@ -176,6 +176,7 @@ VALID_FIELDS = {
     "tapdb_client_id": (str, "TapDB client identifier"),
     "tapdb_database_name": (str, "TapDB namespace / database name"),
     "tapdb_env": (str, "TapDB environment selector"),
+    "tapdb_config_path": (str, "Explicit TapDB config path"),
     "tapdb_domain_registry_path": (
         str,
         "Explicit TapDB domain registry path",
@@ -207,6 +208,7 @@ VALID_FIELDS = {
     "dewey_base_url": (str, "Dewey base URL"),
     "dewey_api_token": (str, "Dewey API bearer token"),
     "dewey_verify_ssl": (bool, "Verify Dewey TLS certificates"),
+    "ursa_internal_api_key": (str, "Ursa internal API key"),
     "whitelist_domains": (str, "Allowed email domains for registration/login"),
     "deployment": (dict, "Deployment metadata for non-production UI chrome"),
     "ui_show_environment_chrome": (bool, "Toggle GUI deployment and region chrome"),
@@ -289,6 +291,9 @@ def validate_config_file(path: Path) -> Tuple[bool, List[str], List[str]]:
         "tapdb_client_id",
         "tapdb_database_name",
         "tapdb_env",
+        "tapdb_config_path",
+        "tapdb_domain_registry_path",
+        "tapdb_prefix_ownership_registry_path",
         "cognito_region",
         "cognito_user_pool_id",
         "cognito_app_client_id",
@@ -303,6 +308,7 @@ def validate_config_file(path: Path) -> Tuple[bool, List[str], List[str]]:
         "atlas_base_url",
         "dewey_base_url",
         "whitelist_domains",
+        "ursa_internal_api_key",
     ]:
         if field_name in data and data[field_name] is not None:
             if not isinstance(data[field_name], str):
@@ -378,6 +384,9 @@ class UrsaConfig:
     tapdb_env: Optional[str] = None
     """TapDB environment selector read from YAML config."""
 
+    tapdb_config_path: Optional[str] = None
+    """Explicit TapDB config path read from YAML config."""
+
     tapdb_domain_registry_path: Optional[str] = None
     """Explicit TapDB domain registry path read from YAML config."""
 
@@ -443,6 +452,9 @@ class UrsaConfig:
 
     dewey_verify_ssl: Optional[bool] = None
     """Dewey TLS verification flag read from YAML config."""
+
+    ursa_internal_api_key: Optional[str] = None
+    """Ursa internal API key read from YAML config."""
 
     whitelist_domains: Optional[str] = None
     """Allowed registration/login email domains (overridden by WHITELIST_DOMAINS env var)."""
@@ -547,6 +559,7 @@ class UrsaConfig:
         tapdb_client_id = data.get("tapdb_client_id")
         tapdb_database_name = data.get("tapdb_database_name")
         tapdb_env = data.get("tapdb_env")
+        tapdb_config_path = data.get("tapdb_config_path")
         tapdb_domain_registry_path = data.get("tapdb_domain_registry_path")
         tapdb_prefix_ownership_registry_path = data.get("tapdb_prefix_ownership_registry_path")
         cognito_user_pool_id = data.get("cognito_user_pool_id")
@@ -569,6 +582,7 @@ class UrsaConfig:
         dewey_base_url = data.get("dewey_base_url")
         dewey_api_token = data.get("dewey_api_token")
         dewey_verify_ssl = data.get("dewey_verify_ssl")
+        ursa_internal_api_key = data.get("ursa_internal_api_key")
         whitelist_domains = os.environ.get("WHITELIST_DOMAINS") or data.get("whitelist_domains")
         ui_show_environment_chrome = data.get("ui_show_environment_chrome")
 
@@ -587,6 +601,7 @@ class UrsaConfig:
             tapdb_client_id=tapdb_client_id,
             tapdb_database_name=tapdb_database_name,
             tapdb_env=tapdb_env,
+            tapdb_config_path=tapdb_config_path,
             tapdb_domain_registry_path=tapdb_domain_registry_path,
             tapdb_prefix_ownership_registry_path=tapdb_prefix_ownership_registry_path,
             cognito_user_pool_id=cognito_user_pool_id,
@@ -609,6 +624,7 @@ class UrsaConfig:
             dewey_base_url=dewey_base_url,
             dewey_api_token=dewey_api_token,
             dewey_verify_ssl=dewey_verify_ssl,
+            ursa_internal_api_key=ursa_internal_api_key,
             whitelist_domains=whitelist_domains,
             deployment_name=str(deployment_chrome["name"]),
             deployment_color=str(deployment_chrome["color"]),

@@ -49,11 +49,11 @@ class ReviewState(str, Enum):
     REJECTED = "REJECTED"
 
 
-ANALYSIS_TEMPLATE = "workflow/analysis/run-linked/1.0/"
-ARTIFACT_TEMPLATE = "data/artifact/analysis-output/1.0/"
-REVIEW_EVENT_TEMPLATE = "action/analysis/review-event/1.0/"
-RETURN_EVENT_TEMPLATE = "action/analysis/atlas-return/1.0/"
-RESOLVED_CONTEXT_TEMPLATE = "integration/reference/sequenced-assignment-context/1.0/"
+ANALYSIS_TEMPLATE = "RGX/analysis/run-linked/1.0/"
+ARTIFACT_TEMPLATE = "RGX/artifact/analysis-output/1.0/"
+REVIEW_EVENT_TEMPLATE = "RGX/analysis/review-event/1.0/"
+RETURN_EVENT_TEMPLATE = "RGX/analysis/atlas-return/1.0/"
+RESOLVED_CONTEXT_TEMPLATE = "RGX/reference/sequenced-assignment-context/1.0/"
 
 
 @dataclass(frozen=True)

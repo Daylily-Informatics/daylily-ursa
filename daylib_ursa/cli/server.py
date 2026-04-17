@@ -392,6 +392,22 @@ def start(
             env.pop(key, None)
     env["MERIDIAN_DOMAIN_CODE"] = "Z"
     env["TAPDB_OWNER_REPO"] = "ursa"
+    if str(getattr(settings, "tapdb_config_path", "") or "").strip():
+        env["TAPDB_CONFIG_PATH"] = str(settings.tapdb_config_path).strip()
+    resolved_domain_registry_path = str(
+        os.environ.get("TAPDB_DOMAIN_REGISTRY_PATH")
+        or getattr(settings, "tapdb_domain_registry_path", "")
+        or ""
+    ).strip()
+    if resolved_domain_registry_path:
+        env["TAPDB_DOMAIN_REGISTRY_PATH"] = resolved_domain_registry_path
+    resolved_prefix_registry_path = str(
+        os.environ.get("TAPDB_PREFIX_OWNERSHIP_REGISTRY_PATH")
+        or getattr(settings, "tapdb_prefix_ownership_registry_path", "")
+        or ""
+    ).strip()
+    if resolved_prefix_registry_path:
+        env["TAPDB_PREFIX_OWNERSHIP_REGISTRY_PATH"] = resolved_prefix_registry_path
     env["PYTHONUNBUFFERED"] = "1"
     env["ENABLE_AUTH"] = "true"
 

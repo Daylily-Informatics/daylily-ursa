@@ -66,6 +66,7 @@ def test_yaml_seed_from_ursa_config_includes_allowed_regions(monkeypatch) -> Non
         tapdb_client_id="local",
         tapdb_database_name="ursa",
         tapdb_env="dev",
+        tapdb_config_path="/tmp/ursa-tapdb.yaml",
         cognito_user_pool_id=None,
         cognito_app_client_id=None,
         cognito_app_client_secret=None,
@@ -83,6 +84,7 @@ def test_yaml_seed_from_ursa_config_includes_allowed_regions(monkeypatch) -> Non
         dewey_base_url=None,
         dewey_api_token=None,
         dewey_verify_ssl=True,
+        ursa_internal_api_key="ursa-internal-key",
         deployment_name="inflec3",
         deployment_color="#7521ca",
         deployment_is_production=False,
@@ -94,3 +96,5 @@ def test_yaml_seed_from_ursa_config_includes_allowed_regions(monkeypatch) -> Non
 
     assert seeded["ursa_allowed_regions"] == "us-west-2,us-east-1"
     assert seeded["aws_profile"] == "lsmc"
+    assert seeded["tapdb_config_path"] == "/tmp/ursa-tapdb.yaml"
+    assert seeded["ursa_internal_api_key"] == "ursa-internal-key"

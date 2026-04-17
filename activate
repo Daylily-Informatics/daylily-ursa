@@ -22,7 +22,7 @@ CONDA_ENV_BASE="URSA"
 URSA_LEGACY_REBIND_VARS=(
     USE_LOCAL_DAYLILY_TAPDB
 )
-URSA_REQUIRED_DISTRIBUTIONS=(
+URSA_REQUIRED_DISTRIBUTIONS_BASE=(
     "daylily-auth-cognito==2.1.1"
     "cli-core-yo==2.1.0"
     "meridian-euid==0.4.2"
@@ -300,11 +300,7 @@ unset _URSA_SCRIPT_PATH
 
 ENV_FILE="${SCRIPT_DIR}/environment.yaml"
 BIN_DIR="${SCRIPT_DIR}/bin"
-URSA_TAPDB_PACKAGE_SPEC="$(dependency_spec_from_pyproject "${SCRIPT_DIR}" "daylily-tapdb")"
-URSA_REQUIRED_DISTRIBUTIONS=(
-    "${URSA_TAPDB_PACKAGE_SPEC}"
-    "${URSA_REQUIRED_DISTRIBUTIONS[@]}"
-)
+URSA_REQUIRED_DISTRIBUTIONS=("${URSA_REQUIRED_DISTRIBUTIONS_BASE[@]}")
 
 distribution_is_editable_from_repo() {
     dist_name="$1"
@@ -393,6 +389,12 @@ activate_main() {
     fi
     log_success "Activated conda environment: ${CONDA_ENV_NAME}"
 
+    URSA_TAPDB_PACKAGE_SPEC="$(dependency_spec_from_pyproject "${SCRIPT_DIR}" "daylily-tapdb")" || return 1
+    URSA_REQUIRED_DISTRIBUTIONS=(
+        "${URSA_TAPDB_PACKAGE_SPEC}"
+        "${URSA_REQUIRED_DISTRIBUTIONS_BASE[@]}"
+    )
+
     if [ -n "${CONDA_PREFIX:-}" ] && [ -x "${CONDA_PREFIX}/bin/python" ]; then
         export PATH="${CONDA_PREFIX}/bin:${PATH}"
     fi
@@ -429,6 +431,10 @@ activate_main() {
         fi
     elif distribution_is_editable_from_repo "daylily-ursa" "${SCRIPT_DIR}"; then
         log_success "Using local Ursa checkout: ${SCRIPT_DIR}"
+    else
+        if ! bootstrap_local_ursa_repo; then
+            return 1
+        fi
     fi
 
     if command -v rehash >/dev/null 2>&1; then

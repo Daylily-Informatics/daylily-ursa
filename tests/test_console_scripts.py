@@ -93,6 +93,8 @@ def test_ursa_server_start_uses_packaged_entrypoint(
             tapdb_database_name="ursa",
             tapdb_env="dev",
             tapdb_config_path="/tmp/ursa-tapdb.yaml",
+            tapdb_domain_registry_path="/tmp/domain_code_registry.json",
+            tapdb_prefix_ownership_registry_path="/tmp/prefix_ownership_registry.json",
             api_host="0.0.0.0",
             api_port=8913,
         ),
@@ -144,6 +146,9 @@ def test_ursa_server_start_uses_packaged_entrypoint(
     assert env["DATABASE_TARGET"] == "local"
     assert env["DATABASE_URL"] == "postgresql://test-db"
     assert env["MERIDIAN_DOMAIN_CODE"] == "Z"
+    assert env["TAPDB_CONFIG_PATH"] == "/tmp/ursa-tapdb.yaml"
+    assert env["TAPDB_DOMAIN_REGISTRY_PATH"] == "/tmp/domain_code_registry.json"
+    assert env["TAPDB_PREFIX_OWNERSHIP_REGISTRY_PATH"] == "/tmp/prefix_ownership_registry.json"
     assert env["TAPDB_OWNER_REPO"] == "ursa"
     assert "TAPDB_CLIENT_ID" not in env
     assert "TAPDB_DATABASE_NAME" not in env

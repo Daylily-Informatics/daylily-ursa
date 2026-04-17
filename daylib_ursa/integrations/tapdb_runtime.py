@@ -181,10 +181,22 @@ def _resolved_default_identity() -> tuple[str, str, str, str]:
         from daylib_ursa.config import get_settings
 
         settings = get_settings()
-        client_id = str(getattr(settings, "tapdb_client_id", "") or "").strip()
-        namespace = str(getattr(settings, "tapdb_database_name", "") or "").strip()
-        tapdb_env = str(getattr(settings, "tapdb_env", "") or "").strip().lower()
-        config_path = str(getattr(settings, "tapdb_config_path", "") or "").strip()
+        client_id = str(
+            os.environ.get("TAPDB_CLIENT_ID") or getattr(settings, "tapdb_client_id", "") or ""
+        ).strip()
+        namespace = str(
+            os.environ.get("TAPDB_DATABASE_NAME")
+            or getattr(settings, "tapdb_database_name", "")
+            or ""
+        ).strip()
+        tapdb_env = (
+            str(os.environ.get("TAPDB_ENV") or getattr(settings, "tapdb_env", "") or "")
+            .strip()
+            .lower()
+        )
+        config_path = str(
+            os.environ.get("TAPDB_CONFIG_PATH") or getattr(settings, "tapdb_config_path", "") or ""
+        ).strip()
     except Exception:
         client_id = ""
         namespace = ""
@@ -348,7 +360,10 @@ def get_tapdb_bundle(
         owner_repo_name=runtime_env["owner_repo_name"],
     )
     template_manager = TemplateManager(Path(resolved_config_path) if resolved_config_path else None)
-    instance_factory = InstanceFactory(template_manager)
+    instance_factory = InstanceFactory(
+        template_manager,
+        domain_code=runtime_env["domain_code"],
+    )
     return TapdbClientBundle(
         connection=connection,
         template_manager=template_manager,

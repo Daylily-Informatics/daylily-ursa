@@ -68,6 +68,7 @@ def _yaml_seed_from_ursa_config() -> dict[str, object]:
         "tapdb_client_id": cfg.tapdb_client_id,
         "tapdb_database_name": cfg.tapdb_database_name,
         "tapdb_env": cfg.tapdb_env,
+        "tapdb_config_path": getattr(cfg, "tapdb_config_path", ""),
         "tapdb_domain_registry_path": getattr(
             cfg,
             "tapdb_domain_registry_path",
@@ -95,6 +96,7 @@ def _yaml_seed_from_ursa_config() -> dict[str, object]:
         "dewey_base_url": cfg.dewey_base_url,
         "dewey_api_token": cfg.dewey_api_token,
         "dewey_verify_ssl": cfg.dewey_verify_ssl,
+        "ursa_internal_api_key": getattr(cfg, "ursa_internal_api_key", ""),
         "deployment_name": cfg.deployment_name,
         "deployment_color": cfg.deployment_color,
         "deployment_is_production": cfg.deployment_is_production,

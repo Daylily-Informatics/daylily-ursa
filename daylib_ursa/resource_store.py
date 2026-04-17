@@ -25,14 +25,14 @@ except ImportError:  # pragma: no cover - import-time compatibility for reduced 
         return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-WORKSET_TEMPLATE = "workflow/workset/gui-ready/1.0/"
-MANIFEST_TEMPLATE = "data/manifest/dewey-bound/1.0/"
-DEWEY_IMPORT_TEMPLATE = "action/artifact/dewey-import/1.0/"
-CLIENT_REGISTRATION_TEMPLATE = "integration/auth/client-registration/1.0/"
-CLUSTER_JOB_TEMPLATE = "workflow/cluster/ephemeral-job/1.0/"
-CLUSTER_JOB_REVISION_TEMPLATE = "action/cluster/ephemeral-job-revision/1.0/"
-CLUSTER_JOB_EVENT_TEMPLATE = "action/cluster/ephemeral-job-event/1.0/"
-LINKED_BUCKET_TEMPLATE = "integration/storage/linked-bucket/1.0/"
+WORKSET_TEMPLATE = "RGX/workset/gui-ready/1.0/"
+MANIFEST_TEMPLATE = "RGX/manifest/dewey-bound/1.0/"
+DEWEY_IMPORT_TEMPLATE = "RGX/artifact/dewey-import/1.0/"
+CLIENT_REGISTRATION_TEMPLATE = "RGX/auth/client-registration/1.0/"
+CLUSTER_JOB_TEMPLATE = "RGX/cluster/ephemeral-job/1.0/"
+CLUSTER_JOB_REVISION_TEMPLATE = "RGX/cluster/ephemeral-job-revision/1.0/"
+CLUSTER_JOB_EVENT_TEMPLATE = "RGX/cluster/ephemeral-job-event/1.0/"
+LINKED_BUCKET_TEMPLATE = "RGX/storage/linked-bucket/1.0/"
 
 
 @dataclass(frozen=True)
@@ -652,7 +652,7 @@ class ResourceStore:
                 raise KeyError(f"workset not found: {workset_euid}")
             analysis = self.backend.find_instance_by_euid(
                 session,
-                template_code="workflow/analysis/run-linked/1.0/",
+                template_code="RGX/analysis/run-linked/1.0/",
                 value=analysis_euid,
                 for_update=True,
             )

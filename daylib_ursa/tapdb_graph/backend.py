@@ -15,6 +15,7 @@ from daylily_tapdb import generic_instance, generic_instance_lineage, utc_now_is
 from daylib_ursa.integrations.tapdb_runtime import (
     DEFAULT_TAPDB_CLIENT_ID,
     DEFAULT_TAPDB_DATABASE_NAME,
+    DEFAULT_TAPDB_DOMAIN_CODE,
     TapdbClientBundle,
     ensure_tapdb_version,
     get_tapdb_bundle,
@@ -34,23 +35,23 @@ class TemplateSpec:
 
 
 URSA_TEMPLATE_DEFINITIONS: list[TemplateSpec] = [
-    TemplateSpec("workflow/analysis/run-linked/1.0/"),
-    TemplateSpec("data/artifact/analysis-output/1.0/"),
-    TemplateSpec("action/analysis/review-event/1.0/"),
-    TemplateSpec("action/analysis/atlas-return/1.0/"),
-    TemplateSpec("integration/reference/sequenced-assignment-context/1.0/"),
-    TemplateSpec("workflow/workset/gui-ready/1.0/"),
-    TemplateSpec("data/manifest/dewey-bound/1.0/"),
-    TemplateSpec("action/artifact/dewey-import/1.0/"),
-    TemplateSpec("integration/auth/user-token/1.0/"),
-    TemplateSpec("integration/auth/user-token-revision/1.0/"),
-    TemplateSpec("integration/auth/user-token-usage/1.0/"),
-    TemplateSpec("integration/auth/client-registration/1.0/"),
-    TemplateSpec("integration/storage/linked-bucket/1.0/"),
-    TemplateSpec("workflow/cluster/ephemeral-job/1.0/"),
-    TemplateSpec("action/cluster/ephemeral-job-revision/1.0/"),
-    TemplateSpec("action/cluster/ephemeral-job-event/1.0/"),
-    TemplateSpec("ops/anomaly/local-record/1.0/"),
+    TemplateSpec("RGX/analysis/run-linked/1.0/"),
+    TemplateSpec("RGX/artifact/analysis-output/1.0/"),
+    TemplateSpec("RGX/analysis/review-event/1.0/"),
+    TemplateSpec("RGX/analysis/atlas-return/1.0/"),
+    TemplateSpec("RGX/reference/sequenced-assignment-context/1.0/"),
+    TemplateSpec("RGX/workset/gui-ready/1.0/"),
+    TemplateSpec("RGX/manifest/dewey-bound/1.0/"),
+    TemplateSpec("RGX/artifact/dewey-import/1.0/"),
+    TemplateSpec("RGX/auth/user-token/1.0/"),
+    TemplateSpec("RGX/auth/user-token-revision/1.0/"),
+    TemplateSpec("RGX/auth/user-token-usage/1.0/"),
+    TemplateSpec("RGX/auth/client-registration/1.0/"),
+    TemplateSpec("RGX/storage/linked-bucket/1.0/"),
+    TemplateSpec("RGX/cluster/ephemeral-job/1.0/"),
+    TemplateSpec("RGX/cluster/ephemeral-job-revision/1.0/"),
+    TemplateSpec("RGX/cluster/ephemeral-job-event/1.0/"),
+    TemplateSpec("RGX/anomaly/local-record/1.0/"),
 ]
 
 TEMPLATE_DEFINITIONS = URSA_TEMPLATE_DEFINITIONS
@@ -144,14 +145,20 @@ class TapDBBackend:
         self._conn = self.bundle.connection
         self._tm = self.bundle.template_manager
         self._factory = self.bundle.instance_factory
+        self._domain_code = (
+            str(getattr(self._conn, "domain_code", "") or DEFAULT_TAPDB_DOMAIN_CODE).strip().upper()
+        )
 
     def session_scope(self, commit: bool = False):
         return self._conn.session_scope(commit=commit)
 
+    def _get_template(self, session, template_code: str):
+        return self._tm.get_template(session, template_code, domain_code=self._domain_code)
+
     def ensure_templates(self, session) -> None:
         missing = []
         for spec in URSA_TEMPLATE_DEFINITIONS:
-            if self._tm.get_template(session, spec.template_code) is None:
+            if self._get_template(session, spec.template_code) is None:
                 missing.append(spec.template_code)
         if missing:
             raise RuntimeError(
@@ -193,7 +200,7 @@ class TapDBBackend:
         *,
         for_update: bool = False,
     ) -> Any | None:
-        tmpl = self._tm.get_template(session, template_code)
+        tmpl = self._get_template(session, template_code)
         if tmpl is None:
             return None
         query = session.query(generic_instance).filter(
@@ -223,7 +230,7 @@ class TapDBBackend:
         key: str,
         value: str,
     ) -> Any | None:
-        tmpl = self._tm.get_template(session, template_code)
+        tmpl = self._get_template(session, template_code)
         if tmpl is None:
             return None
         return (
@@ -243,7 +250,7 @@ class TapDBBackend:
         *,
         limit: int = 200,
     ) -> list[Any]:
-        tmpl = self._tm.get_template(session, template_code)
+        tmpl = self._get_template(session, template_code)
         if tmpl is None:
             return []
         return (
@@ -266,7 +273,7 @@ class TapDBBackend:
         *,
         limit: int = 200,
     ) -> list[Any]:
-        tmpl = self._tm.get_template(session, template_code)
+        tmpl = self._get_template(session, template_code)
         if tmpl is None:
             return []
         return (

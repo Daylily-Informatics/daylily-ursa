@@ -10,7 +10,7 @@ from daylib_ursa.resource_store import ResourceStore
 from daylib_ursa.tapdb_graph import from_json_addl, utc_now_iso
 from daylib_ursa.tapdb_templates import seed_ursa_templates
 
-ANOMALY_TEMPLATE = "ops/anomaly/local-record/1.0/"
+ANOMALY_TEMPLATE = "RGX/anomaly/local-record/1.0/"
 
 
 def _utcnow() -> datetime:
@@ -21,7 +21,7 @@ def _fingerprint(value: str) -> str:
     text = str(value or "").strip()
     if not text:
         return ""
-    return hashlib.sha1(text.encode("utf-8")).hexdigest()[:12]
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
 
 
 def _environment_name(settings: Settings) -> str:
@@ -69,7 +69,9 @@ class AnomalyRecord:
 
 
 class AnomalyRepository:
-    def __init__(self, *, backend: Any, resource_store: ResourceStore | None, settings: Settings) -> None:
+    def __init__(
+        self, *, backend: Any, resource_store: ResourceStore | None, settings: Settings
+    ) -> None:
         self.resource_store = resource_store
         self.backend = backend
         self.settings = settings
@@ -218,7 +220,9 @@ class AnomalyRepository:
             fingerprint=str(payload.get("fingerprint") or ""),
             summary=str(payload.get("summary") or getattr(instance, "name", "") or ""),
             first_seen_at=str(payload.get("first_seen_at") or utc_now_iso()),
-            last_seen_at=str(payload.get("last_seen_at") or payload.get("first_seen_at") or utc_now_iso()),
+            last_seen_at=str(
+                payload.get("last_seen_at") or payload.get("first_seen_at") or utc_now_iso()
+            ),
             occurrence_count=int(payload.get("occurrence_count") or 0),
             redacted_context=dict(payload.get("redacted_context") or {}),
             source_view_url=f"/admin/anomalies/{getattr(instance, 'euid', '')}",

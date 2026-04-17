@@ -11,9 +11,9 @@ from collections.abc import Callable
 from daylib_ursa.auth.dependencies import AuthError, CurrentUser
 from daylib_ursa.tapdb_graph import TapDBBackend, from_json_addl, utc_now_iso
 
-USER_TOKEN_TEMPLATE = "integration/auth/user-token/1.0/"
-USER_TOKEN_REVISION_TEMPLATE = "integration/auth/user-token-revision/1.0/"
-USER_TOKEN_USAGE_TEMPLATE = "integration/auth/user-token-usage/1.0/"
+USER_TOKEN_TEMPLATE = "RGX/auth/user-token/1.0/"
+USER_TOKEN_REVISION_TEMPLATE = "RGX/auth/user-token-revision/1.0/"
+USER_TOKEN_USAGE_TEMPLATE = "RGX/auth/user-token-usage/1.0/"
 
 USER_TOKEN_PREFIX = "urs_"
 TOKEN_STATUS_ACTIVE = "ACTIVE"

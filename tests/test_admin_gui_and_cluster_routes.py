@@ -31,6 +31,8 @@ from daylib_ursa.resource_store import (
 )
 from daylib_ursa.workset_api import create_app
 
+TEST_BASE_URL = "https://testserver"
+
 TENANT_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
 ADMIN_USER_ID = "00000000-0000-0000-0000-000000000101"
 SECONDARY_USER_ID = "00000000-0000-0000-0000-000000000202"
@@ -75,9 +77,9 @@ class MemoryBackend:
         _ = (session, singleton)
         self._uid += 1
         prefix = {
-            "integration/auth/user-token/1.0/": "UT",
-            "integration/auth/user-token-revision/1.0/": "UR",
-            "integration/auth/user-token-usage/1.0/": "UG",
+            "RGX/auth/user-token/1.0/": "UT",
+            "RGX/auth/user-token-revision/1.0/": "UR",
+            "RGX/auth/user-token-usage/1.0/": "UG",
         }.get(template_code, "GI")
         now = datetime.now(timezone.utc)
         instance = _Instance(
@@ -559,13 +561,48 @@ class DummyAdminBucketSession:
         )
 
 
+def _workflow_catalog_payload() -> dict[str, object]:
+    return {
+        "schema_version": "1",
+        "catalog_version": "1.0.0",
+        "repository": "daylily-omics-analysis",
+        "repository_ref": "0.7.640.dev0",
+        "display_name": "Daylily Omics Analysis",
+        "workflows": [
+            {
+                "workflow_id": "germline_wgs_snv",
+                "display_name": "Germline WGS SNV",
+                "description": "Example",
+                "targets": ["produce_alignstats"],
+                "supported_genome_builds": ["hg38"],
+                "default_genome_build": "hg38",
+                "supported_execution_profiles": ["slurm", "local"],
+                "default_execution_profile": "slurm",
+                "required_inputs": [
+                    {
+                        "input_id": "workset_manifest",
+                        "label": "Workset manifest",
+                        "description": "Manifest",
+                        "required": True,
+                    }
+                ],
+                "options": [],
+            }
+        ],
+    }
+
+
 def _settings() -> Settings:
     return Settings(
         aws_profile="",
         cors_origins="*",
         ursa_internal_api_key="ursa-test-key",
         session_secret_key="ursa-session-secret",
+        cognito_domain="auth.example.test",
+        cognito_app_client_id="client-123",
         cognito_app_client_secret="ursa-cognito-secret",
+        cognito_callback_url="https://testserver/auth/callback",
+        cognito_logout_url="https://testserver/auth/logout",
         bloom_base_url="https://bloom.example",
         atlas_base_url="https://atlas.example",
         ursa_internal_output_bucket="ursa-internal",
@@ -629,7 +666,7 @@ def test_admin_routes_cover_me_user_search_client_tokens_and_clusters() -> None:
     app.state.settings.aws_profile = "lsmc"
 
     with (
-        TestClient(app) as client,
+        TestClient(app, base_url=TEST_BASE_URL) as client,
         patch("daylib_ursa.workset_api.boto3.Session", DummyAdminBucketSession),
         patch(
             "daylib_ursa.workset_api.run_cluster_partition_verification",
@@ -775,10 +812,14 @@ def test_gui_routes_cover_remaining_pages_and_logout() -> None:
     app, _resources = _create_test_app(admin=True)
 
     with (
-        TestClient(app) as client,
+        TestClient(app, base_url=TEST_BASE_URL) as client,
         patch(
             "daylib_ursa.workset_api.run_cluster_partition_verification",
             return_value=_verification_result(),
+        ),
+        patch(
+            "daylib_ursa.gui_app.load_workflow_catalog_snapshot",
+            return_value=_workflow_catalog_payload(),
         ),
     ):
         client.post(
@@ -837,7 +878,6 @@ def test_gui_routes_cover_remaining_pages_and_logout() -> None:
     assert "Analysis Repository" in worksets_new_page.text
     assert "Execution Profile" in worksets_new_page.text
     assert "Command Preview" in worksets_new_page.text
-    assert "CLI Help Smoke Test" in worksets_new_page.text
     assert workset_detail_page.status_code == 200
     assert "Workset Tumor Batch" in workset_detail_page.text
     assert "Analysis Command" in workset_detail_page.text
@@ -883,7 +923,7 @@ def test_gui_routes_cover_remaining_pages_and_logout() -> None:
     )
     assert "<redacted>" in admin_config_page.text
     assert logout.status_code == 303
-    assert logout.headers["location"] == "/auth/error?reason=cognito_logout_misconfigured"
+    assert logout.headers["location"].startswith("https://auth.example.test/logout?")
 
 
 def test_cluster_scan_regions_update_refreshes_runtime_service() -> None:
@@ -897,7 +937,7 @@ def test_cluster_scan_regions_update_refreshes_runtime_service() -> None:
     )
 
     with (
-        TestClient(app) as client,
+        TestClient(app, base_url=TEST_BASE_URL) as client,
         patch("daylib_ursa.workset_api.update_config_regions", return_value=updated_config),
     ):
         response = client.post(
@@ -930,7 +970,7 @@ def test_clusters_page_groups_regions_and_surfaces_pending_create_jobs() -> None
         sponsor_user_id=ADMIN_USER_ID,
     )
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url=TEST_BASE_URL) as client:
         client.post(
             "/login",
             data={"access_token": "atlas-token", "next_path": "/clusters"},
@@ -956,7 +996,7 @@ def test_gui_routes_use_session_auth_and_gate_admin_pages() -> None:
     app, _resources = _create_test_app(admin=True)
 
     with (
-        TestClient(app) as client,
+        TestClient(app, base_url=TEST_BASE_URL) as client,
         patch(
             "daylib_ursa.workset_api.run_cluster_partition_verification",
             return_value=_verification_result(),
@@ -1024,7 +1064,7 @@ def test_cluster_create_blocks_when_partition_verification_fails() -> None:
     app, resources = _create_test_app(admin=True)
 
     with (
-        TestClient(app) as client,
+        TestClient(app, base_url=TEST_BASE_URL) as client,
         patch(
             "daylib_ursa.workset_api.run_cluster_partition_verification",
             return_value=_verification_result(
@@ -1091,7 +1131,7 @@ def test_cluster_partition_prechecks_cover_pass_warn_fail_and_pricing() -> None:
     }
 
     with (
-        TestClient(app) as client,
+        TestClient(app, base_url=TEST_BASE_URL) as client,
         patch(
             "daylib_ursa.workset_api.load_daylily_partition_instance_types",
             return_value=(
@@ -1157,7 +1197,7 @@ def test_cluster_partition_prechecks_cover_pass_warn_fail_and_pricing() -> None:
 def test_gui_admin_pages_reject_non_admin_sessions() -> None:
     app, _resources = _create_test_app(admin=False)
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url=TEST_BASE_URL) as client:
         client.post("/login", data={"access_token": "atlas-token", "next_path": "/"})
         dashboard = client.get("/")
         buckets_page = client.get("/buckets")

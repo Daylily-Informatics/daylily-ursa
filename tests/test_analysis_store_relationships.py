@@ -63,7 +63,7 @@ class _FakeBackend:
 class _WrappedContextBackend(_FakeBackend):
     def create_instance(self, session, template_code, name, *, json_addl, bstatus, tenant_id=None):
         payload = dict(json_addl)
-        if template_code == "integration/reference/sequenced-assignment-context/1.0/":
+        if template_code == "RGX/reference/sequenced-assignment-context/1.0/":
             payload = {"properties": payload}
         return super().create_instance(
             session,
@@ -78,7 +78,7 @@ class _WrappedContextBackend(_FakeBackend):
 class _WrappedAnalysisBackend(_FakeBackend):
     def create_instance(self, session, template_code, name, *, json_addl, bstatus, tenant_id=None):
         payload = dict(json_addl)
-        if template_code == "workflow/analysis/run-linked/1.0/":
+        if template_code == "RGX/analysis/run-linked/1.0/":
             payload = {"properties": payload}
         return super().create_instance(
             session,
@@ -122,8 +122,8 @@ def test_ingest_analysis_keeps_relationship_truth_on_context_reference():
     analysis_template, _analysis_name, analysis = store.backend.created[0]
     context_template, _context_name, context = store.backend.created[1]
 
-    assert analysis_template == "workflow/analysis/run-linked/1.0/"
-    assert context_template == "integration/reference/sequenced-assignment-context/1.0/"
+    assert analysis_template == "RGX/analysis/run-linked/1.0/"
+    assert context_template == "RGX/reference/sequenced-assignment-context/1.0/"
 
     analysis_payload = dict(analysis.json_addl)
     assert "run_euid" not in analysis_payload
