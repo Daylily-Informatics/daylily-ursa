@@ -29,10 +29,6 @@ DEFAULT_BLOOM_BASE_URL = "https://localhost:8001"
 DEFAULT_ATLAS_BASE_URL = "https://localhost:8000"
 DEFAULT_URSA_COGNITO_CALLBACK_URL = f"https://localhost:{DEFAULT_API_PORT}/auth/callback"
 DEFAULT_URSA_COGNITO_LOGOUT_URL = f"https://localhost:{DEFAULT_API_PORT}/login"
-DEFAULT_TAPDB_DOMAIN_REGISTRY_PATH = Path.home() / ".config" / "tapdb" / "domain_code_registry.json"
-DEFAULT_TAPDB_PREFIX_REGISTRY_PATH = (
-    Path.home() / ".config" / "tapdb" / "prefix_ownership_registry.json"
-)
 DEFAULT_COGNITO_ALLOWED_EMAIL_DOMAINS = (
     "lsmc.com",
     "lsmc.bio",
@@ -69,15 +65,9 @@ def _yaml_seed_from_ursa_config() -> dict[str, object]:
         "tapdb_database_name": cfg.tapdb_database_name,
         "tapdb_env": cfg.tapdb_env,
         "tapdb_config_path": getattr(cfg, "tapdb_config_path", ""),
-        "tapdb_domain_registry_path": getattr(
-            cfg,
-            "tapdb_domain_registry_path",
-            str(DEFAULT_TAPDB_DOMAIN_REGISTRY_PATH),
-        ),
+        "tapdb_domain_registry_path": getattr(cfg, "tapdb_domain_registry_path", ""),
         "tapdb_prefix_ownership_registry_path": getattr(
-            cfg,
-            "tapdb_prefix_ownership_registry_path",
-            str(DEFAULT_TAPDB_PREFIX_REGISTRY_PATH),
+            cfg, "tapdb_prefix_ownership_registry_path", ""
         ),
         "cognito_user_pool_id": cfg.cognito_user_pool_id,
         "cognito_app_client_id": cfg.cognito_app_client_id,
@@ -145,6 +135,15 @@ def _require_bare_cognito_domain(value: str | None, *, field_name: str) -> str:
         raise ValueError(
             f"{field_name} must be a bare host like example.auth.us-west-2.amazoncognito.com"
         )
+    return normalized
+
+
+def _validate_optional_absolute_path(value: str, *, field_name: str) -> str:
+    normalized = str(value or "").strip()
+    if not normalized:
+        return ""
+    if not Path(normalized).is_absolute():
+        raise ValueError(f"{field_name} must be an absolute path")
     return normalized
 
 
@@ -219,17 +218,18 @@ regions:
 # =============================================================================
 # Ursa reads its TapDB namespace/runtime from this YAML file.
 # Bootstrap the matching namespace with:
-#   tapdb --config ~/.config/tapdb/local/ursa/tapdb-config.yaml --env dev config init --owner-repo-name ursa --domain-code Z --domain-registry-path ~/.config/tapdb/domain_code_registry.json --prefix-ownership-registry-path ~/.config/tapdb/prefix_ownership_registry.json --db-port dev=5541 --ui-port dev=8916
-#   tapdb --config ~/.config/tapdb/local/ursa/tapdb-config.yaml --env dev bootstrap local
+#   tapdb --config {Path.home() / ".config" / "tapdb" / "local" / f"ursa-{_resolve_deployment_code()}" / "tapdb-config.yaml"} config init --client-id local --database-name ursa --owner-repo-name ursa --domain-code dev=Z --domain-registry-path {Path.home() / ".config" / "tapdb" / "domain_code_registry.json"} --prefix-ownership-registry-path {Path.home() / ".config" / "tapdb" / "prefix_ownership_registry.json"} --env dev --db-port dev=5588 --ui-port dev=8918
+#   tapdb --config {Path.home() / ".config" / "tapdb" / "local" / f"ursa-{_resolve_deployment_code()}" / "tapdb-config.yaml"} --env dev bootstrap local
 #
 # Explicit env contract for TapDB/Meridian subprocesses:
 # MERIDIAN_DOMAIN_CODE=Z
 # TAPDB_OWNER_REPO=ursa
 tapdb_client_id: local
 tapdb_database_name: ursa
+tapdb_config_path: {Path.home() / ".config" / "tapdb" / "local" / f"ursa-{_resolve_deployment_code()}" / "tapdb-config.yaml"}
 tapdb_env: dev
-tapdb_domain_registry_path: ~/.config/tapdb/domain_code_registry.json
-tapdb_prefix_ownership_registry_path: ~/.config/tapdb/prefix_ownership_registry.json
+tapdb_domain_registry_path: {Path.home() / ".config" / "tapdb" / "domain_code_registry.json"}
+tapdb_prefix_ownership_registry_path: {Path.home() / ".config" / "tapdb" / "prefix_ownership_registry.json"}
 
 # Required runtime storage bucket
 ursa_internal_output_bucket: your-ursa-output-bucket
@@ -324,11 +324,11 @@ class Settings(BaseSettings):
         description="TapDB environment selector",
     )
     tapdb_domain_registry_path: str = Field(
-        default=str(DEFAULT_TAPDB_DOMAIN_REGISTRY_PATH),
+        default="",
         description="Explicit TapDB domain registry path",
     )
     tapdb_prefix_ownership_registry_path: str = Field(
-        default=str(DEFAULT_TAPDB_PREFIX_REGISTRY_PATH),
+        default="",
         description="Explicit TapDB prefix ownership registry path",
     )
     ursa_cost_monitor_regions: str = Field(
@@ -719,6 +719,15 @@ class Settings(BaseSettings):
     @classmethod
     def validate_dewey_base_url(cls, v: str) -> str:
         return _validate_optional_https_url(v, field_name="dewey_base_url")
+
+    @field_validator(
+        "tapdb_config_path",
+        "tapdb_domain_registry_path",
+        "tapdb_prefix_ownership_registry_path",
+    )
+    @classmethod
+    def validate_explicit_tapdb_paths(cls, v: str, info) -> str:
+        return _validate_optional_absolute_path(v, field_name=str(info.field_name))
 
     @field_validator("cognito_callback_url", "cognito_logout_url")
     @classmethod

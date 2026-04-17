@@ -41,6 +41,11 @@ def test_build_local_uses_tapdb_bootstrap_then_overlay(monkeypatch):
     monkeypatch.setattr(db_cli, "get_settings", _settings)
     monkeypatch.setattr(
         db_cli,
+        "ensure_local_tapdb_namespace_config",
+        lambda **kwargs: events.append(("config", kwargs["config_path"])),
+    )
+    monkeypatch.setattr(
+        db_cli,
         "run_tapdb_cli",
         lambda **kwargs: (
             events.append(("tapdb", kwargs["args"]))
@@ -70,6 +75,7 @@ def test_build_local_uses_tapdb_bootstrap_then_overlay(monkeypatch):
     )
 
     assert events == [
+        ("config", "/tmp/ursa-tapdb.yaml"),
         ("tapdb", ["bootstrap", "local", "--no-gui"]),
         ("db_url", "resolved"),
         ("overlay", (3, 3)),
@@ -96,6 +102,11 @@ def test_reset_uses_tapdb_delete_then_bootstrap_then_overlay(monkeypatch):
     events: list[tuple[str, object]] = []
 
     monkeypatch.setattr(db_cli, "get_settings", _settings)
+    monkeypatch.setattr(
+        db_cli,
+        "ensure_local_tapdb_namespace_config",
+        lambda **kwargs: events.append(("config", kwargs["config_path"])),
+    )
     monkeypatch.setattr(
         db_cli,
         "run_tapdb_cli",
@@ -129,6 +140,7 @@ def test_reset_uses_tapdb_delete_then_bootstrap_then_overlay(monkeypatch):
 
     assert events == [
         ("tapdb", ["db", "delete", "dev", "--force"]),
+        ("config", "/tmp/ursa-tapdb.yaml"),
         ("tapdb", ["bootstrap", "local", "--no-gui"]),
         ("db_url", "resolved"),
         ("overlay", (4, 4)),

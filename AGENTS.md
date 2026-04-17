@@ -18,6 +18,9 @@ source ./activate <deploy-name>
 - If Ursa needs system/bootstrap packages, put them in `environment.yaml`.
 - If an Ursa CLI is missing from PATH after activation, fix the packaging entrypoint or the minimal conda-env bin precedence rule, not by adding broader shell hacks.
 - The declared console scripts `ursa` and `daylily-workset-api` must remain available from the activated conda env.
+- Every service config, TapDB config, and TapDB registry path must be passed explicitly as a full absolute file path.
+- Do not guess TapDB config or registry paths from `~/.config`, deployment names, repo defaults, or implicit home-directory discovery.
+- If Ursa is missing an explicit path, fail hard and fix the caller or config source instead of synthesizing a fallback path.
 
 ## Packaging Boundary
 
@@ -33,6 +36,13 @@ source ./activate <deploy-name>
 - Do not treat direct `python -m ...`, raw `postgres`, raw AWS CLI mutations, or direct config-file edits as automatic fallbacks.
 - If the intended CLI path is broken or incomplete, stop, diagnose, and ask for permission before circumventing it.
 - Prefer patience and repair of the intended CLI workflow over inventing a shortcut.
+
+## Explicit Config Path Contract
+
+- Do not guess TapDB config or registry file locations from deployment names, namespaces, client IDs, repo layout, cwd, home-directory defaults, or XDG conventions.
+- When Ursa invokes TapDB bootstrap, runtime, template seeding, or mounted admin flows, pass exact absolute file paths for `tapdb_config_path`, `tapdb_domain_registry_path`, and `tapdb_prefix_ownership_registry_path`.
+- Reject relative paths and `~`-prefixed paths for those TapDB files. Missing explicit paths must fail hard.
+- Keep any path precedence explicit and narrow: direct function args first, then explicit environment variables, then explicit service config. Do not add fallback synthesis after that.
 
 ## Ursa Examples
 

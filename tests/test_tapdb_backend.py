@@ -190,6 +190,54 @@ def test_run_tapdb_cli_exports_explicit_identity_env(monkeypatch) -> None:
     assert captured["env"]["TAPDB_OWNER_REPO"] == "ursa"
 
 
+def test_ensure_local_tapdb_namespace_config_initializes_namespaced_config(monkeypatch, tmp_path) -> None:
+    config_path = tmp_path / "tapdb" / "tapdb-config.yaml"
+    dayhoff_domain_registry = tmp_path / "dayhoff-domain.json"
+    dayhoff_prefix_registry = tmp_path / "dayhoff-prefix.json"
+    dayhoff_domain_registry.write_text('{"version":"0.4.0","domains":{"Z":{"name":"localhost"}}}\n', encoding="utf-8")
+    dayhoff_prefix_registry.write_text('{"version":"0.4.0","ownership":{"Z":{}}}\n', encoding="utf-8")
+
+    monkeypatch.setattr(tapdb_runtime, "ensure_tapdb_version", lambda: _tapdb_dependency_spec())
+    monkeypatch.setenv("DAYHOFF_TAPDB_DOMAIN_REGISTRY_PATH", str(dayhoff_domain_registry))
+    monkeypatch.setenv("DAYHOFF_TAPDB_PREFIX_REGISTRY_PATH", str(dayhoff_prefix_registry))
+    monkeypatch.setattr(
+        tapdb_runtime,
+        "_resolve_runtime_env",
+        lambda **_kwargs: {
+            "aws_profile": "lsmc",
+            "aws_region": "us-west-2",
+            "client_id": "local",
+            "database_name": "ursa",
+            "tapdb_env": "dev",
+            "config_path": str(config_path),
+            "domain_code": "Z",
+            "owner_repo_name": "ursa",
+            "domain_registry_path": str(dayhoff_domain_registry),
+            "prefix_registry_path": str(dayhoff_prefix_registry),
+        },
+    )
+
+    result = tapdb_runtime.ensure_local_tapdb_namespace_config(config_path=str(config_path))
+    payload = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+
+    assert result.returncode == 0
+    assert config_path.parent.is_dir()
+    assert payload["meta"] == {
+        "config_version": 3,
+        "client_id": "local",
+        "database_name": "ursa",
+        "owner_repo_name": "ursa",
+        "domain_code": "Z",
+        "domain_registry_path": str(dayhoff_domain_registry),
+        "prefix_ownership_registry_path": str(dayhoff_prefix_registry),
+    }
+    assert payload["environments"]["dev"]["engine_type"] == "local"
+    assert payload["environments"]["dev"]["port"] == "5588"
+    assert payload["environments"]["dev"]["ui_port"] == "8918"
+    assert payload["environments"]["dev"]["database"] == "tapdb_ursa_dev"
+    assert payload["environments"]["dev"]["audit_log_euid_prefix"] == "RGX"
+
+
 def test_resolve_tapdb_config_path_requires_explicit_path() -> None:
     resolved = tapdb_runtime._resolve_tapdb_config_path(namespace="ursa", client_id="local")
 
@@ -204,6 +252,14 @@ def test_resolve_tapdb_config_path_returns_explicit_path() -> None:
     )
 
     assert resolved == "/tmp/ursa-tapdb.yaml"
+
+
+def test_require_config_path_rejects_non_absolute_path() -> None:
+    with pytest.raises(
+        tapdb_runtime.TapDBRuntimeError,
+        match="tapdb_config_path must be an absolute path",
+    ):
+        tapdb_runtime._require_config_path({"config_path": "relative/ursa-tapdb.yaml"})
 
 
 def test_resolved_default_identity_prefers_explicit_env_path(monkeypatch) -> None:
@@ -245,10 +301,10 @@ def test_repo_ships_tapdb_config_template() -> None:
     assert payload["meta"]["database_name"] == "ursa"
     assert payload["meta"]["owner_repo_name"] == "ursa"
     assert payload["meta"]["domain_code"] == "Z"
-    assert payload["meta"]["domain_registry_path"] == "~/.config/tapdb/domain_code_registry.json"
+    assert payload["meta"]["domain_registry_path"] == "/absolute/path/to/domain_code_registry.json"
     assert (
         payload["meta"]["prefix_ownership_registry_path"]
-        == "~/.config/tapdb/prefix_ownership_registry.json"
+        == "/absolute/path/to/prefix_ownership_registry.json"
     )
     assert payload["environments"]["dev"]["domain_code"] == "Z"
     assert payload["environments"]["dev"]["port"] == "5588"
@@ -303,6 +359,18 @@ def test_claim_ursa_template_prefixes_rejects_conflict(tmp_path: Path) -> None:
             owner_repo_name="ursa",
             domain_registry_path=domain_registry,
             prefix_registry_path=prefix_registry,
+        )
+
+
+def test_claim_ursa_template_prefixes_requires_explicit_absolute_registry_paths() -> None:
+    with pytest.raises(RuntimeError, match="tapdb_domain_registry_path is required"):
+        claim_ursa_template_prefixes([{"instance_prefix": "RGX"}])
+
+    with pytest.raises(RuntimeError, match="tapdb_domain_registry_path must be an absolute path"):
+        claim_ursa_template_prefixes(
+            [{"instance_prefix": "RGX"}],
+            domain_registry_path="relative/domain_code_registry.json",
+            prefix_registry_path="/tmp/prefix_ownership_registry.json",
         )
 
 

@@ -58,6 +58,15 @@ def test_ursa_settings_accept_explicit_registry_paths() -> None:
     assert settings.tapdb_prefix_ownership_registry_path == "/tmp/prefix_ownership_registry.json"
 
 
+def test_ursa_settings_reject_non_absolute_registry_paths() -> None:
+    with pytest.raises(ValueError, match="tapdb_domain_registry_path must be an absolute path"):
+        get_settings_for_testing(
+            ursa_internal_output_bucket="bucket",
+            tapdb_domain_registry_path="~/domain_code_registry.json",
+            tapdb_prefix_ownership_registry_path="/tmp/prefix_ownership_registry.json",
+        )
+
+
 def test_ursa_seed_prefers_registry_paths_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TAPDB_DOMAIN_REGISTRY_PATH", "/tmp/from-env-domain.json")
     monkeypatch.setenv("TAPDB_PREFIX_OWNERSHIP_REGISTRY_PATH", "/tmp/from-env-prefix.json")
@@ -71,8 +80,23 @@ def test_ursa_seed_prefers_registry_paths_from_env(monkeypatch: pytest.MonkeyPat
 
     resolved_domain, resolved_prefix = tapdb_templates._resolve_registry_paths()
 
-    assert resolved_domain == Path("/tmp/from-env-domain.json").resolve()
-    assert resolved_prefix == Path("/tmp/from-env-prefix.json").resolve()
+    assert resolved_domain == Path("/tmp/from-env-domain.json")
+    assert resolved_prefix == Path("/tmp/from-env-prefix.json")
+
+
+def test_ursa_seed_requires_explicit_registry_paths(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("TAPDB_DOMAIN_REGISTRY_PATH", raising=False)
+    monkeypatch.delenv("TAPDB_PREFIX_OWNERSHIP_REGISTRY_PATH", raising=False)
+    monkeypatch.setattr(
+        "daylib_ursa.config.get_settings",
+        lambda: SimpleNamespace(
+            tapdb_domain_registry_path="",
+            tapdb_prefix_ownership_registry_path="",
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="tapdb_domain_registry_path is required"):
+        tapdb_templates._resolve_registry_paths()
 
 
 def test_ursa_claim_helper_rejects_prefix_collisions(tmp_path: Path) -> None:
@@ -179,18 +203,18 @@ def test_ursa_seed_prefers_explicit_registry_paths(
         prefix_registry_path=explicit_prefix_registry,
     )
 
-    assert Path(calls["claim_domain_path"]).resolve() == explicit_domain_registry.resolve()
-    assert Path(calls["claim_prefix_path"]).resolve() == explicit_prefix_registry.resolve()
+    assert Path(calls["claim_domain_path"]) == explicit_domain_registry
+    assert Path(calls["claim_prefix_path"]) == explicit_prefix_registry
     seed_calls = calls["seed_calls"]
     assert len(seed_calls) == 2
     assert seed_calls[0]["templates"] == [{"instance_prefix": "SYS"}]
     assert seed_calls[0]["owner_repo_name"] == "daylily-tapdb"
-    assert Path(seed_calls[0]["domain_path"]).resolve() == explicit_domain_registry.resolve()
-    assert Path(seed_calls[0]["prefix_path"]).resolve() == explicit_prefix_registry.resolve()
+    assert Path(seed_calls[0]["domain_path"]) == explicit_domain_registry
+    assert Path(seed_calls[0]["prefix_path"]) == explicit_prefix_registry
     assert seed_calls[1]["templates"] == [{"instance_prefix": "RGX"}]
     assert seed_calls[1]["owner_repo_name"] == "ursa"
-    assert Path(seed_calls[1]["domain_path"]).resolve() == explicit_domain_registry.resolve()
-    assert Path(seed_calls[1]["prefix_path"]).resolve() == explicit_prefix_registry.resolve()
+    assert Path(seed_calls[1]["domain_path"]) == explicit_domain_registry
+    assert Path(seed_calls[1]["prefix_path"]) == explicit_prefix_registry
     identity_calls = calls["identity_calls"]
     assert identity_calls == [
         {

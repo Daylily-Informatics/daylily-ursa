@@ -14,6 +14,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import quote
 
+import yaml
+
 from daylily_tapdb import InstanceFactory, TAPDBConnection, TemplateManager
 
 DEFAULT_AWS_PROFILE = "lsmc"
@@ -22,10 +24,10 @@ DEFAULT_TAPDB_CLIENT_ID = "local"
 DEFAULT_TAPDB_DATABASE_NAME = "ursa"
 DEFAULT_TAPDB_DOMAIN_CODE = "Z"
 DEFAULT_TAPDB_OWNER_REPO = "ursa"
-DEFAULT_TAPDB_DOMAIN_REGISTRY_PATH = Path.home() / ".config" / "tapdb" / "domain_code_registry.json"
-DEFAULT_TAPDB_PREFIX_REGISTRY_PATH = (
-    Path.home() / ".config" / "tapdb" / "prefix_ownership_registry.json"
-)
+DEFAULT_TAPDB_LOCAL_DB_PORT = "5588"
+DEFAULT_TAPDB_LOCAL_UI_PORT = "8918"
+DEFAULT_TAPDB_LOCAL_DATABASE = "tapdb_ursa_dev"
+DEFAULT_TAPDB_LOCAL_AUDIT_LOG_EUID_PREFIX = "RGX"
 
 _TARGET_TO_TAPDB_ENV = {
     "local": "dev",
@@ -211,6 +213,29 @@ def _resolved_default_identity() -> tuple[str, str, str, str]:
     )
 
 
+def _resolved_registry_paths() -> tuple[str, str]:
+    try:
+        from daylib_ursa.config import get_settings
+
+        settings = get_settings()
+    except Exception:
+        settings = None
+
+    domain_registry_path = str(
+        os.environ.get("TAPDB_DOMAIN_REGISTRY_PATH")
+        or os.environ.get("DAYHOFF_TAPDB_DOMAIN_REGISTRY_PATH")
+        or getattr(settings, "tapdb_domain_registry_path", "")
+        or ""
+    ).strip()
+    prefix_registry_path = str(
+        os.environ.get("TAPDB_PREFIX_OWNERSHIP_REGISTRY_PATH")
+        or os.environ.get("DAYHOFF_TAPDB_PREFIX_REGISTRY_PATH")
+        or getattr(settings, "tapdb_prefix_ownership_registry_path", "")
+        or ""
+    ).strip()
+    return domain_registry_path, prefix_registry_path
+
+
 def _resolve_runtime_env(
     *,
     target: str,
@@ -255,8 +280,8 @@ def _resolve_runtime_env(
         "config_path": resolved_cfg_path or "",
         "domain_code": DEFAULT_TAPDB_DOMAIN_CODE,
         "owner_repo_name": DEFAULT_TAPDB_OWNER_REPO,
-        "domain_registry_path": str(DEFAULT_TAPDB_DOMAIN_REGISTRY_PATH),
-        "prefix_registry_path": str(DEFAULT_TAPDB_PREFIX_REGISTRY_PATH),
+        "domain_registry_path": _resolved_registry_paths()[0],
+        "prefix_registry_path": _resolved_registry_paths()[1],
     }
 
 
@@ -284,7 +309,102 @@ def _require_config_path(runtime_env: Mapping[str, str]) -> str:
             "TapDB config path is required. Resolve it via Ursa settings and pass it explicitly "
             "to TapDB with --config."
         )
-    return config_path
+    return str(_require_absolute_path(config_path, field_name="tapdb_config_path"))
+
+
+def _require_absolute_path(path_value: str, *, field_name: str) -> Path:
+    raw = str(path_value or "").strip()
+    if not raw:
+        raise TapDBRuntimeError(f"{field_name} is required and must be passed as a full path.")
+    resolved = Path(raw)
+    if not resolved.is_absolute():
+        raise TapDBRuntimeError(f"{field_name} must be an absolute path, got: {raw}")
+    return resolved
+
+
+def _require_existing_file(path_value: str, *, field_name: str) -> Path:
+    resolved = _require_absolute_path(path_value, field_name=field_name)
+    if not resolved.is_file():
+        raise TapDBRuntimeError(f"{field_name} must point to an existing file: {resolved}")
+    return resolved
+
+
+def _local_config_payload(
+    runtime_env: Mapping[str, str],
+    *,
+    domain_registry_path: Path,
+    prefix_registry_path: Path,
+) -> dict[str, object]:
+    return {
+        "meta": {
+            "config_version": 3,
+            "client_id": runtime_env["client_id"],
+            "database_name": runtime_env["database_name"],
+            "owner_repo_name": runtime_env["owner_repo_name"],
+            "domain_code": runtime_env["domain_code"],
+            "domain_registry_path": str(domain_registry_path),
+            "prefix_ownership_registry_path": str(prefix_registry_path),
+        },
+        "environments": {
+            runtime_env["tapdb_env"]: {
+                "domain_code": runtime_env["domain_code"],
+                "engine_type": "local",
+                "host": "localhost",
+                "port": DEFAULT_TAPDB_LOCAL_DB_PORT,
+                "ui_port": DEFAULT_TAPDB_LOCAL_UI_PORT,
+                "database": DEFAULT_TAPDB_LOCAL_DATABASE,
+                "audit_log_euid_prefix": DEFAULT_TAPDB_LOCAL_AUDIT_LOG_EUID_PREFIX,
+                "support_email": "support@lsmc.bio",
+                "cognito_user_pool_id": "",
+            }
+        },
+    }
+
+
+def ensure_local_tapdb_namespace_config(
+    *,
+    client_id: str = DEFAULT_TAPDB_CLIENT_ID,
+    profile: str = DEFAULT_AWS_PROFILE,
+    region: str = DEFAULT_AWS_REGION,
+    namespace: str = DEFAULT_TAPDB_DATABASE_NAME,
+    config_path: str = "",
+) -> subprocess.CompletedProcess[str]:
+    runtime_env = _resolve_runtime_env(
+        target="local",
+        client_id=client_id,
+        profile=profile,
+        region=region,
+        namespace=namespace,
+        tapdb_env="dev",
+        config_path=config_path,
+    )
+    resolved_config_path = Path(_require_config_path(runtime_env))
+    resolved_config_path.parent.mkdir(parents=True, exist_ok=True)
+
+    domain_registry_path = _require_existing_file(
+        runtime_env["domain_registry_path"],
+        field_name="tapdb_domain_registry_path",
+    )
+    prefix_registry_path = _require_existing_file(
+        runtime_env["prefix_registry_path"],
+        field_name="tapdb_prefix_ownership_registry_path",
+    )
+
+    payload = _local_config_payload(
+        runtime_env,
+        domain_registry_path=domain_registry_path,
+        prefix_registry_path=prefix_registry_path,
+    )
+    resolved_config_path.write_text(
+        yaml.safe_dump(payload, sort_keys=False),
+        encoding="utf-8",
+    )
+    return subprocess.CompletedProcess(
+        args=["write-local-tapdb-config", str(resolved_config_path)],
+        returncode=0,
+        stdout="",
+        stderr="",
+    )
 
 
 def export_database_url_for_target(
@@ -411,6 +531,11 @@ def run_tapdb_cli(
     child_env["AWS_DEFAULT_REGION"] = runtime_env["aws_region"]
     child_env["MERIDIAN_DOMAIN_CODE"] = runtime_env["domain_code"]
     child_env["TAPDB_OWNER_REPO"] = runtime_env["owner_repo_name"]
+    child_env["TAPDB_CONFIG_PATH"] = _require_config_path(runtime_env)
+    if runtime_env["domain_registry_path"]:
+        child_env["TAPDB_DOMAIN_REGISTRY_PATH"] = runtime_env["domain_registry_path"]
+    if runtime_env["prefix_registry_path"]:
+        child_env["TAPDB_PREFIX_OWNERSHIP_REGISTRY_PATH"] = runtime_env["prefix_registry_path"]
     child_env.setdefault("PYTHONSAFEPATH", "1")
     result = subprocess.run(
         cmd,

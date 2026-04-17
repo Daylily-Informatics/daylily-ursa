@@ -23,9 +23,7 @@ from daylily_tapdb import (
 )
 from daylib_ursa.integrations.tapdb_runtime import (
     DEFAULT_TAPDB_DOMAIN_CODE,
-    DEFAULT_TAPDB_DOMAIN_REGISTRY_PATH,
     DEFAULT_TAPDB_OWNER_REPO,
-    DEFAULT_TAPDB_PREFIX_REGISTRY_PATH,
 )
 
 _TAPDB_CORE_PREFIXES = {
@@ -102,29 +100,31 @@ def _resolve_registry_paths(
     except Exception:
         settings = None
 
-    resolved_domain_registry_path = (
-        Path(
-            domain_registry_path
-            or os.environ.get("TAPDB_DOMAIN_REGISTRY_PATH")
-            or getattr(settings, "tapdb_domain_registry_path", DEFAULT_TAPDB_DOMAIN_REGISTRY_PATH)
-        )
-        .expanduser()
-        .resolve()
+    resolved_domain_registry_path = _require_explicit_registry_path(
+        domain_registry_path
+        or os.environ.get("TAPDB_DOMAIN_REGISTRY_PATH")
+        or getattr(settings, "tapdb_domain_registry_path", "")
+        or "",
+        field_name="tapdb_domain_registry_path",
     )
-    resolved_prefix_registry_path = (
-        Path(
-            prefix_registry_path
-            or os.environ.get("TAPDB_PREFIX_OWNERSHIP_REGISTRY_PATH")
-            or getattr(
-                settings,
-                "tapdb_prefix_ownership_registry_path",
-                DEFAULT_TAPDB_PREFIX_REGISTRY_PATH,
-            )
-        )
-        .expanduser()
-        .resolve()
+    resolved_prefix_registry_path = _require_explicit_registry_path(
+        prefix_registry_path
+        or os.environ.get("TAPDB_PREFIX_OWNERSHIP_REGISTRY_PATH")
+        or getattr(settings, "tapdb_prefix_ownership_registry_path", "")
+        or "",
+        field_name="tapdb_prefix_ownership_registry_path",
     )
     return resolved_domain_registry_path, resolved_prefix_registry_path
+
+
+def _require_explicit_registry_path(path_value: Path | str, *, field_name: str) -> Path:
+    raw = str(path_value or "").strip()
+    if not raw:
+        raise RuntimeError(f"{field_name} is required and must be passed as a full path.")
+    resolved = Path(raw)
+    if not resolved.is_absolute():
+        raise RuntimeError(f"{field_name} must be an absolute path, got: {raw}")
+    return resolved
 
 
 def claim_ursa_template_prefixes(
@@ -132,12 +132,20 @@ def claim_ursa_template_prefixes(
     *,
     domain_code: str = DEFAULT_TAPDB_DOMAIN_CODE,
     owner_repo_name: str = DEFAULT_TAPDB_OWNER_REPO,
-    domain_registry_path: Path = DEFAULT_TAPDB_DOMAIN_REGISTRY_PATH,
-    prefix_registry_path: Path = DEFAULT_TAPDB_PREFIX_REGISTRY_PATH,
+    domain_registry_path: Path | str | None = None,
+    prefix_registry_path: Path | str | None = None,
 ) -> list[str]:
     """Claim Ursa-owned client template prefixes in the shared TapDB registry."""
-    domain_payload = _load_json_object(domain_registry_path, required_key="domains")
-    prefix_payload = _load_json_object(prefix_registry_path, required_key="ownership")
+    resolved_domain_registry_path = _require_explicit_registry_path(
+        domain_registry_path or "",
+        field_name="tapdb_domain_registry_path",
+    )
+    resolved_prefix_registry_path = _require_explicit_registry_path(
+        prefix_registry_path or "",
+        field_name="tapdb_prefix_ownership_registry_path",
+    )
+    domain_payload = _load_json_object(resolved_domain_registry_path, required_key="domains")
+    prefix_payload = _load_json_object(resolved_prefix_registry_path, required_key="ownership")
     domains = domain_payload["domains"]
     ownership = prefix_payload["ownership"]
 
@@ -145,7 +153,7 @@ def claim_ursa_template_prefixes(
     normalized_owner = str(owner_repo_name or "").strip()
     if normalized_domain not in domains:
         raise RuntimeError(
-            f"Domain {normalized_domain!r} is not registered in {domain_registry_path}"
+            f"Domain {normalized_domain!r} is not registered in {resolved_domain_registry_path}"
         )
 
     domain_claims = ownership.get(normalized_domain)
@@ -154,7 +162,8 @@ def claim_ursa_template_prefixes(
         ownership[normalized_domain] = domain_claims
     if not isinstance(domain_claims, dict):
         raise RuntimeError(
-            f"Prefix claims for domain {normalized_domain!r} must be an object in {prefix_registry_path}"
+            "Prefix claims for domain "
+            f"{normalized_domain!r} must be an object in {resolved_prefix_registry_path}"
         )
 
     claimed_prefixes: list[str] = []
@@ -179,7 +188,7 @@ def claim_ursa_template_prefixes(
     if updated:
         ownership[normalized_domain] = domain_claims
         prefix_payload["ownership"] = ownership
-        _write_json_object(prefix_registry_path, prefix_payload)
+        _write_json_object(resolved_prefix_registry_path, prefix_payload)
 
     return claimed_prefixes
 

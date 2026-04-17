@@ -4,8 +4,8 @@ meta:
   database_name: ursa
   owner_repo_name: ursa
   domain_code: Z
-  domain_registry_path: ~/.config/tapdb/domain_code_registry.json
-  prefix_ownership_registry_path: ~/.config/tapdb/prefix_ownership_registry.json
+  domain_registry_path: /absolute/path/to/domain_code_registry.json
+  prefix_ownership_registry_path: /absolute/path/to/prefix_ownership_registry.json
   # Explicit env contract for TapDB/Meridian subprocesses:
   # MERIDIAN_DOMAIN_CODE=Z
   # TAPDB_OWNER_REPO=ursa
