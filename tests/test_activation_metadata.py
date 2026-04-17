@@ -50,7 +50,7 @@ def test_pyproject_uses_requested_internal_package_versions() -> None:
 
     assert "cli-core-yo==2.1.0" in dependencies
     assert "daylily-auth-cognito==2.1.1" in dependencies
-    assert tapdb_spec == "daylily-tapdb==6.0.4"
+    assert tapdb_spec == "daylily-tapdb==6.0.5"
     assert not any(dep.startswith("daylily-omics-analysis") for dep in dependencies)
     assert cluster_spec == "daylily-ephemeral-cluster==2.0.3"
 
@@ -72,7 +72,7 @@ def test_activate_bootstraps_local_ursa_repo_only() -> None:
     assert "-e ." not in environment
     assert "cli-core-yo==2.1.0" in environment
     assert "daylily-auth-cognito==2.1.1" in environment
-    assert "daylily-tapdb==6.0.4" in environment
+    assert "daylily-tapdb==6.0.5" in environment
     assert "\n  - pre-commit\n" in environment
 
     activate_script = (Path(__file__).resolve().parents[1] / "activate").read_text(encoding="utf-8")

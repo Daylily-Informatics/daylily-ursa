@@ -336,7 +336,7 @@ def test_backend_scopes_template_lookups_to_bundle_domain_code() -> None:
 def test_get_tapdb_bundle_scopes_instance_factory_to_runtime_domain(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
-    monkeypatch.setattr(tapdb_runtime, "ensure_tapdb_version", lambda: "6.0.4")
+    monkeypatch.setattr(tapdb_runtime, "ensure_tapdb_version", lambda: "6.0.5")
     monkeypatch.setattr(
         tapdb_runtime,
         "_resolve_runtime_env",
