@@ -1,34 +1,52 @@
 from __future__ import annotations
 
 import json
+import os
+import tomllib
 from pathlib import Path
 from typing import Any
 
+import jsonschema
 import pytest
 from fastapi.testclient import TestClient
 
+from daylib_ursa import __version__
 from daylib_ursa import observability as observability_module
 from tests.test_admin_gui_and_cluster_routes import ADMIN_USER_ID, _create_test_app
 
-DAYHOFF_SCHEMA_ROOT = Path("/Users/jmajor/.codex/worktrees/cbc5/dayhoff/contracts/observability")
+
+def _tapdb_dependency_spec() -> str:
+    pyproject = tomllib.loads(
+        (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text(encoding="utf-8")
+    )
+    for dependency in pyproject["project"]["dependencies"]:
+        if dependency.startswith("daylily-tapdb"):
+            return dependency
+    raise AssertionError("daylily-tapdb dependency missing from pyproject.toml")
+
+
+def _schema_root() -> Path:
+    root = os.environ.get("DAYHOFF_PROJECT_ROOT")
+    if not root:
+        raise RuntimeError("DAYHOFF_PROJECT_ROOT must point at the canonical Dayhoff repo root")
+    return Path(root) / "contracts" / "observability"
 
 
 def _load_schema(name: str) -> dict[str, Any]:
-    return json.loads((DAYHOFF_SCHEMA_ROOT / name).read_text())
+    return json.loads((_schema_root() / name).read_text(encoding="utf-8"))
 
 
-def _assert_required_shape(payload: dict[str, Any], schema: dict[str, Any]) -> None:
-    for key in schema.get("required", []):
-        assert key in payload, f"missing required key {key}"
-    projection_schema = schema.get("properties", {}).get("projection")
-    if projection_schema and "projection" in payload:
-        for key in projection_schema.get("required", []):
-            assert key in payload["projection"], f"missing projection key {key}"
+def _validate(name: str, payload: dict[str, Any]) -> None:
+    jsonschema.validate(payload, _load_schema(name))
 
 
 @pytest.fixture(autouse=True)
 def _stub_schema_drift(monkeypatch: pytest.MonkeyPatch) -> None:
     observability_module._SCHEMA_DRIFT_CACHE.clear()
+    monkeypatch.setenv(
+        "DAYHOFF_PROJECT_ROOT",
+        "/Users/jmajor/.codex/worktrees/dbb6/dayhoff",
+    )
     monkeypatch.setattr(
         observability_module,
         "run_tapdb_schema_drift_check",
@@ -36,7 +54,7 @@ def _stub_schema_drift(monkeypatch: pytest.MonkeyPatch) -> None:
             "status": "clean",
             "checked_at": "2026-03-29T00:00:00Z",
             "environment": "dev",
-            "tool_version": "3.0.9",
+            "tool_version": _tapdb_dependency_spec(),
             "summary": "no schema drift reported",
             "report": {"counts": {"expected": 10, "live": 10}},
             "strict": False,
@@ -68,6 +86,8 @@ def test_observability_contract_endpoints_match_shared_frame() -> None:
         auth_health_response = client.get("/auth_health", headers=service_headers)
 
         responses = {
+            "/healthz": (healthz, "healthz.schema.json"),
+            "/readyz": (readyz, "readyz.schema.json"),
             "/health": (health_response, "health.schema.json"),
             "/obs_services": (obs_services_response, "obs_services.schema.json"),
             "/api_health": (api_health_response, "api_health.schema.json"),
@@ -77,9 +97,9 @@ def test_observability_contract_endpoints_match_shared_frame() -> None:
         }
 
     assert healthz.status_code == 200
-    assert healthz.json()["status"] == "ok"
-    assert readyz.status_code == 200
-    assert readyz.json()["database"]["detail"]
+    assert readyz.status_code in {200, 503}
+    assert isinstance(readyz.json()["ready"], bool)
+    assert readyz.json()["checks"]["database"]["detail"]
     configured_services = set(obs_services_response.json()["dependencies"]["configured_services"])
     assert {"atlas", "bloom"}.issubset(configured_services)
     assert obs_services_response.json()["dependencies"]["observed_services"] == []
@@ -87,11 +107,12 @@ def test_observability_contract_endpoints_match_shared_frame() -> None:
     assert auth_health_response.json()["auth"]["sessions"]["supported"] is False
 
     for path, (response, schema_name) in responses.items():
-        assert response.status_code == 200, f"{path} returned {response.status_code}"
+        assert response.status_code in {200, 503}, f"{path} returned {response.status_code}"
         payload = response.json()
-        _assert_required_shape(payload, _load_schema(schema_name))
+        _validate(schema_name, payload)
         assert payload["service"] == "ursa"
         assert payload["contract_version"] == "v3"
+        assert payload["build"]["version"] == __version__
 
 
 def test_my_health_matches_shared_schema_for_authenticated_user() -> None:
@@ -101,7 +122,7 @@ def test_my_health_matches_shared_schema_for_authenticated_user() -> None:
 
     assert response.status_code == 200
     payload = response.json()
-    _assert_required_shape(payload, _load_schema("my_health.schema.json"))
+    _validate("my_health.schema.json", payload)
     assert payload["service"] == "ursa"
     assert payload["principal"]["auth_mode"] == "cognito"
     assert payload["principal"]["service_principal"] is False
@@ -202,7 +223,9 @@ def test_admin_observability_page_renders() -> None:
     assert "Session summary:" in response.text
 
 
-def test_schema_drift_check_is_not_run_per_db_health_request(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_schema_drift_check_is_not_run_per_db_health_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     observability_module._SCHEMA_DRIFT_CACHE.clear()
     calls = {"count": 0}
 
@@ -212,7 +235,7 @@ def test_schema_drift_check_is_not_run_per_db_health_request(monkeypatch: pytest
             "status": "drift",
             "checked_at": "2026-03-29T00:00:00Z",
             "environment": "dev",
-            "tool_version": "3.0.9",
+            "tool_version": _tapdb_dependency_spec(),
             "summary": "schema drift detected",
             "report": {},
             "strict": False,

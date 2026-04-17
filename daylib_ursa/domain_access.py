@@ -69,7 +69,5 @@ def build_allowed_origin_regex(*, allow_local: bool) -> str:
         rf"https://(?:[A-Za-z0-9-]+\.)*(?:{domain_expr})(?::\d+)?",
     ]
     if allow_local:
-        patterns.append(
-            r"https?://(?:localhost|127\.0\.0\.1|testserver|\[::1\])(?::\d+)?"
-        )
+        patterns.append(r"https?://(?:localhost|127\.0\.0\.1|testserver|\[::1\])(?::\d+)?")
     return rf"^(?:{'|'.join(patterns)})$"

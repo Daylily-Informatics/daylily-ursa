@@ -12,7 +12,7 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def _quantile(values: list[float], fraction: float) -> float:
+def pricing_quantile(values: list[float], fraction: float) -> float:
     if not values:
         return 0.0
     if len(values) == 1:
@@ -25,6 +25,10 @@ def _quantile(values: list[float], fraction: float) -> float:
         return sorted_values[lower]
     weight = index - lower
     return sorted_values[lower] * (1.0 - weight) + sorted_values[upper] * weight
+
+
+def _quantile(values: list[float], fraction: float) -> float:
+    return pricing_quantile(values, fraction)
 
 
 class PricingState:
@@ -207,24 +211,17 @@ class PricingState:
         from_ts: str | None = None,
         to_ts: str | None = None,
     ) -> dict[str, Any]:
-        clauses = ["1=1"]
-        params: list[Any] = []
-        if region:
-            clauses.append("region = ?")
-            params.append(region)
-        if from_ts:
-            clauses.append("captured_at >= ?")
-            params.append(from_ts)
-        if to_ts:
-            clauses.append("captured_at <= ?")
-            params.append(to_ts)
         requested_partitions = [partition for partition in (partitions or []) if partition]
-        if requested_partitions:
-            placeholders = ", ".join("?" for _ in requested_partitions)
-            clauses.append(f"partition IN ({placeholders})")
-            params.extend(requested_partitions)
+        params: list[Any] = [
+            region,
+            region,
+            from_ts,
+            from_ts,
+            to_ts,
+            to_ts,
+        ]
 
-        query = f"""
+        query = """
             SELECT
                 captured_at,
                 region,
@@ -236,7 +233,9 @@ class PricingState:
                 vcpu_cost_per_hour,
                 cluster_config_path
             FROM pricing_points
-            WHERE {' AND '.join(clauses)}
+            WHERE (? IS NULL OR region = ?)
+              AND (? IS NULL OR captured_at >= ?)
+              AND (? IS NULL OR captured_at <= ?)
             ORDER BY captured_at DESC, region, partition, availability_zone, instance_type
         """
         with self._connect() as connection:
@@ -244,6 +243,8 @@ class PricingState:
 
         snapshots_by_capture: dict[str, dict[str, Any]] = {}
         for row in rows:
+            if requested_partitions and str(row["partition"]) not in requested_partitions:
+                continue
             captured_at = str(row["captured_at"])
             snapshot_entry = snapshots_by_capture.setdefault(
                 captured_at,

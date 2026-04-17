@@ -12,12 +12,18 @@
     <link rel="stylesheet" href="{{ request.url_for('ui-static', path='main.css') }}">
 </head>
 <body>
-    {% if deployment and not deployment.is_production and deployment.name %}
-    <div style="height:18px;line-height:18px;background:{{ deployment.color }};color:#ffffff;text-align:center;font-size:11px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;">{{ deployment.name|upper }}</div>
+    {% if environment_chrome and environment_chrome.show and environment_chrome.deployment.name %}
+    <div class="environment-bar environment-bar-deployment" style="background:{{ environment_chrome.deployment.color }};" title="Deployment {{ environment_chrome.deployment.name }}">
+        {{ environment_chrome.deployment.name|upper }}
+    </div>
+    {% endif %}
+    {% if environment_chrome and environment_chrome.show and environment_chrome.region.name %}
+    <div class="environment-bar environment-bar-region" style="background:{{ environment_chrome.region.color }};" title="Region {{ environment_chrome.region.name }}"></div>
     {% endif %}
     <main class="login-shell">
         <section class="login-card" style="display: grid; gap: 2rem; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));">
             <div>
+                <img class="auth-logo" src="/ui/static/favicon.svg" alt="Ursa">
                 <p class="page-subtitle" style="text-transform: uppercase; letter-spacing: 0.12em; font-size: 0.75rem;">{{ auth_badge|default("Authentication Required") }}</p>
                 <h1 class="page-title">{{ auth_title|default("Ursa PR19 Portal") }}</h1>
                 <p class="page-subtitle">{{ auth_description|default("Restore the legacy shell on top of the current Atlas-backed Ursa backend.") }}</p>
@@ -42,5 +48,36 @@
             </div>
         </section>
     </main>
+    <footer class="footer">
+        <div class="container">
+            <div class="footer-content">
+                <div class="footer-brand">
+                    <div class="footer-logo">
+                        <img class="footer-logo-icon" src="/ui/static/favicon.svg" alt="" aria-hidden="true">
+                        Ursa
+                    </div>
+                    <p>PR19 shell restored on current Ursa routes, with Dewey-backed manifests and linked-bucket workflows.</p>
+                </div>
+                <div>
+                    <h4 class="footer-title">Git</h4>
+                    <ul class="footer-links">
+                        <li>Branch: {{ git_meta.branch if git_meta is defined else "unavailable" }}</li>
+                        <li>Tag: {{ git_meta.tag if git_meta is defined else "unreleased" }}</li>
+                        <li>Commit: {{ git_meta.commit if git_meta is defined else "unavailable" }}</li>
+                    </ul>
+                </div>
+                <div>
+                    <h4 class="footer-title">Access</h4>
+                    <ul class="footer-links">
+                        <li><a href="{{ auth_primary_href|default(cognito_login_url) }}">Sign In</a></li>
+                        <li><a href="/auth/login?next=/">Cognito</a></li>
+                    </ul>
+                </div>
+            </div>
+            <div class="footer-bottom">
+                <p>&copy; Ursa</p>
+            </div>
+        </div>
+    </footer>
 </body>
 </html>

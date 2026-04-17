@@ -10,8 +10,9 @@ Atlas remains the customer-facing results authority. Ursa returns analysis compl
 
 ## Request Rules
 
-- authenticated with the Atlas internal API key
+- authenticated with an Atlas integration bearer token provisioned from Atlas API clients
 - request body uses opaque EUIDs only
+- forward `X-Request-ID` when available so Atlas can echo and log the same request identity
 - request includes:
   - `atlas_tenant_id`
   - `atlas_trf_euid`

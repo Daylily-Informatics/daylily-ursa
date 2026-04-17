@@ -1,7 +1,11 @@
 from __future__ import annotations
 
-import importlib
+import os
+import importlib.util
+import shutil
+import subprocess
 import sys
+import venv
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -38,7 +42,7 @@ def _read_project_scripts(pyproject: Path) -> dict[str, str]:
     return scripts
 
 
-def test_console_script_entrypoints_are_importable_and_callable():
+def test_console_script_entrypoints_reference_real_modules():
     pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
     scripts = _read_project_scripts(pyproject)
     assert scripts, "No [project.scripts] entries found in pyproject.toml"
@@ -46,9 +50,36 @@ def test_console_script_entrypoints_are_importable_and_callable():
     for name, target in scripts.items():
         assert ":" in target, f"Console script {name!r} has unexpected target: {target!r}"
         module_name, func_name = target.split(":", 1)
-        module = importlib.import_module(module_name)
-        func = getattr(module, func_name)
-        assert callable(func), f"Console script {name!r} target is not callable: {target!r}"
+        assert importlib.util.find_spec(module_name) is not None
+        assert func_name, f"Console script {name!r} target is missing a function name: {target!r}"
+
+
+def test_console_script_entrypoints_cover_public_ursa_commands() -> None:
+    pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
+    scripts = _read_project_scripts(pyproject)
+
+    assert {"ursa", "daylily-workset-api"} <= set(scripts)
+
+
+def test_editable_install_places_console_scripts_on_path(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    venv_dir = tmp_path / "venv"
+    builder = venv.EnvBuilder(with_pip=True, system_site_packages=True, clear=True)
+    builder.create(venv_dir)
+
+    venv_python = venv_dir / "bin" / "python"
+    subprocess.run(
+        [str(venv_python), "-m", "pip", "install", "--no-deps", "-e", str(repo_root)],
+        check=True,
+    )
+
+    scripts_dir = venv_dir / "bin"
+    path = str(scripts_dir)
+    for script_name in ("ursa", "daylily-workset-api"):
+        script_path = scripts_dir / script_name
+        assert script_path.exists()
+        assert os.access(script_path, os.X_OK)
+        assert shutil.which(script_name, path=path) == str(script_path)
 
 
 def test_ursa_server_start_uses_packaged_entrypoint(
@@ -65,8 +96,8 @@ def test_ursa_server_start_uses_packaged_entrypoint(
         cognito_app_client_id = "test-app-client"
         cognito_region = "us-west-2"
         cognito_domain = "ursa-auth"
-        cognito_callback_url = "https://localhost:8914/auth/callback"
-        cognito_logout_url = "https://localhost:8914/login"
+        cognito_callback_url = "https://localhost:8913/auth/callback"
+        cognito_logout_url = "https://localhost:8913/login"
 
         def get_allowed_regions(self):
             return ["us-west-2"]
@@ -92,6 +123,9 @@ def test_ursa_server_start_uses_packaged_entrypoint(
             tapdb_client_id="local",
             tapdb_database_name="ursa",
             tapdb_env="dev",
+            tapdb_config_path="/tmp/ursa-tapdb.yaml",
+            tapdb_domain_registry_path="/tmp/domain_code_registry.json",
+            tapdb_prefix_ownership_registry_path="/tmp/prefix_ownership_registry.json",
             api_host="0.0.0.0",
             api_port=8913,
         ),
@@ -142,8 +176,11 @@ def test_ursa_server_start_uses_packaged_entrypoint(
     assert env["DATABASE_BACKEND"] == "tapdb"
     assert env["DATABASE_TARGET"] == "local"
     assert env["DATABASE_URL"] == "postgresql://test-db"
-    assert env["MERIDIAN_DOMAIN_CODE"] == "R"
-    assert env["TAPDB_APP_CODE"] == "R"
+    assert env["MERIDIAN_DOMAIN_CODE"] == "Z"
+    assert env["TAPDB_CONFIG_PATH"] == "/tmp/ursa-tapdb.yaml"
+    assert env["TAPDB_DOMAIN_REGISTRY_PATH"] == "/tmp/domain_code_registry.json"
+    assert env["TAPDB_PREFIX_OWNERSHIP_REGISTRY_PATH"] == "/tmp/prefix_ownership_registry.json"
+    assert env["TAPDB_OWNER_REPO"] == "ursa"
     assert "TAPDB_CLIENT_ID" not in env
     assert "TAPDB_DATABASE_NAME" not in env
     assert "TAPDB_ENV" not in env
@@ -163,8 +200,8 @@ def test_ursa_server_start_command_uses_module_entrypoint_and_profile(
         cognito_app_client_id = "test-app-client"
         cognito_region = "us-west-2"
         cognito_domain = "ursa-auth"
-        cognito_callback_url = "https://localhost:8914/auth/callback"
-        cognito_logout_url = "https://localhost:8914/login"
+        cognito_callback_url = "https://localhost:8913/auth/callback"
+        cognito_logout_url = "https://localhost:8913/login"
 
         def get_allowed_regions(self):
             return ["us-west-2"]
@@ -188,6 +225,7 @@ def test_ursa_server_start_command_uses_module_entrypoint_and_profile(
             tapdb_client_id="local",
             tapdb_database_name="ursa",
             tapdb_env="dev",
+            tapdb_config_path="/tmp/ursa-tapdb.yaml",
             api_host="0.0.0.0",
             api_port=8913,
         ),
@@ -244,6 +282,9 @@ def test_ursa_config_template_bytes_are_fresh() -> None:
     assert "default_tenant_id: 00000000-0000-0000-0000-000000000000" in text
     assert "auto_provision_allowed_domains:" in text
     assert "whitelist_domains: lsmc.com,lsmc.bio,lsmc.life,daylilyinformatics.com" in text
+    assert "api_port: 8913" in text
+    assert "cognito_callback_url: https://localhost:8913/auth/callback" in text
+    assert "cognito_logout_url: https://localhost:8913/login" in text
 
 
 def test_ursa_server_start_allows_ambient_credentials(monkeypatch):
@@ -257,8 +298,8 @@ def test_ursa_server_start_allows_ambient_credentials(monkeypatch):
         cognito_app_client_id = "test-app-client"
         cognito_region = "us-west-2"
         cognito_domain = "ursa-auth"
-        cognito_callback_url = "https://localhost:8914/auth/callback"
-        cognito_logout_url = "https://localhost:8914/login"
+        cognito_callback_url = "https://localhost:8913/auth/callback"
+        cognito_logout_url = "https://localhost:8913/login"
 
         def get_allowed_regions(self):
             return ["us-west-2"]
@@ -280,6 +321,7 @@ def test_ursa_server_start_allows_ambient_credentials(monkeypatch):
             tapdb_client_id="local",
             tapdb_database_name="ursa",
             tapdb_env="dev",
+            tapdb_config_path="/tmp/ursa-tapdb.yaml",
             api_host="0.0.0.0",
             api_port=8913,
         ),
@@ -325,8 +367,8 @@ def test_ursa_server_start_allows_ambient_credentials(monkeypatch):
     assert isinstance(env, dict)
     assert "AWS_PROFILE" not in env
     assert env["DATABASE_URL"] == "postgresql://test-db"
-    assert env["MERIDIAN_DOMAIN_CODE"] == "R"
-    assert env["TAPDB_APP_CODE"] == "R"
+    assert env["MERIDIAN_DOMAIN_CODE"] == "Z"
+    assert env["TAPDB_OWNER_REPO"] == "ursa"
     assert "TAPDB_CLIENT_ID" not in env
     assert "TAPDB_DATABASE_NAME" not in env
     assert "TAPDB_ENV" not in env

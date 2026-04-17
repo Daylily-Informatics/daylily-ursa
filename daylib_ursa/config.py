@@ -11,9 +11,11 @@ import os
 import secrets
 from functools import lru_cache
 from typing import List, Optional
+from urllib.parse import urlparse
+from pathlib import Path
 
 from pydantic import Field, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
 from daylib_ursa.domain_access import (
     APPROVED_WEB_DOMAIN_SUFFIXES,
@@ -22,11 +24,15 @@ from daylib_ursa.domain_access import (
 from daylib_ursa.ursa_config import _resolve_deployment_chrome, _resolve_deployment_code
 
 DEFAULT_API_HOST = "0.0.0.0"
-DEFAULT_API_PORT = 8914
+DEFAULT_API_PORT = 8913
 DEFAULT_BLOOM_BASE_URL = "https://localhost:8001"
 DEFAULT_ATLAS_BASE_URL = "https://localhost:8000"
 DEFAULT_URSA_COGNITO_CALLBACK_URL = f"https://localhost:{DEFAULT_API_PORT}/auth/callback"
 DEFAULT_URSA_COGNITO_LOGOUT_URL = f"https://localhost:{DEFAULT_API_PORT}/login"
+DEFAULT_TAPDB_DOMAIN_REGISTRY_PATH = Path.home() / ".config" / "tapdb" / "domain_code_registry.json"
+DEFAULT_TAPDB_PREFIX_REGISTRY_PATH = (
+    Path.home() / ".config" / "tapdb" / "prefix_ownership_registry.json"
+)
 DEFAULT_COGNITO_ALLOWED_EMAIL_DOMAINS = (
     "lsmc.com",
     "lsmc.bio",
@@ -49,6 +55,7 @@ def _yaml_seed_from_ursa_config() -> dict[str, object]:
 
     seeded = {
         "aws_profile": cfg.aws_profile,
+        "ursa_allowed_regions": ",".join(getattr(cfg, "get_allowed_regions", lambda: [])()),
         "ursa_portal_default_customer_id": cfg.ursa_portal_default_customer_id,
         "cognito_group_role_map": cfg.cognito_group_role_map,
         # Missing YAML allowlists should use the existing empty-string sentinel,
@@ -61,6 +68,17 @@ def _yaml_seed_from_ursa_config() -> dict[str, object]:
         "tapdb_client_id": cfg.tapdb_client_id,
         "tapdb_database_name": cfg.tapdb_database_name,
         "tapdb_env": cfg.tapdb_env,
+        "tapdb_config_path": getattr(cfg, "tapdb_config_path", ""),
+        "tapdb_domain_registry_path": getattr(
+            cfg,
+            "tapdb_domain_registry_path",
+            str(DEFAULT_TAPDB_DOMAIN_REGISTRY_PATH),
+        ),
+        "tapdb_prefix_ownership_registry_path": getattr(
+            cfg,
+            "tapdb_prefix_ownership_registry_path",
+            str(DEFAULT_TAPDB_PREFIX_REGISTRY_PATH),
+        ),
         "cognito_user_pool_id": cfg.cognito_user_pool_id,
         "cognito_app_client_id": cfg.cognito_app_client_id,
         "cognito_app_client_secret": cfg.cognito_app_client_secret,
@@ -78,11 +96,20 @@ def _yaml_seed_from_ursa_config() -> dict[str, object]:
         "dewey_base_url": cfg.dewey_base_url,
         "dewey_api_token": cfg.dewey_api_token,
         "dewey_verify_ssl": cfg.dewey_verify_ssl,
+        "ursa_internal_api_key": getattr(cfg, "ursa_internal_api_key", ""),
         "deployment_name": cfg.deployment_name,
         "deployment_color": cfg.deployment_color,
         "deployment_is_production": cfg.deployment_is_production,
+        "ui_show_environment_chrome": cfg.ui_show_environment_chrome,
     }
-    return {key: value for key, value in seeded.items() if value is not None}
+    filtered: dict[str, object] = {}
+    for key, value in seeded.items():
+        if value is None:
+            continue
+        if isinstance(value, str) and not value.strip():
+            continue
+        filtered[key] = value
+    return filtered
 
 
 def _require_https_url(value: str, *, field_name: str) -> str:
@@ -101,6 +128,24 @@ def _validate_optional_https_url(value: str, *, field_name: str) -> str:
     if not normalized.startswith("https://"):
         raise ValueError(f"{field_name} must use an absolute https:// URL")
     return normalized.rstrip("/")
+
+
+def _require_bare_cognito_domain(value: str | None, *, field_name: str) -> str:
+    normalized = str(value or "").strip()
+    if not normalized:
+        raise ValueError(f"{field_name} must not be empty")
+    parsed = urlparse(normalized)
+    if parsed.scheme or parsed.netloc or parsed.path != normalized:
+        raise ValueError(
+            f"{field_name} must be a bare host like example.auth.us-west-2.amazoncognito.com"
+        )
+    if any(ch.isspace() for ch in normalized) or any(
+        ch in normalized for ch in (":", "/", "?", "#", "@")
+    ):
+        raise ValueError(
+            f"{field_name} must be a bare host like example.auth.us-west-2.amazoncognito.com"
+        )
+    return normalized
 
 
 def normalize_bucket_name(bucket: Optional[str]) -> Optional[str]:
@@ -174,22 +219,25 @@ regions:
 # =============================================================================
 # Ursa reads its TapDB namespace/runtime from this YAML file.
 # Bootstrap the matching namespace with:
-#   tapdb --config ~/.config/tapdb/local/ursa/tapdb-config.yaml --env dev config init --env dev --db-port dev=5541 --ui-port dev=8916
-#   tapdb --config ~/.config/tapdb/local/ursa/tapdb-config.yaml --env dev bootstrap local
+#   tapdb --config ~/.config/tapdb/local/ursa-{_resolve_deployment_code()}/tapdb-config.yaml config init --client-id local --database-name ursa --owner-repo-name ursa --domain-code dev=Z --domain-registry-path ~/.config/tapdb/domain_code_registry.json --prefix-ownership-registry-path ~/.config/tapdb/prefix_ownership_registry.json --env dev --db-port dev=5588 --ui-port dev=8918
+#   tapdb --config ~/.config/tapdb/local/ursa-{_resolve_deployment_code()}/tapdb-config.yaml --env dev bootstrap local
 #
 # Explicit env contract for TapDB/Meridian subprocesses:
-# MERIDIAN_DOMAIN_CODE=R
-# TAPDB_APP_CODE=R
+# MERIDIAN_DOMAIN_CODE=Z
+# TAPDB_OWNER_REPO=ursa
 tapdb_client_id: local
 tapdb_database_name: ursa
+tapdb_config_path: ~/.config/tapdb/local/ursa-{_resolve_deployment_code()}/tapdb-config.yaml
 tapdb_env: dev
+tapdb_domain_registry_path: ~/.config/tapdb/domain_code_registry.json
+tapdb_prefix_ownership_registry_path: ~/.config/tapdb/prefix_ownership_registry.json
 
 # Required runtime storage bucket
 ursa_internal_output_bucket: your-ursa-output-bucket
 
 # API/UI bind settings
 api_host: 0.0.0.0
-api_port: 8914
+api_port: 8913
 
 # Peer service URLs
 bloom_base_url: https://localhost:8912
@@ -206,14 +254,16 @@ dewey_verify_ssl: true
 # cognito_app_client_id: xxxxxxxxxxxxxxxxxxxxxxxxxx
 # cognito_region: us-west-2  # AWS region where Cognito User Pool is deployed
 # cognito_domain: your-domain-prefix.auth.us-west-2.amazoncognito.com
-# cognito_callback_url: https://localhost:8914/auth/callback
-# cognito_logout_url: https://localhost:8914/login
+# cognito_callback_url: https://localhost:8913/auth/callback
+# cognito_logout_url: https://localhost:8913/login
 
 # Non-production deployment chrome
 deployment:
   name: ""
   color: ""
   is_production: false
+
+ui_show_environment_chrome: true
 """.encode("utf-8")
 
 
@@ -266,9 +316,21 @@ class Settings(BaseSettings):
         default="ursa",
         description="TapDB namespace / database name",
     )
+    tapdb_config_path: str = Field(
+        default="",
+        description="Explicit TapDB config path",
+    )
     tapdb_env: str = Field(
         default="dev",
         description="TapDB environment selector",
+    )
+    tapdb_domain_registry_path: str = Field(
+        default=str(DEFAULT_TAPDB_DOMAIN_REGISTRY_PATH),
+        description="Explicit TapDB domain registry path",
+    )
+    tapdb_prefix_ownership_registry_path: str = Field(
+        default=str(DEFAULT_TAPDB_PREFIX_REGISTRY_PATH),
+        description="Explicit TapDB prefix ownership registry path",
     )
     ursa_cost_monitor_regions: str = Field(
         default="us-west-2",
@@ -400,7 +462,11 @@ class Settings(BaseSettings):
     )
     deployment_is_production: bool = Field(
         default=False,
-        description="Whether this deployment should hide non-production chrome",
+        description="Whether this deployment is considered production-like",
+    )
+    ui_show_environment_chrome: bool = Field(
+        default=True,
+        description="Show deployment and region chrome in the GUI",
     )
 
     # ========== Demo Mode ==========
@@ -448,7 +514,7 @@ class Settings(BaseSettings):
     )
     atlas_internal_api_key: Optional[str] = Field(
         default=None,
-        description="Atlas internal API key used by Ursa result return",
+        description="Atlas integration bearer token used by Ursa result return",
     )
     atlas_verify_ssl: bool = Field(
         default=True,
@@ -662,6 +728,16 @@ class Settings(BaseSettings):
             return None
         return _validate_optional_https_url(v, field_name=str(info.field_name))
 
+    @field_validator("cognito_domain")
+    @classmethod
+    def validate_cognito_domain(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        normalized = str(v or "").strip()
+        if not normalized:
+            return None
+        return _require_bare_cognito_domain(normalized, field_name="cognito_domain")
+
     @field_validator("cognito_group_role_map", mode="before")
     @classmethod
     def validate_cognito_group_role_map(cls, value: object) -> dict[str, str]:
@@ -712,6 +788,26 @@ class Settings(BaseSettings):
         self.deployment_color = str(deployment["color"])
         self.deployment_is_production = bool(deployment["is_production"])
         return self
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        def service_config_settings() -> dict[str, object]:
+            return _yaml_seed_from_ursa_config()
+
+        return (
+            init_settings,
+            env_settings,
+            service_config_settings,
+            dotenv_settings,
+            file_secret_settings,
+        )
 
     def get_cors_origins(self) -> List[str]:
         """Get list of CORS origins from comma-separated string.
@@ -876,7 +972,7 @@ def get_settings() -> Settings:
     Settings are loaded once and cached for the lifetime of the application.
     Use this function as a FastAPI dependency.
     """
-    return Settings(**_yaml_seed_from_ursa_config())
+    return Settings()
 
 
 def clear_settings_cache() -> None:
@@ -893,8 +989,7 @@ def get_settings_for_testing(**overrides) -> Settings:
 
     This bypasses the cache, allowing tests to use custom configuration.
     """
-    payload = _yaml_seed_from_ursa_config()
-    payload.update(overrides)
+    payload = dict(overrides)
     if payload.get("ursa_portal_default_customer_id") is None:
         payload.pop("ursa_portal_default_customer_id", None)
     return Settings(**payload)

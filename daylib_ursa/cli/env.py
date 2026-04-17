@@ -28,7 +28,7 @@ def validate():
     config_path = get_config_file_path()
     if not config_path.exists():
         cli_output.print_rich(f"[yellow]⚠[/yellow]  Config file not found: {config_path}")
-        cli_output.print_rich("   Create one with: [cyan]ursa config generate[/cyan]")
+        cli_output.print_rich("   Create one with: [cyan]ursa config init[/cyan]")
         raise typer.Exit(1)
 
     is_valid, errors, warnings = validate_config_file(config_path)

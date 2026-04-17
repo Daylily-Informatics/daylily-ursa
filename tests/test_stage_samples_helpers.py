@@ -53,7 +53,10 @@ def test_subsample_and_row_normalization_helpers():
     assert ss.validate_subsample_pct("abc") == "na"
     assert ss.validate_subsample_pct("") == "na"
 
-    assert ss.build_concordance_reference_uri("/fsx/path/to/conc", "s3://bucket/root") == "s3://bucket/root/path/to/conc"
+    assert (
+        ss.build_concordance_reference_uri("/fsx/path/to/conc", "s3://bucket/root")
+        == "s3://bucket/root/path/to/conc"
+    )
     assert ss.determine_sex(2, 0) == "female"
     assert ss.determine_sex(1, 1) == "male"
     assert ss.determine_sex(0, 0) == "na"

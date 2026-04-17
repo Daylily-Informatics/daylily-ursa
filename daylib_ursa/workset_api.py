@@ -14,7 +14,7 @@ import uuid
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, Sequence
 from urllib.parse import urlparse
 
 import boto3
@@ -67,7 +67,7 @@ from daylib_ursa.auth import (
     UserTokenUsageRecord,
 )
 from daylib_ursa.bloom_resolver_client import BloomResolverClient, BloomResolverError
-from daylib_ursa.cluster_jobs import ClusterJobManager
+from daylib_ursa.cluster_jobs import ClusterJobManager, region_from_region_az
 from daylib_ursa.cluster_service import ClusterService
 from daylib_ursa.config import Settings, get_settings
 from daylib_ursa.dewey_client import DeweyClient, DeweyClientError
@@ -75,6 +75,10 @@ from daylib_ursa.domain_access import (
     build_allowed_origin_regex,
     build_trusted_hosts,
     is_allowed_origin,
+)
+from daylib_ursa.ephemeral_cluster.runner import (
+    REQUIRED_DAYLILY_EC_VERSION,
+    require_daylily_ec_version,
 )
 from daylib_ursa.gui_app import mount_gui
 from daylib_ursa.observability import (
@@ -84,10 +88,13 @@ from daylib_ursa.observability import (
     build_db_health_payload,
     build_endpoint_health_payload,
     build_health_payload,
+    build_healthz_payload,
     build_my_health_payload,
     build_obs_services_payload,
+    build_readyz_payload,
     install_sqlalchemy_observability,
 )
+from daylib_ursa.pricing_state import pricing_quantile
 from daylib_ursa.resource_store import (
     ClientRegistrationRecord,
     ClusterJobEventRecord,
@@ -100,6 +107,14 @@ from daylib_ursa.resource_store import (
 )
 from daylib_ursa.s3_utils import RegionAwareS3Client, normalize_bucket_name
 from daylib_ursa.tapdb_mount import mount_tapdb_admin
+from daylib_ursa.ursa_config import get_ursa_config, parse_regions_csv, update_config_regions
+from daylib_ursa.workflow_catalog import (
+    DEFAULT_ANALYSIS_REPOSITORY,
+    WorkflowCatalogRequestError,
+    WorkflowCatalogRuntimeError,
+    load_workflow_catalog_snapshot,
+    preview_workflow_command,
+)
 
 LOGGER = logging.getLogger("daylily.ursa.api")
 
@@ -285,6 +300,16 @@ class LinkedBucketValidationResponse(BaseModel):
     remediation_steps: list[str]
 
 
+class AdminS3BucketItemResponse(BaseModel):
+    bucket_name: str
+    created_at: str | None = None
+
+
+class AdminS3BucketListResponse(BaseModel):
+    profile: str
+    buckets: list[AdminS3BucketItemResponse] = Field(default_factory=list)
+
+
 class BucketFolderCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -327,6 +352,7 @@ class ClusterCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     cluster_name: str
+    region: str | None = None
     region_az: str
     ssh_key_name: str
     s3_bucket_name: str
@@ -334,6 +360,111 @@ class ClusterCreateRequest(BaseModel):
     contact_email: str | None = None
     pass_on_warn: bool = False
     debug: bool = False
+
+
+class ClusterCreateOptionsResponse(BaseModel):
+    keypairs: list[str] = Field(default_factory=list)
+    buckets: list[str] = Field(default_factory=list)
+    availability_zones: list[str] = Field(default_factory=list)
+
+
+class ClusterScanRegionsUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    regions_csv: str
+
+    @model_validator(mode="after")
+    def validate_regions_csv(self) -> "ClusterScanRegionsUpdateRequest":
+        normalized_regions = parse_regions_csv(self.regions_csv)
+        self.regions_csv = ",".join(normalized_regions)
+        return self
+
+
+class ClusterScanRegionsResponse(BaseModel):
+    regions: list[str] = Field(default_factory=list)
+    regions_csv: str
+    config_path: str
+
+
+class ClusterPartitionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    region: str
+    region_az: str
+
+    @model_validator(mode="after")
+    def validate_region_inputs(self) -> "ClusterPartitionRequest":
+        region = str(self.region or "").strip()
+        region_az = str(self.region_az or "").strip()
+        if not region or not region_az:
+            raise ValueError("region and region_az are required")
+        if region_az == region or not region_az.startswith(f"{region}"):
+            raise ValueError("region_az must identify an availability zone within the region")
+        self.region = region
+        self.region_az = region_az
+        return self
+
+
+class ClusterPartitionPricingRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    region: str
+
+    @model_validator(mode="after")
+    def validate_region(self) -> "ClusterPartitionPricingRequest":
+        region = str(self.region or "").strip()
+        if not region:
+            raise ValueError("region is required")
+        self.region = region
+        return self
+
+
+class ClusterPartitionPricingPointResponse(BaseModel):
+    instance_type: str
+    hourly_spot_price: float
+
+
+class ClusterPartitionVerificationItemResponse(BaseModel):
+    partition: str
+    expected_instance_types: list[str] = Field(default_factory=list)
+    spot_available_instance_types: list[str] = Field(default_factory=list)
+    missing_instance_types: list[str] = Field(default_factory=list)
+    status: Literal["PASS", "WARN", "FAIL"]
+    summary: str
+
+
+class ClusterPartitionVerificationResponse(BaseModel):
+    region: str
+    region_az: str
+    captured_at: str
+    cluster_config_path: str
+    has_failures: bool
+    partitions: list[ClusterPartitionVerificationItemResponse] = Field(default_factory=list)
+
+
+class ClusterPartitionPricingItemResponse(BaseModel):
+    availability_zone: str
+    count: int
+    min: float | None = None
+    q1: float | None = None
+    median: float | None = None
+    mean: float | None = None
+    q3: float | None = None
+    max: float | None = None
+    points: list[ClusterPartitionPricingPointResponse] = Field(default_factory=list)
+
+
+class ClusterPartitionPricingPartitionResponse(BaseModel):
+    partition: str
+    availability_zones: list[ClusterPartitionPricingItemResponse] = Field(default_factory=list)
+
+
+class ClusterPartitionPricingResponse(BaseModel):
+    region: str
+    availability_zones: list[str] = Field(default_factory=list)
+    captured_at: str
+    cluster_config_path: str
+    partitions: list[ClusterPartitionPricingPartitionResponse] = Field(default_factory=list)
 
 
 class AnalysisArtifactResponse(BaseModel):
@@ -402,6 +533,78 @@ class WorksetResponse(BaseModel):
     updated_at: str
     manifests: list[ManifestResponse]
     analysis_euids: list[str]
+
+
+class WorkflowCatalogChoiceResponse(BaseModel):
+    value: str
+    label: str
+
+
+class WorkflowCatalogRequiredInputResponse(BaseModel):
+    input_id: str
+    label: str
+    description: str = ""
+    required: bool = True
+
+
+class WorkflowCatalogOptionResponse(BaseModel):
+    option_id: str
+    label: str
+    description: str = ""
+    type: str
+    default: Any | None = None
+    required: bool = False
+    minimum: int | None = None
+    maximum: int | None = None
+    choices: list[WorkflowCatalogChoiceResponse] = Field(default_factory=list)
+
+
+class WorkflowCatalogWorkflowResponse(BaseModel):
+    workflow_id: str
+    display_name: str
+    description: str
+    targets: list[str] = Field(default_factory=list)
+    supported_genome_builds: list[str]
+    default_genome_build: str | None = None
+    supported_execution_profiles: list[str]
+    default_execution_profile: str | None = None
+    required_inputs: list[WorkflowCatalogRequiredInputResponse] = Field(default_factory=list)
+    options: list[WorkflowCatalogOptionResponse] = Field(default_factory=list)
+
+
+class WorkflowCatalogResponse(BaseModel):
+    schema_version: str
+    catalog_version: str
+    repository: str
+    repository_ref: str
+    display_name: str
+    workflows: list[WorkflowCatalogWorkflowResponse] = Field(default_factory=list)
+
+
+class WorkflowCommandPreviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    repository: str = DEFAULT_ANALYSIS_REPOSITORY
+    workflow_id: str
+    genome_build: str
+    execution_profile: str
+    options: dict[str, Any] = Field(default_factory=dict)
+    input_context: dict[str, Any] = Field(default_factory=dict)
+
+
+class WorkflowCommandPreviewResponse(BaseModel):
+    valid: bool
+    repository: str
+    repository_ref: str
+    catalog_version: str
+    workflow_id: str
+    display_name: str
+    argv: list[str] = Field(default_factory=list)
+    shell_preview: str = ""
+    summary: dict[str, Any] = Field(default_factory=dict)
+    normalized_spec: dict[str, Any] = Field(default_factory=dict)
+    validation_errors: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
 
 
 class ArtifactImportResponse(BaseModel):
@@ -600,6 +803,95 @@ def _workset_response(record: WorksetRecord) -> WorksetResponse:
         manifests=[_manifest_response(item) for item in record.manifests],
         analysis_euids=record.analysis_euids,
     )
+
+
+def _workflow_catalog_response(repository: str) -> WorkflowCatalogResponse:
+    try:
+        return WorkflowCatalogResponse.model_validate(load_workflow_catalog_snapshot(repository))
+    except WorkflowCatalogRequestError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except WorkflowCatalogRuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+def _workflow_command_preview_response(
+    *,
+    repository: str,
+    workflow_id: str,
+    genome_build: str,
+    execution_profile: str,
+    options: dict[str, Any] | None = None,
+    input_context: dict[str, Any] | None = None,
+) -> WorkflowCommandPreviewResponse:
+    try:
+        preview = preview_workflow_command(
+            repository=repository,
+            workflow_id=workflow_id,
+            genome_build=genome_build,
+            execution_profile=execution_profile,
+            options=options or {},
+            input_context=input_context or {},
+        )
+    except WorkflowCatalogRequestError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except WorkflowCatalogRuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return WorkflowCommandPreviewResponse.model_validate(preview)
+
+
+def _canonicalize_workset_metadata(metadata: dict[str, Any] | None) -> dict[str, Any]:
+    payload = dict(metadata or {})
+    raw_analysis_command = payload.get("analysis_command")
+    if not isinstance(raw_analysis_command, dict):
+        return payload
+
+    preview = _workflow_command_preview_response(
+        repository=str(raw_analysis_command.get("repository") or DEFAULT_ANALYSIS_REPOSITORY),
+        workflow_id=str(raw_analysis_command.get("workflow_id") or ""),
+        genome_build=str(raw_analysis_command.get("genome_build") or ""),
+        execution_profile=str(raw_analysis_command.get("execution_profile") or ""),
+        options=dict(raw_analysis_command.get("options") or {}),
+        input_context=dict(raw_analysis_command.get("input_context") or {}),
+    )
+    if not preview.valid:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "message": "Analysis command validation failed",
+                "validation_errors": preview.validation_errors,
+                "warnings": preview.warnings,
+            },
+        )
+
+    payload["analysis_command"] = {
+        "repository": preview.repository,
+        "repository_ref": preview.repository_ref,
+        "catalog_version": preview.catalog_version,
+        "workflow_id": preview.workflow_id,
+        "display_name": preview.display_name,
+        "spec": dict(preview.normalized_spec),
+        "argv": list(preview.argv),
+        "shell_preview": preview.shell_preview,
+        "summary": dict(preview.summary),
+        "warnings": list(preview.warnings),
+        "created_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    }
+    payload["pipeline_type"] = str(
+        preview.summary.get("pipeline_type") or preview.display_name or preview.workflow_id
+    )
+    payload["reference_genome"] = str(
+        preview.summary.get("genome_build") or preview.normalized_spec.get("genome_build") or ""
+    )
+    payload["execution_profile"] = str(
+        preview.summary.get("execution_profile")
+        or preview.normalized_spec.get("execution_profile")
+        or ""
+    )
+    payload["analysis_repository"] = preview.repository
+    payload["analysis_workflow_id"] = preview.workflow_id
+    if not payload.get("sample_count"):
+        payload["sample_count"] = int(preview.summary.get("sample_count") or 0)
+    return payload
 
 
 def _token_response(
@@ -1000,6 +1292,305 @@ def _normalize_euid_list(values: list[str] | None, *, label: str) -> list[str]:
     return normalized
 
 
+def _load_daylily_ec_pricing_helpers() -> tuple[Any, Any, Any]:
+    require_daylily_ec_version()
+    try:
+        from daylily_ec.aws.pricing_snapshots import (
+            collect_pricing_snapshot,
+            load_partition_instance_types,
+            resolve_cluster_config_path,
+        )
+    except Exception as exc:  # pragma: no cover - exercised via integration
+        raise RuntimeError(
+            f"Failed to import daylily-ec {REQUIRED_DAYLILY_EC_VERSION} pricing helpers: {exc}"
+        ) from exc
+    return collect_pricing_snapshot, load_partition_instance_types, resolve_cluster_config_path
+
+
+def resolve_daylily_cluster_config_path(settings: Settings) -> Path:
+    _, _, resolve_cluster_config_path = _load_daylily_ec_pricing_helpers()
+    configured = str(settings.ursa_cost_monitor_config_path or "").strip() or None
+    return Path(resolve_cluster_config_path(configured))
+
+
+def _load_cluster_partition_names(cluster_config_path: Path) -> list[str]:
+    import yaml
+
+    payload = yaml.safe_load(cluster_config_path.read_text(encoding="utf-8")) or {}
+    queues = payload.get("Scheduling", {}).get("SlurmQueues", [])
+    partitions: list[str] = []
+    seen: set[str] = set()
+    for queue in list(queues or []):
+        if not isinstance(queue, dict):
+            continue
+        partition = str(queue.get("Name") or queue.get("QueueName") or "").strip()
+        if not partition or partition in seen:
+            continue
+        seen.add(partition)
+        partitions.append(partition)
+    if not partitions:
+        raise RuntimeError(f"No Slurm queues found in cluster config: {cluster_config_path}")
+    return partitions
+
+
+def load_daylily_partition_instance_types(settings: Settings) -> tuple[Path, dict[str, list[str]]]:
+    _, load_partition_instance_types, _ = _load_daylily_ec_pricing_helpers()
+    cluster_config_path = resolve_daylily_cluster_config_path(settings)
+    partitions = _load_cluster_partition_names(cluster_config_path)
+    partition_map = load_partition_instance_types(
+        cluster_config_path=str(cluster_config_path),
+        partitions=partitions,
+    )
+    return cluster_config_path, {
+        partition: sorted(
+            {
+                str(instance_type).strip()
+                for instance_type in list(partition_map.get(partition) or [])
+                if str(instance_type).strip()
+            }
+        )
+        for partition in partitions
+    }
+
+
+def collect_daylily_cluster_pricing_snapshot(
+    settings: Settings,
+    *,
+    region: str,
+    partitions: Sequence[str],
+) -> dict[str, Any]:
+    collect_pricing_snapshot, _, _ = _load_daylily_ec_pricing_helpers()
+    cluster_config_path = resolve_daylily_cluster_config_path(settings)
+    snapshot = collect_pricing_snapshot(
+        regions=[region],
+        partitions=list(partitions),
+        cluster_config_path=str(cluster_config_path),
+        profile=str(settings.aws_profile or "").strip() or None,
+    )
+    if isinstance(snapshot, dict):
+        return snapshot
+    if hasattr(snapshot, "to_dict"):
+        return snapshot.to_dict()
+    raise RuntimeError("Unsupported daylily-ec pricing snapshot payload")
+
+
+def resolve_cluster_partition_selection(
+    *,
+    region: str | None,
+    region_az: str,
+) -> ClusterPartitionRequest:
+    normalized_region_az = str(region_az or "").strip()
+    normalized_region = str(region or "").strip() or region_from_region_az(normalized_region_az)
+    return ClusterPartitionRequest(region=normalized_region, region_az=normalized_region_az)
+
+
+def _partition_points_for_region_az(
+    snapshot: dict[str, Any],
+    *,
+    region: str,
+    region_az: str,
+) -> dict[str, list[dict[str, Any]]]:
+    points_by_partition: dict[str, list[dict[str, Any]]] = {}
+    for raw_point in list(snapshot.get("points") or []):
+        if str(raw_point.get("region") or "").strip() != region:
+            continue
+        if str(raw_point.get("availability_zone") or "").strip() != region_az:
+            continue
+        partition = str(raw_point.get("partition") or "").strip()
+        instance_type = str(raw_point.get("instance_type") or "").strip()
+        if not partition or not instance_type:
+            continue
+        try:
+            hourly_spot_price = float(raw_point.get("hourly_spot_price"))
+        except (TypeError, ValueError):
+            continue
+        points_by_partition.setdefault(partition, []).append(
+            {
+                "instance_type": instance_type,
+                "hourly_spot_price": hourly_spot_price,
+            }
+        )
+    for partition_points in points_by_partition.values():
+        partition_points.sort(key=lambda item: str(item["instance_type"]))
+    return points_by_partition
+
+
+def _partition_points_for_region(
+    snapshot: dict[str, Any],
+    *,
+    region: str,
+) -> tuple[dict[str, dict[str, list[dict[str, Any]]]], list[str]]:
+    points_by_partition: dict[str, dict[str, list[dict[str, Any]]]] = {}
+    availability_zones: set[str] = set()
+    for raw_point in list(snapshot.get("points") or []):
+        if str(raw_point.get("region") or "").strip() != region:
+            continue
+        availability_zone = str(raw_point.get("availability_zone") or "").strip()
+        partition = str(raw_point.get("partition") or "").strip()
+        instance_type = str(raw_point.get("instance_type") or "").strip()
+        if not availability_zone or not partition or not instance_type:
+            continue
+        try:
+            hourly_spot_price = float(raw_point.get("hourly_spot_price"))
+        except (TypeError, ValueError):
+            continue
+        availability_zones.add(availability_zone)
+        points_by_partition.setdefault(partition, {}).setdefault(availability_zone, []).append(
+            {
+                "instance_type": instance_type,
+                "hourly_spot_price": hourly_spot_price,
+            }
+        )
+    for partition_points in points_by_partition.values():
+        for availability_zone_points in partition_points.values():
+            availability_zone_points.sort(key=lambda item: str(item["instance_type"]))
+    return points_by_partition, sorted(availability_zones)
+
+
+def _pricing_stats(hourly_prices: list[float]) -> dict[str, float | int | None]:
+    count = len(hourly_prices)
+    return {
+        "count": count,
+        "min": round(min(hourly_prices), 8) if hourly_prices else None,
+        "q1": round(pricing_quantile(hourly_prices, 0.25), 8) if hourly_prices else None,
+        "median": round(pricing_quantile(hourly_prices, 0.5), 8) if hourly_prices else None,
+        "mean": round(sum(hourly_prices) / count, 8) if hourly_prices else None,
+        "q3": round(pricing_quantile(hourly_prices, 0.75), 8) if hourly_prices else None,
+        "max": round(max(hourly_prices), 8) if hourly_prices else None,
+    }
+
+
+def build_cluster_partition_verification(
+    *,
+    region: str,
+    region_az: str,
+    cluster_config_path: Path,
+    partition_instances: dict[str, list[str]],
+    snapshot: dict[str, Any],
+) -> ClusterPartitionVerificationResponse:
+    points_by_partition = _partition_points_for_region_az(
+        snapshot, region=region, region_az=region_az
+    )
+    items: list[ClusterPartitionVerificationItemResponse] = []
+    has_failures = False
+
+    for partition, expected_instance_types in partition_instances.items():
+        available_instance_types = sorted(
+            {
+                str(point["instance_type"])
+                for point in list(points_by_partition.get(partition) or [])
+                if str(point.get("instance_type") or "").strip()
+            }
+        )
+        missing_instance_types = [
+            instance_type
+            for instance_type in expected_instance_types
+            if instance_type not in available_instance_types
+        ]
+        if expected_instance_types and not missing_instance_types:
+            status_value: Literal["PASS", "WARN", "FAIL"] = "PASS"
+            summary = (
+                f"All {len(expected_instance_types)} configured instance types have current Spot "
+                f"price data in {region_az}."
+            )
+        elif available_instance_types:
+            status_value = "WARN"
+            summary = (
+                f"Spot price data is available for {len(available_instance_types)} of "
+                f"{len(expected_instance_types)} configured instance types in {region_az}."
+            )
+        else:
+            status_value = "FAIL"
+            summary = f"No configured instance types for {partition} have current Spot price data in {region_az}."
+            has_failures = True
+        items.append(
+            ClusterPartitionVerificationItemResponse(
+                partition=partition,
+                expected_instance_types=list(expected_instance_types),
+                spot_available_instance_types=available_instance_types,
+                missing_instance_types=missing_instance_types,
+                status=status_value,
+                summary=summary,
+            )
+        )
+
+    return ClusterPartitionVerificationResponse(
+        region=region,
+        region_az=region_az,
+        captured_at=str(snapshot.get("captured_at") or ""),
+        cluster_config_path=str(cluster_config_path),
+        has_failures=has_failures,
+        partitions=items,
+    )
+
+
+def run_cluster_partition_verification(
+    settings: Settings,
+    *,
+    region: str,
+    region_az: str,
+) -> ClusterPartitionVerificationResponse:
+    cluster_config_path, partition_instances = load_daylily_partition_instance_types(settings)
+    snapshot = collect_daylily_cluster_pricing_snapshot(
+        settings,
+        region=region,
+        partitions=list(partition_instances.keys()),
+    )
+    return build_cluster_partition_verification(
+        region=region,
+        region_az=region_az,
+        cluster_config_path=cluster_config_path,
+        partition_instances=partition_instances,
+        snapshot=snapshot,
+    )
+
+
+def build_cluster_partition_pricing(
+    *,
+    region: str,
+    cluster_config_path: Path,
+    partition_instances: dict[str, list[str]],
+    snapshot: dict[str, Any],
+) -> ClusterPartitionPricingResponse:
+    points_by_partition, availability_zones = _partition_points_for_region(snapshot, region=region)
+    partitions: list[ClusterPartitionPricingPartitionResponse] = []
+
+    for partition in partition_instances:
+        pricing_items: list[ClusterPartitionPricingItemResponse] = []
+        for availability_zone in availability_zones:
+            raw_points = [
+                ClusterPartitionPricingPointResponse(
+                    instance_type=str(point["instance_type"]),
+                    hourly_spot_price=round(float(point["hourly_spot_price"]), 8),
+                )
+                for point in list(
+                    points_by_partition.get(partition, {}).get(availability_zone) or []
+                )
+            ]
+            hourly_prices = sorted(point.hourly_spot_price for point in raw_points)
+            pricing_items.append(
+                ClusterPartitionPricingItemResponse(
+                    availability_zone=availability_zone,
+                    points=raw_points,
+                    **_pricing_stats(hourly_prices),
+                )
+            )
+        partitions.append(
+            ClusterPartitionPricingPartitionResponse(
+                partition=partition,
+                availability_zones=pricing_items,
+            )
+        )
+
+    return ClusterPartitionPricingResponse(
+        region=region,
+        availability_zones=availability_zones,
+        captured_at=str(snapshot.get("captured_at") or ""),
+        cluster_config_path=str(cluster_config_path),
+        partitions=partitions,
+    )
+
+
 def create_app(
     store: AnalysisStore,
     *,
@@ -1027,13 +1618,14 @@ def create_app(
     app = FastAPI(
         title="Daylily Ursa Backend API",
         description="Versioned backend APIs for analyses, worksets, manifests, tokens, and admin surfaces",
-        version="5.0.0",
+        version=__version__,
     )
     app.state.store = store
     app.state.bloom_client = bloom_client
     app.state.atlas_client = atlas_client
     app.state.dewey_client = dewey_client
     app.state.settings = settings
+    app.state.ursa_config = get_ursa_config()
     app.state.s3_client = s3_client or RegionAwareS3Client(
         default_region=settings.get_effective_region(),
         profile=settings.aws_profile,
@@ -1669,13 +2261,42 @@ def create_app(
             "items": items,
         }
 
-    def load_cluster_create_options(region: str) -> dict[str, list[str]]:
+    def list_profile_s3_buckets(region: str | None = None) -> dict[str, Any]:
+        settings = app.state.settings
+        profile = str(getattr(settings, "aws_profile", "") or "").strip()
+        session_kwargs: dict[str, Any] = {}
+        if profile:
+            session_kwargs["profile_name"] = profile
+        target_region = str(region or settings.get_effective_region() or "").strip() or "us-west-2"
+        session = boto3.Session(**session_kwargs)
+        s3 = session.client("s3", region_name=target_region)
+        response = s3.list_buckets()
+        buckets = sorted(
+            (
+                {
+                    "bucket_name": name,
+                    "created_at": (
+                        created.isoformat()
+                        if isinstance(created, datetime)
+                        else (str(created) if created else None)
+                    ),
+                }
+                for item in list(response.get("Buckets") or [])
+                if (name := str(item.get("Name") or "").strip())
+                for created in [item.get("CreationDate")]
+            ),
+            key=lambda item: item["bucket_name"],
+        )
+        return {"profile": profile or "default", "buckets": buckets}
+
+    def load_cluster_create_options(region: str) -> ClusterCreateOptionsResponse:
         session_kwargs: dict[str, Any] = {"region_name": region}
         profile = str(app.state.settings.aws_profile or "").strip()
         if profile:
             session_kwargs["profile_name"] = profile
         keypairs: list[str] = []
         buckets: list[str] = []
+        availability_zones: list[str] = []
         try:
             session = boto3.Session(**session_kwargs)
             ec2 = session.client("ec2")
@@ -1685,43 +2306,85 @@ def create_app(
                 for item in list(response.get("KeyPairs") or [])
                 if str(item.get("KeyName") or "").strip()
             )
+            zone_response = ec2.describe_availability_zones(
+                Filters=[{"Name": "state", "Values": ["available"]}]
+            )
+            availability_zones = sorted(
+                str(item.get("ZoneName") or "").strip()
+                for item in list(zone_response.get("AvailabilityZones") or [])
+                if str(item.get("ZoneName") or "").strip()
+            )
         except Exception:
-            LOGGER.exception("Failed to list EC2 keypairs for %s", region)
+            LOGGER.exception("Failed to load EC2 create options for %s", region)
         try:
-            session = boto3.Session(
-                **({k: v for k, v in session_kwargs.items() if k != "region_name"})
-            )
-            s3 = session.client("s3", region_name=region)
-            response = s3.list_buckets()
-            buckets = sorted(
-                str(item.get("Name") or "").strip()
-                for item in list(response.get("Buckets") or [])
-                if str(item.get("Name") or "").strip()
-            )
+            buckets = [
+                item["bucket_name"] for item in list_profile_s3_buckets(region=region)["buckets"]
+            ]
         except Exception:
             LOGGER.exception("Failed to list S3 buckets for cluster create options")
-        return {"keypairs": keypairs, "buckets": buckets}
+        return ClusterCreateOptionsResponse(
+            keypairs=keypairs,
+            buckets=buckets,
+            availability_zones=availability_zones,
+        )
+
+    def update_cluster_scan_regions(regions_csv: str) -> ClusterScanRegionsResponse:
+        normalized_regions = parse_regions_csv(regions_csv)
+        current_config = getattr(app.state, "ursa_config", None)
+        config_path = getattr(current_config, "config_path", None)
+        if not isinstance(config_path, Path):
+            raise RuntimeError("Ursa config path is not available for cluster region updates")
+
+        refreshed_config = update_config_regions(
+            regions=normalized_regions,
+            config_path=config_path,
+        )
+        app.state.ursa_config = refreshed_config
+        app.state.settings.ursa_allowed_regions = ",".join(refreshed_config.get_allowed_regions())
+
+        aws_profile = (
+            str(app.state.settings.aws_profile or refreshed_config.aws_profile or "").strip()
+            or None
+        )
+        cluster_service = ClusterService(
+            regions=refreshed_config.get_allowed_regions(),
+            aws_profile=aws_profile,
+        )
+        app.state.cluster_service = cluster_service
+
+        cluster_job_manager = getattr(app.state, "cluster_job_manager", None)
+        if cluster_job_manager is not None:
+            cluster_job_manager.cluster_service = cluster_service
+
+        return ClusterScanRegionsResponse(
+            regions=refreshed_config.get_allowed_regions(),
+            regions_csv=",".join(refreshed_config.get_allowed_regions()),
+            config_path=str(refreshed_config.config_path or config_path),
+        )
 
     @app.get("/healthz", tags=["health"])
-    async def healthz() -> dict[str, str]:
-        return {
-            "status": "ok",
-            "service": "ursa",
-            "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-        }
+    async def healthz(request: Request) -> dict[str, Any]:
+        return build_healthz_payload(
+            request,
+            settings=settings,
+            app_version=__version__,
+            started_at=app.state.observability.started_at,
+        )
 
     @app.get("/readyz", tags=["health"])
-    async def readyz() -> JSONResponse:
+    async def readyz(request: Request) -> JSONResponse:
         database = _database_probe()
-        status_code = 200 if database["status"] in {"ok", "unknown"} else 503
+        ready = str(database.get("status") or "") == "ok"
         return JSONResponse(
-            status_code=status_code,
-            content={
-                "status": "ok" if status_code == 200 else "degraded",
-                "service": "ursa",
-                "database": database,
-                "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-            },
+            status_code=200 if ready else 503,
+            content=build_readyz_payload(
+                request,
+                settings=settings,
+                app_version=__version__,
+                started_at=app.state.observability.started_at,
+                database_check=database,
+                ready=ready,
+            ),
         )
 
     @app.get("/health", tags=["observability"])
@@ -2079,7 +2742,8 @@ def create_app(
     @app.post("/api/v1/analyses/{analysis_euid}/return", response_model=AnalysisResponse)
     async def return_analysis_result(
         analysis_euid: str,
-        request: AnalysisReturnRequest,
+        payload: AnalysisReturnRequest,
+        request: Request,
         actor: RequireAuth,
         idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
     ) -> AnalysisResponse:
@@ -2142,11 +2806,12 @@ def create_app(
                 lane=record.lane,
                 library_barcode=record.library_barcode,
                 analysis_type=record.analysis_type,
-                result_status=request.result_status,
+                result_status=payload.result_status,
                 review_state=record.review_state,
-                result_payload=request.result_payload,
+                result_payload=payload.result_payload,
                 artifacts=atlas_artifacts,
                 idempotency_key=str(idempotency_key),
+                request_id=str(getattr(request.state, "request_id", "") or ""),
             )
             record_observed_dependency("atlas")
         except AtlasResultClientError as exc:
@@ -2156,7 +2821,7 @@ def create_app(
             analysis_euid,
             atlas_return={
                 **atlas_response,
-                "result_status": request.result_status,
+                "result_status": payload.result_status,
                 "returned_by_user_id": actor.user_id,
             },
             idempotency_key=str(idempotency_key),
@@ -2173,6 +2838,35 @@ def create_app(
         )
         return [_workset_response(item) for item in items]
 
+    @app.get(
+        "/api/v1/worksets/workflow-catalog",
+        response_model=WorkflowCatalogResponse,
+    )
+    async def get_workset_workflow_catalog(
+        actor: RequireAuth,
+        repository: str = Query(DEFAULT_ANALYSIS_REPOSITORY),
+    ) -> WorkflowCatalogResponse:
+        _ = actor
+        return _workflow_catalog_response(repository)
+
+    @app.post(
+        "/api/v1/worksets/command-preview",
+        response_model=WorkflowCommandPreviewResponse,
+    )
+    async def preview_workset_command(
+        request: WorkflowCommandPreviewRequest,
+        actor: RequireAuth,
+    ) -> WorkflowCommandPreviewResponse:
+        _ = actor
+        return _workflow_command_preview_response(
+            repository=request.repository,
+            workflow_id=request.workflow_id,
+            genome_build=request.genome_build,
+            execution_profile=request.execution_profile,
+            options=request.options,
+            input_context=request.input_context,
+        )
+
     @app.post(
         "/api/v1/worksets", response_model=WorksetResponse, status_code=status.HTTP_201_CREATED
     )
@@ -2182,12 +2876,13 @@ def create_app(
         resources: ResourceStore = Depends(require_resource_store),
     ) -> WorksetResponse:
         artifact_set_euids = validate_workset_artifact_sets(request.artifact_set_euids)
+        metadata = _canonicalize_workset_metadata(request.metadata)
         record = resources.create_workset(
             name=request.name,
             tenant_id=actor.tenant_id,
             owner_user_id=actor.user_id,
             artifact_set_euids=artifact_set_euids,
-            metadata=request.metadata,
+            metadata=metadata,
         )
         return _workset_response(record)
 
@@ -2490,6 +3185,18 @@ def create_app(
             raise HTTPException(status_code=404, detail="Bucket not found")
         return LinkedBucketDeleteResponse(bucket_id=deleted.bucket_id, state=deleted.state)
 
+    @app.get("/api/v1/admin/s3-buckets", response_model=AdminS3BucketListResponse)
+    async def admin_list_s3_buckets(actor: RequireAdmin) -> AdminS3BucketListResponse:
+        _ = actor
+        try:
+            payload = list_profile_s3_buckets()
+        except Exception as exc:
+            LOGGER.exception("Failed to list S3 buckets for admin bucket management")
+            raise HTTPException(
+                status_code=502, detail=f"Failed to list S3 buckets: {exc}"
+            ) from exc
+        return AdminS3BucketListResponse(**payload)
+
     @app.get("/api/v1/buckets/{bucket_id}/objects")
     async def list_bucket_objects(
         bucket_id: str,
@@ -2682,13 +3389,95 @@ def create_app(
             raise HTTPException(status_code=403, detail="Cluster job is outside the caller tenant")
         return _cluster_job_response(record)
 
-    @app.get("/api/v1/clusters/create-options")
+    @app.get("/api/v1/clusters/create-options", response_model=ClusterCreateOptionsResponse)
     async def get_cluster_create_options(
         actor: RequireAdmin,
         region: str = Query(...),
-    ) -> dict[str, list[str]]:
+    ) -> ClusterCreateOptionsResponse:
         _ = actor
-        return load_cluster_create_options(region)
+        normalized_region = str(region or "").strip()
+        if not normalized_region:
+            raise HTTPException(status_code=400, detail="region is required")
+        return load_cluster_create_options(normalized_region)
+
+    @app.post(
+        "/api/v1/clusters/scan-regions",
+        response_model=ClusterScanRegionsResponse,
+    )
+    async def set_cluster_scan_regions(
+        request: ClusterScanRegionsUpdateRequest,
+        actor: RequireAdmin,
+    ) -> ClusterScanRegionsResponse:
+        _ = actor
+        try:
+            return update_cluster_scan_regions(request.regions_csv)
+        except (FileNotFoundError, RuntimeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            LOGGER.exception("Failed to update cluster scan regions")
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    @app.post(
+        "/api/v1/clusters/verify-partitions",
+        response_model=ClusterPartitionVerificationResponse,
+    )
+    async def verify_cluster_partitions(
+        request: ClusterPartitionRequest,
+        actor: RequireAdmin,
+    ) -> ClusterPartitionVerificationResponse:
+        _ = actor
+        try:
+            selection = resolve_cluster_partition_selection(
+                region=request.region,
+                region_az=request.region_az,
+            )
+            return run_cluster_partition_verification(
+                app.state.settings,
+                region=selection.region,
+                region_az=selection.region_az,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            LOGGER.exception(
+                "Failed to verify partition instances for %s in %s",
+                request.region,
+                request.region_az,
+            )
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    @app.post(
+        "/api/v1/clusters/partition-pricing",
+        response_model=ClusterPartitionPricingResponse,
+    )
+    async def cluster_partition_pricing(
+        request: ClusterPartitionPricingRequest,
+        actor: RequireAdmin,
+    ) -> ClusterPartitionPricingResponse:
+        _ = actor
+        try:
+            cluster_config_path, partition_instances = load_daylily_partition_instance_types(
+                app.state.settings
+            )
+            snapshot = collect_daylily_cluster_pricing_snapshot(
+                app.state.settings,
+                region=request.region,
+                partitions=list(partition_instances.keys()),
+            )
+            return build_cluster_partition_pricing(
+                region=request.region,
+                cluster_config_path=cluster_config_path,
+                partition_instances=partition_instances,
+                snapshot=snapshot,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            LOGGER.exception(
+                "Failed to calculate partition pricing for %s",
+                request.region,
+            )
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     @app.get("/api/v1/clusters")
     async def list_clusters(
@@ -2726,9 +3515,42 @@ def create_app(
                 status_code=400,
                 detail="cluster_name, region_az, ssh_key_name, and s3_bucket_name are required",
             )
+        try:
+            selection = resolve_cluster_partition_selection(
+                region=request.region,
+                region_az=region_az,
+            )
+            verification = run_cluster_partition_verification(
+                app.state.settings,
+                region=selection.region,
+                region_az=selection.region_az,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            LOGGER.exception(
+                "Failed pre-create partition verification for %s in %s",
+                request.region or region_from_region_az(region_az),
+                region_az,
+            )
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        if verification.has_failures:
+            failing_partitions = (
+                ", ".join(
+                    item.partition for item in verification.partitions if item.status == "FAIL"
+                )
+                or "unknown partitions"
+            )
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Create blocked because partition verification found no current Spot "
+                    f"availability for: {failing_partitions}."
+                ),
+            )
         record = manager.start_create_job(
             cluster_name=cluster_name,
-            region_az=region_az,
+            region_az=selection.region_az,
             ssh_key_name=ssh_key_name,
             s3_bucket_name=s3_bucket_name,
             tenant_id=actor.tenant_id,

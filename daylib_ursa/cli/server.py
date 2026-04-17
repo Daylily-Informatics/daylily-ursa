@@ -390,8 +390,24 @@ def start(
     for key in list(env):
         if key.startswith("TAPDB_"):
             env.pop(key, None)
-    env["MERIDIAN_DOMAIN_CODE"] = "R"
-    env["TAPDB_APP_CODE"] = "R"
+    env["MERIDIAN_DOMAIN_CODE"] = "Z"
+    env["TAPDB_OWNER_REPO"] = "ursa"
+    if str(getattr(settings, "tapdb_config_path", "") or "").strip():
+        env["TAPDB_CONFIG_PATH"] = str(settings.tapdb_config_path).strip()
+    resolved_domain_registry_path = str(
+        os.environ.get("TAPDB_DOMAIN_REGISTRY_PATH")
+        or getattr(settings, "tapdb_domain_registry_path", "")
+        or ""
+    ).strip()
+    if resolved_domain_registry_path:
+        env["TAPDB_DOMAIN_REGISTRY_PATH"] = resolved_domain_registry_path
+    resolved_prefix_registry_path = str(
+        os.environ.get("TAPDB_PREFIX_OWNERSHIP_REGISTRY_PATH")
+        or getattr(settings, "tapdb_prefix_ownership_registry_path", "")
+        or ""
+    ).strip()
+    if resolved_prefix_registry_path:
+        env["TAPDB_PREFIX_OWNERSHIP_REGISTRY_PATH"] = resolved_prefix_registry_path
     env["PYTHONUNBUFFERED"] = "1"
     env["ENABLE_AUTH"] = "true"
 
@@ -405,6 +421,7 @@ def start(
             client_id=settings.tapdb_client_id,
             namespace=settings.tapdb_database_name,
             tapdb_env=settings.tapdb_env,
+            config_path=settings.tapdb_config_path,
         )
 
     if reload:

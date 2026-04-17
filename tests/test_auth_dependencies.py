@@ -29,7 +29,7 @@ def test_claims_to_current_user_maps_canonical_cognito_groups() -> None:
 def test_cognito_auth_provider_accepts_id_token_claims(monkeypatch) -> None:
     monkeypatch.setattr(
         auth_dependencies,
-        "decode_jwt_unverified",
+        "_decode_unverified_claims",
         lambda _token: {"token_use": "id"},
     )
     monkeypatch.setattr(
@@ -63,7 +63,7 @@ def test_cognito_auth_provider_passes_paired_access_token_for_id_token_at_hash(m
 
     monkeypatch.setattr(
         auth_dependencies,
-        "decode_jwt_unverified",
+        "_decode_unverified_claims",
         lambda _token: {"token_use": "id"},
     )
     monkeypatch.setattr(jwt, "get_unverified_header", lambda _token: {"kid": "kid-123"})
@@ -111,6 +111,43 @@ def test_cognito_auth_provider_passes_paired_access_token_for_id_token_at_hash(m
     assert captured["issuer"] == "https://cognito-idp.us-west-2.amazonaws.com/pool-123"
 
 
+def test_cognito_auth_provider_routes_id_tokens_without_unverified_at_hash_validation(
+    monkeypatch,
+) -> None:
+    from jose import jwt
+
+    monkeypatch.setattr(
+        jwt,
+        "get_unverified_claims",
+        lambda _token: {"token_use": "id", "at_hash": "hash-123"},
+    )
+    monkeypatch.setattr(
+        auth_dependencies.CognitoAuthProvider,
+        "_verify_id_token_claims",
+        lambda self, _token, access_token=None: {
+            "sub": "user-123",
+            "email": "ursa@example.com",
+            "aud": "client-123",
+            "custom:customer_id": "00000000-0000-0000-0000-000000000001",
+            "cognito:groups": ["ursa-admin"],
+        },
+    )
+
+    provider = auth_dependencies.CognitoAuthProvider(
+        user_pool_id="pool-123",
+        app_client_id="client-123",
+        region="us-west-2",
+    )
+
+    user = provider.resolve_access_token(
+        "id-token-value",
+        paired_access_token="access-token-value",
+    )
+
+    assert user.email == "ursa@example.com"
+    assert user.roles == ["ADMIN"]
+
+
 def test_claims_to_current_user_maps_external_admin_group() -> None:
     user = auth_dependencies._claims_to_current_user(
         {
@@ -127,10 +164,10 @@ def test_claims_to_current_user_maps_external_admin_group() -> None:
 def test_settings_whitelist_domains_default_to_base_four() -> None:
     settings = Settings(
         ursa_internal_output_bucket="ursa-internal",
-        cognito_domain="https://auth.example.com",
+        cognito_domain="auth.example.com",
         cognito_app_client_id="client-1",
-        cognito_callback_url="https://localhost:8914/auth/callback",
-        cognito_logout_url="https://localhost:8914/login",
+        cognito_callback_url="https://localhost:8913/auth/callback",
+        cognito_logout_url="https://localhost:8913/login",
     )
 
     assert settings.get_whitelist_domains() == [
@@ -143,10 +180,34 @@ def test_settings_whitelist_domains_default_to_base_four() -> None:
     assert settings.is_domain_whitelisted("user@gmail.com") is False
 
 
+def test_settings_rejects_schemeful_cognito_domain() -> None:
+    with pytest.raises(ValueError, match="must be a bare host"):
+        Settings(
+            ursa_internal_output_bucket="ursa-internal",
+            cognito_domain="https://auth.example.com",
+            cognito_app_client_id="client-1",
+            cognito_callback_url="https://localhost:8913/auth/callback",
+            cognito_logout_url="https://localhost:8913/login",
+        )
+
+
+def test_build_web_session_config_requires_cognito_domain() -> None:
+    settings = Settings(
+        ursa_internal_output_bucket="ursa-internal",
+        cognito_domain=None,
+        cognito_app_client_id="client-1",
+        cognito_callback_url="https://localhost:8913/auth/callback",
+        cognito_logout_url="https://localhost:8913/login",
+    )
+
+    with pytest.raises(AuthError, match="Cognito domain is required"):
+        auth_dependencies.build_web_session_config(settings, "server-123")
+
+
 def test_cognito_auth_provider_rejects_id_token_with_wrong_audience(monkeypatch) -> None:
     monkeypatch.setattr(
         auth_dependencies,
-        "decode_jwt_unverified",
+        "_decode_unverified_claims",
         lambda _token: {"token_use": "id"},
     )
     monkeypatch.setattr(

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 import uuid
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -167,6 +168,7 @@ def test_return_analysis_result_calls_atlas_and_marks_returned():
             headers={
                 "Authorization": "Bearer atlas-token",
                 "Idempotency-Key": "return-1",
+                "X-Request-ID": "req-ursa-endpoint-1",
             },
             json={
                 "result_payload": {"calls": []},
@@ -181,6 +183,7 @@ def test_return_analysis_result_calls_atlas_and_marks_returned():
     assert body["tenant_id"] == str(TENANT_ID)
     assert atlas.calls[0]["atlas_test_fulfillment_item_euid"] == "TPC-1"
     assert atlas.calls[0]["atlas_tenant_id"] == str(TENANT_ID)
+    assert atlas.calls[0]["request_id"] == "req-ursa-endpoint-1"
     assert store.mark_returned_calls[0]["idempotency_key"] == "return-1"
 
 
@@ -248,7 +251,7 @@ def test_review_analysis_updates_review_state():
 
 
 def test_atlas_result_client_rejects_non_https_base_url():
-    client = AtlasResultClient(base_url="http://atlas.example", api_key="atlas-test-key")
+    client = AtlasResultClient(base_url="http://atlas.example", token="atlas-token")
 
     with pytest.raises(AtlasResultClientError, match="absolute https:// URL"):
         client.return_analysis_result(
@@ -269,6 +272,48 @@ def test_atlas_result_client_rejects_non_https_base_url():
             artifacts=[],
             idempotency_key="idem-1",
         )
+
+
+def test_atlas_result_client_uses_bearer_auth_and_request_id():
+    captured: dict[str, object] = {}
+
+    class DummyHttpClient:
+        def post(self, url, *, json, headers):
+            captured["url"] = url
+            captured["json"] = json
+            captured["headers"] = headers
+            return SimpleNamespace(status_code=200, json=lambda: {"accepted": True})
+
+    client = AtlasResultClient(
+        base_url="https://atlas.example",
+        token="atlas-token",
+        client=DummyHttpClient(),
+    )
+
+    response = client.return_analysis_result(
+        atlas_tenant_id=str(TENANT_ID),
+        atlas_trf_euid="TRF-1",
+        atlas_test_euid="TST-1",
+        atlas_test_fulfillment_item_euid="TPC-1",
+        analysis_euid="AN-1",
+        run_euid="RUN-1",
+        sequenced_library_assignment_euid="SQA-1",
+        flowcell_id="FLOW-1",
+        lane="1",
+        library_barcode="LIB-1",
+        analysis_type="somatic",
+        result_status="COMPLETED",
+        review_state="APPROVED",
+        result_payload={},
+        artifacts=[],
+        idempotency_key="idem-2",
+        request_id="req-ursa-return-1",
+    )
+
+    assert response["accepted"] is True
+    assert captured["headers"]["Authorization"] == "Bearer atlas-token"
+    assert captured["headers"]["Idempotency-Key"] == "idem-2"
+    assert captured["headers"]["X-Request-ID"] == "req-ursa-return-1"
 
 
 def test_create_app_rejects_no_auth_write_mode():

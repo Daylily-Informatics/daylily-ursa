@@ -95,7 +95,9 @@ def _call_with_retries(func, /, **kwargs):
 def ensure_test_user() -> E2ECredentials:
     settings = get_settings()
     region = str(os.getenv("E2E_COGNITO_REGION") or settings.cognito_region or "").strip()
-    pool_id = str(os.getenv("E2E_COGNITO_USER_POOL_ID") or settings.cognito_user_pool_id or "").strip()
+    pool_id = str(
+        os.getenv("E2E_COGNITO_USER_POOL_ID") or settings.cognito_user_pool_id or ""
+    ).strip()
     profile = str(settings.aws_profile or "").strip()
     if not region or not pool_id:
         raise RuntimeError("Ursa E2E tests require Cognito region and user pool ID.")

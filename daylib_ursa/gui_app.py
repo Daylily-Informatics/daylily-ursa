@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import subprocess
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlencode
@@ -25,6 +26,8 @@ from daylib_ursa.auth import (
     persist_session_user,
     session_principal_from_current_user,
 )
+from daylib_ursa.cluster_jobs import region_from_region_az
+from daylib_ursa.config import _require_bare_cognito_domain
 from daylib_ursa.observability import (
     build_api_health_payload,
     build_auth_health_payload,
@@ -33,23 +36,204 @@ from daylib_ursa.observability import (
     build_health_payload,
     build_obs_services_payload,
 )
+from daylib_ursa.workflow_catalog import (
+    DEFAULT_ANALYSIS_REPOSITORY,
+    WorkflowCatalogRuntimeError,
+    load_workflow_catalog_snapshot,
+)
+from daylib_ursa.ursa_config import (
+    _stable_deployment_color_hex,
+    _stable_region_color_hex,
+    get_ursa_config,
+)
 
 LOGGER = logging.getLogger(__name__)
+CLUSTER_CREATE_REGION_SUGGESTIONS = [
+    "us-west-2",
+    "us-east-1",
+    "us-east-2",
+    "ap-south-1",
+    "eu-central-1",
+]
+_SENSITIVE_CONFIG_TOKENS = (
+    "secret",
+    "token",
+    "password",
+    "passwd",
+    "key",
+    "credential",
+    "private",
+    "signing",
+    "session",
+    "cookie",
+    "authorization",
+    "client_secret",
+    "api_key",
+    "access_key",
+    "secret_key",
+)
+
+
+def _run_git_command(repo_root: Path, *args: str) -> str:
+    completed = subprocess.run(
+        ["git", "-C", str(repo_root), *args],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return str(completed.stdout or "").strip()
+
+
+def _resolve_git_metadata(repo_root: Path) -> dict[str, str]:
+    metadata = {"branch": "unavailable", "tag": "unreleased", "commit": "unavailable"}
+    try:
+        branch = _run_git_command(repo_root, "rev-parse", "--abbrev-ref", "HEAD")
+        if branch:
+            metadata["branch"] = "detached" if branch == "HEAD" else branch
+        metadata["commit"] = (
+            _run_git_command(repo_root, "rev-parse", "--short", "HEAD") or "unavailable"
+        )
+        try:
+            tag = _run_git_command(repo_root, "describe", "--tags", "--exact-match")
+        except subprocess.CalledProcessError:
+            tag = ""
+        if tag:
+            metadata["tag"] = tag
+    except (OSError, subprocess.CalledProcessError):
+        return metadata
+    return metadata
+
+
+def _is_sensitive_config_path(path: str) -> bool:
+    lowered = str(path or "").lower()
+    return any(token in lowered for token in _SENSITIVE_CONFIG_TOKENS)
+
+
+def _format_config_value(value: Any) -> str:
+    if value is None:
+        return "<unset>"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, (dict, list, tuple)):
+        return json.dumps(value, indent=2, sort_keys=True, default=str)
+    return str(value)
+
+
+def _flatten_effective_config(
+    value: Any,
+    *,
+    prefix: str = "",
+    rows: list[dict[str, str]] | None = None,
+) -> list[dict[str, str]]:
+    rows = [] if rows is None else rows
+    if prefix and _is_sensitive_config_path(prefix):
+        rows.append({"path": prefix, "value": "<redacted>" if value else "<unset>"})
+        return rows
+    if isinstance(value, dict):
+        if prefix:
+            rows.append({"path": prefix, "value": _format_config_value(value)})
+        for key in sorted(value.keys(), key=str):
+            child_prefix = f"{prefix}.{key}" if prefix else str(key)
+            _flatten_effective_config(value[key], prefix=child_prefix, rows=rows)
+        return rows
+    if isinstance(value, list):
+        if prefix:
+            rows.append({"path": prefix, "value": _format_config_value(value) if value else "[]"})
+        for index, item in enumerate(value):
+            child_prefix = f"{prefix}.{index}" if prefix else str(index)
+            _flatten_effective_config(item, prefix=child_prefix, rows=rows)
+        return rows
+    if prefix:
+        rows.append({"path": prefix, "value": _format_config_value(value)})
+    return rows
+
+
+def _safe_settings_snapshot(settings: Any, *, config_path: Path | None = None) -> dict[str, Any]:
+    effective = {}
+    if hasattr(settings, "model_dump"):
+        effective = dict(settings.model_dump(mode="json", exclude_none=False))
+    else:
+        effective = {
+            key: getattr(settings, key)
+            for key in dir(settings)
+            if not key.startswith("_") and not callable(getattr(settings, key))
+        }
+    region_value = (
+        getattr(settings, "day_aws_region", "")
+        or getattr(settings, "get_effective_region", lambda: "")()
+        or ""
+    )
+    effective["build_version"] = __version__
+    effective["config_path"] = str(config_path or "")
+    effective["environment"] = str(getattr(settings, "daylily_env", "") or "")
+    effective["deployment"] = dict(getattr(settings, "deployment", {}) or {})
+    effective["region"] = str(region_value)
+    return effective
+
+
+def _build_environment_chrome(settings: Any) -> dict[str, Any]:
+    deployment_name = str(getattr(settings, "deployment_name", "") or "").strip()
+    region_name = str(
+        getattr(settings, "day_aws_region", "")
+        or getattr(settings, "get_effective_region", lambda: "")()
+        or ""
+    ).strip()
+    return {
+        "show": bool(getattr(settings, "ui_show_environment_chrome", True)),
+        "deployment": {
+            "name": deployment_name,
+            "color": _stable_deployment_color_hex(deployment_name) if deployment_name else "",
+        },
+        "region": {
+            "name": region_name,
+            "color": _stable_region_color_hex(region_name) if region_name else "",
+        },
+    }
 
 
 def mount_gui(app: FastAPI) -> None:
     gui_root = Path(__file__).resolve().parent / "gui"
+    repo_root = Path(__file__).resolve().parents[1]
     templates = Jinja2Templates(directory=str(gui_root / "templates"))
     static_root = gui_root / "static"
     if static_root.is_dir():
         app.mount("/ui/static", StaticFiles(directory=str(static_root)), name="ui-static")
 
-    def _deployment_context() -> dict[str, object]:
+    app.state.ursa_config = getattr(app.state, "ursa_config", None) or get_ursa_config()
+    git_meta = _resolve_git_metadata(repo_root)
+
+    def _config_source():
+        cfg = getattr(app.state, "ursa_config", None)
+        if cfg is None:
+            cfg = get_ursa_config()
+            app.state.ursa_config = cfg
+        return cfg
+
+    def _config_path() -> Path | None:
+        cfg = _config_source()
+        path = getattr(cfg, "config_path", None)
+        return path if isinstance(path, Path) else None
+
+    def _environment_chrome_context() -> dict[str, object]:
         settings = getattr(app.state, "settings", None)
+        deployment_name = str(getattr(settings, "deployment_name", "") or "").strip()
+        region_name = str(
+            getattr(settings, "day_aws_region", "")
+            or getattr(settings, "get_effective_region", lambda: "")()
+            or ""
+        ).strip()
         return {
-            "name": str(getattr(settings, "deployment_name", "") or ""),
-            "color": str(getattr(settings, "deployment_color", "#AFEEEE") or "#AFEEEE"),
-            "is_production": bool(getattr(settings, "deployment_is_production", False)),
+            "show": bool(getattr(settings, "ui_show_environment_chrome", True)),
+            "deployment": {
+                "name": deployment_name,
+                "color": _stable_deployment_color_hex(deployment_name) if deployment_name else "",
+            },
+            "region": {
+                "name": region_name,
+                "color": _stable_region_color_hex(region_name) if region_name else "",
+            },
         }
 
     def _next_path(raw_value: str | None) -> str:
@@ -62,14 +246,12 @@ def mount_gui(app: FastAPI) -> None:
     def _cognito_settings() -> dict[str, str]:
         settings = getattr(app.state, "settings", None)
         values = {
-            "domain": str(getattr(settings, "cognito_domain", "") or "").strip().rstrip("/"),
+            "domain": str(getattr(settings, "cognito_domain", "") or "").strip(),
             "client_id": str(getattr(settings, "cognito_app_client_id", "") or "").strip(),
             "client_secret": str(getattr(settings, "cognito_app_client_secret", "") or "").strip(),
             "callback_url": str(getattr(settings, "cognito_callback_url", "") or "").strip(),
             "logout_url": str(getattr(settings, "cognito_logout_url", "") or "").strip(),
         }
-        if values["domain"].startswith("https://"):
-            values["domain"] = values["domain"][len("https://") :]
         missing = [
             key for key in ("domain", "client_id", "callback_url", "logout_url") if not values[key]
         ]
@@ -78,6 +260,16 @@ def mount_gui(app: FastAPI) -> None:
                 status_code=503,
                 detail=f"Cognito authentication is not configured: missing {', '.join(missing)}",
             )
+        try:
+            values["domain"] = _require_bare_cognito_domain(
+                values["domain"],
+                field_name="cognito_domain",
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail=f"Cognito authentication is not configured: {exc}",
+            ) from exc
         return values
 
     def _web_session_config():
@@ -157,6 +349,11 @@ def mount_gui(app: FastAPI) -> None:
             _require_allowed_cognito_email(actor.email)
             return session_principal_from_current_user(actor)
         except AuthError as exc:
+            LOGGER.warning(
+                "Ursa Cognito principal resolution failed during callback: %s",
+                exc,
+                exc_info=exc,
+            )
             reason = "not_authorized" if "not authorized" in str(exc).lower() else "auth_error"
             raise CognitoWebAuthError(
                 reason,
@@ -250,10 +447,27 @@ def mount_gui(app: FastAPI) -> None:
             "active_page": active_page,
             "secondary_page": secondary_page,
             "page_data_json": json.dumps(context or {}, default=_json_default),
-            "deployment": _deployment_context(),
+            "environment_chrome": _environment_chrome_context(),
+            "git_meta": git_meta,
+            "app_version": __version__,
         }
         template_context.update(context or {})
         return templates.TemplateResponse(request, template_name, template_context)
+
+    def _admin_config_context() -> dict[str, Any]:
+        settings = getattr(app.state, "settings", None)
+        if settings is None:
+            raise HTTPException(status_code=503, detail="Settings are not configured")
+        config_snapshot = _safe_settings_snapshot(settings, config_path=_config_path())
+        rows = _flatten_effective_config(config_snapshot)
+        rows.sort(key=lambda item: item["path"])
+        return {
+            "config_path": str(_config_path() or ""),
+            "effective_config_rows": rows,
+            "ui_show_environment_chrome": bool(
+                getattr(settings, "ui_show_environment_chrome", True)
+            ),
+        }
 
     def _json_text(value: Any) -> str:
         def _json_default(inner: Any):
@@ -278,13 +492,150 @@ def mount_gui(app: FastAPI) -> None:
         return _resource_store().list_linked_buckets(tenant_id=actor.tenant_id)
 
     def _allowed_regions() -> list[str]:
+        service = getattr(app.state, "cluster_service", None)
+        runtime_regions = [
+            str(region or "").strip()
+            for region in list(getattr(service, "regions", []) or [])
+            if str(region or "").strip()
+        ]
+        if runtime_regions:
+            return runtime_regions
         settings = getattr(app.state, "settings", None)
         if settings is None or not hasattr(settings, "get_allowed_regions"):
             return []
         return list(settings.get_allowed_regions())
 
+    def _cluster_create_regions() -> list[str]:
+        values: list[str] = []
+        seen: set[str] = set()
+        for region in [*CLUSTER_CREATE_REGION_SUGGESTIONS, *_allowed_regions()]:
+            normalized = str(region or "").strip()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            values.append(normalized)
+        return values
+
+    def _active_cluster_create_jobs(jobs: list[Any]) -> list[dict[str, Any]]:
+        items: list[dict[str, Any]] = []
+        for job in jobs:
+            state = str(getattr(job, "state", "") or "").strip().upper()
+            if state not in {"QUEUED", "RUNNING"}:
+                continue
+            cluster_name = str(getattr(job, "cluster_name", "") or "").strip()
+            region = str(getattr(job, "region", "") or "").strip()
+            region_az = str(getattr(job, "region_az", "") or "").strip()
+            if not region:
+                region = region_from_region_az(region_az)
+            if not cluster_name or not region:
+                continue
+            items.append(
+                {
+                    "job_euid": str(getattr(job, "job_euid", "") or "").strip(),
+                    "cluster_name": cluster_name,
+                    "region": region,
+                    "region_az": region_az,
+                    "state": state,
+                    "created_at": str(getattr(job, "created_at", "") or "").strip(),
+                }
+            )
+        return items
+
+    def _cluster_region_sections(
+        clusters: list[dict[str, Any]],
+        jobs: list[Any],
+    ) -> list[dict[str, Any]]:
+        scanned_regions = _allowed_regions()
+        live_by_region: dict[str, list[dict[str, Any]]] = {}
+        live_cluster_keys: set[tuple[str, str]] = set()
+        for cluster in clusters:
+            region = str(cluster.get("region") or "").strip()
+            cluster_name = str(cluster.get("cluster_name") or "").strip()
+            if not region:
+                continue
+            live_by_region.setdefault(region, []).append(cluster)
+            if cluster_name:
+                live_cluster_keys.add((region, cluster_name))
+
+        pending_by_region: dict[str, list[dict[str, Any]]] = {}
+        for job in _active_cluster_create_jobs(jobs):
+            if (job["region"], job["cluster_name"]) in live_cluster_keys:
+                continue
+            pending_by_region.setdefault(job["region"], []).append(job)
+
+        ordered_regions: list[str] = []
+        seen_regions: set[str] = set()
+        for region in [*scanned_regions, *live_by_region.keys(), *pending_by_region.keys()]:
+            normalized = str(region or "").strip()
+            if not normalized or normalized in seen_regions:
+                continue
+            seen_regions.add(normalized)
+            ordered_regions.append(normalized)
+
+        sections: list[dict[str, Any]] = []
+        for region in ordered_regions:
+            live_clusters = sorted(
+                list(live_by_region.get(region) or []),
+                key=lambda item: str(item.get("cluster_name") or ""),
+            )
+            pending_jobs = sorted(
+                list(pending_by_region.get(region) or []),
+                key=lambda item: str(item.get("created_at") or ""),
+                reverse=True,
+            )
+            sections.append(
+                {
+                    "region": region,
+                    "clusters": live_clusters,
+                    "pending_jobs": pending_jobs,
+                    "live_count": len(live_clusters),
+                    "pending_count": len(pending_jobs),
+                }
+            )
+        return sections
+
+    def _aws_profile_label() -> str:
+        settings = getattr(app.state, "settings", None)
+        value = str(getattr(settings, "aws_profile", "") or "").strip()
+        return value or "default"
+
+    def _workflow_catalog_context(
+        repository: str = DEFAULT_ANALYSIS_REPOSITORY,
+    ) -> dict[str, Any]:
+        try:
+            return load_workflow_catalog_snapshot(repository)
+        except WorkflowCatalogRuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    def _analysis_command_summary(metadata: dict[str, Any]) -> dict[str, Any]:
+        command = dict(metadata.get("analysis_command") or {})
+        summary = dict(command.get("summary") or {})
+        spec = dict(command.get("spec") or {})
+        pipeline_type = (
+            str(summary.get("pipeline_type") or "")
+            or str(command.get("display_name") or "")
+            or str(metadata.get("pipeline_type") or "")
+            or "germline"
+        )
+        reference_genome = (
+            str(summary.get("genome_build") or "")
+            or str(spec.get("genome_build") or "")
+            or str(metadata.get("reference_genome") or "")
+        )
+        execution_profile = (
+            str(summary.get("execution_profile") or "")
+            or str(spec.get("execution_profile") or "")
+            or str(metadata.get("execution_profile") or "")
+        )
+        return {
+            "pipeline_type": pipeline_type,
+            "reference_genome": reference_genome,
+            "execution_profile": execution_profile,
+        }
+
     def _workset_view_model(workset: Any) -> dict[str, Any]:
         metadata = dict(getattr(workset, "metadata", {}) or {})
+        command_summary = _analysis_command_summary(metadata)
         manifests = list(getattr(workset, "manifests", []) or [])
         analysis_euids = list(getattr(workset, "analysis_euids", []) or [])
         sample_count = int(metadata.get("sample_count") or 0)
@@ -301,8 +652,9 @@ def mount_gui(app: FastAPI) -> None:
             "workset_euid": getattr(workset, "workset_euid", ""),
             "state": getattr(workset, "state", "ACTIVE"),
             "workset_type": str(metadata.get("workset_type") or "ruo"),
-            "pipeline_type": str(metadata.get("pipeline_type") or "germline"),
-            "reference_genome": str(metadata.get("reference_genome") or ""),
+            "pipeline_type": command_summary["pipeline_type"],
+            "reference_genome": command_summary["reference_genome"],
+            "execution_profile": command_summary["execution_profile"],
             "customer_id": str(getattr(workset, "tenant_id", "") or ""),
             "s3_status": str(metadata.get("s3_status") or "unknown"),
             "execution_cluster_name": str(
@@ -598,7 +950,9 @@ def mount_gui(app: FastAPI) -> None:
                 "next_path": _next_path(next),
                 "cognito_login_url": _cognito_login_path(next),
                 "error": _auth_error_message(reason),
-                "deployment": _deployment_context(),
+                "environment_chrome": _environment_chrome_context(),
+                "git_meta": git_meta,
+                "app_version": __version__,
             },
         )
 
@@ -644,7 +998,9 @@ def mount_gui(app: FastAPI) -> None:
                     "next_path": _next_path(next_path),
                     "cognito_login_url": _cognito_login_path(next_path),
                     "error": "Authentication token is required",
-                    "deployment": _deployment_context(),
+                    "environment_chrome": _environment_chrome_context(),
+                    "git_meta": git_meta,
+                    "app_version": __version__,
                 },
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
@@ -663,7 +1019,9 @@ def mount_gui(app: FastAPI) -> None:
                     "next_path": _next_path(next_path),
                     "cognito_login_url": _cognito_login_path(next_path),
                     "error": str(exc),
-                    "deployment": _deployment_context(),
+                    "environment_chrome": _environment_chrome_context(),
+                    "git_meta": git_meta,
+                    "app_version": __version__,
                 },
                 status_code=status.HTTP_401_UNAUTHORIZED,
             )
@@ -698,7 +1056,9 @@ def mount_gui(app: FastAPI) -> None:
                 "auth_card_copy": message,
                 "auth_primary_href": "/auth/login",
                 "auth_primary_label": "Return to Sign In",
-                "deployment": _deployment_context(),
+                "environment_chrome": _environment_chrome_context(),
+                "git_meta": git_meta,
+                "app_version": __version__,
             },
             status_code=status.HTTP_403_FORBIDDEN,
         )
@@ -799,6 +1159,7 @@ def mount_gui(app: FastAPI) -> None:
                 "allowed_regions": _allowed_regions(),
                 "clusters": clusters,
                 "is_admin": actor.is_admin,
+                "workflow_catalog": _workflow_catalog_context(),
             },
         )
 
@@ -882,7 +1243,10 @@ def mount_gui(app: FastAPI) -> None:
             template_name="buckets.html",
             page_title="Linked Buckets",
             active_page="buckets",
-            context={"buckets": _list_buckets(actor)},
+            context={
+                "buckets": _list_buckets(actor),
+                "admin_bucket_profile": _aws_profile_label(),
+            },
         )
 
     @app.get("/buckets/{bucket_id}", response_class=HTMLResponse)
@@ -995,9 +1359,12 @@ def mount_gui(app: FastAPI) -> None:
         clusters = _cluster_service().get_all_clusters_with_status(
             force_refresh=False, fetch_ssh_status=False
         )
+        cluster_payload = [item.to_dict(include_sensitive=False) for item in clusters]
         jobs = _resource_store().list_cluster_jobs(
             tenant_id=None if actor.is_admin else actor.tenant_id
         )
+        scanned_regions = _allowed_regions()
+        active_create_jobs = _active_cluster_create_jobs(jobs)
         return _render_page(
             request,
             template_name="clusters.html",
@@ -1005,12 +1372,19 @@ def mount_gui(app: FastAPI) -> None:
             active_page="clusters",
             admin_only=True,
             context={
-                "clusters": [item.to_dict(include_sensitive=False) for item in clusters],
+                "clusters": cluster_payload,
+                "cluster_regions": _cluster_region_sections(cluster_payload, jobs),
                 "jobs": jobs,
-                "regions": _allowed_regions(),
+                "regions": scanned_regions,
+                "scan_regions_csv": ",".join(scanned_regions),
+                "create_regions": _cluster_create_regions(),
                 "is_admin": actor.is_admin,
                 "create_mode": False,
-                "prefill_region": (_allowed_regions()[0] if _allowed_regions() else ""),
+                "active_create_jobs_count": len(active_create_jobs),
+                "aws_profile_label": _aws_profile_label(),
+                "prefill_region": (
+                    _cluster_create_regions()[0] if _cluster_create_regions() else ""
+                ),
             },
         )
 
@@ -1066,6 +1440,17 @@ def mount_gui(app: FastAPI) -> None:
             context={"job": job, "job_payload_json": _json_text(job)},
         )
 
+    @app.get("/admin", response_class=HTMLResponse, include_in_schema=False)
+    async def admin_home(request: Request):
+        actor = _session_actor(request)
+        if actor is None:
+            return RedirectResponse(
+                url=f"/login?next={request.url.path}", status_code=status.HTTP_303_SEE_OTHER
+            )
+        if not actor.is_admin:
+            raise HTTPException(status_code=403, detail="Admin privileges are required")
+        return RedirectResponse(url="/admin/tokens", status_code=status.HTTP_303_SEE_OTHER)
+
     @app.get("/admin/tokens", response_class=HTMLResponse)
     async def admin_tokens_page(request: Request):
         actor = _session_actor(request)
@@ -1077,7 +1462,7 @@ def mount_gui(app: FastAPI) -> None:
             request,
             template_name="admin_tokens.html",
             page_title="Admin Tokens",
-            active_page="tools",
+            active_page="admin",
             secondary_page="admin_tokens",
             admin_only=True,
             context={"tokens": _list_all_tokens_for_admin(actor)},
@@ -1094,7 +1479,7 @@ def mount_gui(app: FastAPI) -> None:
             request,
             template_name="admin_clients.html",
             page_title="Client Registrations",
-            active_page="tools",
+            active_page="admin",
             secondary_page="admin_clients",
             admin_only=True,
             context={"clients": _resource_store().list_client_registrations()},
@@ -1120,7 +1505,7 @@ def mount_gui(app: FastAPI) -> None:
             request,
             template_name="admin_client_detail.html",
             page_title=f"Client {client.client_name}",
-            active_page="tools",
+            active_page="admin",
             secondary_page="admin_clients",
             admin_only=True,
             context={
@@ -1200,10 +1585,29 @@ def mount_gui(app: FastAPI) -> None:
             request,
             template_name="observability.html",
             page_title="Observability",
-            active_page="tools",
+            active_page="admin",
             secondary_page="admin_observability",
             admin_only=True,
             context=context,
+        )
+
+    @app.get("/admin/config", response_class=HTMLResponse)
+    async def admin_config_page(request: Request):
+        actor = _session_actor(request)
+        if actor is None:
+            return RedirectResponse(
+                url=f"/login?next={request.url.path}", status_code=status.HTTP_303_SEE_OTHER
+            )
+        if not actor.is_admin:
+            raise HTTPException(status_code=403, detail="Admin privileges are required")
+        return _render_page(
+            request,
+            template_name="admin_config.html",
+            page_title="Configuration",
+            active_page="admin",
+            secondary_page="admin_config",
+            admin_only=True,
+            context=_admin_config_context(),
         )
 
     @app.get("/admin/anomalies", response_class=HTMLResponse)
@@ -1214,7 +1618,7 @@ def mount_gui(app: FastAPI) -> None:
             request,
             template_name="admin_anomalies.html",
             page_title="Anomalies",
-            active_page="tools",
+            active_page="admin",
             secondary_page="admin_anomalies",
             admin_only=True,
             context={
@@ -1233,7 +1637,7 @@ def mount_gui(app: FastAPI) -> None:
             request,
             template_name="admin_anomalies.html",
             page_title="Anomalies",
-            active_page="tools",
+            active_page="admin",
             secondary_page="admin_anomalies",
             admin_only=True,
             context={

@@ -55,9 +55,9 @@ class MemoryBackend:
         _ = (session, singleton)
         self._uid += 1
         prefix = {
-            "integration/auth/user-token/1.0/": "UT",
-            "integration/auth/user-token-revision/1.0/": "UR",
-            "integration/auth/user-token-usage/1.0/": "UG",
+            "RGX/auth/user-token/1.0/": "UT",
+            "RGX/auth/user-token-revision/1.0/": "UR",
+            "RGX/auth/user-token-usage/1.0/": "UG",
         }.get(template_code, "GI")
         now = datetime.now(timezone.utc)
         instance = _Instance(
@@ -154,6 +154,10 @@ def _settings() -> Settings:
         ursa_internal_api_key="ursa-test-key",
         bloom_base_url="https://bloom.example",
         atlas_base_url="https://atlas.example",
+        cognito_domain="auth.example.test",
+        cognito_app_client_id="client-123",
+        cognito_callback_url="https://testserver/auth/callback",
+        cognito_logout_url="https://testserver/auth/logout",
         ursa_internal_output_bucket="ursa-internal",
         ursa_tapdb_mount_enabled=False,
     )
@@ -220,7 +224,7 @@ def test_user_token_service_rejects_snapshotless_legacy_tokens() -> None:
     with backend.session_scope(commit=True) as session:
         token = backend.create_instance(
             session,
-            "integration/auth/user-token/1.0/",
+            "RGX/auth/user-token/1.0/",
             "legacy token",
             json_addl={
                 "owner_user_id": USER_ID,
@@ -237,7 +241,7 @@ def test_user_token_service_rejects_snapshotless_legacy_tokens() -> None:
         )
         revision = backend.create_instance(
             session,
-            "integration/auth/user-token-revision/1.0/",
+            "RGX/auth/user-token-revision/1.0/",
             "revision:legacy:1",
             json_addl={
                 "token_euid": token.euid,

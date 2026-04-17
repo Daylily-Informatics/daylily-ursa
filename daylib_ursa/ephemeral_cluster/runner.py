@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from importlib import metadata as importlib_metadata
 import json
 import os
 import secrets
@@ -15,6 +16,34 @@ from typing import Any, Dict, List, Optional, cast
 import yaml  # type: ignore[import-untyped]
 
 _DAYLILY_EC_BIN_ENV = "URSA_DAYLILY_EC_BIN"
+DAYLILY_EC_DISTRIBUTION = "daylily-ephemeral-cluster"
+REQUIRED_DAYLILY_EC_VERSION = "2.0.3"
+REQUIRED_DAYLILY_EC_CONFIG_KEYS = [
+    "allowed_budget_users",
+    "auto_delete_fsx",
+    "budget_amount",
+    "budget_email",
+    "cluster_name",
+    "cluster_template_yaml",
+    "delete_local_root",
+    "enable_detailed_monitoring",
+    "enforce_budget",
+    "fsx_fs_size",
+    "global_allowed_budget_users",
+    "global_budget_amount",
+    "headnode_instance_type",
+    "heartbeat_email",
+    "heartbeat_schedule",
+    "heartbeat_scheduler_role_arn",
+    "iam_policy_arn",
+    "max_count_128I",
+    "max_count_192I",
+    "max_count_8I",
+    "private_subnet_id",
+    "public_subnet_id",
+    "s3_bucket_name",
+    "spot_instance_allocation_strategy",
+]
 
 
 def _now_iso() -> str:
@@ -35,6 +64,11 @@ def _atomic_write_json(path: Path, data: Dict[str, Any]) -> None:
 
 def _read_json(path: Path) -> Dict[str, Any]:
     return cast(Dict[str, Any], json.loads(path.read_text(encoding="utf-8")))
+
+
+def _ensure_required_triplets(config: Dict[str, list[str]]) -> None:
+    for key in REQUIRED_DAYLILY_EC_CONFIG_KEYS:
+        config.setdefault(key, ["PROMPTUSER", "", ""])
 
 
 def _job_base_dir() -> Path:
@@ -62,6 +96,28 @@ class ClusterCreateJob:
     job_path: Path
     log_path: Path
     status: str
+
+
+def require_daylily_ec_version() -> str:
+    try:
+        installed = importlib_metadata.version(DAYLILY_EC_DISTRIBUTION)
+    except importlib_metadata.PackageNotFoundError as exc:
+        raise RuntimeError(
+            f"{DAYLILY_EC_DISTRIBUTION} is not installed. "
+            f"Install {DAYLILY_EC_DISTRIBUTION}=={REQUIRED_DAYLILY_EC_VERSION} in the active Ursa environment."
+        ) from exc
+    if installed != REQUIRED_DAYLILY_EC_VERSION:
+        raise RuntimeError(
+            f"{DAYLILY_EC_DISTRIBUTION} version mismatch: expected "
+            f"{REQUIRED_DAYLILY_EC_VERSION}, found {installed}."
+        )
+    return installed
+
+
+def require_daylily_ec_runtime() -> Path:
+    path = resolve_daylily_ec()
+    require_daylily_ec_version()
+    return path
 
 
 def resolve_daylily_ec() -> Path:
@@ -106,9 +162,10 @@ def write_generated_ec_config(
             }
         }
     }
+    triplets = cast(Dict[str, list[str]], config["ephemeral_cluster"]["config"])
     if contact_email:
-        config["ephemeral_cluster"]["config"]["budget_email"] = ["USESETVALUE", "", contact_email]
-
+        triplets["budget_email"] = ["USESETVALUE", "", contact_email]
+    _ensure_required_triplets(triplets)
     dest.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
     return dest
 
@@ -210,7 +267,9 @@ def _build_command_env(
     return env
 
 
-def _summarize_process_output(result: subprocess.CompletedProcess[str], *, max_chars: int = 4000) -> str:
+def _summarize_process_output(
+    result: subprocess.CompletedProcess[str], *, max_chars: int = 4000
+) -> str:
     output = (result.stderr or "").strip() or (result.stdout or "").strip()
     if not output:
         return f"exit code {result.returncode}"
@@ -244,7 +303,7 @@ def run_preflight_sync(
     cwd: Optional[Path] = None,
 ) -> subprocess.CompletedProcess[str]:
     """Run daylily-ec preflight synchronously in the same runtime used for create."""
-    daylily_ec_path = resolve_daylily_ec()
+    daylily_ec_path = require_daylily_ec_runtime()
     command = _build_preflight_command(
         daylily_ec_path=daylily_ec_path,
         region_az=region_az,
@@ -280,7 +339,7 @@ def start_create_job(
     debug: bool,
 ) -> ClusterCreateJob:
     """Start a background cluster create job and return its metadata."""
-    daylily_ec_path = resolve_daylily_ec()
+    daylily_ec_path = require_daylily_ec_runtime()
     job_id = _new_job_id()
 
     jobs_dir = _jobs_dir()
@@ -401,7 +460,7 @@ def run_create_sync(
     cwd: Optional[Path] = None,
 ) -> subprocess.CompletedProcess[str]:
     """Run daylily-ec synchronously for monitor-driven cluster creation."""
-    daylily_ec_path = resolve_daylily_ec()
+    daylily_ec_path = require_daylily_ec_runtime()
     resolved_config_path = Path(config_path).expanduser()
     if not resolved_config_path.is_absolute():
         resolved_config_path = (Path.cwd() / resolved_config_path).resolve()

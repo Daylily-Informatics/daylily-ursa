@@ -252,9 +252,9 @@ def test_validate_cognito_oauth_uris_reports_mismatch() -> None:
     }
     errors = validate_cognito_app_client(
         app_client=app_client,
-        expected_callback_url="https://localhost:8914/auth/callback",
-        expected_logout_url="https://localhost:8914/",
-        expected_port=8914,
+        expected_callback_url="https://localhost:8913/auth/callback",
+        expected_logout_url="https://localhost:8913/",
+        expected_port=8913,
         runtime_host="localhost",
         expected_client_name="ursa",
     )
@@ -271,8 +271,8 @@ def test_require_cognito_configuration_reads_yaml_only_fields(
         cognito_app_client_id="client",
         cognito_region="us-west-2",
         cognito_domain="example.auth.us-west-2.amazoncognito.com",
-        cognito_callback_url="https://localhost:8914/auth/callback",
-        cognito_logout_url="https://localhost:8914/login",
+        cognito_callback_url="https://localhost:8913/auth/callback",
+        cognito_logout_url="https://localhost:8913/login",
     )
     for key in (
         "COGNITO_USER_POOL_ID",
@@ -287,7 +287,7 @@ def test_require_cognito_configuration_reads_yaml_only_fields(
     assert resolved["cognito_user_pool_id"] == "pool"
     assert resolved["cognito_app_client_id"] == "client"
     assert resolved["cognito_region"] == "us-west-2"
-    assert resolved["cognito_callback_url"] == "https://localhost:8914/auth/callback"
+    assert resolved["cognito_callback_url"] == "https://localhost:8913/auth/callback"
     assert os.environ["COGNITO_USER_POOL_ID"] == "env-cognito_user_pool_id"
 
 

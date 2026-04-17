@@ -4,11 +4,13 @@
 # This script must be SOURCED, not executed:
 #   source ./activate <deploy-name>
 #
-# It will:
-#   1. Build the URSA conda environment from environment.yaml if it doesn't exist
-#   2. Activate the URSA conda environment
-#   3. Expose the repo-local commands and Python package path
-#   4. Validate the required CLI tools from the canonical Conda environment
+# Contract:
+#   1. create the URSA conda environment if it does not exist
+#   2. activate the conda environment
+#   3. on the first create only, install this repo editable exactly once
+#   4. do nothing else
+
+set -euo pipefail
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -19,35 +21,6 @@ BOLD='\033[1m'
 NC='\033[0m'
 
 CONDA_ENV_BASE="URSA"
-URSA_PIP_INSTALL_EXTRAS="[auth,dev]"
-URSA_LEGACY_REBIND_VARS=(
-    USE_LOCAL_DAYLILY_TAPDB
-)
-URSA_REQUIRED_DISTRIBUTIONS=(
-    "daylily-tapdb==5.0.4"
-    "daylily-auth-cognito==2.0.2"
-    "cli-core-yo==2.0.0"
-)
-URSA_REQUIRED_IMPORTS=(
-    "daylily_tapdb:daylily-tapdb"
-    "daylily_auth_cognito:daylily-auth-cognito"
-    "cli_core_yo:cli-core-yo"
-    "fastapi:fastapi"
-    "pydantic_settings:pydantic-settings"
-    "pytest:pytest"
-    "ruff:ruff"
-    "mypy:mypy"
-    "jose:python-jose[cryptography]"
-)
-
-sanitize_deployment_code() {
-    raw_value="$1"
-    sanitized="$(printf '%s' "$raw_value" | LC_ALL=C sed -E 's/[^A-Za-z0-9-]+/-/g; s/^-+//; s/-+$//')"
-    if [ -z "$sanitized" ]; then
-        sanitized="local"
-    fi
-    printf '%s\n' "$sanitized"
-}
 
 validate_deploy_name() {
     deploy_name="$1"
@@ -57,38 +30,17 @@ validate_deploy_name() {
     fi
 }
 
-ursa_config_dir_name() {
-    printf 'ursa-%s\n' "${CONDA_ENV_DEPLOYMENT_CODE}"
+log_info() {
+    printf "${CYAN}→${NC} %s\n" "$1"
 }
 
-ursa_config_file_name() {
-    printf 'ursa-config-%s.yaml\n' "${CONDA_ENV_DEPLOYMENT_CODE}"
+log_success() {
+    printf "${GREEN}✓${NC} %s\n" "$1"
 }
 
-prepare_tapdb_config_path() {
-    client_id="$1"
-    namespace="$2"
-    xdg_config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
-    deployment_code="${URSA_DEPLOYMENT_CODE:-${DEPLOYMENT_CODE:-${LSMC_DEPLOYMENT_CODE:-local}}}"
-    deployment_code="$(sanitize_deployment_code "${deployment_code}")"
-    scoped_namespace="${namespace}-${deployment_code}"
-    user_dir="${xdg_config_home}/tapdb/${client_id}/${scoped_namespace}"
-    user_path="${user_dir}/tapdb-config.yaml"
-    repo_template="${SCRIPT_DIR}/config/tapdb-config-${namespace}.yaml"
-
-    if [ -f "$user_path" ]; then
-        chmod 600 "$user_path" 2>/dev/null || true
-        printf '%s\n' "$user_path"
-        return 0
-    fi
-    if [ ! -f "$repo_template" ]; then
-        printf '%s\n' "$user_path"
-        return 0
-    fi
-    mkdir -p "$user_dir" || return 1
-    cp "$repo_template" "$user_path" || return 1
-    chmod 600 "$user_path" || return 1
-    printf '%s\n' "$user_path"
+fail_activate() {
+    printf "${RED}✗${NC} %s\n" "$1"
+    return 1
 }
 
 if [ "$#" -ne 1 ]; then
@@ -101,152 +53,6 @@ CONDA_ENV_DEPLOYMENT_CODE="$1"
 if ! validate_deploy_name "${CONDA_ENV_DEPLOYMENT_CODE}"; then
     return 1 2>/dev/null || exit 1
 fi
-export URSA_DEPLOYMENT_CODE="${CONDA_ENV_DEPLOYMENT_CODE}"
-export DEPLOYMENT_CODE="${CONDA_ENV_DEPLOYMENT_CODE}"
-export LSMC_DEPLOYMENT_CODE="${CONDA_ENV_DEPLOYMENT_CODE}"
-export MERIDIAN_DOMAIN_CODE="${MERIDIAN_DOMAIN_CODE:-R}"
-export TAPDB_APP_CODE="${TAPDB_APP_CODE:-R}"
-CONDA_ENV_NAME="${CONDA_ENV_BASE}-${CONDA_ENV_DEPLOYMENT_CODE}"
-
-log_info() {
-    printf "${CYAN}→${NC} %s\n" "$1"
-}
-
-log_success() {
-    printf "${GREEN}✓${NC} %s\n" "$1"
-}
-
-log_warn() {
-    printf "${YELLOW}⚠${NC} %s\n" "$1"
-}
-
-log_error() {
-    printf "${RED}✗${NC} %s\n" "$1"
-}
-
-fail_activate() {
-    log_error "$1"
-    return 1
-}
-
-reject_legacy_local_rebind_env() {
-    for var_name in "${URSA_LEGACY_REBIND_VARS[@]}"; do
-        if [ -n "${ZSH_VERSION:-}" ]; then
-            eval 'var_value="${(P)var_name-}"'
-        else
-            eval 'var_value="${!var_name-}"'
-        fi
-        if [ -n "$var_value" ]; then
-            fail_activate "${var_name} is no longer supported; use packaged dependencies from ${CONDA_ENV_NAME}"
-            return 1
-        fi
-    done
-}
-
-if ! reject_legacy_local_rebind_env; then
-    return 1 2>/dev/null || exit 1
-fi
-
-require_tool() {
-    tool_scope="$1"
-    tool_name="$2"
-    if ! command -v "$tool_name" >/dev/null 2>&1; then
-        fail_activate "Required ${tool_scope} tool '$tool_name' is missing"
-        return 1
-    fi
-}
-
-python_importable() {
-    module_name="$1"
-    if ! python - "${module_name}" >/dev/null 2>&1 <<'PY'
-import importlib
-import sys
-
-importlib.import_module(sys.argv[1])
-PY
-    then
-        return 1
-    fi
-}
-
-require_python_import() {
-    module_name="$1"
-    package_hint="$2"
-    if ! python_importable "$module_name"; then
-        fail_activate "Required Python package '${package_hint}' is missing from the ${CONDA_ENV_NAME} environment"
-        printf "   Rebuild with: ${CYAN}conda env create -n ${CONDA_ENV_NAME} -f ${ENV_FILE}${NC}\n"
-        return 1
-    fi
-}
-
-installed_distribution_version() {
-    dist_name="$1"
-    python - "${dist_name}" 2>/dev/null <<'PY'
-import importlib.metadata
-import sys
-
-try:
-    print(importlib.metadata.version(sys.argv[1]))
-except importlib.metadata.PackageNotFoundError:
-    pass
-PY
-}
-
-distribution_version_matches() {
-    package_spec="$1"
-    python - "${package_spec}" 2>/dev/null <<'PY'
-import importlib.metadata
-import re
-import sys
-
-spec = sys.argv[1].strip()
-match = re.match(
-    r'^([A-Za-z0-9_.-]+)(?:\[[^]]+\])?(?:\s*(==)\s*([^,;\s]+))?$',
-    spec,
-)
-if not match:
-    sys.exit(1)
-
-name = match.group(1)
-required_version = match.group(3)
-
-try:
-    installed_version = importlib.metadata.version(name)
-except importlib.metadata.PackageNotFoundError:
-    sys.exit(1)
-
-if required_version is not None and installed_version == required_version:
-    sys.exit(0)
-
-sys.exit(1)
-PY
-}
-
-distribution_requirement_name() {
-    package_spec="$1"
-    python - "${package_spec}" 2>/dev/null <<'PY'
-import re
-import sys
-
-spec = sys.argv[1].strip()
-match = re.match(r'^([A-Za-z0-9_.-]+)(?:\[[^]]+\])?(?:\s*(?:==|!=|<=|>=|<|>|~=|===).*)?$', spec)
-if not match:
-    sys.exit(1)
-
-print(match.group(1))
-PY
-}
-
-require_distribution_version() {
-    package_spec="$1"
-    dist_name="$(distribution_requirement_name "${package_spec}")"
-    installed_version="$(installed_distribution_version "${dist_name}")"
-    if ! distribution_version_matches "${package_spec}"; then
-        fail_activate "Required Python package '${dist_name}' must satisfy ${package_spec} (found: ${installed_version:-not installed})"
-        printf "   Recreate the conda env to refresh the local Ursa install for ${CONDA_ENV_NAME}.${NC}\n"
-        return 1
-    fi
-}
 
 if [ -n "${BASH_VERSION:-}" ] && [ "${BASH_SOURCE[0]}" = "$0" ]; then
     printf "Error: This script must be sourced, not executed.\n"
@@ -269,222 +75,71 @@ SCRIPT_DIR="$(cd "$(dirname "${_URSA_SCRIPT_PATH}")" 2>/dev/null && pwd)"
 unset _URSA_SCRIPT_PATH
 
 ENV_FILE="${SCRIPT_DIR}/environment.yaml"
-BIN_DIR="${SCRIPT_DIR}/bin"
+CONDA_ENV_NAME="${CONDA_ENV_BASE}-${CONDA_ENV_DEPLOYMENT_CODE}"
+env_created=0
 
-distribution_is_editable_from_repo() {
-    dist_name="$1"
-    repo_root="$2"
-    editable_location=""
+if ! command -v conda >/dev/null 2>&1; then
+    fail_activate "Conda is required for Ursa activation"
+    return 1
+fi
 
-    editable_location="$(python -m pip show "$dist_name" 2>/dev/null | awk -F': ' '/^Editable project location:/ {print $2; exit}')"
-    [ -n "$editable_location" ] || return 1
+if [ ! -f "$ENV_FILE" ]; then
+    fail_activate "Environment file not found: $ENV_FILE"
+    return 1
+fi
 
-    editable_location="$(cd "$editable_location" 2>/dev/null && pwd)"
-    [ -n "$editable_location" ] || return 1
+if [ -n "${ZSH_VERSION:-}" ]; then
+    eval "$(conda shell.zsh hook 2>/dev/null)" 2>/dev/null || true
+elif [ -n "${BASH_VERSION:-}" ]; then
+    eval "$(conda shell.bash hook 2>/dev/null)" 2>/dev/null || true
+else
+    CONDA_BASE="$(conda info --base 2>/dev/null)"
+    if [ -f "${CONDA_BASE}/etc/profile.d/conda.sh" ]; then
+        . "${CONDA_BASE}/etc/profile.d/conda.sh"
+    fi
+    unset CONDA_BASE
+fi
 
-    [ "$editable_location" = "$repo_root" ]
-}
+if conda info --envs | grep -q "^${CONDA_ENV_NAME}[[:space:]]"; then
+    log_success "Environment '${CONDA_ENV_NAME}' already exists"
+else
+    log_info "Environment '${CONDA_ENV_NAME}' not found. Building from ${ENV_FILE}..."
+    log_info "This may take a few minutes..."
+    if ! (cd "${SCRIPT_DIR}" && conda env create -n "$CONDA_ENV_NAME" -f "$ENV_FILE"); then
+        fail_activate "Failed to create conda environment '${CONDA_ENV_NAME}'"
+        return 1
+    fi
+    env_created=1
+    log_success "Environment '${CONDA_ENV_NAME}' created successfully"
+fi
 
-bootstrap_local_ursa_repo() {
-    install_target="${SCRIPT_DIR}${URSA_PIP_INSTALL_EXTRAS}"
-    log_info "Installing local Ursa checkout with auth+dev extras..."
-    if ! python -m pip install -e "$install_target" -q; then
+log_info "Activating environment '${CONDA_ENV_NAME}'..."
+if ! conda activate "$CONDA_ENV_NAME"; then
+    fail_activate "Failed to activate conda environment '${CONDA_ENV_NAME}'"
+    return 1
+fi
+if [ -n "${CONDA_PREFIX:-}" ] && [ -d "${CONDA_PREFIX}/bin" ]; then
+    export PATH="${CONDA_PREFIX}/bin:${PATH:-}"
+    hash -r 2>/dev/null || true
+fi
+log_success "Activated conda environment: ${CONDA_ENV_NAME}"
+
+if [ "${env_created}" -eq 1 ]; then
+    log_info "Installing local Ursa checkout..."
+    if [ -z "${CONDA_PREFIX:-}" ] || [ ! -x "${CONDA_PREFIX}/bin/python" ]; then
+        fail_activate "Activated conda environment does not expose ${CONDA_PREFIX:-<unset>}/bin/python"
+        return 1
+    fi
+    if ! "${CONDA_PREFIX}/bin/python" -m pip install -e "${SCRIPT_DIR}"; then
         fail_activate "Failed to install local Ursa checkout from ${SCRIPT_DIR}"
         return 1
     fi
-    if ! distribution_is_editable_from_repo "daylily-ursa" "${SCRIPT_DIR}"; then
-        fail_activate "Ursa is not installed editable from ${SCRIPT_DIR}"
-        return 1
-    fi
-    log_success "Using local Ursa checkout: ${SCRIPT_DIR}"
-}
+    log_success "Installed local Ursa checkout: ${SCRIPT_DIR}"
+fi
 
-ensure_pre_commit_hooks() {
-    if ! git -C "${SCRIPT_DIR}" rev-parse --git-dir >/dev/null 2>&1; then
-        return 0
-    fi
-    if ! (cd "${SCRIPT_DIR}" && pre-commit install --hook-type pre-commit --hook-type pre-push >/dev/null); then
-        fail_activate "Failed to install Git pre-commit hooks"
-        return 1
-    fi
-    log_success "Installed Git pre-commit and pre-push hooks"
-}
-
-activate_main() {
-    env_created=0
-    printf "\n${BOLD}${BLUE}╔══════════════════════════════════════════════════════════════╗${NC}\n"
-    printf "${BOLD}${BLUE}║               Ursa Conda environment activation            ║${NC}\n"
-    printf "${BOLD}${BLUE}╚══════════════════════════════════════════════════════════════╝${NC}\n\n"
-
-    if ! command -v conda >/dev/null 2>&1; then
-        fail_activate "Conda is required for Ursa activation"
-        return 1
-    fi
-
-    if [ ! -f "$ENV_FILE" ]; then
-        fail_activate "Environment file not found: $ENV_FILE"
-        return 1
-    fi
-
-    if [ -n "${ZSH_VERSION:-}" ]; then
-        eval "$(conda shell.zsh hook 2>/dev/null)" 2>/dev/null || true
-    elif [ -n "${BASH_VERSION:-}" ]; then
-        eval "$(conda shell.bash hook 2>/dev/null)" 2>/dev/null || true
-    else
-        CONDA_BASE="$(conda info --base 2>/dev/null)"
-        if [ -f "${CONDA_BASE}/etc/profile.d/conda.sh" ]; then
-            . "${CONDA_BASE}/etc/profile.d/conda.sh"
-        fi
-        unset CONDA_BASE
-    fi
-
-    if conda info --envs | grep -q "^${CONDA_ENV_NAME}[[:space:]]"; then
-        log_success "Environment '${CONDA_ENV_NAME}' already exists"
-    else
-        log_info "Environment '${CONDA_ENV_NAME}' not found. Building from ${ENV_FILE}..."
-        log_info "This may take a few minutes..."
-        if ! (cd "${SCRIPT_DIR}" && conda env create -n "$CONDA_ENV_NAME" -f "$ENV_FILE"); then
-            fail_activate "Failed to create conda environment '${CONDA_ENV_NAME}'"
-            return 1
-        fi
-        env_created=1
-        log_success "Environment '${CONDA_ENV_NAME}' created successfully"
-    fi
-
-    log_info "Activating environment '${CONDA_ENV_NAME}'..."
-    if ! conda activate "$CONDA_ENV_NAME"; then
-        fail_activate "Failed to activate conda environment '${CONDA_ENV_NAME}'"
-        return 1
-    fi
-    log_success "Activated conda environment: ${CONDA_ENV_NAME}"
-
-    if [ -n "${CONDA_PREFIX:-}" ] && [ -x "${CONDA_PREFIX}/bin/python" ]; then
-        export PATH="${CONDA_PREFIX}/bin:${PATH}"
-    fi
-
-    if ! command -v python >/dev/null 2>&1; then
-        fail_activate "Activated conda environment does not expose python"
-        return 1
-    fi
-
-    _URSA_PYTHON_BIN="$(dirname "$(command -v python)")"
-    case ":$PATH:" in
-        *":${_URSA_PYTHON_BIN}:"*)
-            ;;
-        *)
-            export PATH="${_URSA_PYTHON_BIN}:${PATH}"
-            ;;
-    esac
-    unset _URSA_PYTHON_BIN
-
-    if [ -d "$BIN_DIR" ]; then
-        case ":$PATH:" in
-            *":${BIN_DIR}:"*)
-                ;;
-            *)
-                export PATH="${BIN_DIR}:${PATH}"
-                log_success "Added ${BIN_DIR} to PATH"
-                ;;
-        esac
-    fi
-
-    if [ "${env_created}" -eq 1 ]; then
-        if ! bootstrap_local_ursa_repo; then
-            return 1
-        fi
-    elif distribution_is_editable_from_repo "daylily-ursa" "${SCRIPT_DIR}"; then
-        log_success "Using local Ursa checkout: ${SCRIPT_DIR}"
-    fi
-
-    if command -v rehash >/dev/null 2>&1; then
-        rehash
-    elif command -v hash >/dev/null 2>&1; then
-        hash -r 2>/dev/null || true
-    fi
-
-    export URSA_ROOT="${SCRIPT_DIR}"
-    export URSA_ACTIVE=1
-    export URSA_PROJECT_ROOT="${SCRIPT_DIR}"
-    _URSA_TAPDB_CLIENT_ID="local"
-    _URSA_TAPDB_DATABASE_NAME="ursa"
-    _URSA_TAPDB_ENV="dev"
-    _URSA_RUNTIME_TAPDB_CONFIG_PATH="$(prepare_tapdb_config_path "${_URSA_TAPDB_CLIENT_ID}" "${_URSA_TAPDB_DATABASE_NAME}")"
-
-    require_tool "conda env" "aws" || return 1
-    require_tool "conda env" "pcluster" || return 1
-    require_tool "conda env" "jq" || return 1
-    require_tool "conda env" "yq" || return 1
-    require_tool "conda env" "rclone" || return 1
-    require_tool "conda env" "parallel" || return 1
-    require_tool "conda env" "perl" || return 1
-    require_tool "conda env" "yamllint" || return 1
-    require_tool "conda env" "fd" || return 1
-    require_tool "conda env" "psql" || return 1
-    require_tool "conda env" "node" || return 1
-    require_tool "conda env" "pre-commit" || return 1
-    for package_spec in "${URSA_REQUIRED_DISTRIBUTIONS[@]}"; do
-        require_distribution_version "${package_spec}" || return 1
-    done
-    for import_spec in "${URSA_REQUIRED_IMPORTS[@]}"; do
-        module_name="${import_spec%%:*}"
-        package_hint="${import_spec#*:}"
-        require_python_import "${module_name}" "${package_hint}" || return 1
-    done
-    ensure_pre_commit_hooks || return 1
-
-    URSA_CONFIG_FILE="${HOME}/.config/$(ursa_config_dir_name)/$(ursa_config_file_name)"
-    URSA_CONFIG_EXAMPLE="${SCRIPT_DIR}/config/ursa-config.example.yaml"
-
-    if [ -f "$URSA_CONFIG_FILE" ]; then
-        log_success "Config file found: ${URSA_CONFIG_FILE}"
-    else
-        log_warn "Config file not found: ${URSA_CONFIG_FILE}"
-        printf "   Create it with: ${CYAN}mkdir -p %s && cp %s %s${NC}\n" "$(dirname "${URSA_CONFIG_FILE}")" "${URSA_CONFIG_EXAMPLE}" "${URSA_CONFIG_FILE}"
-    fi
-
-    if [ -n "${PS1:-}" ]; then
-        _ursa_shell="$(basename "${SHELL:-}")"
-        if [ "${_ursa_shell}" = "zsh" ]; then
-            eval "$(ursa --show-completion zsh 2>/dev/null)" 2>/dev/null || true
-        elif [ "${_ursa_shell}" = "bash" ]; then
-            eval "$(ursa --show-completion bash 2>/dev/null)" 2>/dev/null || true
-        fi
-        unset _ursa_shell
-    fi
-
-    if command -v rehash >/dev/null 2>&1; then
-        rehash
-    elif command -v hash >/dev/null 2>&1; then
-        hash -r 2>/dev/null || true
-    fi
-
-    printf "\n${BOLD}${GREEN}╔══════════════════════════════════════════════════════════════╗${NC}\n"
-    printf "${BOLD}${GREEN}║  ✓ Ursa environment ready!                                   ║${NC}\n"
-    printf "${BOLD}${GREEN}╚══════════════════════════════════════════════════════════════╝${NC}\n\n"
-    printf "  ${CYAN}Conda Environment:${NC} %s\n" "${CONDA_ENV_NAME}"
-    printf "  ${CYAN}Python:${NC}           %s\n" "$(python --version 2>&1 | cut -d' ' -f2)"
-    printf "  ${CYAN}Project Root:${NC}     %s\n" "${SCRIPT_DIR}"
-    printf "  ${CYAN}Ursa Config:${NC}      %s\n" "${URSA_CONFIG_FILE}"
-    printf "  ${CYAN}TapDB Runtime:${NC}    from deployment-scoped Ursa config\n"
-    printf "  ${CYAN}MERIDIAN_DOMAIN_CODE:${NC} %s\n" "${MERIDIAN_DOMAIN_CODE}"
-    printf "  ${CYAN}TAPDB_APP_CODE:${NC}      %s\n" "${TAPDB_APP_CODE}"
-    printf "\n"
-    printf "  ${BOLD}Command Groups:${NC}\n"
-    printf "    ${CYAN}ursa server${NC}   API server management\n"
-    printf "    ${CYAN}ursa env${NC}      Environment and tooling status\n"
-    printf "    ${CYAN}ursa quality${NC}  Linting and validation helpers\n"
-    printf "    ${CYAN}ursa config${NC}   Configuration helpers\n"
-    printf "    ${CYAN}tapdb${NC}         Shared DB/runtime lifecycle where documented\n"
-    printf "    ${CYAN}daycog${NC}        Cognito/SSO management via daylily-auth-cognito\n"
-    printf "\n"
-    printf "  ${BOLD}Quick Start:${NC}\n"
-    printf "    ursa --help\n"
-    printf "    ursa env status\n"
-    printf "    ursa server start\n"
-    printf "\n"
-    printf "  ${BOLD}Deactivate:${NC}\n"
-    printf "    conda deactivate\n\n"
-
-}
-
-activate_main || return $? 2>/dev/null || exit $?
+printf "\n${BOLD}${GREEN}╔══════════════════════════════════════════════════════════════╗${NC}\n"
+printf "${BOLD}${GREEN}║  ✓ Ursa environment ready!                                   ║${NC}\n"
+printf "${BOLD}${GREEN}╚══════════════════════════════════════════════════════════════╝${NC}\n\n"
+printf "  ${CYAN}Conda Environment:${NC} %s\n" "${CONDA_ENV_NAME}"
+printf "  ${CYAN}Project Root:${NC}     %s\n" "${SCRIPT_DIR}"
+printf "\n"

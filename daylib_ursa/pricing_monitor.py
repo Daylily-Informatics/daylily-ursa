@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from daylib_ursa.config import Settings
-from daylib_ursa.ephemeral_cluster.runner import resolve_daylily_ec
+from daylib_ursa.ephemeral_cluster.runner import require_daylily_ec_runtime
 from daylib_ursa.pricing_state import PricingState
 
 LOGGER = logging.getLogger("daylily.pricing_monitor")
@@ -104,7 +104,7 @@ class PricingMonitor:
                 raise RuntimeError("daylily-ec pricing snapshot did not return valid JSON") from exc
 
     def _build_snapshot_command(self) -> list[str]:
-        command: list[str] = [str(resolve_daylily_ec()), "pricing", "snapshot"]
+        command: list[str] = [str(require_daylily_ec_runtime()), "pricing", "snapshot"]
         for region in self.settings.get_cost_monitor_regions():
             command.extend(["--region", region])
         for partition in self.settings.get_cost_monitor_partitions():

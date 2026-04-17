@@ -5,6 +5,8 @@ from fastapi.testclient import TestClient
 from daylib_ursa.anomalies import open_anomaly_repository
 from tests.test_admin_gui_and_cluster_routes import _create_test_app
 
+TEST_BASE_URL = "https://testserver"
+
 
 def test_anomaly_repository_persists_and_redacts_records() -> None:
     app, _resources = _create_test_app(admin=True)
@@ -54,7 +56,7 @@ def test_anomaly_api_routes_return_records_for_observability_auth() -> None:
     )
     headers = {"Authorization": f"Bearer {app.state.api_key}"}
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url=TEST_BASE_URL) as client:
         list_response = client.get("/api/anomalies", headers=headers)
         detail_response = client.get(f"/api/anomalies/{created.id}", headers=headers)
         missing_response = client.get("/api/anomalies/ANM-DOES-NOT-EXIST", headers=headers)
@@ -75,7 +77,7 @@ def test_obs_services_advertises_anomaly_capability() -> None:
     app, _resources = _create_test_app(admin=True)
     headers = {"Authorization": f"Bearer {app.state.api_key}"}
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url=TEST_BASE_URL) as client:
         response = client.get("/obs_services", headers=headers)
 
     assert response.status_code == 200
@@ -101,7 +103,7 @@ def test_admin_anomalies_page_requires_session_and_renders() -> None:
         redacted_context={"token": "secret-token"},
     )
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url=TEST_BASE_URL) as client:
         redirect = client.get("/admin/anomalies", follow_redirects=False)
         client.post(
             "/login",

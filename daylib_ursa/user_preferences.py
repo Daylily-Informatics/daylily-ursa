@@ -30,6 +30,7 @@ except Exception:
         except Exception:
             return default
 
+
 try:
     from daylily_tapdb.user_store import (  # type: ignore
         get_display_timezone_by_login_or_email as _get_tz_from_user_store,
@@ -60,9 +61,7 @@ def list_display_timezone_options() -> list[str]:
         "Australia/Sydney",
     ]
     all_timezones = sorted(
-        tz
-        for tz in available_timezones()
-        if not tz.startswith(("Etc/", "posix/", "right/"))
+        tz for tz in available_timezones() if not tz.startswith(("Etc/", "posix/", "right/"))
     )
     ordered: list[str] = []
     for tz in common + all_timezones:
@@ -89,9 +88,10 @@ def get_display_timezone_for_email(email: str | None) -> str:
                     value,
                     default=DEFAULT_DISPLAY_TIMEZONE,
                 )
-            row = session.execute(
-                text(
-                    """
+            row = (
+                session.execute(
+                    text(
+                        """
                     SELECT gi.json_addl->'preferences'->>'display_timezone' AS display_timezone
                     FROM generic_instance gi
                     WHERE gi.is_deleted = FALSE
@@ -105,9 +105,12 @@ def get_display_timezone_for_email(email: str | None) -> str:
                       )
                     LIMIT 1
                     """
-                ),
-                {"identifier": identifier},
-            ).mappings().first()
+                    ),
+                    {"identifier": identifier},
+                )
+                .mappings()
+                .first()
+            )
             return normalize_display_timezone(
                 (row or {}).get("display_timezone"),
                 default=DEFAULT_DISPLAY_TIMEZONE,

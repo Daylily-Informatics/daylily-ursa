@@ -36,7 +36,7 @@ class AtlasResultArtifact:
 @dataclass
 class AtlasResultClient:
     base_url: str
-    api_key: str
+    token: str
     timeout_seconds: float = 10.0
     verify_ssl: bool = True
     client: httpx.Client | None = None
@@ -60,6 +60,7 @@ class AtlasResultClient:
         result_payload: dict[str, Any],
         artifacts: list[AtlasResultArtifact],
         idempotency_key: str,
+        request_id: str | None = None,
     ) -> dict[str, Any]:
         url = (
             f"{_require_https_url(self.base_url, field_name='Atlas base URL')}"
@@ -98,9 +99,12 @@ class AtlasResultClient:
         headers = {
             "Accept": "application/json",
             "Content-Type": "application/json",
-            "X-API-Key": self.api_key,
+            "Authorization": f"Bearer {self.token}",
             "Idempotency-Key": idempotency_key,
         }
+        clean_request_id = str(request_id or "").strip()
+        if clean_request_id:
+            headers["X-Request-ID"] = clean_request_id
         client = self.client or httpx.Client(
             timeout=self.timeout_seconds,
             verify=self.verify_ssl,

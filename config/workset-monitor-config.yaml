@@ -25,10 +25,10 @@
 aws:
   # AWS profile name from ~/.aws/credentials (use "default" if not using profiles)
   profile: daylily-service-lsmc
-  
+
   # AWS region for S3 and other AWS services
   region: us-west-2
-  
+
   # Optional: Session duration for profile authentication (in seconds)
   # Useful when using assumed roles with limited session duration
   session_duration_seconds: 3600
@@ -69,22 +69,22 @@ monitor:
 cluster:
   # Path to ParallelCluster template YAML file
   template_path: cluex.yaml
-  
+
   # Contact email for cluster notifications
   contact_email: johnm@lsmc.com
-  
+
   # Git tag/branch for the daylily-omics-analysis repo
-  repo_tag: main
-  
+  repo_tag: 0.7.641
+
   # Preferred AWS availability zone for cluster creation
   preferred_availability_zone: us-west-2d
-  
+
   # Automatically shut down idle clusters
   auto_teardown: false
-  
+
   # Minutes of idle time before cluster teardown (if auto_teardown is true)
   idle_teardown_minutes: 20
-  
+
   # Optional: Reuse an existing cluster instead of creating new ones
   # Leave empty ("") to create clusters dynamically
   reuse_cluster_name: ""
@@ -95,50 +95,50 @@ cluster:
 pipeline:
   # Directory on the headnode where worksets will be staged
   workdir: /fsx/data/worksets
-  
+
   # Local directory for staging manifests before transfer
   local_stage_root: .
-  
+
   # S3 bucket URI for reference data (defaults to monitor bucket if omitted)
   reference_bucket: s3://lsmc-dayoa-omics-analysis-us-west-2/
-  
+
   # SSH identity file for headnode connection
-  ssh_identity_file: ~/.ssh/lsmc-omics-us-west-2.pem 
-  
+  ssh_identity_file: ~/.ssh/lsmc-omics-us-west-2.pem
+
   # SSH user for headnode connection
   ssh_user: ubuntu
-  
+
   # Additional SSH options (optional)
   ssh_extra_args: []
-  
+
   # Command to stage samples to the headnode
   # Available variables: {profile}, {region}, {reference_bucket}, {analysis_samples}, {output_dir}
   # Note: --config-dir ensures generated samples.tsv/units.tsv are written to the workset state dir
   stage_command: daylily-stage-samples-from-local-to-headnode --profile {profile} --region {region} --reference-bucket {reference_bucket} --config-dir {output_dir} {analysis_samples}
-  
+
   # Command to clone the pipeline repository
   # Available variables: {clone_args}
   clone_command: echo cloning && day-clone {clone_args}
-  
+
   # Command prefix for running the pipeline
   # The dy-r suffix from workset YAML is appended to this
   run_prefix: "source dyoainit && source bin/day_activate slurm hg38 && DAY_CONTAINERIZED=0 ./bin/day_run "
-  
+
   # Maximum pipeline execution time (in minutes) before timeout
   pipeline_timeout_minutes: 880
-  
+
   # Command to export results back to S3
   # Available variables: {cluster}, {target_uri}, {region}, {profile}, {output_dir},
   #                      {workdir_name}, {workset_dir}, {pipeline_dir}, {workset}
   # IMPORTANT: {output_dir} must be used for --output-dir to match where monitor looks for fsx_export.yaml
   export_command: daylily-export-fsx-to-s3-from-local --cluster {cluster} --target-uri analysis_results/ubuntu/{workdir_name} --region {region} --profile {profile} --output-dir {output_dir} --verbose
-  
+
   # Shell initialization command run before entering pipeline directory
   login_shell_init: source ~/.bashrc
-  
+
   # Prefix for tmux session names
   tmux_session_prefix: daylily
-  
+
   # Shell to keep tmux session alive after pipeline completion
   tmux_keepalive_shell: bash
 
@@ -148,7 +148,7 @@ pipeline:
 # These can be overridden per-workset in daylily_work.yaml
 
 # Clone arguments for day-clone command
-day-clone: "--repo Daylily-Informatics/daylily-omics-analysis --branch main"
+day-clone: "--repo Daylily-Informatics/daylily-omics-analysis --branch 0.7.641"
 
 # Run arguments appended to run_prefix
 dy-r: "--name my-analysis --samples config/samples.tsv --outdir results/my-analysis --profile slurm --jobs 192 --rerun-incomplete"

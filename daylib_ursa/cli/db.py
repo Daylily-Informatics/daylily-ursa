@@ -24,6 +24,7 @@ from daylib_ursa.integrations.tapdb_runtime import (
     DEFAULT_TAPDB_CLIENT_ID,
     DEFAULT_TAPDB_DATABASE_NAME,
     TapDBRuntimeError,
+    ensure_local_tapdb_namespace_config,
     ensure_tapdb_version,
     export_database_url_for_target,
     run_tapdb_cli,
@@ -44,7 +45,7 @@ def _resolved_runtime_defaults(
     profile: str,
     region: str,
     namespace: str,
-) -> tuple[str, str, str]:
+) -> tuple[str, str, str, str]:
     settings = get_settings()
     effective_profile = str(profile or getattr(settings, "aws_profile", "") or "").strip()
     if not effective_profile:
@@ -64,7 +65,9 @@ def _resolved_runtime_defaults(
     if not effective_namespace:
         effective_namespace = DEFAULT_TAPDB_DATABASE_NAME
 
-    return effective_profile, effective_region, effective_namespace
+    effective_config_path = str(getattr(settings, "tapdb_config_path", "") or "").strip()
+
+    return effective_profile, effective_region, effective_namespace, effective_config_path
 
 
 def _validate_target(target: str) -> str:
@@ -93,12 +96,19 @@ def _build_target(
 ) -> None:
     ensure_tapdb_version()
     target = _validate_target(target)
-    profile, region, namespace = _resolved_runtime_defaults(
+    profile, region, namespace, config_path = _resolved_runtime_defaults(
         profile=profile,
         region=region,
         namespace=namespace,
     )
     if target == "local":
+        ensure_local_tapdb_namespace_config(
+            client_id=DEFAULT_TAPDB_CLIENT_ID,
+            profile=profile,
+            region=region,
+            namespace=namespace,
+            config_path=config_path,
+        )
         result = run_tapdb_cli(
             args=["bootstrap", "local", "--no-gui"],
             target=target,
@@ -106,6 +116,7 @@ def _build_target(
             profile=profile,
             region=region,
             namespace=namespace,
+            config_path=config_path,
         )
     else:
         if not cluster.strip():
@@ -125,6 +136,7 @@ def _build_target(
             profile=profile,
             region=region,
             namespace=namespace,
+            config_path=config_path,
         )
     if result.stdout:
         console.print(result.stdout.rstrip())
@@ -135,6 +147,7 @@ def _build_target(
         profile=profile,
         region=region,
         namespace=namespace,
+        config_path=config_path,
     )
     console.print(f"[green]DATABASE_URL[/green] resolved: [dim]{db_url}[/dim]")
     _apply_ursa_overlay(start_step=overlay_start_step, total_steps=overlay_total_steps)
@@ -179,7 +192,7 @@ def seed(
     """Apply the Ursa TapDB template overlay only."""
     try:
         target = _validate_target(target)
-        profile, region, namespace = _resolved_runtime_defaults(
+        profile, region, namespace, config_path = _resolved_runtime_defaults(
             profile=profile,
             region=region,
             namespace=namespace,
@@ -190,6 +203,7 @@ def seed(
             profile=profile,
             region=region,
             namespace=namespace,
+            config_path=config_path,
         )
         console.print(f"[green]DATABASE_URL[/green] resolved: [dim]{db_url}[/dim]")
         _apply_ursa_overlay(start_step=1, total_steps=1)
@@ -215,7 +229,7 @@ def reset(
 
     try:
         target = _validate_target(target)
-        profile, region, namespace = _resolved_runtime_defaults(
+        profile, region, namespace, config_path = _resolved_runtime_defaults(
             profile=profile,
             region=region,
             namespace=namespace,
@@ -227,6 +241,7 @@ def reset(
             profile=profile,
             region=region,
             namespace=namespace,
+            config_path=config_path,
         )
     except TapDBRuntimeError as exc:
         console.print(f"[red]Delete failed:[/red] {exc}")
@@ -263,7 +278,7 @@ def nuke(
 
     try:
         target = _validate_target(target)
-        profile, region, namespace = _resolved_runtime_defaults(
+        profile, region, namespace, config_path = _resolved_runtime_defaults(
             profile=profile,
             region=region,
             namespace=namespace,
@@ -275,6 +290,7 @@ def nuke(
             profile=profile,
             region=region,
             namespace=namespace,
+            config_path=config_path,
         )
     except TapDBRuntimeError as exc:
         console.print(f"[red]Delete failed:[/red] {exc}")

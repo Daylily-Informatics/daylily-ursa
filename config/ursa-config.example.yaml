@@ -45,12 +45,12 @@ regions:
 # =============================================================================
 # Ursa reads its TapDB namespace/runtime from this YAML file.
 # Bootstrap the matching namespace with:
-#   tapdb --config ~/.config/tapdb/local/ursa/tapdb-config.yaml --env dev config init --env dev --db-port dev=5541 --ui-port dev=8916
+#   tapdb --config ~/.config/tapdb/local/ursa/tapdb-config.yaml --env dev config init --owner-repo-name ursa --domain-code Z --domain-registry-path ~/.config/tapdb/domain_code_registry.json --prefix-ownership-registry-path ~/.config/tapdb/prefix_ownership_registry.json --db-port dev=5541 --ui-port dev=8916
 #   tapdb --config ~/.config/tapdb/local/ursa/tapdb-config.yaml --env dev bootstrap local
 #
 # Explicit env contract for TapDB/Meridian subprocesses:
-# MERIDIAN_DOMAIN_CODE=R
-# TAPDB_APP_CODE=R
+# MERIDIAN_DOMAIN_CODE=Z
+# TAPDB_OWNER_REPO=ursa
 tapdb_client_id: local
 tapdb_database_name: ursa
 tapdb_env: dev
@@ -60,7 +60,7 @@ ursa_internal_output_bucket: your-ursa-output-bucket
 
 # API/UI bind settings
 api_host: 0.0.0.0
-api_port: 8914
+api_port: 8913
 
 # Peer service URLs
 bloom_base_url: https://localhost:8912
@@ -77,11 +77,14 @@ dewey_verify_ssl: true
 # cognito_app_client_id: xxxxxxxxxxxxxxxxxxxxxxxxxx
 # cognito_region: us-west-2  # AWS region where Cognito User Pool is deployed
 # cognito_domain: your-domain-prefix.auth.us-west-2.amazoncognito.com
-# cognito_callback_url: https://localhost:8914/auth/callback
-# cognito_logout_url: https://localhost:8914/login
+# cognito_callback_url: https://localhost:8913/auth/callback
+# cognito_logout_url: https://localhost:8913/login
 
 # Non-production deployment chrome
 deployment:
   name: ""
   color: ""
   is_production: false
+
+# Show deployment and region bars across every GUI page unless explicitly disabled
+ui_show_environment_chrome: true

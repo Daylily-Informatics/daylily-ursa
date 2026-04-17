@@ -57,7 +57,7 @@ def _fingerprint(value: str) -> str:
     text = str(value or "").strip()
     if not text:
         return ""
-    return hashlib.sha1(text.encode("utf-8")).hexdigest()[:12]
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
 
 
 def _normalize_sql(statement: str) -> tuple[str, str]:
@@ -221,6 +221,10 @@ class UrsaObservabilityStore:
         self._refresh_schema_drift_status()
         self._obs_services_snapshot = self._build_obs_services_snapshot()
 
+    @property
+    def started_at(self) -> str:
+        return self._started_at
+
     def _build_obs_services_snapshot(self) -> dict[str, Any]:
         return {
             "status": "ok",
@@ -230,9 +234,17 @@ class UrsaObservabilityStore:
                 {"path": "/health", "auth": "operator_or_service_token", "kind": "summary"},
                 {"path": "/obs_services", "auth": "operator_or_service_token", "kind": "discovery"},
                 {"path": "/api_health", "auth": "operator_or_service_token", "kind": "api_rollup"},
-                {"path": "/endpoint_health", "auth": "operator_or_service_token", "kind": "endpoint_rollup"},
+                {
+                    "path": "/endpoint_health",
+                    "auth": "operator_or_service_token",
+                    "kind": "endpoint_rollup",
+                },
                 {"path": "/db_health", "auth": "operator_or_service_token", "kind": "database"},
-                {"path": "/api/anomalies", "auth": "operator_or_service_token", "kind": "anomaly_list"},
+                {
+                    "path": "/api/anomalies",
+                    "auth": "operator_or_service_token",
+                    "kind": "anomaly_list",
+                },
                 {
                     "path": "/api/anomalies/{anomaly_id}",
                     "auth": "operator_or_service_token",
@@ -292,7 +304,9 @@ class UrsaObservabilityStore:
                 target=self.settings.database_target,
                 client_id=self.settings.tapdb_client_id,
                 profile=self.settings.aws_profile or "",
-                region=self.settings.day_aws_region or self.settings.daylily_primary_region or "us-west-2",
+                region=self.settings.day_aws_region
+                or self.settings.daylily_primary_region
+                or "us-west-2",
                 namespace=self.settings.tapdb_database_name,
                 tapdb_env=environment or None,
             )
@@ -311,7 +325,9 @@ class UrsaObservabilityStore:
         self._schema_drift = dict(result)
         _SCHEMA_DRIFT_CACHE[cache_key] = dict(result)
 
-    def projection(self, *, observed_at: str | None = None, detail: str | None = None) -> ProjectionMetadata:
+    def projection(
+        self, *, observed_at: str | None = None, detail: str | None = None
+    ) -> ProjectionMetadata:
         seen_at = observed_at or self._started_at
         return ProjectionMetadata(
             state="ready",
@@ -441,7 +457,9 @@ class UrsaObservabilityStore:
         observed_at = families[0]["observed_at"] if families else self._started_at
         return self.projection(observed_at=observed_at), families
 
-    def endpoint_health(self, *, offset: int, limit: int) -> tuple[ProjectionMetadata, dict[str, Any]]:
+    def endpoint_health(
+        self, *, offset: int, limit: int
+    ) -> tuple[ProjectionMetadata, dict[str, Any]]:
         with self._lock:
             items = [rollup.to_dict() for rollup in self._endpoint_rollups.values()]
         items.sort(
@@ -450,7 +468,9 @@ class UrsaObservabilityStore:
         total = len(items)
         sliced = items[offset : offset + limit]
         observed_at = (
-            sliced[0]["observed_at"] if sliced else (items[0]["observed_at"] if items else self._started_at)
+            sliced[0]["observed_at"]
+            if sliced
+            else (items[0]["observed_at"] if items else self._started_at)
         )
         return self.projection(observed_at=observed_at), {
             "total": total,
@@ -468,12 +488,17 @@ class UrsaObservabilityStore:
             latest = dict(self._db_probes[0]) if self._db_probes else None
             recent_queries = [rollup.to_dict() for rollup in self._db_rollups.values()]
             schema_drift = dict(self._schema_drift)
-        recent_queries.sort(key=lambda item: (-float(item["p95_ms"]), -int(item["request_count"]), item["label"]))
-        hottest = sorted(recent_queries, key=lambda item: (-int(item["request_count"]), item["label"]))[:10]
-        slowest = sorted(recent_queries, key=lambda item: (-float(item["p95_ms"]), item["label"]))[:10]
-        observed_at = (
-            (latest or {}).get("observed_at")
-            or (recent_queries[0]["observed_at"] if recent_queries else self._started_at)
+        recent_queries.sort(
+            key=lambda item: (-float(item["p95_ms"]), -int(item["request_count"]), item["label"])
+        )
+        hottest = sorted(
+            recent_queries, key=lambda item: (-int(item["request_count"]), item["label"])
+        )[:10]
+        slowest = sorted(recent_queries, key=lambda item: (-float(item["p95_ms"]), item["label"]))[
+            :10
+        ]
+        observed_at = (latest or {}).get("observed_at") or (
+            recent_queries[0]["observed_at"] if recent_queries else self._started_at
         )
         payload = {
             "status": str((latest or {}).get("status") or "unknown"),
@@ -533,7 +558,9 @@ class UrsaObservabilityStore:
         return "web"
 
 
-def base_frame(request: Request, *, status: str, settings: Settings, app_version: str) -> dict[str, Any]:
+def base_frame(
+    request: Request, *, status: str, settings: Settings, app_version: str
+) -> dict[str, Any]:
     return {
         "contract_version": CONTRACT_VERSION,
         "service": SERVICE_NAME,
@@ -557,6 +584,69 @@ def _status_for_projection(projection: ProjectionMetadata, ready_status: str) ->
 def _with_projection(payload: dict[str, Any], projection: ProjectionMetadata) -> dict[str, Any]:
     payload["projection"] = projection.model_dump()
     return payload
+
+
+def _probe_projection(observed_at: str) -> ProjectionMetadata:
+    return ProjectionMetadata(
+        state="ready",
+        stale=False,
+        observed_at=observed_at,
+        last_synced_at=observed_at,
+        detail=None,
+    )
+
+
+def build_healthz_payload(
+    request: Request,
+    *,
+    settings: Settings,
+    app_version: str,
+    started_at: str,
+) -> dict[str, Any]:
+    payload = base_frame(request, status="ok", settings=settings, app_version=app_version)
+    observed_at = str(payload.get("observed_at") or _utcnow())
+    payload["checks"] = {
+        "process": {
+            "status": "ok",
+            "started_at": started_at,
+        }
+    }
+    return _with_projection(payload, _probe_projection(observed_at))
+
+
+def build_readyz_payload(
+    request: Request,
+    *,
+    settings: Settings,
+    app_version: str,
+    started_at: str,
+    database_check: dict[str, Any],
+    ready: bool,
+    process_details: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    payload = base_frame(
+        request,
+        status="ok" if ready else "degraded",
+        settings=settings,
+        app_version=app_version,
+    )
+    observed_at = str(payload.get("observed_at") or _utcnow())
+    payload["ready"] = ready
+    payload["checks"] = {
+        "process": {
+            "status": "ok",
+            "started_at": started_at,
+            "details": dict(process_details or {}),
+        },
+        "database": {
+            "status": str(database_check.get("status") or "unknown"),
+            "latency_ms": database_check.get("latency_ms"),
+            "detail": database_check.get("detail"),
+            "observed_at": database_check.get("observed_at") or observed_at,
+            "details": dict(database_check.get("details") or {}),
+        },
+    }
+    return _with_projection(payload, _probe_projection(observed_at))
 
 
 def build_health_payload(
@@ -724,9 +814,13 @@ def install_sqlalchemy_observability(store: UrsaObservabilityStore, engine: Any)
     def handle_error(exception_context):
         conn = exception_context.connection
         stack = conn.info.get(start_key, []) if conn is not None else []
-        start_time, started_statement = stack.pop() if stack else (
-            time.monotonic(),
-            exception_context.statement,
+        start_time, started_statement = (
+            stack.pop()
+            if stack
+            else (
+                time.monotonic(),
+                exception_context.statement,
+            )
         )
         store.record_db_query(
             statement=str(started_statement or exception_context.statement or "unknown"),
