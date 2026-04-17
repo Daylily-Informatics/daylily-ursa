@@ -34,7 +34,7 @@ flowchart LR
 - Python 3.10+
 - local PostgreSQL/TapDB-compatible runtime
 - API keys and base URLs if you want live Bloom, Dewey, or Atlas integration
-- optional Playwright/test dependencies for E2E flows
+- Playwright browser binaries for E2E flows
 
 ## Getting Started
 
@@ -52,7 +52,7 @@ local testing, or `--cert` and `--key` to override the deployment-scoped cert pa
 
 Current live caveats from the April 7, 2026 local walkthrough:
 
-- the missing-config hint from `ursa env validate` currently says `ursa config generate`, but the working command is `ursa config init`
+- the missing-config hint from `ursa env validate` now says `ursa config init`
 - GUI startup requires the Cognito values to exist in the YAML config itself; the current server preflight does not accept those fields from shell env overrides alone
 - populate these YAML fields before starting the GUI path:
   `cognito_user_pool_id`, `cognito_app_client_id`, `cognito_region`, `cognito_domain`, `cognito_callback_url`, `cognito_logout_url`

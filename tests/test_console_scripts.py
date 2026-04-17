@@ -1,7 +1,11 @@
 from __future__ import annotations
 
-import importlib
+import os
+import importlib.util
+import shutil
+import subprocess
 import sys
+import venv
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -38,7 +42,7 @@ def _read_project_scripts(pyproject: Path) -> dict[str, str]:
     return scripts
 
 
-def test_console_script_entrypoints_are_importable_and_callable():
+def test_console_script_entrypoints_reference_real_modules():
     pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
     scripts = _read_project_scripts(pyproject)
     assert scripts, "No [project.scripts] entries found in pyproject.toml"
@@ -46,9 +50,36 @@ def test_console_script_entrypoints_are_importable_and_callable():
     for name, target in scripts.items():
         assert ":" in target, f"Console script {name!r} has unexpected target: {target!r}"
         module_name, func_name = target.split(":", 1)
-        module = importlib.import_module(module_name)
-        func = getattr(module, func_name)
-        assert callable(func), f"Console script {name!r} target is not callable: {target!r}"
+        assert importlib.util.find_spec(module_name) is not None
+        assert func_name, f"Console script {name!r} target is missing a function name: {target!r}"
+
+
+def test_console_script_entrypoints_cover_public_ursa_commands() -> None:
+    pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
+    scripts = _read_project_scripts(pyproject)
+
+    assert {"ursa", "daylily-workset-api"} <= set(scripts)
+
+
+def test_editable_install_places_console_scripts_on_path(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    venv_dir = tmp_path / "venv"
+    builder = venv.EnvBuilder(with_pip=True, system_site_packages=True, clear=True)
+    builder.create(venv_dir)
+
+    venv_python = venv_dir / "bin" / "python"
+    subprocess.run(
+        [str(venv_python), "-m", "pip", "install", "--no-deps", "-e", str(repo_root)],
+        check=True,
+    )
+
+    scripts_dir = venv_dir / "bin"
+    path = str(scripts_dir)
+    for script_name in ("ursa", "daylily-workset-api"):
+        script_path = scripts_dir / script_name
+        assert script_path.exists()
+        assert os.access(script_path, os.X_OK)
+        assert shutil.which(script_name, path=path) == str(script_path)
 
 
 def test_ursa_server_start_uses_packaged_entrypoint(

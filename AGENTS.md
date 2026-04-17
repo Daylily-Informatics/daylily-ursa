@@ -9,6 +9,24 @@ source ./activate <deploy-name>
 - Use `tapdb ...` only when Ursa explicitly delegates low-level DB/runtime lifecycle to TapDB.
 - Use `daycog ...` only when Ursa explicitly delegates shared Cognito lifecycle to Daycog.
 
+## Activation Contract
+
+- `source ./activate <deploy-name>` must only create the conda env if missing, activate it, and run exactly one `python -m pip install -e .` on first create.
+- Do not add any other pip installs, conda installs, config copying, runtime env exports, pre-commit installs, Playwright installs, or tool checks to `activate`.
+- The only allowed PATH adjustment in `activate` is a minimal `${CONDA_PREFIX}/bin` prepend after `conda activate` so the repo's declared console scripts win over conflicting global installs.
+- If Ursa needs Python dependencies, put them in `pyproject.toml`.
+- If Ursa needs system/bootstrap packages, put them in `environment.yaml`.
+- If an Ursa CLI is missing from PATH after activation, fix the packaging entrypoint or the minimal conda-env bin precedence rule, not by adding broader shell hacks.
+- The declared console scripts `ursa` and `daylily-workset-api` must remain available from the activated conda env.
+
+## Packaging Boundary
+
+- `environment.yaml` is for Python itself, `pip`, `setuptools`, and non-Python/system packages only.
+- `environment.yaml` must not contain a `pip:` block or Python library dependencies.
+- `pyproject.toml` owns all Python dependencies needed by the repo in `project.dependencies`.
+- `pyproject.toml` must not use `project.optional-dependencies` for repo Python installs.
+- Do not add any secondary install set such as `.[dev]`, `.[test]`, or `requirements-dev.txt`.
+
 ## No Circumvention Policy
 
 - Do not bypass `ursa`, `tapdb`, or `daycog` with raw tools just because something is missing or broken.
