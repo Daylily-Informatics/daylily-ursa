@@ -22,6 +22,8 @@ DEFAULT_TAPDB_CLIENT_ID = "local"
 DEFAULT_TAPDB_DATABASE_NAME = "ursa"
 DEFAULT_TAPDB_DOMAIN_CODE = "Z"
 DEFAULT_TAPDB_OWNER_REPO = "ursa"
+DEFAULT_TAPDB_LOCAL_DB_PORT = "5588"
+DEFAULT_TAPDB_LOCAL_UI_PORT = "8918"
 DEFAULT_TAPDB_DOMAIN_REGISTRY_PATH = Path.home() / ".config" / "tapdb" / "domain_code_registry.json"
 DEFAULT_TAPDB_PREFIX_REGISTRY_PATH = (
     Path.home() / ".config" / "tapdb" / "prefix_ownership_registry.json"
@@ -285,6 +287,84 @@ def _require_config_path(runtime_env: Mapping[str, str]) -> str:
             "to TapDB with --config."
         )
     return config_path
+
+
+def ensure_local_tapdb_namespace_config(
+    *,
+    client_id: str = DEFAULT_TAPDB_CLIENT_ID,
+    profile: str = DEFAULT_AWS_PROFILE,
+    region: str = DEFAULT_AWS_REGION,
+    namespace: str = DEFAULT_TAPDB_DATABASE_NAME,
+    config_path: str = "",
+) -> subprocess.CompletedProcess[str]:
+    runtime_env = _resolve_runtime_env(
+        target="local",
+        client_id=client_id,
+        profile=profile,
+        region=region,
+        namespace=namespace,
+        tapdb_env="dev",
+        config_path=config_path,
+    )
+    resolved_config_path = Path(_require_config_path(runtime_env)).expanduser()
+    resolved_config_path.parent.mkdir(parents=True, exist_ok=True)
+
+    domain_registry_path = str(
+        os.environ.get("TAPDB_DOMAIN_REGISTRY_PATH") or runtime_env["domain_registry_path"]
+    ).strip()
+    prefix_registry_path = str(
+        os.environ.get("TAPDB_PREFIX_OWNERSHIP_REGISTRY_PATH")
+        or runtime_env["prefix_registry_path"]
+    ).strip()
+
+    cmd = [
+        sys.executable,
+        "-m",
+        "daylily_tapdb.cli",
+        "--config",
+        str(resolved_config_path),
+        "config",
+        "init",
+        "--client-id",
+        runtime_env["client_id"],
+        "--database-name",
+        runtime_env["database_name"],
+        "--owner-repo-name",
+        runtime_env["owner_repo_name"],
+        "--domain-code",
+        f"{runtime_env['tapdb_env']}={runtime_env['domain_code']}",
+        "--domain-registry-path",
+        domain_registry_path,
+        "--prefix-ownership-registry-path",
+        prefix_registry_path,
+        "--env",
+        runtime_env["tapdb_env"],
+        "--db-port",
+        f"{runtime_env['tapdb_env']}={DEFAULT_TAPDB_LOCAL_DB_PORT}",
+        "--ui-port",
+        f"{runtime_env['tapdb_env']}={DEFAULT_TAPDB_LOCAL_UI_PORT}",
+    ]
+
+    child_env = os.environ.copy()
+    child_env["AWS_PROFILE"] = runtime_env["aws_profile"]
+    child_env["AWS_REGION"] = runtime_env["aws_region"]
+    child_env["AWS_DEFAULT_REGION"] = runtime_env["aws_region"]
+    child_env["MERIDIAN_DOMAIN_CODE"] = runtime_env["domain_code"]
+    child_env["TAPDB_OWNER_REPO"] = runtime_env["owner_repo_name"]
+    child_env.setdefault("PYTHONSAFEPATH", "1")
+
+    result = subprocess.run(
+        cmd,
+        env=child_env,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        stderr = (result.stderr or "").strip()
+        stdout = (result.stdout or "").strip()
+        details = stderr or stdout or "tapdb config init failed without output."
+        raise TapDBRuntimeError(f"tapdb config init failed: {details}")
+    return result
 
 
 def export_database_url_for_target(

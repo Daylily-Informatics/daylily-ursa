@@ -24,6 +24,7 @@ from daylib_ursa.integrations.tapdb_runtime import (
     DEFAULT_TAPDB_CLIENT_ID,
     DEFAULT_TAPDB_DATABASE_NAME,
     TapDBRuntimeError,
+    ensure_local_tapdb_namespace_config,
     ensure_tapdb_version,
     export_database_url_for_target,
     run_tapdb_cli,
@@ -101,6 +102,13 @@ def _build_target(
         namespace=namespace,
     )
     if target == "local":
+        ensure_local_tapdb_namespace_config(
+            client_id=DEFAULT_TAPDB_CLIENT_ID,
+            profile=profile,
+            region=region,
+            namespace=namespace,
+            config_path=config_path,
+        )
         result = run_tapdb_cli(
             args=["bootstrap", "local", "--no-gui"],
             target=target,

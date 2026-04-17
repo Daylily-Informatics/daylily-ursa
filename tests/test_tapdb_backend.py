@@ -190,6 +190,70 @@ def test_run_tapdb_cli_exports_explicit_identity_env(monkeypatch) -> None:
     assert captured["env"]["TAPDB_OWNER_REPO"] == "ursa"
 
 
+def test_ensure_local_tapdb_namespace_config_initializes_namespaced_config(monkeypatch, tmp_path) -> None:
+    captured: dict[str, object] = {}
+    config_path = tmp_path / "tapdb" / "tapdb-config.yaml"
+
+    monkeypatch.setattr(tapdb_runtime, "ensure_tapdb_version", lambda: _tapdb_dependency_spec())
+    monkeypatch.setattr(
+        tapdb_runtime,
+        "_resolve_runtime_env",
+        lambda **_kwargs: {
+            "aws_profile": "lsmc",
+            "aws_region": "us-west-2",
+            "client_id": "local",
+            "database_name": "ursa",
+            "tapdb_env": "dev",
+            "config_path": str(config_path),
+            "domain_code": "Z",
+            "owner_repo_name": "ursa",
+            "domain_registry_path": str(tmp_path / "domain.json"),
+            "prefix_registry_path": str(tmp_path / "prefix.json"),
+        },
+    )
+
+    def fake_run(cmd, *, env=None, capture_output, text):
+        captured["cmd"] = cmd
+        captured["env"] = env
+        return SimpleNamespace(returncode=0, stdout="ok\n", stderr="")
+
+    monkeypatch.setattr(tapdb_runtime.subprocess, "run", fake_run)
+
+    result = tapdb_runtime.ensure_local_tapdb_namespace_config(config_path=str(config_path))
+
+    assert result.returncode == 0
+    assert config_path.parent.is_dir()
+    assert captured["cmd"] == [
+        sys.executable,
+        "-m",
+        "daylily_tapdb.cli",
+        "--config",
+        str(config_path),
+        "config",
+        "init",
+        "--client-id",
+        "local",
+        "--database-name",
+        "ursa",
+        "--owner-repo-name",
+        "ursa",
+        "--domain-code",
+        "dev=Z",
+        "--domain-registry-path",
+        str(tmp_path / "domain.json"),
+        "--prefix-ownership-registry-path",
+        str(tmp_path / "prefix.json"),
+        "--env",
+        "dev",
+        "--db-port",
+        "dev=5588",
+        "--ui-port",
+        "dev=8918",
+    ]
+    assert captured["env"]["MERIDIAN_DOMAIN_CODE"] == "Z"
+    assert captured["env"]["TAPDB_OWNER_REPO"] == "ursa"
+
+
 def test_resolve_tapdb_config_path_requires_explicit_path() -> None:
     resolved = tapdb_runtime._resolve_tapdb_config_path(namespace="ursa", client_id="local")
 

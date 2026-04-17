@@ -110,6 +110,7 @@ def test_default_config_template_emits_secret_and_domain_defaults() -> None:
     assert "auto_provision_allowed_domains:" in template
     assert "  - lsmc.com" in template
     assert "whitelist_domains: lsmc.com,lsmc.bio,lsmc.life,daylilyinformatics.com" in template
+    assert "tapdb_config_path: ~/.config/tapdb/local/ursa-local/tapdb-config.yaml" in template
     assert "ui_show_environment_chrome: true" in template
 
 
