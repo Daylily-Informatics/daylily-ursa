@@ -504,7 +504,6 @@
                 name,
                 input_references: inputReferences,
                 metadata: {
-                    editor_manifest_tsv: generateManifestTSV(),
                     editor_analysis_inputs: analysisInputs,
                     editor_run_config: {
                         run_id: document.getElementById('run_id')?.value || '',
@@ -531,9 +530,6 @@
         }
         if (Array.isArray(metadata.editor_analysis_inputs) && metadata.editor_analysis_inputs.length) {
             analysisInputs = metadata.editor_analysis_inputs.map((input) => initialInput(input));
-        } else if (metadata.editor_manifest_tsv) {
-            loadInputsFromTSVContent(metadata.editor_manifest_tsv);
-            return;
         } else {
             const tsv = await UrsaPortal.apiRequest(`/api/v1/manifests/${encodeURIComponent(manifestId)}/download`);
             loadInputsFromTSVContent(tsv);

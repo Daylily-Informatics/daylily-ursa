@@ -12,7 +12,11 @@ from fastapi.testclient import TestClient
 
 from daylib_ursa import __version__
 from daylib_ursa import observability as observability_module
-from tests.test_admin_gui_and_cluster_routes import ADMIN_USER_ID, _create_test_app
+from tests.test_admin_gui_and_cluster_routes import (
+    ADMIN_USER_ID,
+    TEST_BASE_URL,
+    _create_test_app,
+)
 
 
 def _tapdb_dependency_spec() -> str:
@@ -73,7 +77,7 @@ def test_observability_contract_endpoints_match_shared_frame() -> None:
         success=True,
     )
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url=TEST_BASE_URL) as client:
         healthz = client.get("/healthz")
         readyz = client.get("/readyz")
         client.get("/api/v1/analyses/AN-1", headers=admin_headers)
@@ -117,7 +121,7 @@ def test_observability_contract_endpoints_match_shared_frame() -> None:
 
 def test_my_health_matches_shared_schema_for_authenticated_user() -> None:
     app, _resources = _create_test_app(admin=True)
-    with TestClient(app) as client:
+    with TestClient(app, base_url=TEST_BASE_URL) as client:
         response = client.get("/my_health", headers={"Authorization": "Bearer atlas-token"})
 
     assert response.status_code == 200
@@ -206,7 +210,7 @@ def test_my_health_rejects_internal_service_token() -> None:
 def test_admin_observability_page_renders() -> None:
     app, _resources = _create_test_app(admin=True)
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url=TEST_BASE_URL) as client:
         login = client.post(
             "/login",
             data={"access_token": "atlas-token", "next_path": "/admin/observability"},

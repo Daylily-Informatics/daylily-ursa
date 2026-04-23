@@ -1,0 +1,303 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container">
+    <div class="page-header">
+        <div>
+            <h1 class="page-title">Analysis Launches</h1>
+            <p class="page-subtitle">Stage stable manifests and launch Daylily-EC command profiles on a cluster.</p>
+        </div>
+    </div>
+
+    <div class="grid grid-2">
+        <form id="analysis-job-form" class="card">
+            <h3 class="card-title">Define Launch Job</h3>
+
+            <div class="form-group">
+                <label for="workset_euid" class="form-label">Workset</label>
+                <select id="workset_euid" class="form-control form-select" required>
+                    <option value="">Choose workset...</option>
+                    {% for workset in worksets %}
+                    <option value="{{ workset.workset_euid }}">{{ workset.name }} ({{ workset.workset_euid }})</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label for="manifest_euid" class="form-label">Stable Manifest</label>
+                <select id="manifest_euid" class="form-control form-select" required>
+                    <option value="">Choose manifest...</option>
+                    {% for manifest in manifests %}
+                    <option value="{{ manifest.manifest_euid }}" data-workset="{{ manifest.workset_euid }}">{{ manifest.name }} ({{ manifest.manifest_euid }})</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="grid grid-2">
+                <div class="form-group">
+                    <label for="cluster_name" class="form-label">Cluster</label>
+                    <select id="cluster_name" class="form-control form-select" required>
+                        <option value="">Choose cluster...</option>
+                        {% for cluster in clusters %}
+                        <option value="{{ cluster.cluster_name }}" data-region="{{ cluster.region }}">{{ cluster.cluster_name }} ({{ cluster.region }})</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="region" class="form-label">Region</label>
+                    <select id="region" class="form-control form-select" required>
+                        {% for region in allowed_regions %}
+                        <option value="{{ region }}">{{ region }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="analysis_command_id" class="form-label">Command Profile</label>
+                <select id="analysis_command_id" class="form-control form-select" required>
+                    <option value="">Choose profile...</option>
+                    {% for command in analysis_command_catalog.commands %}
+                    <option value="{{ command.command_id }}">{{ command.display_name }} ({{ command.command_id }})</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="grid grid-2">
+                <div class="form-group">
+                    <label for="reference_bucket" class="form-label">Reference Bucket</label>
+                    <input id="reference_bucket" class="form-control" placeholder="s3://bucket/path" required>
+                </div>
+                <div class="form-group">
+                    <label for="project" class="form-label">Project</label>
+                    <input id="project" class="form-control" placeholder="budget/project">
+                </div>
+            </div>
+
+            <div class="grid grid-2">
+                <label class="checkbox-label">
+                    <input type="checkbox" id="feature_tiddit" value="tiddit">
+                    <span>Tiddit SV calling</span>
+                </label>
+                <label class="checkbox-label">
+                    <input type="checkbox" id="dry_run">
+                    <span>Daylily-EC dry run</span>
+                </label>
+            </div>
+
+            <div class="form-actions">
+                <button type="button" class="btn btn-outline" id="preview-btn">
+                    <i class="fas fa-eye"></i> Preview
+                </button>
+                <button type="submit" class="btn btn-primary">
+                    <i class="fas fa-rocket"></i> Define
+                </button>
+                <button type="button" class="btn btn-secondary" id="define-launch-btn">
+                    Define + Launch
+                </button>
+            </div>
+        </form>
+
+        <div class="card">
+            <h3 class="card-title">Preview</h3>
+            <pre id="command-preview" class="json-block" style="min-height: 240px;">Select a command profile.</pre>
+        </div>
+    </div>
+
+    <div class="card mt-lg">
+        <div class="d-flex justify-between align-center mb-md">
+            <h3 class="card-title mb-0">Jobs</h3>
+            <button type="button" class="btn btn-outline btn-sm" id="refresh-jobs-btn">
+                <i class="fas fa-sync"></i> Refresh
+            </button>
+        </div>
+        <div class="table-wrapper">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Job</th>
+                        <th>Workset</th>
+                        <th>Command</th>
+                        <th>Cluster</th>
+                        <th>Status</th>
+                        <th>Updated</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody id="analysis-jobs-body">
+                    {% for job in analysis_jobs %}
+                    <tr data-job-euid="{{ job.job_euid }}">
+                        <td><span class="mono">{{ job.job_euid }}</span><br>{{ job.job_name }}</td>
+                        <td class="mono">{{ job.workset_euid }}</td>
+                        <td>{{ job.request.analysis_command_id }}</td>
+                        <td>{{ job.cluster_name }}<br><span class="text-muted">{{ job.region }}</span></td>
+                        <td><span class="badge badge-secondary">{{ job.state }}</span></td>
+                        <td>{{ job.updated_at }}</td>
+                        <td>
+                            <button type="button" class="btn btn-outline btn-sm" data-action="refresh">Refresh</button>
+                            <button type="button" class="btn btn-outline btn-sm" data-action="logs">Logs</button>
+                            {% if job.state == "DEFINED" %}
+                            <button type="button" class="btn btn-primary btn-sm" data-action="launch">Launch</button>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="7" class="text-muted">No analysis jobs yet.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        <pre id="job-logs" class="json-block d-none mt-md"></pre>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(() => {
+    const pageData = UrsaPortal.parsePageData();
+    const manifestSelect = document.getElementById('manifest_euid');
+    const worksetSelect = document.getElementById('workset_euid');
+    const clusterSelect = document.getElementById('cluster_name');
+    let launchAfterDefine = false;
+
+    function features() {
+        return document.getElementById('feature_tiddit')?.checked ? ['tiddit'] : [];
+    }
+
+    function jobPayload() {
+        return {
+            workset_euid: worksetSelect?.value || '',
+            manifest_euid: manifestSelect?.value || '',
+            cluster_name: clusterSelect?.value || '',
+            region: document.getElementById('region')?.value || '',
+            reference_bucket: document.getElementById('reference_bucket')?.value || '',
+            analysis_command_id: document.getElementById('analysis_command_id')?.value || '',
+            optional_features: features(),
+            project: document.getElementById('project')?.value || null,
+            dry_run: Boolean(document.getElementById('dry_run')?.checked),
+        };
+    }
+
+    function filterManifests() {
+        const workset = worksetSelect?.value || '';
+        Array.from(manifestSelect?.options || []).forEach((option) => {
+            const owner = option.getAttribute('data-workset') || '';
+            option.hidden = Boolean(owner && workset && owner !== workset);
+        });
+        if (manifestSelect?.selectedOptions[0]?.hidden) {
+            manifestSelect.value = '';
+        }
+    }
+
+    function syncClusterRegion() {
+        const option = clusterSelect?.selectedOptions[0];
+        const region = option?.getAttribute('data-region') || '';
+        if (region) {
+            document.getElementById('region').value = region;
+        }
+    }
+
+    async function previewCommand() {
+        const payload = jobPayload();
+        if (!payload.analysis_command_id) return;
+        const preview = await UrsaPortal.apiRequest(
+            `/api/v1/analysis-commands/${encodeURIComponent(payload.analysis_command_id)}/preview`,
+            {
+                method: 'POST',
+                body: {
+                    optional_features: payload.optional_features,
+                    region: payload.region,
+                    cluster_name: payload.cluster_name,
+                    project: payload.project,
+                    dry_run: payload.dry_run,
+                    stage_dir: '/fsx/staged_sample_data/<after-staging>',
+                },
+            },
+        );
+        document.getElementById('command-preview').textContent = preview.shell_preview;
+    }
+
+    async function reloadJobs() {
+        const jobs = await UrsaPortal.apiRequest('/api/v1/analysis-jobs');
+        const body = document.getElementById('analysis-jobs-body');
+        body.innerHTML = jobs.length ? jobs.map((job) => `
+            <tr data-job-euid="${escapeHtml(job.job_euid)}">
+                <td><span class="mono">${escapeHtml(job.job_euid)}</span><br>${escapeHtml(job.job_name)}</td>
+                <td class="mono">${escapeHtml(job.workset_euid)}</td>
+                <td>${escapeHtml(job.request.analysis_command_id || '')}</td>
+                <td>${escapeHtml(job.cluster_name)}<br><span class="text-muted">${escapeHtml(job.region)}</span></td>
+                <td><span class="badge badge-secondary">${escapeHtml(job.state)}</span></td>
+                <td>${escapeHtml(job.updated_at)}</td>
+                <td>
+                    <button type="button" class="btn btn-outline btn-sm" data-action="refresh">Refresh</button>
+                    <button type="button" class="btn btn-outline btn-sm" data-action="logs">Logs</button>
+                    ${job.state === 'DEFINED' ? '<button type="button" class="btn btn-primary btn-sm" data-action="launch">Launch</button>' : ''}
+                </td>
+            </tr>
+        `).join('') : '<tr><td colspan="7" class="text-muted">No analysis jobs yet.</td></tr>';
+    }
+
+    async function defineJob(event) {
+        event.preventDefault();
+        const created = await UrsaPortal.apiRequest('/api/v1/analysis-jobs', {
+            method: 'POST',
+            body: jobPayload(),
+        });
+        if (launchAfterDefine) {
+            await UrsaPortal.apiRequest(`/api/v1/analysis-jobs/${encodeURIComponent(created.job_euid)}/launch`, {
+                method: 'POST',
+                body: {},
+            });
+        }
+        launchAfterDefine = false;
+        await reloadJobs();
+        UrsaPortal.showToast('success', 'Analysis job saved');
+    }
+
+    async function handleJobAction(event) {
+        const button = event.target.closest('button[data-action]');
+        if (!button) return;
+        const row = button.closest('tr[data-job-euid]');
+        const jobEuid = row?.getAttribute('data-job-euid') || '';
+        const action = button.getAttribute('data-action');
+        if (!jobEuid) return;
+        if (action === 'launch') {
+            await UrsaPortal.apiRequest(`/api/v1/analysis-jobs/${encodeURIComponent(jobEuid)}/launch`, { method: 'POST', body: {} });
+            await reloadJobs();
+            return;
+        }
+        if (action === 'refresh') {
+            await UrsaPortal.apiRequest(`/api/v1/analysis-jobs/${encodeURIComponent(jobEuid)}/refresh`, { method: 'POST' });
+            await reloadJobs();
+            return;
+        }
+        if (action === 'logs') {
+            const logs = await UrsaPortal.apiRequest(`/api/v1/analysis-jobs/${encodeURIComponent(jobEuid)}/logs`);
+            const logEl = document.getElementById('job-logs');
+            logEl.classList.remove('d-none');
+            logEl.textContent = logs.stdout || logs.stderr || '';
+        }
+    }
+
+    worksetSelect?.addEventListener('change', filterManifests);
+    clusterSelect?.addEventListener('change', syncClusterRegion);
+    document.getElementById('preview-btn')?.addEventListener('click', () => previewCommand().catch((error) => UrsaPortal.showToast('error', error.message)));
+    document.getElementById('refresh-jobs-btn')?.addEventListener('click', () => reloadJobs().catch((error) => UrsaPortal.showToast('error', error.message)));
+    document.getElementById('define-launch-btn')?.addEventListener('click', () => {
+        launchAfterDefine = true;
+        document.getElementById('analysis-job-form')?.requestSubmit();
+    });
+    document.getElementById('analysis-job-form')?.addEventListener('submit', (event) => defineJob(event).catch((error) => {
+        launchAfterDefine = false;
+        UrsaPortal.showToast('error', error.message);
+    }));
+    document.getElementById('analysis-jobs-body')?.addEventListener('click', (event) => handleJobAction(event).catch((error) => UrsaPortal.showToast('error', error.message)));
+    filterManifests();
+    syncClusterRegion();
+    if (!Array.isArray(pageData.analysis_command_catalog?.commands) || !pageData.analysis_command_catalog.commands.length) {
+        document.getElementById('command-preview').textContent = 'No daylily-ec command profiles are available.';
+    }
+})();
+</script>
+{% endblock %}

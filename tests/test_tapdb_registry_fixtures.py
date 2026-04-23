@@ -38,7 +38,7 @@ def test_ursa_registry_fixtures_match_template_pack() -> None:
     template_prefixes = {
         str(template["instance_prefix"])
         for template in templates
-        if str(template["instance_prefix"]) not in {"MSG", "SYS"}
+        if str(template["instance_prefix"]) not in {"GX", "MSG", "SYS"}
     }
     claimed_prefixes = set(prefix_payload["ownership"]["Z"])
     assert claimed_prefixes == template_prefixes

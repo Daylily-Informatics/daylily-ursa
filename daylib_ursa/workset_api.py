@@ -39,6 +39,12 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from daylily_auth_cognito import configure_session_middleware
 
 from daylib_ursa import __version__
+from daylib_ursa.analysis_commands import (
+    analysis_command_payload,
+    command_catalog_payload,
+    preview_analysis_command,
+)
+from daylib_ursa.analysis_jobs import AnalysisJobManager
 from daylib_ursa.analysis_store import (
     AnalysisArtifact,
     AnalysisRecord,
@@ -97,6 +103,8 @@ from daylib_ursa.observability import (
 from daylib_ursa.pricing_state import pricing_quantile
 from daylib_ursa.resource_store import (
     ClientRegistrationRecord,
+    AnalysisJobEventRecord,
+    AnalysisJobRecord,
     ClusterJobEventRecord,
     ClusterJobRecord,
     DeweyImportRecord,
@@ -106,15 +114,9 @@ from daylib_ursa.resource_store import (
     WorksetRecord,
 )
 from daylib_ursa.s3_utils import RegionAwareS3Client, normalize_bucket_name
+from daylib_ursa.stable_manifest import build_stable_manifest
 from daylib_ursa.tapdb_mount import mount_tapdb_admin
 from daylib_ursa.ursa_config import get_ursa_config, parse_regions_csv, update_config_regions
-from daylib_ursa.workflow_catalog import (
-    DEFAULT_ANALYSIS_REPOSITORY,
-    WorkflowCatalogRequestError,
-    WorkflowCatalogRuntimeError,
-    load_workflow_catalog_snapshot,
-    preview_workflow_command,
-)
 
 LOGGER = logging.getLogger("daylily.ursa.api")
 
@@ -213,8 +215,10 @@ class ManifestCreateRequest(BaseModel):
     def validate_manifest_inputs(self) -> "ManifestCreateRequest":
         if self.input_references:
             return self
-        if not str(self.artifact_set_euid or "").strip():
-            raise ValueError("artifact_set_euid is required when input_references is empty")
+        editor_rows = dict(self.metadata or {}).get("editor_analysis_inputs")
+        if isinstance(editor_rows, list) and editor_rows:
+            return self
+        raise ValueError("input_references or metadata.editor_analysis_inputs is required")
         return self
 
 
@@ -535,76 +539,93 @@ class WorksetResponse(BaseModel):
     analysis_euids: list[str]
 
 
-class WorkflowCatalogChoiceResponse(BaseModel):
-    value: str
-    label: str
-
-
-class WorkflowCatalogRequiredInputResponse(BaseModel):
-    input_id: str
-    label: str
-    description: str = ""
-    required: bool = True
-
-
-class WorkflowCatalogOptionResponse(BaseModel):
-    option_id: str
-    label: str
-    description: str = ""
-    type: str
-    default: Any | None = None
-    required: bool = False
-    minimum: int | None = None
-    maximum: int | None = None
-    choices: list[WorkflowCatalogChoiceResponse] = Field(default_factory=list)
-
-
-class WorkflowCatalogWorkflowResponse(BaseModel):
-    workflow_id: str
-    display_name: str
-    description: str
-    targets: list[str] = Field(default_factory=list)
-    supported_genome_builds: list[str]
-    default_genome_build: str | None = None
-    supported_execution_profiles: list[str]
-    default_execution_profile: str | None = None
-    required_inputs: list[WorkflowCatalogRequiredInputResponse] = Field(default_factory=list)
-    options: list[WorkflowCatalogOptionResponse] = Field(default_factory=list)
-
-
-class WorkflowCatalogResponse(BaseModel):
-    schema_version: str
-    catalog_version: str
-    repository: str
-    repository_ref: str
-    display_name: str
-    workflows: list[WorkflowCatalogWorkflowResponse] = Field(default_factory=list)
-
-
-class WorkflowCommandPreviewRequest(BaseModel):
+class AnalysisCommandPreviewRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    repository: str = DEFAULT_ANALYSIS_REPOSITORY
-    workflow_id: str
-    genome_build: str
-    execution_profile: str
-    options: dict[str, Any] = Field(default_factory=dict)
-    input_context: dict[str, Any] = Field(default_factory=dict)
+    optional_features: list[str] = Field(default_factory=list)
+    profile: str | None = None
+    region: str | None = None
+    cluster_name: str | None = None
+    stage_dir: str | None = None
+    session_name: str | None = None
+    project: str | None = None
+    dry_run: bool = False
 
 
-class WorkflowCommandPreviewResponse(BaseModel):
+class AnalysisCommandPreviewResponse(BaseModel):
     valid: bool
-    repository: str
-    repository_ref: str
-    catalog_version: str
-    workflow_id: str
-    display_name: str
+    command: dict[str, Any]
     argv: list[str] = Field(default_factory=list)
     shell_preview: str = ""
-    summary: dict[str, Any] = Field(default_factory=dict)
-    normalized_spec: dict[str, Any] = Field(default_factory=dict)
-    validation_errors: list[str] = Field(default_factory=list)
-    warnings: list[str] = Field(default_factory=list)
+
+
+class AnalysisJobCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    job_name: str | None = None
+    workset_euid: str
+    manifest_euid: str
+    cluster_name: str
+    region: str
+    reference_bucket: str
+    analysis_command_id: str
+    optional_features: list[str] = Field(default_factory=list)
+    session_name: str | None = None
+    project: str | None = None
+    aws_profile: str | None = None
+    dry_run: bool = False
+    stage_target: str | None = None
+
+    @model_validator(mode="after")
+    def validate_required_fields(self) -> "AnalysisJobCreateRequest":
+        for field_name in (
+            "workset_euid",
+            "manifest_euid",
+            "cluster_name",
+            "region",
+            "reference_bucket",
+            "analysis_command_id",
+        ):
+            if not str(getattr(self, field_name) or "").strip():
+                raise ValueError(f"{field_name} is required")
+        return self
+
+
+class AnalysisJobLaunchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class AnalysisJobEventResponse(BaseModel):
+    event_euid: str
+    job_euid: str
+    event_type: str
+    status: str
+    summary: str
+    details: dict[str, Any]
+    created_by: str | None
+    created_at: str
+
+
+class AnalysisJobResponse(BaseModel):
+    job_euid: str
+    job_name: str
+    workset_euid: str
+    manifest_euid: str
+    cluster_name: str
+    region: str
+    tenant_id: uuid.UUID
+    owner_user_id: str
+    state: str
+    created_at: str
+    updated_at: str
+    started_at: str | None
+    completed_at: str | None
+    return_code: int | None
+    error: str | None
+    output_summary: str | None
+    request: dict[str, Any]
+    launch: dict[str, Any]
+    events: list[AnalysisJobEventResponse]
 
 
 class ArtifactImportResponse(BaseModel):
@@ -805,92 +826,42 @@ def _workset_response(record: WorksetRecord) -> WorksetResponse:
     )
 
 
-def _workflow_catalog_response(repository: str) -> WorkflowCatalogResponse:
-    try:
-        return WorkflowCatalogResponse.model_validate(load_workflow_catalog_snapshot(repository))
-    except WorkflowCatalogRequestError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except WorkflowCatalogRuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-
-
-def _workflow_command_preview_response(
-    *,
-    repository: str,
-    workflow_id: str,
-    genome_build: str,
-    execution_profile: str,
-    options: dict[str, Any] | None = None,
-    input_context: dict[str, Any] | None = None,
-) -> WorkflowCommandPreviewResponse:
-    try:
-        preview = preview_workflow_command(
-            repository=repository,
-            workflow_id=workflow_id,
-            genome_build=genome_build,
-            execution_profile=execution_profile,
-            options=options or {},
-            input_context=input_context or {},
-        )
-    except WorkflowCatalogRequestError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except WorkflowCatalogRuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    return WorkflowCommandPreviewResponse.model_validate(preview)
-
-
 def _canonicalize_workset_metadata(metadata: dict[str, Any] | None) -> dict[str, Any]:
     payload = dict(metadata or {})
     raw_analysis_command = payload.get("analysis_command")
-    if not isinstance(raw_analysis_command, dict):
+    command_id = str(payload.get("analysis_command_id") or "").strip()
+    optional_features = list(payload.get("optional_features") or [])
+    if isinstance(raw_analysis_command, dict):
+        command_id = command_id or str(raw_analysis_command.get("command_id") or "").strip()
+        optional_features = list(raw_analysis_command.get("optional_features") or optional_features)
+    if not command_id:
         return payload
 
-    preview = _workflow_command_preview_response(
-        repository=str(raw_analysis_command.get("repository") or DEFAULT_ANALYSIS_REPOSITORY),
-        workflow_id=str(raw_analysis_command.get("workflow_id") or ""),
-        genome_build=str(raw_analysis_command.get("genome_build") or ""),
-        execution_profile=str(raw_analysis_command.get("execution_profile") or ""),
-        options=dict(raw_analysis_command.get("options") or {}),
-        input_context=dict(raw_analysis_command.get("input_context") or {}),
-    )
-    if not preview.valid:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={
-                "message": "Analysis command validation failed",
-                "validation_errors": preview.validation_errors,
-                "warnings": preview.warnings,
-            },
+    try:
+        command = analysis_command_payload(
+            command_id,
+            optional_features=[str(item) for item in optional_features],
         )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
+    command_id = str(command.get("command_id") or command_id)
     payload["analysis_command"] = {
-        "repository": preview.repository,
-        "repository_ref": preview.repository_ref,
-        "catalog_version": preview.catalog_version,
-        "workflow_id": preview.workflow_id,
-        "display_name": preview.display_name,
-        "spec": dict(preview.normalized_spec),
-        "argv": list(preview.argv),
-        "shell_preview": preview.shell_preview,
-        "summary": dict(preview.summary),
-        "warnings": list(preview.warnings),
+        "command_id": command_id,
+        "repository": str(command.get("repository") or ""),
+        "command_catalog_version": 1,
+        "optional_features": [str(item) for item in optional_features],
+        "profile": command,
         "created_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     }
-    payload["pipeline_type"] = str(
-        preview.summary.get("pipeline_type") or preview.display_name or preview.workflow_id
-    )
-    payload["reference_genome"] = str(
-        preview.summary.get("genome_build") or preview.normalized_spec.get("genome_build") or ""
-    )
-    payload["execution_profile"] = str(
-        preview.summary.get("execution_profile")
-        or preview.normalized_spec.get("execution_profile")
-        or ""
-    )
-    payload["analysis_repository"] = preview.repository
-    payload["analysis_workflow_id"] = preview.workflow_id
+    payload["analysis_command_id"] = command_id
+    payload["pipeline_type"] = str(command.get("display_name") or command_id)
+    payload["reference_genome"] = str(command.get("genome") or "")
+    payload["analysis_repository"] = str(command.get("repository") or "")
     if not payload.get("sample_count"):
-        payload["sample_count"] = int(preview.summary.get("sample_count") or 0)
+        payload["sample_count"] = int(command.get("sample_count") or 0)
     return payload
 
 
@@ -988,6 +959,34 @@ def _cluster_job_response(record: ClusterJobRecord) -> ClusterJobResponse:
         request=record.request,
         cluster=record.cluster,
         events=[_cluster_job_event_response(item) for item in record.events],
+    )
+
+
+def _analysis_job_event_response(record: AnalysisJobEventRecord) -> AnalysisJobEventResponse:
+    return AnalysisJobEventResponse(**record.__dict__)
+
+
+def _analysis_job_response(record: AnalysisJobRecord) -> AnalysisJobResponse:
+    return AnalysisJobResponse(
+        job_euid=record.job_euid,
+        job_name=record.job_name,
+        workset_euid=record.workset_euid,
+        manifest_euid=record.manifest_euid,
+        cluster_name=record.cluster_name,
+        region=record.region,
+        tenant_id=record.tenant_id,
+        owner_user_id=record.owner_user_id,
+        state=record.state,
+        created_at=record.created_at,
+        updated_at=record.updated_at,
+        started_at=record.started_at,
+        completed_at=record.completed_at,
+        return_code=record.return_code,
+        error=record.error,
+        output_summary=record.output_summary,
+        request=record.request,
+        launch=record.launch,
+        events=[_analysis_job_event_response(item) for item in record.events],
     )
 
 
@@ -1601,6 +1600,8 @@ def create_app(
     token_service: UserTokenService | None = None,
     auth_provider: CognitoAuthProvider | None = None,
     user_directory: CognitoUserDirectoryService | None = None,
+    cluster_service: ClusterService | None = None,
+    analysis_job_manager: AnalysisJobManager | None = None,
     settings: Settings | None = None,
     require_api_key: bool | None = None,
     s3_client: Any | None = None,
@@ -1664,10 +1665,11 @@ def create_app(
         resource_store = ResourceStore(backend=store.backend)
     app.state.resource_store = resource_store
 
-    cluster_service = ClusterService(
-        regions=settings.get_allowed_regions(),
-        aws_profile=settings.aws_profile,
-    )
+    if cluster_service is None:
+        cluster_service = ClusterService(
+            regions=settings.get_allowed_regions(),
+            aws_profile=settings.aws_profile,
+        )
     app.state.cluster_service = cluster_service
 
     if token_service is None and resource_store is not None and hasattr(resource_store, "backend"):
@@ -1683,6 +1685,15 @@ def create_app(
             workspace_root=Path.cwd(),
         )
         if resource_store is not None
+        else None
+    )
+    app.state.analysis_job_manager = analysis_job_manager or (
+        AnalysisJobManager(
+            resource_store=resource_store,
+            client=cluster_service.client,
+            workspace_root=Path.cwd(),
+        )
+        if resource_store is not None and hasattr(cluster_service, "client")
         else None
     )
     app.state.observability_cleanup = []
@@ -1935,6 +1946,12 @@ def create_app(
             raise HTTPException(status_code=503, detail="Cluster job manager is not configured")
         return manager
 
+    def require_analysis_job_manager() -> AnalysisJobManager:
+        manager = getattr(app.state, "analysis_job_manager", None)
+        if manager is None:
+            raise HTTPException(status_code=503, detail="Analysis job manager is not configured")
+        return manager
+
     def require_dewey_client() -> DeweyClient:
         client = getattr(app.state, "dewey_client", None)
         if client is None:
@@ -2038,6 +2055,14 @@ def create_app(
         request: ManifestCreateRequest,
     ) -> tuple[str | None, list[str], list[dict[str, Any]], dict[str, Any]]:
         if not request.input_references:
+            metadata = dict(request.metadata or {})
+            editor_rows = metadata.get("editor_analysis_inputs")
+            if (
+                isinstance(editor_rows, list)
+                and editor_rows
+                and not str(request.artifact_set_euid or "").strip()
+            ):
+                return (None, [], [], metadata)
             canonical_set_euid, canonical_artifact_euids, input_references = (
                 validate_manifest_artifact_references(
                     str(request.artifact_set_euid or ""),
@@ -2355,6 +2380,9 @@ def create_app(
         cluster_job_manager = getattr(app.state, "cluster_job_manager", None)
         if cluster_job_manager is not None:
             cluster_job_manager.cluster_service = cluster_service
+        analysis_job_manager = getattr(app.state, "analysis_job_manager", None)
+        if analysis_job_manager is not None and hasattr(cluster_service, "client"):
+            analysis_job_manager.client = cluster_service.client
 
         return ClusterScanRegionsResponse(
             regions=refreshed_config.get_allowed_regions(),
@@ -2838,34 +2866,54 @@ def create_app(
         )
         return [_workset_response(item) for item in items]
 
-    @app.get(
-        "/api/v1/worksets/workflow-catalog",
-        response_model=WorkflowCatalogResponse,
-    )
-    async def get_workset_workflow_catalog(
-        actor: RequireAuth,
-        repository: str = Query(DEFAULT_ANALYSIS_REPOSITORY),
-    ) -> WorkflowCatalogResponse:
+    @app.get("/api/v1/analysis-commands")
+    async def list_analysis_commands(actor: RequireAuth) -> dict[str, Any]:
         _ = actor
-        return _workflow_catalog_response(repository)
+        try:
+            return command_catalog_payload()
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    @app.get("/api/v1/analysis-commands/{command_id}")
+    async def get_analysis_command(command_id: str, actor: RequireAuth) -> dict[str, Any]:
+        _ = actor
+        try:
+            return analysis_command_payload(command_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     @app.post(
-        "/api/v1/worksets/command-preview",
-        response_model=WorkflowCommandPreviewResponse,
+        "/api/v1/analysis-commands/{command_id}/preview",
+        response_model=AnalysisCommandPreviewResponse,
     )
-    async def preview_workset_command(
-        request: WorkflowCommandPreviewRequest,
+    async def preview_analysis_launch_command(
+        command_id: str,
+        request: AnalysisCommandPreviewRequest,
         actor: RequireAuth,
-    ) -> WorkflowCommandPreviewResponse:
+    ) -> AnalysisCommandPreviewResponse:
         _ = actor
-        return _workflow_command_preview_response(
-            repository=request.repository,
-            workflow_id=request.workflow_id,
-            genome_build=request.genome_build,
-            execution_profile=request.execution_profile,
-            options=request.options,
-            input_context=request.input_context,
-        )
+        try:
+            return AnalysisCommandPreviewResponse.model_validate(
+                preview_analysis_command(
+                    command_id,
+                    optional_features=request.optional_features,
+                    profile=request.profile,
+                    region=request.region,
+                    cluster_name=request.cluster_name,
+                    stage_dir=request.stage_dir,
+                    session_name=request.session_name,
+                    project=request.project,
+                    dry_run=request.dry_run,
+                )
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     @app.post(
         "/api/v1/worksets", response_model=WorksetResponse, status_code=status.HTTP_201_CREATED
@@ -2927,6 +2975,20 @@ def create_app(
                 request=request,
             )
         )
+        try:
+            stable_manifest = build_stable_manifest(
+                metadata=metadata,
+                input_references=input_references,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        metadata = dict(metadata)
+        if "editor_manifest_tsv" in metadata:
+            raise HTTPException(
+                status_code=400,
+                detail="editor_manifest_tsv is not supported; provide editor_analysis_inputs",
+            )
+        metadata["stable_manifest"] = stable_manifest.metadata()
         record = resources.create_manifest(
             workset_euid=request.workset_euid,
             name=request.name,
@@ -2962,18 +3024,174 @@ def create_app(
         if not actor.is_admin and record.tenant_id != actor.tenant_id:
             raise HTTPException(status_code=403, detail="Manifest is outside the caller tenant")
         metadata = dict(record.metadata or {})
-        tsv_content = str(metadata.get("editor_manifest_tsv") or "").strip()
+        stable_manifest = dict(metadata.get("stable_manifest") or {})
+        tsv_content = str(stable_manifest.get("content") or "")
         if not tsv_content:
             raise HTTPException(
                 status_code=409,
-                detail="This manifest does not have downloadable TSV editor content",
+                detail="This manifest does not have stable analysis_samples.tsv content",
             )
-        filename = f"{record.name or record.manifest_euid}.tsv".replace("/", "-")
+        filename = str(stable_manifest.get("filename") or "analysis_samples.tsv").replace("/", "-")
         return PlainTextResponse(
             tsv_content,
             media_type="text/tab-separated-values",
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
+
+    def require_analysis_job_access(
+        *,
+        job_euid: str,
+        actor: CurrentUser,
+        resources: ResourceStore,
+    ) -> AnalysisJobRecord:
+        record = resources.get_analysis_job(job_euid)
+        if record is None:
+            raise HTTPException(status_code=404, detail="Analysis job not found")
+        if not actor.is_admin and record.tenant_id != actor.tenant_id:
+            raise HTTPException(status_code=403, detail="Analysis job is outside the caller tenant")
+        return record
+
+    @app.get("/api/v1/analysis-jobs", response_model=list[AnalysisJobResponse])
+    async def list_analysis_jobs(
+        actor: RequireAuth,
+        resources: ResourceStore = Depends(require_resource_store),
+    ) -> list[AnalysisJobResponse]:
+        records = resources.list_analysis_jobs(
+            tenant_id=None if actor.is_admin else actor.tenant_id
+        )
+        return [_analysis_job_response(item) for item in records]
+
+    @app.post(
+        "/api/v1/analysis-jobs",
+        response_model=AnalysisJobResponse,
+        status_code=status.HTTP_201_CREATED,
+    )
+    async def create_analysis_job(
+        request: AnalysisJobCreateRequest,
+        actor: RequireAuth,
+        resources: ResourceStore = Depends(require_resource_store),
+    ) -> AnalysisJobResponse:
+        workset = resources.get_workset(request.workset_euid)
+        if workset is None:
+            raise HTTPException(status_code=404, detail="Workset not found")
+        if not actor.is_admin and workset.tenant_id != actor.tenant_id:
+            raise HTTPException(status_code=403, detail="Workset is outside the caller tenant")
+        manifest = resources.get_manifest(request.manifest_euid)
+        if manifest is None:
+            raise HTTPException(status_code=404, detail="Manifest not found")
+        if manifest.workset_euid != workset.workset_euid:
+            raise HTTPException(status_code=400, detail="Manifest does not belong to workset")
+        if not actor.is_admin and manifest.tenant_id != actor.tenant_id:
+            raise HTTPException(status_code=403, detail="Manifest is outside the caller tenant")
+        try:
+            command = analysis_command_payload(
+                request.analysis_command_id,
+                optional_features=request.optional_features,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        request_payload = {
+            "analysis_command_id": request.analysis_command_id,
+            "optional_features": list(request.optional_features),
+            "reference_bucket": request.reference_bucket,
+            "session_name": request.session_name,
+            "project": request.project,
+            "aws_profile": request.aws_profile,
+            "dry_run": bool(request.dry_run),
+            "stage_target": request.stage_target,
+            "command": command,
+        }
+        job_name = str(request.job_name or "").strip() or (
+            f"{workset.name}:{command.get('command_id')}"
+        )
+        try:
+            record = resources.create_analysis_job(
+                job_name=job_name,
+                workset_euid=workset.workset_euid,
+                manifest_euid=manifest.manifest_euid,
+                cluster_name=request.cluster_name,
+                region=request.region,
+                tenant_id=workset.tenant_id,
+                owner_user_id=actor.user_id,
+                request=request_payload,
+            )
+            resources.add_analysis_job_event(
+                job_euid=record.job_euid,
+                event_type="defined",
+                status="DEFINED",
+                summary=f"Defined analysis job for {command.get('command_id')}",
+                details={"manifest_euid": manifest.manifest_euid},
+                created_by=actor.user_id,
+            )
+            record = resources.get_analysis_job(record.job_euid) or record
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return _analysis_job_response(record)
+
+    @app.get("/api/v1/analysis-jobs/{job_euid}", response_model=AnalysisJobResponse)
+    async def get_analysis_job(
+        job_euid: str,
+        actor: RequireAuth,
+        resources: ResourceStore = Depends(require_resource_store),
+    ) -> AnalysisJobResponse:
+        return _analysis_job_response(
+            require_analysis_job_access(job_euid=job_euid, actor=actor, resources=resources)
+        )
+
+    @app.post(
+        "/api/v1/analysis-jobs/{job_euid}/launch",
+        response_model=AnalysisJobResponse,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    async def launch_analysis_job(
+        job_euid: str,
+        request: AnalysisJobLaunchRequest,
+        actor: RequireAuth,
+        resources: ResourceStore = Depends(require_resource_store),
+        manager: AnalysisJobManager = Depends(require_analysis_job_manager),
+    ) -> AnalysisJobResponse:
+        _ = request
+        require_analysis_job_access(job_euid=job_euid, actor=actor, resources=resources)
+        try:
+            record = manager.launch_job(job_euid, actor_user_id=actor.user_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return _analysis_job_response(record)
+
+    @app.post("/api/v1/analysis-jobs/{job_euid}/refresh", response_model=AnalysisJobResponse)
+    async def refresh_analysis_job(
+        job_euid: str,
+        actor: RequireAuth,
+        resources: ResourceStore = Depends(require_resource_store),
+        manager: AnalysisJobManager = Depends(require_analysis_job_manager),
+    ) -> AnalysisJobResponse:
+        require_analysis_job_access(job_euid=job_euid, actor=actor, resources=resources)
+        try:
+            return _analysis_job_response(
+                manager.refresh_job(job_euid, actor_user_id=actor.user_id)
+            )
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    @app.get("/api/v1/analysis-jobs/{job_euid}/logs")
+    async def get_analysis_job_logs(
+        job_euid: str,
+        actor: RequireAuth,
+        lines: int = Query(default=200, ge=1, le=5000),
+        resources: ResourceStore = Depends(require_resource_store),
+        manager: AnalysisJobManager = Depends(require_analysis_job_manager),
+    ) -> dict[str, Any]:
+        require_analysis_job_access(job_euid=job_euid, actor=actor, resources=resources)
+        try:
+            return manager.logs(job_euid, lines=lines)
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     @app.post(
         "/api/v1/artifacts/import",
@@ -3584,8 +3802,8 @@ def create_app(
             raise HTTPException(status_code=404, detail=cluster.error_message)
         return payload
 
-    @app.delete("/api/v1/clusters/{cluster_name}")
-    async def delete_cluster(
+    @app.post("/api/v1/clusters/{cluster_name}/delete-plan")
+    async def create_cluster_delete_plan(
         cluster_name: str,
         actor: RequireAdmin,
         region: str | None = Query(default=None),
@@ -3593,7 +3811,35 @@ def create_app(
     ) -> dict[str, Any]:
         _ = actor
         resolved_region = resolve_cluster_region(cluster_name, region=region, service=service)
-        result = service.delete_cluster(cluster_name, resolved_region)
+        try:
+            return service.create_delete_plan(cluster_name, resolved_region)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    @app.delete("/api/v1/clusters/{cluster_name}")
+    async def delete_cluster(
+        cluster_name: str,
+        actor: RequireAdmin,
+        region: str | None = Query(default=None),
+        confirmation_token: str = Query(...),
+        confirm_cluster_name: str = Query(...),
+        service: ClusterService = Depends(require_cluster_service),
+    ) -> dict[str, Any]:
+        _ = actor
+        resolved_region = resolve_cluster_region(cluster_name, region=region, service=service)
+        try:
+            result = service.delete_cluster(
+                cluster_name,
+                resolved_region,
+                confirmation_token=confirmation_token,
+                confirm_cluster_name=confirm_cluster_name,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
         return {
             "cluster_name": cluster_name,
             "region": resolved_region,

@@ -1,27 +1,19 @@
 """Helpers for Ursa-managed ephemeral cluster creation jobs."""
 
 from daylib_ursa.ephemeral_cluster.runner import (
-    ClusterCreateJob,
-    list_cluster_create_jobs,
-    read_cluster_create_job,
-    require_daylily_ec_runtime,
+    DaylilyEcClient,
+    get_daylily_ec_client,
     require_daylily_ec_version,
-    resolve_daylily_ec,
     run_create_sync,
-    start_create_job,
-    tail_job_log,
-    write_generated_ec_config,
+    run_preflight_sync,
+    write_dayec_cluster_config,
 )
 
 __all__ = [
-    "ClusterCreateJob",
-    "list_cluster_create_jobs",
-    "read_cluster_create_job",
-    "require_daylily_ec_runtime",
+    "DaylilyEcClient",
+    "get_daylily_ec_client",
     "require_daylily_ec_version",
-    "resolve_daylily_ec",
     "run_create_sync",
-    "start_create_job",
-    "tail_job_log",
-    "write_generated_ec_config",
+    "run_preflight_sync",
+    "write_dayec_cluster_config",
 ]

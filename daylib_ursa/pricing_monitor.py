@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from daylib_ursa.config import Settings
-from daylib_ursa.ephemeral_cluster.runner import require_daylily_ec_runtime
+from daylib_ursa.ephemeral_cluster.runner import get_daylily_ec_client
 from daylib_ursa.pricing_state import PricingState
 
 LOGGER = logging.getLogger("daylily.pricing_monitor")
@@ -104,16 +104,17 @@ class PricingMonitor:
                 raise RuntimeError("daylily-ec pricing snapshot did not return valid JSON") from exc
 
     def _build_snapshot_command(self) -> list[str]:
-        command: list[str] = [str(require_daylily_ec_runtime()), "pricing", "snapshot"]
+        client = get_daylily_ec_client(aws_profile=self.settings.aws_profile)
+        args: list[str] = ["pricing", "snapshot"]
         for region in self.settings.get_cost_monitor_regions():
-            command.extend(["--region", region])
+            args.extend(["--region", region])
         for partition in self.settings.get_cost_monitor_partitions():
-            command.extend(["--partition", partition])
+            args.extend(["--partition", partition])
         if self.settings.ursa_cost_monitor_config_path:
-            command.extend(["--config", self.settings.ursa_cost_monitor_config_path])
+            args.extend(["--config", self.settings.ursa_cost_monitor_config_path])
         if self.settings.aws_profile:
-            command.extend(["--profile", self.settings.aws_profile])
-        return command
+            args.extend(["--profile", self.settings.aws_profile])
+        return client.command(args, json_mode=True)
 
     def get_snapshot_payload(
         self,

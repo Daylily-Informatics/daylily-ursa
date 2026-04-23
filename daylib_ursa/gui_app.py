@@ -28,6 +28,7 @@ from daylib_ursa.auth import (
 )
 from daylib_ursa.cluster_jobs import region_from_region_az
 from daylib_ursa.config import _require_bare_cognito_domain
+from daylib_ursa.analysis_commands import command_catalog_payload
 from daylib_ursa.observability import (
     build_api_health_payload,
     build_auth_health_payload,
@@ -35,11 +36,6 @@ from daylib_ursa.observability import (
     build_endpoint_health_payload,
     build_health_payload,
     build_obs_services_payload,
-)
-from daylib_ursa.workflow_catalog import (
-    DEFAULT_ANALYSIS_REPOSITORY,
-    WorkflowCatalogRuntimeError,
-    load_workflow_catalog_snapshot,
 )
 from daylib_ursa.ursa_config import (
     _stable_deployment_color_hex,
@@ -483,6 +479,11 @@ def mount_gui(app: FastAPI) -> None:
     def _list_manifests(actor: CurrentUser) -> list[Any]:
         return _resource_store().list_manifests(tenant_id=actor.tenant_id)
 
+    def _list_analysis_jobs(actor: CurrentUser) -> list[Any]:
+        return _resource_store().list_analysis_jobs(
+            tenant_id=None if actor.is_admin else actor.tenant_id
+        )
+
     def _list_analyses(actor: CurrentUser) -> list[Any]:
         return app.state.store.list_analyses(
             tenant_id=None if actor.is_admin else actor.tenant_id,
@@ -599,38 +600,30 @@ def mount_gui(app: FastAPI) -> None:
         value = str(getattr(settings, "aws_profile", "") or "").strip()
         return value or "default"
 
-    def _workflow_catalog_context(
-        repository: str = DEFAULT_ANALYSIS_REPOSITORY,
-    ) -> dict[str, Any]:
+    def _analysis_command_catalog_context() -> dict[str, Any]:
         try:
-            return load_workflow_catalog_snapshot(repository)
-        except WorkflowCatalogRuntimeError as exc:
+            return command_catalog_payload()
+        except RuntimeError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     def _analysis_command_summary(metadata: dict[str, Any]) -> dict[str, Any]:
         command = dict(metadata.get("analysis_command") or {})
-        summary = dict(command.get("summary") or {})
-        spec = dict(command.get("spec") or {})
+        profile = dict(command.get("profile") or {})
         pipeline_type = (
-            str(summary.get("pipeline_type") or "")
-            or str(command.get("display_name") or "")
+            str(profile.get("display_name") or "")
+            or str(command.get("command_id") or "")
             or str(metadata.get("pipeline_type") or "")
             or "germline"
         )
-        reference_genome = (
-            str(summary.get("genome_build") or "")
-            or str(spec.get("genome_build") or "")
-            or str(metadata.get("reference_genome") or "")
-        )
-        execution_profile = (
-            str(summary.get("execution_profile") or "")
-            or str(spec.get("execution_profile") or "")
-            or str(metadata.get("execution_profile") or "")
+        reference_genome = str(profile.get("genome") or "") or str(
+            metadata.get("reference_genome") or ""
         )
         return {
             "pipeline_type": pipeline_type,
             "reference_genome": reference_genome,
-            "execution_profile": execution_profile,
+            "execution_profile": "daylily-ec",
         }
 
     def _workset_view_model(workset: Any) -> dict[str, Any]:
@@ -1159,7 +1152,7 @@ def mount_gui(app: FastAPI) -> None:
                 "allowed_regions": _allowed_regions(),
                 "clusters": clusters,
                 "is_admin": actor.is_admin,
-                "workflow_catalog": _workflow_catalog_context(),
+                "analysis_command_catalog": _analysis_command_catalog_context(),
             },
         )
 
@@ -1229,6 +1222,40 @@ def mount_gui(app: FastAPI) -> None:
             page_title=f"Manifest {manifest.name}",
             active_page="manifests",
             context={"manifest": manifest, "manifest_payload_json": _json_text(manifest)},
+        )
+
+    @app.get("/analysis-jobs", response_class=HTMLResponse)
+    async def analysis_jobs_page(request: Request):
+        actor = _session_actor(request)
+        if actor is None:
+            return RedirectResponse(
+                url=f"/login?next={request.url.path}", status_code=status.HTTP_303_SEE_OTHER
+            )
+        clusters = (
+            [
+                item.to_dict(include_sensitive=False)
+                for item in _cluster_service().get_all_clusters_with_status(
+                    force_refresh=False,
+                    fetch_ssh_status=False,
+                )
+            ]
+            if actor.is_admin
+            else []
+        )
+        return _render_page(
+            request,
+            template_name="analysis_jobs.html",
+            page_title="Analysis Launches",
+            active_page="analysis_jobs",
+            context={
+                "worksets": _list_worksets(actor),
+                "manifests": _list_manifests(actor),
+                "analysis_jobs": _list_analysis_jobs(actor),
+                "analysis_command_catalog": _analysis_command_catalog_context(),
+                "clusters": clusters,
+                "allowed_regions": _allowed_regions(),
+                "is_admin": actor.is_admin,
+            },
         )
 
     @app.get("/buckets", response_class=HTMLResponse)

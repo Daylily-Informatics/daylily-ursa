@@ -45,6 +45,13 @@ def _settings() -> Settings:
         atlas_internal_api_key="atlas-internal-key",
         ursa_internal_output_bucket="ursa-internal",
         ursa_internal_api_key="ursa-internal-key",
+        session_secret_key="ursa-session-secret",
+        cognito_domain="auth.example.test",
+        cognito_app_client_id="client-123",
+        cognito_app_client_secret="ursa-cognito-secret",
+        cognito_callback_url="https://testserver/auth/callback",
+        cognito_logout_url="https://testserver/auth/logout",
+        ursa_tapdb_mount_enabled=False,
     )
 
 
