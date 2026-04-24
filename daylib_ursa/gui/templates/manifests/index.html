@@ -5,7 +5,7 @@
     <div class="page-header">
         <div>
             <h1 class="page-title">Workset Manifest Generator</h1>
-            <p class="page-subtitle">Create and save <code>stage_samples.tsv</code> manifests with the PR19 editor, now backed by current Ursa manifest records.</p>
+            <p class="page-subtitle">Create and save <code>analysis_samples.tsv</code> manifests with the PR19 editor, now backed by current Ursa manifest records.</p>
         </div>
     </div>
 
@@ -32,7 +32,7 @@
                 </div>
                 <div class="form-group">
                     <label for="stage_target" class="form-label">Stage Target</label>
-                    <input type="text" id="stage_target" class="form-control" value="/fsx/staged_sample_data/">
+                    <input type="text" id="stage_target" class="form-control" value="/data/staged_sample_data">
                 </div>
             </div>
         </div>
@@ -45,7 +45,7 @@
                 </button>
             </div>
 
-            <p class="text-muted mb-md">Each analysis input becomes a row in <code>stage_samples.tsv</code>. Edit rows individually, import a TSV, or browse linked buckets to select FASTQ files.</p>
+            <p class="text-muted mb-md">Each analysis input becomes a row in <code>analysis_samples.tsv</code>. Edit rows individually, import a TSV, or browse linked buckets to select FASTQ files.</p>
 
             <div id="inputs-container"></div>
 
@@ -108,8 +108,8 @@
             </div>
 
             <div class="mt-md p-md" style="background: var(--color-gray-100); border-radius: var(--radius-md); font-size: 0.8rem;">
-                <strong>Required columns:</strong>
-                <code>RUN_ID, SAMPLE_ID, EXPERIMENTID, SAMPLE_TYPE, LIB_PREP, SEQ_VENDOR, SEQ_PLATFORM, LANE, SEQBC_ID, PATH_TO_CONCORDANCE_DATA_DIR, R1_FQ, R2_FQ, STAGE_DIRECTIVE, STAGE_TARGET, SUBSAMPLE_PCT, IS_POS_CTRL, IS_NEG_CTRL, N_X, N_Y, EXTERNAL_SAMPLE_ID</code>
+                <strong>Template columns:</strong>
+                <code>RUN_ID, SAMPLE_ID, EXPERIMENTID, SAMPLE_TYPE, LIB_PREP, SEQ_VENDOR, SEQ_PLATFORM, LANE, SEQBC_ID, PATH_TO_CONCORDANCE_DATA_DIR, R1_FQ, R2_FQ, ILMN_R1_FQ, ILMN_R2_FQ, PACBIO_R1_FQ, PACBIO_R2_FQ, ONT_R1_FQ, ONT_R2_FQ, UG_R1_FQ, UG_R2_FQ, ULTIMA_CRAM, ULTIMA_CRAM_ALIGNER, ULTIMA_CRAM_SNV_CALLER, ULTIMA_SUBSAMPLE_PCT, ONT_CRAM, ONT_CRAM_ALIGNER, ONT_CRAM_SNV_CALLER, ONT_SUBSAMPLE_PCT, PB_BAM, PB_BAM_ALIGNER, PB_BAM_SNV_CALLER, ONT_BAM, ONT_BAM_ALIGNER, ONT_BAM_SNV_CALLER, ROCHE_BAM, ROCHE_BAM_ALIGNER, ROCHE_BAM_SNV_CALLER, ROCHE_DOWNSAMPLE_RATIO, STAGE_DIRECTIVE, STAGE_TARGET, SUBSAMPLE_PCT, ILMN_TRIM_READ_LENGTH, LONGREADTRIM_READ_LENGTH, LONGREADTRIM_MODE, SAMPLEUSE, BWA_KMER, DEEP_MODEL, IS_POS_CTRL, IS_NEG_CTRL, N_X, N_Y, EXTERNAL_SAMPLE_ID</code>
             </div>
         </div>
     </div>
@@ -219,8 +219,24 @@
         'RUN_ID', 'SAMPLE_ID', 'EXPERIMENTID', 'SAMPLE_TYPE', 'LIB_PREP',
         'SEQ_VENDOR', 'SEQ_PLATFORM', 'LANE', 'SEQBC_ID',
         'PATH_TO_CONCORDANCE_DATA_DIR', 'R1_FQ', 'R2_FQ',
+        'ILMN_R1_FQ', 'ILMN_R2_FQ', 'PACBIO_R1_FQ', 'PACBIO_R2_FQ',
+        'ONT_R1_FQ', 'ONT_R2_FQ', 'UG_R1_FQ', 'UG_R2_FQ',
+        'ULTIMA_CRAM', 'ULTIMA_CRAM_ALIGNER', 'ULTIMA_CRAM_SNV_CALLER',
+        'ULTIMA_SUBSAMPLE_PCT', 'ONT_CRAM', 'ONT_CRAM_ALIGNER',
+        'ONT_CRAM_SNV_CALLER', 'ONT_SUBSAMPLE_PCT', 'PB_BAM',
+        'PB_BAM_ALIGNER', 'PB_BAM_SNV_CALLER', 'ONT_BAM', 'ONT_BAM_ALIGNER',
+        'ONT_BAM_SNV_CALLER', 'ROCHE_BAM', 'ROCHE_BAM_ALIGNER',
+        'ROCHE_BAM_SNV_CALLER', 'ROCHE_DOWNSAMPLE_RATIO',
         'STAGE_DIRECTIVE', 'STAGE_TARGET', 'SUBSAMPLE_PCT',
+        'ILMN_TRIM_READ_LENGTH', 'LONGREADTRIM_READ_LENGTH',
+        'LONGREADTRIM_MODE', 'SAMPLEUSE', 'BWA_KMER', 'DEEP_MODEL',
         'IS_POS_CTRL', 'IS_NEG_CTRL', 'N_X', 'N_Y', 'EXTERNAL_SAMPLE_ID'
+    ];
+    const SOURCE_COLUMNS = [
+        'R1_FQ', 'R2_FQ', 'ILMN_R1_FQ', 'ILMN_R2_FQ',
+        'PACBIO_R1_FQ', 'PACBIO_R2_FQ', 'ONT_R1_FQ', 'ONT_R2_FQ',
+        'UG_R1_FQ', 'UG_R2_FQ', 'ULTIMA_CRAM', 'ONT_CRAM',
+        'PB_BAM', 'ONT_BAM', 'ROCHE_BAM'
     ];
 
     const COLUMN_DEFAULTS = {
@@ -232,7 +248,7 @@
         SEQBC_ID: 'S1',
         PATH_TO_CONCORDANCE_DATA_DIR: '',
         STAGE_DIRECTIVE: 'stage_data',
-        STAGE_TARGET: '/fsx/staged_sample_data/',
+        STAGE_TARGET: '/data/staged_sample_data',
         SUBSAMPLE_PCT: 'na',
         IS_POS_CTRL: 'false',
         IS_NEG_CTRL: 'false',
@@ -317,15 +333,26 @@
         preview.textContent = tsv;
     }
 
+    function currentManifestRows() {
+        return analysisInputs.map((input) => {
+            const row = {};
+            MANIFEST_COLUMNS.forEach((column) => {
+                if (column === 'RUN_ID') {
+                    row[column] = document.getElementById('run_id')?.value || input.RUN_ID || '';
+                } else if (column === 'STAGE_TARGET') {
+                    row[column] = document.getElementById('stage_target')?.value || input.STAGE_TARGET || COLUMN_DEFAULTS.STAGE_TARGET;
+                } else {
+                    row[column] = String(input[column] || '');
+                }
+            });
+            return row;
+        });
+    }
+
     function generateManifestTSV() {
         const lines = [MANIFEST_COLUMNS.join('\t')];
-        analysisInputs.forEach((input) => {
-            const row = MANIFEST_COLUMNS.map((column) => {
-                if (column === 'RUN_ID') return document.getElementById('run_id')?.value || input.RUN_ID || '';
-                if (column === 'STAGE_TARGET') return document.getElementById('stage_target')?.value || input.STAGE_TARGET || '';
-                return String(input[column] || '');
-            });
-            lines.push(row.join('\t'));
+        currentManifestRows().forEach((row) => {
+            lines.push(MANIFEST_COLUMNS.map((column) => row[column] || '').join('\t'));
         });
         return lines.join('\n');
     }
@@ -461,7 +488,7 @@
         const url = URL.createObjectURL(blob);
         const anchor = document.createElement('a');
         anchor.href = url;
-        anchor.download = `${document.getElementById('manifest-save-name')?.value || 'stage_samples'}.tsv`;
+        anchor.download = `${document.getElementById('manifest-save-name')?.value || 'analysis_samples'}.tsv`;
         anchor.click();
         URL.revokeObjectURL(url);
     }
@@ -469,8 +496,8 @@
     function manifestInputReferences() {
         const seen = new Set();
         const refs = [];
-        analysisInputs.forEach((input) => {
-            ['R1_FQ', 'R2_FQ'].forEach((field) => {
+        currentManifestRows().forEach((input) => {
+            SOURCE_COLUMNS.forEach((field) => {
                 const value = String(input[field] || '').trim();
                 if (!value || !value.startsWith('s3://') || seen.has(value)) return;
                 seen.add(value);
@@ -504,10 +531,10 @@
                 name,
                 input_references: inputReferences,
                 metadata: {
-                    editor_analysis_inputs: analysisInputs,
+                    editor_analysis_inputs: currentManifestRows(),
                     editor_run_config: {
                         run_id: document.getElementById('run_id')?.value || '',
-                        stage_target: document.getElementById('stage_target')?.value || '',
+                        stage_target: document.getElementById('stage_target')?.value || COLUMN_DEFAULTS.STAGE_TARGET,
                     },
                 },
             },

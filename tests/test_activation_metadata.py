@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tomllib
 from pathlib import Path
 
@@ -29,7 +30,9 @@ def test_environment_yaml_is_system_only() -> None:
 
     for expected in (
         "python=3.11",
-        "awscli=2.22.4",
+        "awscli=2.34.31",
+        "prompt-toolkit=3.0.51",
+        "ruamel.yaml=0.19.1",
         "aws-parallelcluster=3.13.2",
         "pip",
         "setuptools<81",
@@ -59,6 +62,7 @@ def test_pyproject_contains_the_single_python_install_set() -> None:
         "black>=23.0.0",
         "boto3-stubs[s3,sns,cloudwatch]>=1.28.0",
         "daylily-auth-cognito==2.1.1",
+        "daylily-ephemeral-cluster==2.1.3",
         "daylily-tapdb==6.0.4",
         "fastapi>=0.104.0",
         "httpx>=0.25.0",
@@ -90,6 +94,27 @@ def test_pyproject_contains_the_single_python_install_set() -> None:
         "boto3>=1.26.0",
     ):
         assert expected in dependencies
+
+
+def test_ecosystem_versions_track_ephemeral_cluster_baseline() -> None:
+    payload = json.loads(_load_text(_project_root() / "config" / "ecosystem-versions.json"))
+
+    assert payload["last_updated"] == "2026-04-24"
+    assert payload["tested_combinations"][0]["date"] == "2026-04-24"
+    assert payload["components"]["daylily-ephemeral-cluster"]["current"] == "2.1.3"
+    assert payload["tested_combinations"][0]["ephemeral_cluster"] == "2.1.3"
+    assert "daylily-ephemeral-cluster to 2.1.3" in payload["tested_combinations"][0]["notes"]
+
+
+def test_workset_monitor_configs_use_daylily_ec_samples_stage() -> None:
+    config_dir = _project_root() / "config"
+    monitor_configs = sorted(config_dir.glob("*workset-monitor*.yaml"))
+
+    assert monitor_configs
+    for path in monitor_configs:
+        text = _load_text(path)
+        assert "daylily-stage-samples-from-local-to-headnode" not in text, path
+        assert "stage_command: daylily-ec samples stage " in text, path
 
 
 def test_activate_is_env_only() -> None:

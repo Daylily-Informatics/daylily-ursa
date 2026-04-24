@@ -18,6 +18,10 @@ CLUSTER_JOB_EVENT_TEMPLATE = "RGX/cluster/ephemeral-job-event/1.0/"
 ANALYSIS_JOB_TEMPLATE = "RGX/analysis/launch-job/1.0/"
 ANALYSIS_JOB_REVISION_TEMPLATE = "RGX/analysis/launch-job-revision/1.0/"
 ANALYSIS_JOB_EVENT_TEMPLATE = "RGX/analysis/launch-job-event/1.0/"
+STAGING_JOB_TEMPLATE = "RGX/staging/job/1.0/"
+STAGING_JOB_REVISION_TEMPLATE = "RGX/staging/job-revision/1.0/"
+STAGING_JOB_EVENT_TEMPLATE = "RGX/staging/job-event/1.0/"
+STAGING_JOB_STATES = frozenset({"DEFINED", "STAGING", "COMPLETED", "FAILED"})
 LINKED_BUCKET_TEMPLATE = "RGX/storage/linked-bucket/1.0/"
 
 
@@ -144,6 +148,41 @@ class AnalysisJobRecord:
     request: dict[str, Any]
     launch: dict[str, Any]
     events: list[AnalysisJobEventRecord] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class StagingJobEventRecord:
+    event_euid: str
+    job_euid: str
+    event_type: str
+    status: str
+    summary: str
+    details: dict[str, Any]
+    created_by: str | None
+    created_at: str
+
+
+@dataclass(frozen=True)
+class StagingJobRecord:
+    job_euid: str
+    job_name: str
+    workset_euid: str
+    manifest_euid: str
+    cluster_name: str
+    region: str
+    tenant_id: uuid.UUID
+    owner_user_id: str
+    state: str
+    created_at: str
+    updated_at: str
+    started_at: str | None
+    completed_at: str | None
+    return_code: int | None
+    error: str | None
+    output_summary: str | None
+    request: dict[str, Any]
+    stage: dict[str, Any]
+    events: list[StagingJobEventRecord] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -392,6 +431,82 @@ class ResourceStore:
             output_summary=str(revision_payload.get("output_summary") or "").strip() or None,
             request=dict(payload.get("request") or {}),
             launch=dict(revision_payload.get("launch") or {}),
+            events=events,
+        )
+
+    @staticmethod
+    def _staging_job_revision_sort_key(instance: Any) -> int:
+        payload = from_json_addl(instance)
+        return int(payload.get("revision_no") or 0)
+
+    def _latest_staging_job_revision(self, session, job_instance) -> Any | None:
+        revisions = self.backend.list_children(
+            session,
+            parent=job_instance,
+            relationship_type="revision",
+        )
+        if not revisions:
+            return None
+        revisions.sort(key=self._staging_job_revision_sort_key, reverse=True)
+        return revisions[0]
+
+    @staticmethod
+    def _staging_job_event_from_instance(instance) -> StagingJobEventRecord:
+        payload = from_json_addl(instance)
+        return StagingJobEventRecord(
+            event_euid=str(instance.euid),
+            job_euid=str(payload.get("job_euid") or ""),
+            event_type=str(payload.get("event_type") or ""),
+            status=str(payload.get("status") or instance.bstatus),
+            summary=str(payload.get("summary") or ""),
+            details=dict(payload.get("details") or {}),
+            created_by=str(payload.get("created_by") or "").strip() or None,
+            created_at=str(payload.get("created_at") or utc_now_iso()),
+        )
+
+    def _staging_job_from_instance(self, session, instance) -> StagingJobRecord:
+        payload = from_json_addl(instance)
+        latest_revision = self._latest_staging_job_revision(session, instance)
+        revision_payload = from_json_addl(latest_revision) if latest_revision is not None else {}
+        events = [
+            self._staging_job_event_from_instance(child)
+            for child in self.backend.list_children(
+                session,
+                parent=instance,
+                relationship_type="event",
+            )
+        ]
+        events.sort(key=lambda item: item.created_at, reverse=True)
+        state = str(revision_payload.get("state") or payload.get("state") or instance.bstatus)
+        return_code_raw = revision_payload.get("return_code")
+        try:
+            return_code = int(return_code_raw) if return_code_raw is not None else None
+        except (TypeError, ValueError):
+            return_code = None
+        return StagingJobRecord(
+            job_euid=str(instance.euid),
+            job_name=str(instance.name or payload.get("job_name") or payload.get("name") or ""),
+            workset_euid=str(payload.get("workset_euid") or ""),
+            manifest_euid=str(payload.get("manifest_euid") or ""),
+            cluster_name=str(payload.get("cluster_name") or ""),
+            region=str(payload.get("region") or ""),
+            tenant_id=ResourceStore._parse_tenant_uuid(payload.get("tenant_id")),
+            owner_user_id=str(payload.get("owner_user_id") or ""),
+            state=state,
+            created_at=str(payload.get("created_at") or utc_now_iso()),
+            updated_at=str(
+                revision_payload.get("created_at")
+                or payload.get("updated_at")
+                or payload.get("created_at")
+                or utc_now_iso()
+            ),
+            started_at=str(revision_payload.get("started_at") or "").strip() or None,
+            completed_at=str(revision_payload.get("completed_at") or "").strip() or None,
+            return_code=return_code,
+            error=str(revision_payload.get("error") or "").strip() or None,
+            output_summary=str(revision_payload.get("output_summary") or "").strip() or None,
+            request=dict(payload.get("request") or {}),
+            stage=dict(revision_payload.get("stage") or {}),
             events=events,
         )
 
@@ -1350,3 +1465,260 @@ class ResourceStore:
                     limit=limit,
                 )
             return [self._analysis_job_from_instance(session, item) for item in jobs]
+
+    def create_staging_job(
+        self,
+        *,
+        job_name: str,
+        workset_euid: str,
+        manifest_euid: str,
+        cluster_name: str,
+        region: str,
+        tenant_id: uuid.UUID,
+        owner_user_id: str,
+        request: dict[str, Any] | None = None,
+    ) -> StagingJobRecord:
+        now = utc_now_iso()
+        with self.backend.session_scope(commit=True) as session:
+            workset = self.backend.find_instance_by_euid(
+                session,
+                template_code=WORKSET_TEMPLATE,
+                value=workset_euid,
+                for_update=True,
+            )
+            if workset is None:
+                raise KeyError(f"workset not found: {workset_euid}")
+            manifest = self.backend.find_instance_by_euid(
+                session,
+                template_code=MANIFEST_TEMPLATE,
+                value=manifest_euid,
+                for_update=True,
+            )
+            if manifest is None:
+                raise KeyError(f"manifest not found: {manifest_euid}")
+            workset_payload = from_json_addl(workset)
+            manifest_payload = from_json_addl(manifest)
+            if self._parse_tenant_uuid(workset_payload.get("tenant_id")) != tenant_id:
+                raise ValueError("workset tenant does not match staging job tenant")
+            if self._parse_tenant_uuid(manifest_payload.get("tenant_id")) != tenant_id:
+                raise ValueError("manifest tenant does not match staging job tenant")
+            if str(manifest_payload.get("workset_euid") or "") != workset_euid:
+                raise ValueError("manifest does not belong to workset")
+            job = self.backend.create_instance(
+                session,
+                STAGING_JOB_TEMPLATE,
+                job_name,
+                json_addl={
+                    "job_name": job_name,
+                    "workset_euid": workset_euid,
+                    "manifest_euid": manifest_euid,
+                    "cluster_name": cluster_name,
+                    "region": region,
+                    "tenant_id": str(tenant_id),
+                    "owner_user_id": owner_user_id,
+                    "request": dict(request or {}),
+                    "created_at": now,
+                    "updated_at": now,
+                    "state": "DEFINED",
+                },
+                bstatus="DEFINED",
+                tenant_id=tenant_id,
+            )
+            revision = self.backend.create_instance(
+                session,
+                STAGING_JOB_REVISION_TEMPLATE,
+                f"revision:{job.euid}:1",
+                json_addl={
+                    "job_euid": str(job.euid),
+                    "revision_no": 1,
+                    "state": "DEFINED",
+                    "started_at": None,
+                    "completed_at": None,
+                    "return_code": None,
+                    "error": None,
+                    "output_summary": None,
+                    "stage": {},
+                    "created_by": owner_user_id,
+                    "created_at": now,
+                },
+                bstatus="DEFINED",
+            )
+            self.backend.create_lineage(
+                session,
+                parent=job,
+                child=revision,
+                relationship_type="revision",
+            )
+            self.backend.create_lineage(
+                session,
+                parent=workset,
+                child=job,
+                relationship_type="workset_staging_job",
+            )
+            self.backend.create_lineage(
+                session,
+                parent=manifest,
+                child=job,
+                relationship_type="staging_manifest",
+            )
+            self.backend.update_instance_json(
+                session,
+                workset,
+                {
+                    "updated_at": now,
+                },
+            )
+            return self._staging_job_from_instance(session, job)
+
+    def update_staging_job_status(
+        self,
+        *,
+        job_euid: str,
+        state: str,
+        created_by: str,
+        started_at: str | None = None,
+        completed_at: str | None = None,
+        return_code: int | None = None,
+        error: str | None = None,
+        output_summary: str | None = None,
+        stage: dict[str, Any] | None = None,
+    ) -> StagingJobRecord:
+        if state not in STAGING_JOB_STATES:
+            raise ValueError(f"Invalid staging job state: {state}")
+        with self.backend.session_scope(commit=True) as session:
+            job = self.backend.find_instance_by_euid(
+                session,
+                template_code=STAGING_JOB_TEMPLATE,
+                value=job_euid,
+                for_update=True,
+            )
+            if job is None:
+                raise KeyError(f"staging job not found: {job_euid}")
+            latest_revision = self._latest_staging_job_revision(session, job)
+            latest_payload = from_json_addl(latest_revision) if latest_revision is not None else {}
+            revision_no = int(latest_payload.get("revision_no") or 0) + 1
+            created_at = utc_now_iso()
+            revision = self.backend.create_instance(
+                session,
+                STAGING_JOB_REVISION_TEMPLATE,
+                f"revision:{job.euid}:{revision_no}",
+                json_addl={
+                    "job_euid": str(job.euid),
+                    "revision_no": revision_no,
+                    "state": state,
+                    "started_at": started_at
+                    if started_at is not None
+                    else latest_payload.get("started_at"),
+                    "completed_at": completed_at
+                    if completed_at is not None
+                    else latest_payload.get("completed_at"),
+                    "return_code": return_code
+                    if return_code is not None
+                    else latest_payload.get("return_code"),
+                    "error": error if error is not None else latest_payload.get("error"),
+                    "output_summary": (
+                        output_summary
+                        if output_summary is not None
+                        else latest_payload.get("output_summary")
+                    ),
+                    "stage": dict(
+                        stage if stage is not None else latest_payload.get("stage") or {}
+                    ),
+                    "created_by": created_by,
+                    "created_at": created_at,
+                },
+                bstatus=state,
+            )
+            self.backend.create_lineage(
+                session,
+                parent=job,
+                child=revision,
+                relationship_type="revision",
+            )
+            self.backend.update_instance_json(
+                session,
+                job,
+                {
+                    "updated_at": created_at,
+                    "state": state,
+                },
+            )
+            job.bstatus = state
+            return self._staging_job_from_instance(session, job)
+
+    def add_staging_job_event(
+        self,
+        *,
+        job_euid: str,
+        event_type: str,
+        status: str,
+        summary: str,
+        details: dict[str, Any] | None = None,
+        created_by: str | None = None,
+    ) -> StagingJobEventRecord:
+        created_at = utc_now_iso()
+        with self.backend.session_scope(commit=True) as session:
+            job = self.backend.find_instance_by_euid(
+                session,
+                template_code=STAGING_JOB_TEMPLATE,
+                value=job_euid,
+                for_update=True,
+            )
+            if job is None:
+                raise KeyError(f"staging job not found: {job_euid}")
+            event = self.backend.create_instance(
+                session,
+                STAGING_JOB_EVENT_TEMPLATE,
+                f"{event_type}:{job.euid}:{created_at}",
+                json_addl={
+                    "job_euid": str(job.euid),
+                    "event_type": event_type,
+                    "status": status,
+                    "summary": summary,
+                    "details": dict(details or {}),
+                    "created_by": created_by,
+                    "created_at": created_at,
+                },
+                bstatus=status,
+            )
+            self.backend.create_lineage(
+                session,
+                parent=job,
+                child=event,
+                relationship_type="event",
+            )
+            self.backend.update_instance_json(
+                session,
+                job,
+                {
+                    "updated_at": created_at,
+                },
+            )
+            return self._staging_job_event_from_instance(event)
+
+    def get_staging_job(self, job_euid: str) -> StagingJobRecord | None:
+        with self.backend.session_scope(commit=False) as session:
+            job = self.backend.find_instance_by_euid(
+                session,
+                template_code=STAGING_JOB_TEMPLATE,
+                value=job_euid,
+            )
+            if job is None:
+                return None
+            return self._staging_job_from_instance(session, job)
+
+    def list_staging_jobs(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        limit: int = 200,
+    ) -> list[StagingJobRecord]:
+        with self.backend.session_scope(commit=False) as session:
+            jobs = self.backend.list_instances_by_property(
+                session,
+                template_code=STAGING_JOB_TEMPLATE,
+                key="tenant_id",
+                value=str(tenant_id),
+                limit=limit,
+            )
+            return [self._staging_job_from_instance(session, item) for item in jobs]

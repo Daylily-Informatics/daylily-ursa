@@ -296,7 +296,13 @@ def start(
         help="Validate Cognito callback/logout URI ports before startup",
     ),
 ):
-    """Start the Ursa beta analysis API server."""
+    """Start the Ursa beta analysis API server.
+
+    Examples:
+        ursa server start --port 8913
+        ursa server start --port 8913 --foreground
+        ursa server start --no-ssl --foreground
+    """
     port = _option_default(port, None)
     host = _option_default(host, None)
     ssl = _option_default(ssl, True)

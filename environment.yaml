@@ -4,7 +4,10 @@ channels:
   - defaults
 dependencies:
   - python=3.11
-  - awscli=2.22.4
+  - awscli=2.34.31
+  # Compatibility pins keep conda AWS CLI v2 metadata aligned with daylily-ec 2.1.3.
+  - prompt-toolkit=3.0.51
+  - ruamel.yaml=0.19.1
   - aws-parallelcluster=3.13.2
   - bash=5.2.37
   - jq=1.8.1

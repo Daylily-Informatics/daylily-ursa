@@ -114,7 +114,7 @@ pipeline:
   # Command to stage samples to the headnode
   # Available variables: {profile}, {region}, {reference_bucket}, {analysis_samples}, {output_dir}
   # Note: --config-dir ensures generated samples.tsv/units.tsv are written to the workset state dir
-  stage_command: daylily-stage-samples-from-local-to-headnode --profile {profile} --region {region} --reference-bucket {reference_bucket} --config-dir {output_dir} {analysis_samples}
+  stage_command: daylily-ec samples stage {analysis_samples} --profile {profile} --region {region} --reference-bucket {reference_bucket} --config-dir {output_dir}
 
   # Command to clone the pipeline repository
   # Available variables: {clone_args}

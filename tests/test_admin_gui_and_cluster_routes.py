@@ -29,6 +29,7 @@ from daylib_ursa.resource_store import (
     ClusterJobRecord,
     LinkedBucketRecord,
     ManifestRecord,
+    StagingJobRecord,
     WorksetRecord,
 )
 from daylib_ursa.workset_api import create_app
@@ -306,12 +307,18 @@ class MemoryResourceStore:
                 artifact_euids=["AT-1"],
                 input_references=[{"reference_type": "artifact_set_euid", "value": "AS-1"}],
                 metadata={
-                    "stable_manifest": {
+                    "analysis_samples_manifest": {
                         "filename": "analysis_samples.tsv",
                         "content": "RUN_ID\tSAMPLE_ID\nRU1\tS1\n",
                         "sha256": "a" * 64,
-                        "line_count": 2,
-                        "column_count": 2,
+                        "row_count": 1,
+                        "sample_count": 1,
+                        "columns": ["RUN_ID", "SAMPLE_ID"],
+                        "rows": [{"RUN_ID": "RU1", "SAMPLE_ID": "S1"}],
+                        "input_references": [],
+                        "artifact_euids": ["AT-1"],
+                        "staging": {"stage_target": "/data/staged_sample_data"},
+                        "analysis_defaults": {},
                     }
                 },
                 created_at="2026-03-25T00:05:00Z",
@@ -345,6 +352,7 @@ class MemoryResourceStore:
         self.client_registrations: dict[str, ClientRegistrationRecord] = {}
         self.cluster_jobs: dict[str, ClusterJobRecord] = {}
         self.analysis_jobs: dict[str, AnalysisJobRecord] = {}
+        self.staging_jobs: dict[str, StagingJobRecord] = {}
         self._client_seq = 0
         self._job_seq = 0
         self._analysis_job_seq = 0
@@ -513,6 +521,43 @@ class MemoryResourceStore:
 
     def get_analysis_job(self, job_euid: str):
         return self.analysis_jobs.get(job_euid)
+
+    def list_staging_jobs(self, *, tenant_id: uuid.UUID, limit: int = 200):
+        _ = limit
+        return [item for item in self.staging_jobs.values() if item.tenant_id == tenant_id]
+
+
+def _staging_job_record(job_euid: str, state: str) -> StagingJobRecord:
+    stage_target = "/data/staged_sample_data"
+    started_at = "2026-03-25T00:30:00Z" if state in {"STAGING", "COMPLETED", "FAILED"} else None
+    completed_at = "2026-03-25T00:31:00Z" if state in {"COMPLETED", "FAILED"} else None
+    return StagingJobRecord(
+        job_euid=job_euid,
+        job_name=f"{state.lower()} staging",
+        workset_euid="WS-1",
+        manifest_euid="MF-1",
+        cluster_name="cluster-1",
+        region="us-west-2",
+        tenant_id=TENANT_ID,
+        owner_user_id=ADMIN_USER_ID,
+        state=state,
+        created_at="2026-03-25T00:29:00Z",
+        updated_at=completed_at or started_at or "2026-03-25T00:29:00Z",
+        started_at=started_at,
+        completed_at=completed_at,
+        return_code=0 if state == "COMPLETED" else 1 if state == "FAILED" else None,
+        error="stage failed" if state == "FAILED" else None,
+        output_summary="stage completed" if state == "COMPLETED" else None,
+        request={
+            "reference_bucket": "s3://omics-inputs/incoming",
+            "stage_target": stage_target,
+            "aws_profile": None,
+            "debug": False,
+            "metadata": {},
+        },
+        stage={"stage_dir": f"{stage_target}/{job_euid}"} if state == "COMPLETED" else {},
+        events=[],
+    )
 
 
 class DummyClusterInfo:
@@ -981,6 +1026,7 @@ def test_gui_routes_cover_remaining_pages_and_logout() -> None:
         manifests_page = client.get("/manifests")
         manifest_detail_page = client.get("/manifests/MF-1")
         analysis_jobs_page = client.get("/analysis-jobs")
+        staging_page = client.get("/staging")
         bucket_detail_page = client.get("/buckets/BK-1")
         analyses_page = client.get("/analyses")
         analysis_detail_page = client.get("/analyses/AN-1")
@@ -1013,6 +1059,14 @@ def test_gui_routes_cover_remaining_pages_and_logout() -> None:
     assert "Manifest Manifest One" in manifest_detail_page.text
     assert analysis_jobs_page.status_code == 200
     assert "Analysis Launches" in analysis_jobs_page.text
+    assert "Completed Staging Job" in analysis_jobs_page.text
+    assert "stage_target" in analysis_jobs_page.text
+    assert "/api/v1/staging-jobs" in analysis_jobs_page.text
+    assert staging_page.status_code == 200
+    assert "Define Staging Job" in staging_page.text
+    assert "Source Preview" in staging_page.text
+    assert "/api/v1/staging-jobs" in staging_page.text
+    assert 'id="staging_stage_target"' in staging_page.text
     assert bucket_detail_page.status_code == 200
     assert "Browse Bucket" in bucket_detail_page.text
     assert analyses_page.status_code == 200
@@ -1051,6 +1105,59 @@ def test_gui_routes_cover_remaining_pages_and_logout() -> None:
     assert "<redacted>" in admin_config_page.text
     assert logout.status_code == 303
     assert logout.headers["location"].startswith("https://auth.example.test/logout?")
+
+
+def test_staging_gui_exposes_authenticated_forms_statuses_and_analysis_selector() -> None:
+    app, resources = _create_test_app(admin=True)
+    for state in ("DEFINED", "STAGING", "COMPLETED", "FAILED"):
+        resources.staging_jobs[f"SJ-{state}"] = _staging_job_record(f"SJ-{state}", state)
+
+    with (
+        TestClient(app, base_url=TEST_BASE_URL) as client,
+        patch(
+            "daylib_ursa.gui_app.command_catalog_payload",
+            return_value=_command_catalog_payload(),
+        ),
+    ):
+        client.post(
+            "/login",
+            data={"access_token": "atlas-token", "next_path": "/staging"},
+            follow_redirects=False,
+        )
+        staging_page = client.get("/staging")
+        analysis_jobs_page = client.get("/analysis-jobs")
+
+    assert staging_page.status_code == 200
+    assert 'href="/staging" class="nav-link active"' in staging_page.text
+    for element_id in (
+        "staging_workset_euid",
+        "staging_manifest_euid",
+        "staging_reference_bucket",
+        "staging_region",
+        "staging_cluster_name",
+        "staging_stage_target",
+    ):
+        assert f'id="{element_id}"' in staging_page.text
+    for payload_field in (
+        "workset_euid",
+        "manifest_euid",
+        "reference_bucket",
+        "cluster_name",
+        "region",
+        "stage_target",
+    ):
+        assert f"{payload_field}:" in staging_page.text
+    for state in ("DEFINED", "STAGING", "COMPLETED", "FAILED"):
+        assert f"SJ-{state}" in staging_page.text
+        assert f">{state}</span>" in staging_page.text
+
+    assert analysis_jobs_page.status_code == 200
+    assert 'id="staging_job_euid"' in analysis_jobs_page.text
+    assert 'value="SJ-COMPLETED"' in analysis_jobs_page.text
+    assert 'value="SJ-DEFINED"' not in analysis_jobs_page.text
+    assert 'value="SJ-STAGING"' not in analysis_jobs_page.text
+    assert 'value="SJ-FAILED"' not in analysis_jobs_page.text
+    assert "staging_job_euid = stagingJobSelect.value" in analysis_jobs_page.text
 
 
 def test_cluster_scan_regions_update_refreshes_runtime_service() -> None:
@@ -1142,6 +1249,7 @@ def test_gui_routes_use_session_auth_and_gate_admin_pages() -> None:
         )
         dashboard = client.get("/")
         usage_page = client.get("/usage")
+        staging_page = client.get("/staging")
         buckets_page = client.get("/buckets")
         user_token = client.post(
             "/api/v1/user-tokens",
@@ -1171,9 +1279,12 @@ def test_gui_routes_use_session_auth_and_gate_admin_pages() -> None:
     assert "Welcome back" in dashboard.text
     assert usage_page.status_code == 200
     assert "Usage Summary" in usage_page.text
+    assert staging_page.status_code == 200
+    assert "Staging" in staging_page.text
     assert buckets_page.status_code == 200
     assert "S3 Bucket Management" in buckets_page.text
     assert 'href="/admin"' in dashboard.text
+    assert 'href="/staging"' in dashboard.text
     assert "Admin Access" in dashboard.text
     assert "List Buckets" in buckets_page.text
     assert user_token.status_code == 201

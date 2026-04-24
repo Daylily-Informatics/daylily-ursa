@@ -484,6 +484,9 @@ def mount_gui(app: FastAPI) -> None:
             tenant_id=None if actor.is_admin else actor.tenant_id
         )
 
+    def _list_staging_jobs(actor: CurrentUser) -> list[Any]:
+        return _resource_store().list_staging_jobs(tenant_id=actor.tenant_id)
+
     def _list_analyses(actor: CurrentUser) -> list[Any]:
         return app.state.store.list_analyses(
             tenant_id=None if actor.is_admin else actor.tenant_id,
@@ -491,6 +494,35 @@ def mount_gui(app: FastAPI) -> None:
 
     def _list_buckets(actor: CurrentUser) -> list[Any]:
         return _resource_store().list_linked_buckets(tenant_id=actor.tenant_id)
+
+    def _bucket_reference_uri(bucket: Any) -> str:
+        bucket_name = str(getattr(bucket, "bucket_name", "") or "").strip()
+        if not bucket_name:
+            return ""
+        prefix = str(getattr(bucket, "prefix_restriction", "") or "").strip().strip("/")
+        return f"s3://{bucket_name}/{prefix}" if prefix else f"s3://{bucket_name}"
+
+    def _bucket_options(actor: CurrentUser) -> list[dict[str, Any]]:
+        options: list[dict[str, Any]] = []
+        for bucket in _list_buckets(actor):
+            reference_bucket = _bucket_reference_uri(bucket)
+            if not reference_bucket:
+                continue
+            options.append(
+                {
+                    "bucket_id": str(getattr(bucket, "bucket_id", "") or "").strip(),
+                    "bucket_name": str(getattr(bucket, "bucket_name", "") or "").strip(),
+                    "display_name": str(getattr(bucket, "display_name", "") or "").strip(),
+                    "reference_bucket": reference_bucket,
+                    "region": str(getattr(bucket, "region", "") or "").strip(),
+                    "prefix_restriction": str(
+                        getattr(bucket, "prefix_restriction", "") or ""
+                    ).strip(),
+                    "state": str(getattr(bucket, "state", "") or "").strip(),
+                    "can_write": bool(getattr(bucket, "can_write", False)),
+                }
+            )
+        return options
 
     def _allowed_regions() -> list[str]:
         service = getattr(app.state, "cluster_service", None)
@@ -624,6 +656,30 @@ def mount_gui(app: FastAPI) -> None:
             "pipeline_type": pipeline_type,
             "reference_genome": reference_genome,
             "execution_profile": "daylily-ec",
+        }
+
+    def _cluster_options(actor: CurrentUser) -> list[dict[str, Any]]:
+        if not actor.is_admin:
+            return []
+        return [
+            item.to_dict(include_sensitive=False)
+            for item in _cluster_service().get_all_clusters_with_status(
+                force_refresh=False,
+                fetch_ssh_status=False,
+            )
+        ]
+
+    def _staging_context(actor: CurrentUser) -> dict[str, Any]:
+        return {
+            "worksets": _list_worksets(actor),
+            "manifests": _list_manifests(actor),
+            "buckets": _list_buckets(actor),
+            "bucket_options": _bucket_options(actor),
+            "clusters": _cluster_options(actor),
+            "allowed_regions": _allowed_regions(),
+            "staging_jobs": _list_staging_jobs(actor),
+            "stage_target_default": "/data/staged_sample_data",
+            "is_admin": actor.is_admin,
         }
 
     def _workset_view_model(workset: Any) -> dict[str, Any]:
@@ -1252,10 +1308,30 @@ def mount_gui(app: FastAPI) -> None:
                 "manifests": _list_manifests(actor),
                 "analysis_jobs": _list_analysis_jobs(actor),
                 "analysis_command_catalog": _analysis_command_catalog_context(),
+                "completed_staging_jobs": [
+                    job
+                    for job in _list_staging_jobs(actor)
+                    if getattr(job, "state", "") == "COMPLETED"
+                ],
                 "clusters": clusters,
                 "allowed_regions": _allowed_regions(),
                 "is_admin": actor.is_admin,
             },
+        )
+
+    @app.get("/staging", response_class=HTMLResponse)
+    async def staging_page(request: Request):
+        actor = _session_actor(request)
+        if actor is None:
+            return RedirectResponse(
+                url=f"/login?next={request.url.path}", status_code=status.HTTP_303_SEE_OTHER
+            )
+        return _render_page(
+            request,
+            template_name="staging.html",
+            page_title="Staging",
+            active_page="staging",
+            context=_staging_context(actor),
         )
 
     @app.get("/buckets", response_class=HTMLResponse)

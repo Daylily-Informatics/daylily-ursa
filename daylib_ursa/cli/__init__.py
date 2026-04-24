@@ -120,7 +120,14 @@ def _build_spec() -> CliSpec:
         prog_name="ursa",
         app_display_name="Ursa",
         dist_name="daylily-ursa",
-        root_help="Ursa development CLI for beta analysis APIs and integrations.",
+        root_help=(
+            "Ursa development CLI for beta analysis APIs and integrations.\n\n"
+            "Examples:\n"
+            "  ursa config init\n"
+            "  ursa db build --target local\n"
+            "  ursa server start --port 8913\n"
+            "  ursa monitor start --config config/workset-monitor-config.yaml --foreground"
+        ),
         xdg=XdgSpec(
             app_dir_name=f"ursa-{_resolve_deployment_code()}",
         ),

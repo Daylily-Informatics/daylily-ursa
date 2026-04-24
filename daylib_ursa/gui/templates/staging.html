@@ -1,0 +1,370 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container">
+    <div class="page-header">
+        <div>
+            <h1 class="page-title">Staging</h1>
+            <p class="page-subtitle">Stage analysis sample manifests into a cluster-visible S3/FSx target.</p>
+        </div>
+    </div>
+
+    <div class="grid grid-2">
+        <form id="staging-job-form" class="card">
+            <h3 class="card-title">Define Staging Job</h3>
+
+            <div class="form-group">
+                <label for="staging_workset_euid" class="form-label">Workset</label>
+                <select id="staging_workset_euid" class="form-control form-select" required>
+                    <option value="">Choose workset...</option>
+                    {% for workset in worksets %}
+                    <option value="{{ workset.workset_euid }}">{{ workset.name }} ({{ workset.workset_euid }})</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label for="staging_manifest_euid" class="form-label">Analysis Samples Manifest</label>
+                <select id="staging_manifest_euid" class="form-control form-select" required>
+                    <option value="">Choose manifest...</option>
+                    {% for manifest in manifests %}
+                    <option value="{{ manifest.manifest_euid }}" data-workset="{{ manifest.workset_euid }}">{{ manifest.name }} ({{ manifest.manifest_euid }})</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label for="staging_reference_bucket" class="form-label">Reference Bucket</label>
+                <select id="staging_reference_bucket" class="form-control form-select" required>
+                    <option value="">Choose bucket...</option>
+                    {% for bucket in bucket_options %}
+                    <option value="{{ bucket.reference_bucket }}" data-region="{{ bucket.region }}" data-bucket-id="{{ bucket.bucket_id }}">
+                        {{ bucket.display_name or bucket.bucket_name }} ({{ bucket.reference_bucket }})
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="grid grid-2">
+                <div class="form-group">
+                    <label for="staging_region" class="form-label">Region</label>
+                    <select id="staging_region" class="form-control form-select" required>
+                        <option value="">Choose region...</option>
+                        {% for region in allowed_regions %}
+                        <option value="{{ region }}">{{ region }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="staging_cluster_name" class="form-label">Cluster</label>
+                    <input id="staging_cluster_name" class="form-control" list="staging-cluster-options" required placeholder="cluster name">
+                    <datalist id="staging-cluster-options">
+                        {% for cluster in clusters %}
+                        <option value="{{ cluster.cluster_name }}" data-region="{{ cluster.region }}">{{ cluster.cluster_name }} ({{ cluster.region }})</option>
+                        {% endfor %}
+                    </datalist>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="staging_stage_target" class="form-label">Stage Target</label>
+                <input id="staging_stage_target" class="form-control mono" required value="{{ stage_target_default }}">
+            </div>
+
+            <div class="form-group">
+                <label for="staging_job_name" class="form-label">Job Name</label>
+                <input id="staging_job_name" class="form-control" placeholder="optional staging job name">
+            </div>
+
+            <div class="form-actions">
+                <button type="button" class="btn btn-outline" id="staging-preview-btn">
+                    <i class="fas fa-eye"></i> Preview
+                </button>
+                <button type="submit" class="btn btn-outline">
+                    <i class="fas fa-save"></i> Define
+                </button>
+                <button type="button" class="btn btn-primary" id="define-run-staging-btn">
+                    <i class="fas fa-upload"></i> Define + Run
+                </button>
+            </div>
+        </form>
+
+        <div class="card">
+            <h3 class="card-title">Source Preview</h3>
+            <pre id="staging-source-preview" class="json-block" style="min-height: 180px;">Choose an analysis samples manifest.</pre>
+            <h3 class="card-title mt-lg">Destination Preview</h3>
+            <pre id="staging-destination-preview" class="json-block" style="min-height: 120px;">Choose a bucket and stage target.</pre>
+        </div>
+    </div>
+
+    <div class="card mt-lg">
+        <div class="d-flex justify-between align-center mb-md">
+            <h3 class="card-title mb-0">Staging Jobs</h3>
+            <button type="button" class="btn btn-outline btn-sm" id="refresh-staging-jobs-btn">
+                <i class="fas fa-sync"></i> Refresh
+            </button>
+        </div>
+        <div class="table-wrapper">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Job</th>
+                        <th>Workset</th>
+                        <th>Manifest</th>
+                        <th>Bucket</th>
+                        <th>Cluster</th>
+                        <th>Stage Target</th>
+                        <th>Status</th>
+                        <th>Updated</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody id="staging-jobs-body">
+                    {% for job in staging_jobs %}
+                    <tr data-job-euid="{{ job.job_euid }}">
+                        <td><span class="mono">{{ job.job_euid }}</span><br>{{ job.job_name }}</td>
+                        <td class="mono">{{ job.workset_euid }}</td>
+                        <td class="mono">{{ job.manifest_euid }}</td>
+                        <td class="mono">{{ job.request.reference_bucket }}</td>
+                        <td>{{ job.cluster_name }}<br><span class="text-muted">{{ job.region }}</span></td>
+                        <td class="mono">{{ job.request.stage_target }}</td>
+                        <td><span class="badge badge-secondary">{{ job.state }}</span></td>
+                        <td>{{ job.updated_at }}</td>
+                        <td>
+                            {% if job.state == "DEFINED" %}
+                            <button type="button" class="btn btn-primary btn-sm" data-action="run">Run</button>
+                            {% endif %}
+                            {% if job.state in ["COMPLETED", "FAILED"] %}
+                            <button type="button" class="btn btn-outline btn-sm" data-action="logs">Logs</button>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="9" class="text-muted">No staging jobs yet.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        <pre id="staging-log-preview" class="json-block mt-md d-none"></pre>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(() => {
+    const pageData = UrsaPortal.parsePageData();
+    const worksetSelect = document.getElementById('staging_workset_euid');
+    const manifestSelect = document.getElementById('staging_manifest_euid');
+    const bucketSelect = document.getElementById('staging_reference_bucket');
+    const regionSelect = document.getElementById('staging_region');
+    const clusterInput = document.getElementById('staging_cluster_name');
+    const stageTargetInput = document.getElementById('staging_stage_target');
+    const manifests = Array.isArray(pageData.manifests) ? pageData.manifests : [];
+    const clusters = Array.isArray(pageData.clusters) ? pageData.clusters : [];
+    let runAfterDefine = false;
+
+    function selectedManifest() {
+        const manifestEuid = manifestSelect?.value || '';
+        return manifests.find((manifest) => manifest.manifest_euid === manifestEuid) || null;
+    }
+
+    function manifestMetadata(manifest) {
+        return (manifest?.metadata && manifest.metadata.analysis_samples_manifest) || {};
+    }
+
+    function parseManifestRows(content) {
+        const lines = String(content || '').trim().split(/\r?\n/).filter(Boolean);
+        if (lines.length < 2) return [];
+        const headers = lines[0].split('\t');
+        return lines.slice(1).map((line) => {
+            const values = line.split('\t');
+            const row = {};
+            headers.forEach((header, index) => { row[header] = values[index] || ''; });
+            return row;
+        });
+    }
+
+    function filterManifests() {
+        const workset = worksetSelect?.value || '';
+        Array.from(manifestSelect?.options || []).forEach((option) => {
+            const owner = option.getAttribute('data-workset') || '';
+            option.hidden = Boolean(owner && workset && owner !== workset);
+        });
+        if (manifestSelect?.selectedOptions[0]?.hidden) manifestSelect.value = '';
+    }
+
+    function syncBucketRegion() {
+        const region = bucketSelect?.selectedOptions[0]?.getAttribute('data-region') || '';
+        if (region && regionSelect) regionSelect.value = region;
+    }
+
+    function syncClusterRegion() {
+        const clusterName = clusterInput?.value || '';
+        const cluster = clusters.find((item) => item.cluster_name === clusterName);
+        if (cluster?.region && regionSelect) regionSelect.value = cluster.region;
+    }
+
+    function updatePreview() {
+        const manifest = selectedManifest();
+        const metadata = manifestMetadata(manifest);
+        const rows = parseManifestRows(metadata.content || '');
+        const sourcePaths = [];
+        rows.forEach((row) => {
+            ['R1_FQ', 'R2_FQ', 'ILMN_R1_FQ', 'ILMN_R2_FQ', 'ULTIMA_CRAM', 'ONT_CRAM', 'PB_BAM', 'ONT_BAM', 'ROCHE_BAM'].forEach((field) => {
+                if (row[field]) sourcePaths.push(row[field]);
+            });
+        });
+        const sourcePreview = document.getElementById('staging-source-preview');
+        const destinationPreview = document.getElementById('staging-destination-preview');
+        if (sourcePreview) {
+            sourcePreview.textContent = manifest
+                ? [
+                    `manifest: ${manifest.manifest_euid}`,
+                    `filename: ${metadata.filename || 'analysis_samples.tsv'}`,
+                    `rows: ${metadata.row_count || rows.length}`,
+                    `sha256: ${metadata.sha256 || ''}`,
+                    '',
+                    ...sourcePaths.slice(0, 12),
+                    sourcePaths.length > 12 ? `... ${sourcePaths.length - 12} more source paths` : '',
+                ].filter((line) => line !== '').join('\n')
+                : 'Choose an analysis samples manifest.';
+        }
+        if (destinationPreview) {
+            const referenceBucket = String(bucketSelect?.value || '').replace(/\/+$/, '');
+            const stageTarget = String(stageTargetInput?.value || '').replace(/^\/+/, '').replace(/\/+$/, '');
+            destinationPreview.textContent = referenceBucket && stageTarget
+                ? [
+                    `reference_bucket: ${referenceBucket}`,
+                    `remote_s3_stage: ${referenceBucket}/${stageTarget}/remote_stage_<timestamp>`,
+                    `remote_fsx_root: /${stageTarget}`,
+                    `region: ${regionSelect?.value || ''}`,
+                    `cluster: ${clusterInput?.value || ''}`,
+                ].join('\n')
+                : 'Choose a bucket and stage target.';
+        }
+    }
+
+    function stagingPayload() {
+        const payload = {
+            workset_euid: worksetSelect?.value || '',
+            manifest_euid: manifestSelect?.value || '',
+            reference_bucket: bucketSelect?.value || '',
+            cluster_name: clusterInput?.value || '',
+            region: regionSelect?.value || '',
+            stage_target: stageTargetInput?.value || '',
+        };
+        const jobName = document.getElementById('staging_job_name')?.value || '';
+        if (jobName) payload.job_name = jobName;
+        return payload;
+    }
+
+    function actionButtons(job) {
+        const buttons = [];
+        if (String(job.state || '').toUpperCase() === 'DEFINED') {
+            buttons.push('<button type="button" class="btn btn-primary btn-sm" data-action="run">Run</button>');
+        }
+        if (['COMPLETED', 'FAILED'].includes(String(job.state || '').toUpperCase())) {
+            buttons.push('<button type="button" class="btn btn-outline btn-sm" data-action="logs">Logs</button>');
+        }
+        return buttons.join(' ');
+    }
+
+    function renderStagingJobs(jobs) {
+        if (!Array.isArray(jobs)) throw new Error('Staging job list response must be an array');
+        const body = document.getElementById('staging-jobs-body');
+        if (!body) return;
+        body.innerHTML = jobs.length ? jobs.map((job) => `
+            <tr data-job-euid="${escapeHtml(job.job_euid || '')}">
+                <td><span class="mono">${escapeHtml(job.job_euid || '')}</span><br>${escapeHtml(job.job_name || '')}</td>
+                <td class="mono">${escapeHtml(job.workset_euid || '')}</td>
+                <td class="mono">${escapeHtml(job.manifest_euid || '')}</td>
+                <td class="mono">${escapeHtml(job.request?.reference_bucket || '')}</td>
+                <td>${escapeHtml(job.cluster_name || '')}<br><span class="text-muted">${escapeHtml(job.region || '')}</span></td>
+                <td class="mono">${escapeHtml(job.request?.stage_target || '')}</td>
+                <td><span class="badge badge-secondary">${escapeHtml(job.state || '')}</span></td>
+                <td>${escapeHtml(job.updated_at || '')}</td>
+                <td>${actionButtons(job)}</td>
+            </tr>
+        `).join('') : '<tr><td colspan="9" class="text-muted">No staging jobs yet.</td></tr>';
+    }
+
+    async function reloadStagingJobs() {
+        const jobs = await UrsaPortal.apiRequest('/api/v1/staging-jobs');
+        renderStagingJobs(jobs);
+        return jobs;
+    }
+
+    async function createStagingJob(event) {
+        event.preventDefault();
+        const created = await UrsaPortal.apiRequest('/api/v1/staging-jobs', {
+            method: 'POST',
+            body: stagingPayload(),
+        });
+        let message = 'Staging job defined';
+        if (runAfterDefine) {
+            await UrsaPortal.apiRequest(`/api/v1/staging-jobs/${encodeURIComponent(created.job_euid)}/run`, {
+                method: 'POST',
+                body: {},
+            });
+            message = 'Staging job started';
+        }
+        runAfterDefine = false;
+        await reloadStagingJobs();
+        UrsaPortal.showToast('success', message);
+    }
+
+    async function handleJobAction(event) {
+        const button = event.target.closest('button[data-action]');
+        if (!button) return;
+        const row = button.closest('tr[data-job-euid]');
+        const jobEuid = row?.getAttribute('data-job-euid') || '';
+        if (!jobEuid) return;
+        const action = button.getAttribute('data-action');
+        if (action === 'run') {
+            await UrsaPortal.apiRequest(`/api/v1/staging-jobs/${encodeURIComponent(jobEuid)}/run`, {
+                method: 'POST',
+                body: {},
+            });
+            await reloadStagingJobs();
+            UrsaPortal.showToast('success', 'Staging job started');
+        } else if (action === 'logs') {
+            const logs = await UrsaPortal.apiRequest(`/api/v1/staging-jobs/${encodeURIComponent(jobEuid)}/logs`);
+            const preview = document.getElementById('staging-log-preview');
+            preview.classList.remove('d-none');
+            preview.textContent = [
+                `job: ${logs.job_euid || jobEuid}`,
+                `stage_dir: ${logs.stage_dir || ''}`,
+                '',
+                logs.stdout || '',
+                logs.stderr ? `stderr:\n${logs.stderr}` : '',
+            ].filter(Boolean).join('\n');
+        }
+    }
+
+    worksetSelect?.addEventListener('change', () => { filterManifests(); updatePreview(); });
+    manifestSelect?.addEventListener('change', updatePreview);
+    bucketSelect?.addEventListener('change', () => { syncBucketRegion(); updatePreview(); });
+    regionSelect?.addEventListener('change', updatePreview);
+    clusterInput?.addEventListener('input', () => { syncClusterRegion(); updatePreview(); });
+    stageTargetInput?.addEventListener('input', updatePreview);
+    document.getElementById('staging-preview-btn')?.addEventListener('click', updatePreview);
+    document.getElementById('refresh-staging-jobs-btn')?.addEventListener('click', () => reloadStagingJobs().catch((error) => UrsaPortal.showToast('error', error.message)));
+    document.getElementById('define-run-staging-btn')?.addEventListener('click', () => {
+        runAfterDefine = true;
+        document.getElementById('staging-job-form')?.requestSubmit();
+    });
+    document.getElementById('staging-job-form')?.addEventListener('submit', (event) => createStagingJob(event).catch((error) => {
+        runAfterDefine = false;
+        UrsaPortal.showToast('error', error.message);
+    }));
+    document.getElementById('staging-jobs-body')?.addEventListener('click', (event) => handleJobAction(event).catch((error) => UrsaPortal.showToast('error', error.message)));
+
+    filterManifests();
+    syncBucketRegion();
+    syncClusterRegion();
+    renderStagingJobs(Array.isArray(pageData.staging_jobs) ? pageData.staging_jobs : []);
+    updatePreview();
+})();
+</script>
+{% endblock %}

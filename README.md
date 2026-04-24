@@ -50,6 +50,18 @@ ursa server start --port 8913
 `ursa server start` uses the shared TLS resolver by default. Pass `--no-ssl` for HTTP-only
 local testing, or `--cert` and `--key` to override the deployment-scoped cert pair.
 
+### CLI Examples
+
+Examples:
+
+```bash
+ursa config init
+ursa db build --target local
+ursa server start --port 8913 --foreground
+ursa monitor start --config config/workset-monitor-config.yaml --foreground
+daylily-ec samples stage samples.tsv --profile default --region us-west-2 --reference-bucket s3://bucket/ --config-dir worksets/ws-001
+```
+
 Current live caveats from the April 7, 2026 local walkthrough:
 
 - the missing-config hint from `ursa env validate` now says `ursa config init`

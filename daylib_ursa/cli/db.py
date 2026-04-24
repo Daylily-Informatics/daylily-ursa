@@ -164,7 +164,12 @@ def build(
         DEFAULT_TAPDB_DATABASE_NAME, "--namespace", help="TapDB namespace"
     ),
 ) -> None:
-    """Bootstrap TapDB runtime and apply the Ursa overlay."""
+    """Bootstrap TapDB runtime and apply the Ursa overlay.
+
+    Examples:
+        ursa db build --target local
+        ursa db build --target aurora --cluster daylily-ursa-dev
+    """
     try:
         _build_target(
             target=target,

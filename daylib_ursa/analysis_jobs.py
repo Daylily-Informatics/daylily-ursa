@@ -3,16 +3,14 @@ from __future__ import annotations
 import re
 import subprocess
 from pathlib import Path
-from tempfile import TemporaryDirectory
 from typing import Any
 
 from daylib_ursa.analysis_commands import get_analysis_command
 from daylib_ursa.ephemeral_cluster.runner import DaylilyEcClient, _summarize_process_output
-from daylib_ursa.resource_store import AnalysisJobRecord, ManifestRecord, ResourceStore
+from daylib_ursa.resource_store import AnalysisJobRecord, ResourceStore, StagingJobRecord
 from daylib_ursa.tapdb_graph import utc_now_iso
 
 
-_REMOTE_STAGE_RE = re.compile(r"^Remote FSx stage directory:\s*(?P<path>\S+)\s*$", re.MULTILINE)
 _MARKER_RE = re.compile(r"^__(?P<name>DAYLILY_[A-Z_]+)__=(?P<value>.*)$", re.MULTILINE)
 
 
@@ -21,21 +19,6 @@ def _safe_session_name(job_euid: str) -> str:
     if not cleaned:
         raise ValueError("job_euid is required")
     return f"ursa-{cleaned}"[:80]
-
-
-def _manifest_content(manifest: ManifestRecord) -> str:
-    stable_manifest = dict((manifest.metadata or {}).get("stable_manifest") or {})
-    content = str(stable_manifest.get("content") or "")
-    if not content:
-        raise ValueError("Manifest is missing stable_manifest.content")
-    return content
-
-
-def _parse_stage_dir(stdout: str) -> str:
-    match = _REMOTE_STAGE_RE.search(stdout or "")
-    if match is None:
-        raise RuntimeError("daylily-ec samples stage did not report a remote FSx stage directory")
-    return match.group("path").strip()
 
 
 def _parse_launch_markers(stdout: str) -> dict[str, str]:
@@ -55,7 +38,7 @@ def _parse_launch_markers(stdout: str) -> dict[str, str]:
 
 
 class AnalysisJobManager:
-    """Launch manager for Ursa analysis jobs through daylily-ec 2.1.1."""
+    """Launch manager for Ursa analysis jobs through daylily-ec 2.1.3."""
 
     def __init__(
         self,
@@ -68,40 +51,72 @@ class AnalysisJobManager:
         self.client = client
         self.workspace_root = (workspace_root or Path.cwd()).resolve()
 
-    def _stage_samples(
+    @staticmethod
+    def _stage_dir_from_completed_staging_job(
+        *, analysis_job: AnalysisJobRecord, staging_job: StagingJobRecord
+    ) -> str:
+        if staging_job.tenant_id != analysis_job.tenant_id:
+            raise ValueError("Staging job tenant does not match analysis job tenant")
+        if staging_job.workset_euid != analysis_job.workset_euid:
+            raise ValueError("Staging job does not belong to analysis job workset")
+        if staging_job.manifest_euid != analysis_job.manifest_euid:
+            raise ValueError("Staging job does not belong to analysis job manifest")
+        if staging_job.state != "COMPLETED":
+            raise ValueError("Staging job must be COMPLETED before analysis launch")
+        stage_dir = str((staging_job.stage or {}).get("stage_dir") or "").strip()
+        if not stage_dir:
+            raise ValueError("Staging job is completed but has no stage_dir")
+        return stage_dir
+
+    def _run_staging_job_for_analysis(
         self,
         *,
-        manifest: ManifestRecord,
+        job: AnalysisJobRecord,
         request: dict[str, Any],
-        region: str,
         aws_profile: str | None,
-        temp_dir: Path,
-    ) -> tuple[subprocess.CompletedProcess[str], str]:
+        actor_user_id: str,
+    ) -> tuple[StagingJobRecord, str]:
+        from daylib_ursa.staging_jobs import StagingJobManager
+
         reference_bucket = str(request.get("reference_bucket") or "").strip()
         if not reference_bucket:
-            raise ValueError("reference_bucket is required for analysis launch")
-        manifest_path = temp_dir / "analysis_samples.tsv"
-        manifest_path.write_text(_manifest_content(manifest), encoding="utf-8", newline="\n")
-        args = [
-            "samples",
-            "stage",
-            str(manifest_path),
-            "--reference-bucket",
-            reference_bucket,
-            "--config-dir",
-            str(temp_dir),
-            "--region",
-            region,
-        ]
-        stage_target = str(request.get("stage_target") or "").strip()
-        if stage_target:
-            args.extend(["--stage-target", stage_target])
-        if aws_profile:
-            args.extend(["--profile", aws_profile])
-        result = self.client.run(args, cwd=self.workspace_root)
-        if result.returncode != 0:
-            raise RuntimeError(_summarize_process_output(result))
-        return result, _parse_stage_dir(result.stdout or "")
+            raise ValueError("reference_bucket is required for analysis launch staging")
+        staging_job = self.resource_store.create_staging_job(
+            job_name=f"{job.job_name}:staging",
+            workset_euid=job.workset_euid,
+            manifest_euid=job.manifest_euid,
+            cluster_name=job.cluster_name,
+            region=job.region,
+            tenant_id=job.tenant_id,
+            owner_user_id=job.owner_user_id,
+            request={
+                "reference_bucket": reference_bucket,
+                "stage_target": str(request.get("stage_target") or "").strip()
+                or "/data/staged_sample_data",
+                "aws_profile": aws_profile,
+                "analysis_job_euid": job.job_euid,
+            },
+        )
+        self.resource_store.add_staging_job_event(
+            job_euid=staging_job.job_euid,
+            event_type="defined",
+            status="DEFINED",
+            summary="Defined staging job for analysis launch",
+            details={"analysis_job_euid": job.job_euid, "manifest_euid": job.manifest_euid},
+            created_by=actor_user_id,
+        )
+        manager = StagingJobManager(
+            resource_store=self.resource_store,
+            client=self.client,
+            workspace_root=self.workspace_root,
+        )
+        completed = manager.run_job(staging_job.job_euid, actor_user_id=actor_user_id)
+        if completed.state != "COMPLETED":
+            raise RuntimeError(completed.error or completed.output_summary or "Staging job failed")
+        stage_dir = self._stage_dir_from_completed_staging_job(
+            analysis_job=job, staging_job=completed
+        )
+        return completed, stage_dir
 
     def _launch_workflow(
         self,
@@ -132,7 +147,7 @@ class AnalysisJobManager:
             project=str(request.get("project") or "").strip() or None,
             dry_run=bool(request.get("dry_run")),
         )
-        result = self.client.run(argv, cwd=self.workspace_root)
+        result = self.client.workflow_launch(argv, cwd=self.workspace_root)
         if result.returncode != 0:
             raise RuntimeError(_summarize_process_output(result))
         markers = _parse_launch_markers(result.stdout or "")
@@ -151,9 +166,6 @@ class AnalysisJobManager:
         job = self.resource_store.get_analysis_job(job_euid)
         if job is None:
             raise KeyError(f"analysis job not found: {job_euid}")
-        manifest = self.resource_store.get_manifest(job.manifest_euid)
-        if manifest is None:
-            raise KeyError(f"manifest not found: {job.manifest_euid}")
         request = dict(job.request or {})
         aws_profile = (
             str(request.get("aws_profile") or self.client.aws_profile or "").strip() or None
@@ -170,65 +182,83 @@ class AnalysisJobManager:
                 job_euid=job_euid,
                 event_type="stage",
                 status="RUNNING",
-                summary="Staging stable analysis manifest",
-                details={"manifest_euid": manifest.manifest_euid},
+                summary="Preparing analysis staging",
+                details={"manifest_euid": job.manifest_euid},
                 created_by=actor_user_id,
             )
-            with TemporaryDirectory(prefix="ursa-analysis-") as temp_dir_name:
-                temp_dir = Path(temp_dir_name)
-                stage_result, stage_dir = self._stage_samples(
-                    manifest=manifest,
-                    request=request,
-                    region=job.region,
-                    aws_profile=aws_profile,
-                    temp_dir=temp_dir,
+            requested_staging_job_euid = str(request.get("staging_job_euid") or "").strip()
+            if requested_staging_job_euid:
+                staging_job = self.resource_store.get_staging_job(requested_staging_job_euid)
+                if staging_job is None:
+                    raise KeyError(f"staging job not found: {requested_staging_job_euid}")
+                stage_dir = self._stage_dir_from_completed_staging_job(
+                    analysis_job=job,
+                    staging_job=staging_job,
                 )
+                staging_job_euid = staging_job.job_euid
+                self.resource_store.add_analysis_job_event(
+                    job_euid=job_euid,
+                    event_type="stage",
+                    status="COMPLETED",
+                    summary=f"Using staged samples from {stage_dir}",
+                    details={
+                        "staging_job_euid": staging_job_euid,
+                        "stage_dir": stage_dir,
+                    },
+                    created_by=actor_user_id,
+                )
+            else:
+                staging_job, stage_dir = self._run_staging_job_for_analysis(
+                    job=job,
+                    request=request,
+                    aws_profile=aws_profile,
+                    actor_user_id=actor_user_id,
+                )
+                staging_job_euid = staging_job.job_euid
                 self.resource_store.add_analysis_job_event(
                     job_euid=job_euid,
                     event_type="stage",
                     status="COMPLETED",
                     summary=f"Staged samples to {stage_dir}",
-                    details={
-                        "stage_dir": stage_dir,
-                        "stdout": (stage_result.stdout or "")[-4000:],
-                        "stderr": (stage_result.stderr or "")[-4000:],
-                    },
+                    details={"staging_job_euid": staging_job_euid, "stage_dir": stage_dir},
                     created_by=actor_user_id,
                 )
-                self.resource_store.update_analysis_job_status(
-                    job_euid=job_euid,
-                    state="LAUNCHING",
-                    created_by=actor_user_id,
-                    started_at=started_at,
-                    launch={"stage_dir": stage_dir},
-                )
-                launch_result, launch = self._launch_workflow(
-                    job=job,
-                    request=request,
-                    stage_dir=stage_dir,
-                    aws_profile=aws_profile,
-                )
-                self.resource_store.add_analysis_job_event(
-                    job_euid=job_euid,
-                    event_type="launch",
-                    status="RUNNING",
-                    summary=f"Workflow session {launch['session_name']} launched",
-                    details={
-                        "session_name": launch["session_name"],
-                        "run_dir": launch["run_dir"],
-                        "return_code": int(launch_result.returncode),
-                    },
-                    created_by=actor_user_id,
-                )
-                return self.resource_store.update_analysis_job_status(
-                    job_euid=job_euid,
-                    state="RUNNING",
-                    created_by=actor_user_id,
-                    started_at=started_at,
-                    return_code=int(launch_result.returncode),
-                    output_summary=f"Workflow session {launch['session_name']} launched",
-                    launch=launch,
-                )
+            self.resource_store.update_analysis_job_status(
+                job_euid=job_euid,
+                state="LAUNCHING",
+                created_by=actor_user_id,
+                started_at=started_at,
+                launch={"stage_dir": stage_dir, "staging_job_euid": staging_job_euid},
+            )
+            launch_result, launch = self._launch_workflow(
+                job=job,
+                request=request,
+                stage_dir=stage_dir,
+                aws_profile=aws_profile,
+            )
+            launch["staging_job_euid"] = staging_job_euid
+            self.resource_store.add_analysis_job_event(
+                job_euid=job_euid,
+                event_type="launch",
+                status="RUNNING",
+                summary=f"Workflow session {launch['session_name']} launched",
+                details={
+                    "session_name": launch["session_name"],
+                    "run_dir": launch["run_dir"],
+                    "return_code": int(launch_result.returncode),
+                    "staging_job_euid": staging_job_euid,
+                },
+                created_by=actor_user_id,
+            )
+            return self.resource_store.update_analysis_job_status(
+                job_euid=job_euid,
+                state="RUNNING",
+                created_by=actor_user_id,
+                started_at=started_at,
+                return_code=int(launch_result.returncode),
+                output_summary=f"Workflow session {launch['session_name']} launched",
+                launch=launch,
+            )
         except Exception as exc:
             error_message = f"{type(exc).__name__}: {exc}"
             self.resource_store.add_analysis_job_event(

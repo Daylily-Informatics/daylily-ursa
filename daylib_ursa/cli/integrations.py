@@ -117,7 +117,12 @@ def import_artifact(
         "", "--idempotency-key", help="Optional import idempotency key"
     ),
 ) -> None:
-    """Import an artifact into Dewey and print the new artifact EUID."""
+    """Import an artifact into Dewey and print the new artifact EUID.
+
+    Examples:
+        ursa --json integrations dewey import-artifact --artifact-type qc --storage-uri s3://b/qc
+        ursa --json integrations dewey import-artifact --artifact-type report --storage-uri s3://b/r
+    """
     client = _require_dewey_client()
     metadata = _parse_metadata_json(metadata_json)
     try:

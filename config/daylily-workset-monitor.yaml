@@ -49,7 +49,7 @@ pipeline:
   # Command that prepares staging files on the headnode.
   # Available variables: {profile}, {region}, {reference_bucket}, {analysis_samples}, {output_dir}
   # Note: --config-dir ensures generated samples.tsv/units.tsv are written to the workset state dir
-  stage_command: daylily-stage-samples-from-local-to-headnode --profile {profile} --region {region} --reference-bucket {reference_bucket} --config-dir {output_dir} {analysis_samples}
+  stage_command: daylily-ec samples stage {analysis_samples} --profile {profile} --region {region} --reference-bucket {reference_bucket} --config-dir {output_dir}
   # Command that creates the pipeline working tree before execution.  The day-clone output
   # is parsed to determine the working directory for subsequent commands.
   clone_command: echo cloning && day-clone {clone_args}

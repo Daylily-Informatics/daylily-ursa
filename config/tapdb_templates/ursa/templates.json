@@ -249,6 +249,45 @@
       "json_addl": {}
     },
     {
+      "name": "Ursa Staging Job",
+      "polymorphic_discriminator": "workflow_template",
+      "category": "RGX",
+      "type": "staging",
+      "subtype": "job",
+      "version": "1.0",
+      "instance_prefix": "RGX",
+      "instance_polymorphic_identity": "workflow_instance",
+      "bstatus": "active",
+      "is_singleton": false,
+      "json_addl": {}
+    },
+    {
+      "name": "Ursa Staging Job Revision",
+      "polymorphic_discriminator": "action_template",
+      "category": "RGX",
+      "type": "staging",
+      "subtype": "job-revision",
+      "version": "1.0",
+      "instance_prefix": "RGX",
+      "instance_polymorphic_identity": "action_instance",
+      "bstatus": "active",
+      "is_singleton": false,
+      "json_addl": {}
+    },
+    {
+      "name": "Ursa Staging Job Event",
+      "polymorphic_discriminator": "action_template",
+      "category": "RGX",
+      "type": "staging",
+      "subtype": "job-event",
+      "version": "1.0",
+      "instance_prefix": "RGX",
+      "instance_polymorphic_identity": "action_instance",
+      "bstatus": "active",
+      "is_singleton": false,
+      "json_addl": {}
+    },
+    {
       "name": "Ursa Local Anomaly Record",
       "polymorphic_discriminator": "generic_template",
       "category": "RGX",

@@ -91,6 +91,43 @@ def test_cli_registry_exposes_v2_command_tree_and_policies() -> None:
     assert import_artifact_cmd.policy.mutates_state is True
 
 
+def _invoke_help(*args: str) -> str:
+    result = runner.invoke(app, [*args, "--help"])
+
+    assert result.exit_code == 0
+    return result.stdout
+
+
+def test_root_help_includes_tested_examples() -> None:
+    help_text = _invoke_help()
+
+    assert "Examples:" in help_text
+    assert "ursa config init" in help_text
+    assert "ursa db build --target local" in help_text
+    assert "ursa server start --port 8913" in help_text
+    assert "ursa monitor start --config config/workset-monitor-config.yaml" in help_text
+
+
+def test_key_command_help_includes_tested_examples() -> None:
+    command_examples = {
+        ("db", "build"): ("Examples:", "ursa db build --target local"),
+        ("server", "start"): ("Examples:", "ursa server start --port 8913"),
+        ("monitor", "start"): (
+            "Examples:",
+            "ursa monitor start --config config/workset-monitor-config.yaml",
+        ),
+        ("integrations", "dewey", "import-artifact"): (
+            "Examples:",
+            "ursa --json integrations dewey import-artifact",
+        ),
+    }
+
+    for args, expected_fragments in command_examples.items():
+        help_text = _invoke_help(*args)
+        for fragment in expected_fragments:
+            assert fragment in help_text
+
+
 def test_root_json_is_global_for_version() -> None:
     result = runner.invoke(app, ["--json", "version"])
 

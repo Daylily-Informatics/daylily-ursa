@@ -111,10 +111,13 @@ from daylib_ursa.resource_store import (
     LinkedBucketRecord,
     ManifestRecord,
     ResourceStore,
+    StagingJobEventRecord,
+    StagingJobRecord,
     WorksetRecord,
 )
 from daylib_ursa.s3_utils import RegionAwareS3Client, normalize_bucket_name
-from daylib_ursa.stable_manifest import build_stable_manifest
+from daylib_ursa.analysis_samples_manifest import build_analysis_samples_manifest
+from daylib_ursa.staging_jobs import StagingJobManager
 from daylib_ursa.tapdb_mount import mount_tapdb_admin
 from daylib_ursa.ursa_config import get_ursa_config, parse_regions_csv, update_config_regions
 
@@ -567,7 +570,7 @@ class AnalysisJobCreateRequest(BaseModel):
     manifest_euid: str
     cluster_name: str
     region: str
-    reference_bucket: str
+    reference_bucket: str | None = None
     analysis_command_id: str
     optional_features: list[str] = Field(default_factory=list)
     session_name: str | None = None
@@ -575,6 +578,7 @@ class AnalysisJobCreateRequest(BaseModel):
     aws_profile: str | None = None
     dry_run: bool = False
     stage_target: str | None = None
+    staging_job_euid: str | None = None
 
     @model_validator(mode="after")
     def validate_required_fields(self) -> "AnalysisJobCreateRequest":
@@ -583,11 +587,15 @@ class AnalysisJobCreateRequest(BaseModel):
             "manifest_euid",
             "cluster_name",
             "region",
-            "reference_bucket",
             "analysis_command_id",
         ):
             if not str(getattr(self, field_name) or "").strip():
                 raise ValueError(f"{field_name} is required")
+        if (
+            not str(self.staging_job_euid or "").strip()
+            and not str(self.reference_bucket or "").strip()
+        ):
+            raise ValueError("reference_bucket is required when staging_job_euid is omitted")
         return self
 
 
@@ -626,6 +634,71 @@ class AnalysisJobResponse(BaseModel):
     request: dict[str, Any]
     launch: dict[str, Any]
     events: list[AnalysisJobEventResponse]
+
+
+class StagingJobCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    job_name: str | None = None
+    workset_euid: str
+    manifest_euid: str
+    cluster_name: str
+    region: str
+    reference_bucket: str
+    stage_target: str | None = None
+    aws_profile: str | None = None
+    debug: bool = False
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_required_fields(self) -> "StagingJobCreateRequest":
+        for field_name in (
+            "workset_euid",
+            "manifest_euid",
+            "cluster_name",
+            "region",
+            "reference_bucket",
+        ):
+            if not str(getattr(self, field_name) or "").strip():
+                raise ValueError(f"{field_name} is required")
+        return self
+
+
+class StagingJobRunRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class StagingJobEventResponse(BaseModel):
+    event_euid: str
+    job_euid: str
+    event_type: str
+    status: str
+    summary: str
+    details: dict[str, Any]
+    created_by: str | None
+    created_at: str
+
+
+class StagingJobResponse(BaseModel):
+    job_euid: str
+    job_name: str
+    workset_euid: str
+    manifest_euid: str
+    cluster_name: str
+    region: str
+    tenant_id: uuid.UUID
+    owner_user_id: str
+    state: str
+    created_at: str
+    updated_at: str
+    started_at: str | None
+    completed_at: str | None
+    return_code: int | None
+    error: str | None
+    output_summary: str | None
+    request: dict[str, Any]
+    stage: dict[str, Any]
+    events: list[StagingJobEventResponse]
 
 
 class ArtifactImportResponse(BaseModel):
@@ -987,6 +1060,34 @@ def _analysis_job_response(record: AnalysisJobRecord) -> AnalysisJobResponse:
         request=record.request,
         launch=record.launch,
         events=[_analysis_job_event_response(item) for item in record.events],
+    )
+
+
+def _staging_job_event_response(record: StagingJobEventRecord) -> StagingJobEventResponse:
+    return StagingJobEventResponse(**record.__dict__)
+
+
+def _staging_job_response(record: StagingJobRecord) -> StagingJobResponse:
+    return StagingJobResponse(
+        job_euid=record.job_euid,
+        job_name=record.job_name,
+        workset_euid=record.workset_euid,
+        manifest_euid=record.manifest_euid,
+        cluster_name=record.cluster_name,
+        region=record.region,
+        tenant_id=record.tenant_id,
+        owner_user_id=record.owner_user_id,
+        state=record.state,
+        created_at=record.created_at,
+        updated_at=record.updated_at,
+        started_at=record.started_at,
+        completed_at=record.completed_at,
+        return_code=record.return_code,
+        error=record.error,
+        output_summary=record.output_summary,
+        request=record.request,
+        stage=record.stage,
+        events=[_staging_job_event_response(item) for item in record.events],
     )
 
 
@@ -1602,6 +1703,7 @@ def create_app(
     user_directory: CognitoUserDirectoryService | None = None,
     cluster_service: ClusterService | None = None,
     analysis_job_manager: AnalysisJobManager | None = None,
+    staging_job_manager: StagingJobManager | None = None,
     settings: Settings | None = None,
     require_api_key: bool | None = None,
     s3_client: Any | None = None,
@@ -1689,6 +1791,15 @@ def create_app(
     )
     app.state.analysis_job_manager = analysis_job_manager or (
         AnalysisJobManager(
+            resource_store=resource_store,
+            client=cluster_service.client,
+            workspace_root=Path.cwd(),
+        )
+        if resource_store is not None and hasattr(cluster_service, "client")
+        else None
+    )
+    app.state.staging_job_manager = staging_job_manager or (
+        StagingJobManager(
             resource_store=resource_store,
             client=cluster_service.client,
             workspace_root=Path.cwd(),
@@ -1950,6 +2061,12 @@ def create_app(
         manager = getattr(app.state, "analysis_job_manager", None)
         if manager is None:
             raise HTTPException(status_code=503, detail="Analysis job manager is not configured")
+        return manager
+
+    def require_staging_job_manager() -> StagingJobManager:
+        manager = getattr(app.state, "staging_job_manager", None)
+        if manager is None:
+            raise HTTPException(status_code=503, detail="Staging job manager is not configured")
         return manager
 
     def require_dewey_client() -> DeweyClient:
@@ -2975,20 +3092,31 @@ def create_app(
                 request=request,
             )
         )
-        try:
-            stable_manifest = build_stable_manifest(
-                metadata=metadata,
-                input_references=input_references,
-            )
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
         metadata = dict(metadata)
         if "editor_manifest_tsv" in metadata:
             raise HTTPException(
                 status_code=400,
                 detail="editor_manifest_tsv is not supported; provide editor_analysis_inputs",
             )
-        metadata["stable_manifest"] = stable_manifest.metadata()
+        if "stable_manifest" in metadata:
+            raise HTTPException(
+                status_code=400,
+                detail="metadata.stable_manifest is not supported; Ursa writes metadata.analysis_samples_manifest",
+            )
+        if "analysis_samples_manifest" in metadata:
+            raise HTTPException(
+                status_code=400,
+                detail="metadata.analysis_samples_manifest is generated by Ursa",
+            )
+        try:
+            analysis_samples_manifest = build_analysis_samples_manifest(
+                metadata=metadata,
+                input_references=input_references,
+                artifact_euids=artifact_euids,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        metadata["analysis_samples_manifest"] = analysis_samples_manifest.metadata()
         record = resources.create_manifest(
             workset_euid=request.workset_euid,
             name=request.name,
@@ -3024,19 +3152,150 @@ def create_app(
         if not actor.is_admin and record.tenant_id != actor.tenant_id:
             raise HTTPException(status_code=403, detail="Manifest is outside the caller tenant")
         metadata = dict(record.metadata or {})
-        stable_manifest = dict(metadata.get("stable_manifest") or {})
-        tsv_content = str(stable_manifest.get("content") or "")
+        analysis_samples_manifest = dict(metadata.get("analysis_samples_manifest") or {})
+        tsv_content = str(analysis_samples_manifest.get("content") or "")
         if not tsv_content:
             raise HTTPException(
                 status_code=409,
-                detail="This manifest does not have stable analysis_samples.tsv content",
+                detail="This manifest does not have analysis_samples_manifest.content",
             )
-        filename = str(stable_manifest.get("filename") or "analysis_samples.tsv").replace("/", "-")
+        filename = str(analysis_samples_manifest.get("filename") or "analysis_samples.tsv").replace(
+            "/", "-"
+        )
         return PlainTextResponse(
             tsv_content,
             media_type="text/tab-separated-values",
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
+
+    def require_staging_job_access(
+        *,
+        job_euid: str,
+        actor: CurrentUser,
+        resources: ResourceStore,
+    ) -> StagingJobRecord:
+        record = resources.get_staging_job(job_euid)
+        if record is None:
+            raise HTTPException(status_code=404, detail="Staging job not found")
+        if record.tenant_id != actor.tenant_id:
+            raise HTTPException(status_code=403, detail="Staging job is outside the caller tenant")
+        return record
+
+    @app.get("/api/v1/staging-jobs", response_model=list[StagingJobResponse])
+    async def list_staging_jobs(
+        actor: RequireAuth,
+        resources: ResourceStore = Depends(require_resource_store),
+    ) -> list[StagingJobResponse]:
+        records = resources.list_staging_jobs(tenant_id=actor.tenant_id)
+        return [_staging_job_response(item) for item in records]
+
+    @app.post(
+        "/api/v1/staging-jobs",
+        response_model=StagingJobResponse,
+        status_code=status.HTTP_201_CREATED,
+    )
+    async def create_staging_job(
+        request: StagingJobCreateRequest,
+        actor: RequireAuth,
+        resources: ResourceStore = Depends(require_resource_store),
+    ) -> StagingJobResponse:
+        workset = resources.get_workset(request.workset_euid)
+        if workset is None:
+            raise HTTPException(status_code=404, detail="Workset not found")
+        if workset.tenant_id != actor.tenant_id:
+            raise HTTPException(status_code=403, detail="Workset is outside the caller tenant")
+        manifest = resources.get_manifest(request.manifest_euid)
+        if manifest is None:
+            raise HTTPException(status_code=404, detail="Manifest not found")
+        if manifest.tenant_id != actor.tenant_id:
+            raise HTTPException(status_code=403, detail="Manifest is outside the caller tenant")
+        if manifest.workset_euid != workset.workset_euid:
+            raise HTTPException(status_code=400, detail="Manifest does not belong to workset")
+        request_payload = {
+            "reference_bucket": request.reference_bucket,
+            "stage_target": request.stage_target or "/data/staged_sample_data",
+            "aws_profile": request.aws_profile,
+            "debug": bool(request.debug),
+            "metadata": dict(request.metadata or {}),
+        }
+        job_name = str(request.job_name or "").strip() or f"{workset.name}:staging"
+        try:
+            record = resources.create_staging_job(
+                job_name=job_name,
+                workset_euid=workset.workset_euid,
+                manifest_euid=manifest.manifest_euid,
+                cluster_name=request.cluster_name,
+                region=request.region,
+                tenant_id=actor.tenant_id,
+                owner_user_id=actor.user_id,
+                request=request_payload,
+            )
+            resources.add_staging_job_event(
+                job_euid=record.job_euid,
+                event_type="defined",
+                status="DEFINED",
+                summary="Defined staging job",
+                details={"manifest_euid": manifest.manifest_euid},
+                created_by=actor.user_id,
+            )
+            record = resources.get_staging_job(record.job_euid) or record
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return _staging_job_response(record)
+
+    @app.get("/api/v1/staging-jobs/{job_euid}", response_model=StagingJobResponse)
+    async def get_staging_job(
+        job_euid: str,
+        actor: RequireAuth,
+        resources: ResourceStore = Depends(require_resource_store),
+    ) -> StagingJobResponse:
+        return _staging_job_response(
+            require_staging_job_access(job_euid=job_euid, actor=actor, resources=resources)
+        )
+
+    @app.post(
+        "/api/v1/staging-jobs/{job_euid}/run",
+        response_model=StagingJobResponse,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    async def run_staging_job(
+        job_euid: str,
+        request: StagingJobRunRequest,
+        actor: RequireAuth,
+        resources: ResourceStore = Depends(require_resource_store),
+        manager: StagingJobManager = Depends(require_staging_job_manager),
+    ) -> StagingJobResponse:
+        _ = request
+        require_staging_job_access(job_euid=job_euid, actor=actor, resources=resources)
+        try:
+            record = manager.run_job(job_euid, actor_user_id=actor.user_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return _staging_job_response(record)
+
+    @app.get("/api/v1/staging-jobs/{job_euid}/logs")
+    async def get_staging_job_logs(
+        job_euid: str,
+        actor: RequireAuth,
+        lines: int = Query(default=200, ge=1, le=5000),
+        resources: ResourceStore = Depends(require_resource_store),
+        manager: StagingJobManager = Depends(require_staging_job_manager),
+    ) -> dict[str, Any]:
+        require_staging_job_access(job_euid=job_euid, actor=actor, resources=resources)
+        try:
+            return manager.logs(job_euid, lines=lines)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     def require_analysis_job_access(
         *,
@@ -3083,6 +3342,31 @@ def create_app(
             raise HTTPException(status_code=400, detail="Manifest does not belong to workset")
         if not actor.is_admin and manifest.tenant_id != actor.tenant_id:
             raise HTTPException(status_code=403, detail="Manifest is outside the caller tenant")
+        staging_job: StagingJobRecord | None = None
+        staging_job_euid = str(request.staging_job_euid or "").strip()
+        if staging_job_euid:
+            staging_job = resources.get_staging_job(staging_job_euid)
+            if staging_job is None:
+                raise HTTPException(status_code=404, detail="Staging job not found")
+            if staging_job.tenant_id != workset.tenant_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Staging job tenant does not match analysis job tenant",
+                )
+            if staging_job.workset_euid != workset.workset_euid:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Staging job does not belong to workset",
+                )
+            if staging_job.manifest_euid != manifest.manifest_euid:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Staging job does not belong to manifest",
+                )
+            if staging_job.state != "COMPLETED":
+                raise HTTPException(status_code=409, detail="Staging job is not completed")
+            if not str((staging_job.stage or {}).get("stage_dir") or "").strip():
+                raise HTTPException(status_code=409, detail="Staging job has no stage_dir")
         try:
             command = analysis_command_payload(
                 request.analysis_command_id,
@@ -3100,7 +3384,10 @@ def create_app(
             "project": request.project,
             "aws_profile": request.aws_profile,
             "dry_run": bool(request.dry_run),
-            "stage_target": request.stage_target,
+            "stage_target": request.stage_target
+            or (staging_job.request.get("stage_target") if staging_job else None)
+            or "/data/staged_sample_data",
+            "staging_job_euid": staging_job_euid or None,
             "command": command,
         }
         job_name = str(request.job_name or "").strip() or (

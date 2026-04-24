@@ -11,7 +11,7 @@ from typing import Any, Dict, Iterable, Optional, cast
 
 
 DAYLILY_EC_DISTRIBUTION = "daylily-ephemeral-cluster"
-REQUIRED_DAYLILY_EC_VERSION = "2.1.1"
+REQUIRED_DAYLILY_EC_VERSION = "2.1.3"
 
 
 def require_daylily_ec_version() -> str:
@@ -58,7 +58,7 @@ def _summarize_process_output(
 
 
 class DaylilyEcClient:
-    """Strict Ursa client for the daylily-ephemeral-cluster 2.1.1 contract."""
+    """Strict Ursa client for the daylily-ephemeral-cluster 2.1.3 contract."""
 
     def __init__(
         self,
@@ -121,6 +121,9 @@ class DaylilyEcClient:
         )
         if result.returncode != 0:
             raise RuntimeError(_summarize_process_output(result))
+        if not str(result.stdout or "").strip():
+            detail = (result.stderr or "").strip() or "daylily-ec returned empty JSON output"
+            raise RuntimeError(detail)
         try:
             payload = json.loads(result.stdout or "{}")
         except json.JSONDecodeError as exc:
@@ -187,6 +190,46 @@ class DaylilyEcClient:
             args.extend(["--profile", self.aws_profile])
         return self.run(args)
 
+    def stage_samples(
+        self,
+        *,
+        analysis_samples: Path,
+        reference_bucket: str,
+        config_dir: Path,
+        region: str,
+        stage_target: str | None = None,
+        aws_profile: Optional[str] = None,
+        debug: bool = False,
+        cwd: Optional[Path] = None,
+    ) -> subprocess.CompletedProcess[str]:
+        args = [
+            "samples",
+            "stage",
+            str(analysis_samples),
+            "--reference-bucket",
+            reference_bucket,
+            "--config-dir",
+            str(config_dir),
+            "--region",
+            region,
+        ]
+        resolved_profile = aws_profile if aws_profile is not None else self.aws_profile
+        if stage_target:
+            args.extend(["--stage-target", stage_target])
+        if resolved_profile:
+            args.extend(["--profile", resolved_profile])
+        if debug:
+            args.append("--debug")
+        return self.run(args, cwd=cwd)
+
+    def workflow_launch(
+        self,
+        args: Iterable[str],
+        *,
+        cwd: Optional[Path] = None,
+    ) -> subprocess.CompletedProcess[str]:
+        return self.run(args, cwd=cwd)
+
     def delete_dry_run(self, *, cluster_name: str, region: str) -> subprocess.CompletedProcess[str]:
         args = [
             "delete",
@@ -219,7 +262,7 @@ def write_dayec_cluster_config(
     s3_bucket_name: str,
     contact_email: Optional[str],
 ) -> Path:
-    """Write a non-interactive cluster request through the day-ec 2.1.1 library."""
+    """Write a non-interactive cluster request through the day-ec 2.1.3 library."""
 
     require_daylily_ec_version()
     module = import_module("daylily_ec.config")

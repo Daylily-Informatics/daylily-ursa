@@ -113,7 +113,12 @@ def start(
         help="Maximum number of worksets to run in parallel (overrides config file)",
     ),
 ):
-    """Start the workset monitor daemon."""
+    """Start the workset monitor daemon.
+
+    Examples:
+        ursa monitor start --config config/workset-monitor-config.yaml --foreground
+        ursa monitor start --config config/workset-monitor-config.yaml --once --dry-run
+    """
     _ensure_dir()
 
     # Check if already running
