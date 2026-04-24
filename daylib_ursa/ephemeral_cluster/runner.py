@@ -11,7 +11,7 @@ from typing import Any, Dict, Iterable, Optional, cast
 
 
 DAYLILY_EC_DISTRIBUTION = "daylily-ephemeral-cluster"
-REQUIRED_DAYLILY_EC_VERSION = "2.1.3"
+REQUIRED_DAYLILY_EC_VERSION = "2.1.4"
 
 
 def require_daylily_ec_version() -> str:
@@ -58,7 +58,7 @@ def _summarize_process_output(
 
 
 class DaylilyEcClient:
-    """Strict Ursa client for the daylily-ephemeral-cluster 2.1.3 contract."""
+    """Strict Ursa client for the daylily-ephemeral-cluster 2.1.4 contract."""
 
     def __init__(
         self,
@@ -262,7 +262,7 @@ def write_dayec_cluster_config(
     s3_bucket_name: str,
     contact_email: Optional[str],
 ) -> Path:
-    """Write a non-interactive cluster request through the day-ec 2.1.3 library."""
+    """Write a non-interactive cluster request through the day-ec 2.1.4 library."""
 
     require_daylily_ec_version()
     module = import_module("daylily_ec.config")

@@ -10,7 +10,7 @@ from daylib_ursa.ephemeral_cluster import runner
 def test_run_json_raises_when_daylily_ec_returns_empty_stdout(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(runner, "require_daylily_ec_version", lambda: "2.1.3")
+    monkeypatch.setattr(runner, "require_daylily_ec_version", lambda: "2.1.4")
 
     def fake_run(*_args, **_kwargs) -> subprocess.CompletedProcess[str]:
         return subprocess.CompletedProcess(
@@ -31,7 +31,7 @@ def test_run_json_raises_when_daylily_ec_returns_empty_stdout(
 def test_run_json_parses_object_payload(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(runner, "require_daylily_ec_version", lambda: "2.1.3")
+    monkeypatch.setattr(runner, "require_daylily_ec_version", lambda: "2.1.4")
     captured: dict[str, object] = {}
 
     def fake_run(command, **kwargs) -> subprocess.CompletedProcess[str]:  # noqa: ANN001
@@ -60,11 +60,11 @@ def test_run_json_parses_object_payload(
     ]
 
 
-def test_stage_samples_builds_daylily_ec_213_argv(
+def test_stage_samples_builds_daylily_ec_214_argv(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
 ) -> None:
-    monkeypatch.setattr(runner, "require_daylily_ec_version", lambda: "2.1.3")
+    monkeypatch.setattr(runner, "require_daylily_ec_version", lambda: "2.1.4")
 
     captured: dict[str, object] = {}
 
