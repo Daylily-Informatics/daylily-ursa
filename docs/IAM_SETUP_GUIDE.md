@@ -1,59 +1,41 @@
-# IAM Setup Guide for Ursa Monitor
+# Archived Background: IAM Setup Guide For Ursa Monitor
 
-This is a legacy workset-monitor note retained for background. The current repo
-surface is the analysis API described in [../README.md](../README.md).
+This note is retained for older workset-monitor deployments. Current Ursa runtime work should start from the root [README](../README.md), use `ursa ...` first, and use `tapdb ...`, `daycog ...`, or `daylily-ec ...` only where Ursa delegates that lifecycle.
 
-This guide describes the AWS IAM permissions needed for the **workset monitor/worker** to interact with AWS services (S3, SNS, CloudWatch, EC2).
+The active API/GUI surface now centers on worksets, manifests, staging jobs, analysis jobs, cluster operations, linked buckets, user tokens, and Atlas return. This file describes an older monitor/worker permission shape and should not be treated as the full current deployment policy.
 
-TapDB persistence is **Postgres-backed**. It is not an AWS “NoSQL table” service, so you should not grant IAM permissions for a fictional `tapdb:*` API.
+## Historical Scope
 
-## Overview
+The older monitor typically needed AWS permissions for:
 
-The monitor typically needs AWS permissions for:
+- S3 read/list access to workset paths and sentinel files
+- CloudWatch metrics and logs
+- SNS publish access for notifications
+- EC2 describe access for cluster discovery/status
 
-- **S3**: read/list workset paths and read/write sentinel files
-- **CloudWatch**: publish metrics and write logs (optional, depending on deployment)
-- **SNS**: publish notifications (optional)
-- **EC2**: describe instances/tags for cluster discovery/status
+The repository includes the historical example policy in [../iam-policy.json](../iam-policy.json).
 
-The repository includes an example policy in [../iam-policy.json](../iam-policy.json).
-
-## Quick Setup (AWS CLI)
+## Historical Setup Pattern
 
 ```bash
 AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text --profile "$AWS_PROFILE")
 
-# 1. Create the IAM policy
 aws iam create-policy \
   --policy-name UrsaWorksetMonitorPolicy \
   --policy-document file://iam-policy.json \
-  --description "Permissions for Ursa workset monitor/worker"
+  --description "Permissions for the archived Ursa workset monitor"
 
-# 2. Attach to an existing role
 aws iam attach-role-policy \
   --role-name YOUR_MONITOR_ROLE \
   --policy-arn "arn:aws:iam::${AWS_ACCOUNT_ID}:policy/UrsaWorksetMonitorPolicy"
 ```
 
-## Customizing The Policy
+Review and scope the example policy before any live AWS change. Creating or attaching IAM policies is a destructive/security-sensitive operation and should be explicitly approved before execution.
 
-### 1) Update S3 Bucket(s)
+## Current Notes
 
-Edit `iam-policy.json` and set the bucket ARNs to your workset bucket(s).
-
-### 2) Update SNS Topic Pattern (Optional)
-
-If you use SNS notifications, scope the SNS topic ARN(s) to your environment.
-
-### 3) CloudWatch Namespace
-
-If you restrict `cloudwatch:PutMetricData` by namespace, keep it aligned with Ursa’s metric namespace (`Daylily/WorksetMonitor`).
-
-## TapDB Note (If Using IAM Auth or Secrets Manager)
-
-Depending on your TapDB deployment, the process may additionally need:
-
-- `secretsmanager:GetSecretValue` for the DB secret ARN configured in TapDB, and
-- RDS IAM auth permissions (for example `rds-db:connect`) if enabled by your TapDB config.
-
-Those permissions are deployment-specific and intentionally not baked into the example policy.
+- TapDB persistence is Postgres-backed and is not an AWS service API.
+- TapDB lifecycle is delegated to the `tapdb` CLI when Ursa explicitly needs DB bootstrap or inspection.
+- Cognito lifecycle is delegated to `daycog`.
+- Sample staging and workflow execution are delegated to `daylily-ec`.
+- Cluster delete operations should use Ursa's delete-plan path before any live delete.

@@ -1,5 +1,8 @@
-# Example configuration for the daylily workset monitor tool.
-# Copy and edit this file before running daylily-workset-monitor.
+# Archived configuration for the daylily workset monitor tool.
+# Current Ursa runtime operations should start with `ursa ...`; sample staging
+# and workflow execution are delegated to daylily-ec where Ursa explicitly calls
+# that execution-plane contract.
+# Copy and edit this file only for a monitor deployment that still uses this path.
 
 aws:
   profile: default
@@ -7,8 +10,8 @@ aws:
   # Optional session duration for profile authentication in seconds.
   session_duration_seconds: 3600
 
-# NOTE: The monitor does not have a default bucket. Each workset has its own bucket
-# assigned during creation based on the selected cluster's region (from ~/.config/ursa/ursa-config.yaml).
+# NOTE: The archived monitor does not have a default bucket. Each workset has its
+# own bucket assigned during creation based on the selected cluster's region.
 monitor:
   prefix: daylily_monitoring/active_worksets/
   archive_prefix: daylily_monitoring/archived_worksets/
