@@ -22,10 +22,21 @@ class DummyBloomClient:
         raise AssertionError("not used")
 
 
+class DummyClusterService:
+    regions = ["us-west-2"]
+    client = object()
+
+
 def _settings(*, mount_enabled: bool = False) -> Settings:
     return Settings(
         cors_origins="*",
         ursa_internal_api_key="ursa-test-key",
+        session_secret_key="ursa-session-secret",
+        cognito_domain="auth.example.test",
+        cognito_app_client_id="client-123",
+        cognito_app_client_secret="ursa-cognito-secret",
+        cognito_callback_url="https://testserver/auth/callback",
+        cognito_logout_url="https://testserver/auth/logout",
         bloom_base_url="https://bloom.example",
         atlas_base_url="https://atlas.example",
         ursa_internal_output_bucket="ursa-internal",
@@ -35,7 +46,12 @@ def _settings(*, mount_enabled: bool = False) -> Settings:
 
 def _create_test_app():
     with patch("daylib_ursa.workset_api.RegionAwareS3Client", return_value=object()):
-        return create_app(DummyStore(), bloom_client=DummyBloomClient(), settings=_settings())
+        return create_app(
+            DummyStore(),
+            bloom_client=DummyBloomClient(),
+            settings=_settings(),
+            cluster_service=DummyClusterService(),
+        )
 
 
 def _runtime_inventory(app) -> tuple[set[tuple[str, str]], set[str]]:
@@ -161,6 +177,7 @@ def test_all_decorated_routes_have_direct_request_coverage() -> None:
         ("GET", "/auth/logout"),
         ("POST", "/auth/logout"),
         ("GET", "/logout"),
+        ("GET", "/api/v1/analysis-commands/illumina_snv_alignstats"),
     }
     missing = sorted(
         (method, route)
@@ -187,6 +204,7 @@ def test_runtime_route_inventory_covers_docs_static_and_tapdb_mount_boundaries()
                 DummyStore(),
                 bloom_client=DummyBloomClient(),
                 settings=_settings(mount_enabled=True),
+                cluster_service=DummyClusterService(),
             )
 
     routes, mounts = _runtime_inventory(app)

@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import os
+import subprocess
 import uuid
 from dataclasses import replace
 from pathlib import Path
 
 from daylib_ursa.cluster_jobs import ClusterJobManager, run_cluster_create_job
 from daylib_ursa.cluster_service import ClusterService
-from daylib_ursa.ephemeral_cluster.runner import REQUIRED_DAYLILY_EC_VERSION
 from daylib_ursa.resource_store import ClusterJobEventRecord, ClusterJobRecord
 
 TENANT_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
@@ -113,9 +112,25 @@ class MemoryResourceStore:
         return self.jobs.get(job_euid)
 
 
-def _write_executable(path: Path, content: str) -> None:
-    path.write_text(content, encoding="utf-8")
-    path.chmod(0o755)
+class FakeDaylilyEcClient:
+    def cluster_describe(self, *, cluster_name: str, region: str):
+        _ = region
+        return {
+            "clusterName": cluster_name,
+            "clusterStatus": "CREATE_COMPLETE",
+            "computeFleetStatus": "RUNNING",
+            "headNode": {
+                "instanceType": "c7i.large",
+                "state": "running",
+            },
+            "scheduler": {"type": "slurm"},
+            "tags": [
+                {
+                    "key": "aws-parallelcluster-monitor-bucket",
+                    "value": "s3://ursa-bucket",
+                }
+            ],
+        }
 
 
 def test_cluster_job_manager_spawns_dedicated_worker_process(monkeypatch, tmp_path: Path) -> None:
@@ -134,7 +149,7 @@ def test_cluster_job_manager_spawns_dedicated_worker_process(monkeypatch, tmp_pa
 
     manager = ClusterJobManager(
         resource_store=store,
-        cluster_service=ClusterService(regions=["us-west-2"]),
+        cluster_service=ClusterService(regions=["us-west-2"], client=FakeDaylilyEcClient()),
         workspace_root=tmp_path,
         python_executable="/usr/bin/python3",
     )
@@ -172,46 +187,28 @@ def test_run_cluster_create_job_uses_fake_tools_and_leaves_no_home_state(
 ) -> None:
     home_dir = tmp_path / "home"
     home_dir.mkdir()
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-
-    daylily_ec = bin_dir / "daylily-ec"
-    _write_executable(
-        daylily_ec,
-        """#!/bin/sh
-set -eu
-cmd="$1"
-shift
-if [ "$cmd" = "preflight" ]; then
-  echo "preflight ok"
-  exit 0
-fi
-if [ "$cmd" = "create" ]; then
-  echo "create ok"
-  exit 0
-fi
-echo "unexpected command" >&2
-exit 2
-""",
-    )
-
-    pcluster = bin_dir / "pcluster"
-    _write_executable(
-        pcluster,
-        """#!/bin/sh
-set -eu
-cat <<'JSON'
-{"clusterName":"cluster-1","clusterStatus":"CREATE_COMPLETE","computeFleetStatus":"RUNNING","headNode":{"instanceType":"c7i.large","state":"running"},"scheduler":{"type":"slurm"},"tags":[{"key":"aws-parallelcluster-monitor-bucket","value":"s3://ursa-bucket"}]}
-JSON
-""",
-    )
-
-    monkeypatch.setenv("URSA_DAYLILY_EC_BIN", str(daylily_ec))
-    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
     monkeypatch.setenv("HOME", str(home_dir))
     monkeypatch.setattr(
-        "daylib_ursa.ephemeral_cluster.runner.require_daylily_ec_version",
-        lambda: REQUIRED_DAYLILY_EC_VERSION,
+        "daylib_ursa.cluster_jobs.run_preflight_sync",
+        lambda **_kwargs: subprocess.CompletedProcess(
+            ["daylily-ec", "preflight"], 0, "preflight ok\n", ""
+        ),
+    )
+    monkeypatch.setattr(
+        "daylib_ursa.cluster_jobs.run_create_sync",
+        lambda **_kwargs: subprocess.CompletedProcess(
+            ["daylily-ec", "create"], 0, "create ok\n", ""
+        ),
+    )
+
+    def fake_write_dayec_cluster_config(*, dest, **_kwargs):
+        path = Path(dest)
+        path.write_text("ephemeral_cluster:\n  config: {}\n", encoding="utf-8")
+        return path
+
+    monkeypatch.setattr(
+        "daylib_ursa.cluster_jobs.write_dayec_cluster_config",
+        fake_write_dayec_cluster_config,
     )
 
     store = MemoryResourceStore()
@@ -237,7 +234,7 @@ JSON
 
     run_cluster_create_job(
         resource_store=store,
-        cluster_service=ClusterService(regions=["us-west-2"]),
+        cluster_service=ClusterService(regions=["us-west-2"], client=FakeDaylilyEcClient()),
         workspace_root=tmp_path,
         job_euid=job.job_euid,
     )

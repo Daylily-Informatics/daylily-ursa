@@ -1,14 +1,14 @@
 {
   "schema_version": "1",
-  "last_updated": "2026-04-15",
+  "last_updated": "2026-04-24",
   "components": {
     "daylily-ursa": {
       "repo": "Daylily-Informatics/daylily-ursa",
-      "current": "0.6.16"
+      "current": "2.0.1"
     },
     "daylily-ephemeral-cluster": {
       "repo": "Daylily-Informatics/daylily-ephemeral-cluster",
-      "current": "2.0.3"
+      "current": "2.1.4"
     },
     "daylily-omics-analysis": {
       "repo": "Daylily-Informatics/daylily-omics-analysis",
@@ -16,11 +16,11 @@
     },
     "daylily-auth-cognito": {
       "repo": "Daylily-Informatics/daylily-auth-cognito",
-      "current": "2.0.2"
+      "current": "2.1.1"
     },
     "daylily-tapdb": {
       "repo": "Daylily-Informatics/daylily-tapdb",
-      "current": "6.0.1"
+      "current": "6.0.4"
     },
     "daylily-omics-references": {
       "repo": "Daylily-Informatics/daylily-omics-references",
@@ -29,14 +29,14 @@
   },
   "tested_combinations": [
     {
-      "date": "2026-04-16",
-      "ursa": "0.6.16",
-      "ephemeral_cluster": "2.0.3",
+      "date": "2026-04-24",
+      "ursa": "2.0.1",
+      "ephemeral_cluster": "2.1.4",
       "omics_analysis": "0.7.641",
-      "cognito": "2.0.2",
-      "tapdb": "6.0.1",
+      "cognito": "2.1.1",
+      "tapdb": "6.0.4",
       "omics_references": "0.3.1",
-      "notes": "Pinned daylily-ephemeral-cluster to 2.0.3 and daylily-omics-analysis to GitHub release 0.7.641"
+      "notes": "Pinned daylily-ephemeral-cluster to 2.1.4, daylily-auth-cognito to 2.1.1, daylily-tapdb to 6.0.4, and daylily-omics-analysis to GitHub release 0.7.641"
     },
     {
       "date": "2026-03-03",

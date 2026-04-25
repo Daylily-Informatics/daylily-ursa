@@ -1,17 +1,12 @@
-# Multi-Region Cluster Discovery
+# Archived Background: Multi-Region Cluster Discovery
 
-This is a legacy workset-monitor note retained for background. The current repo
-surface is the analysis API described in [../README.md](../README.md).
+This note is retained for older workset-monitor and cluster-discovery context. Current Ursa runtime work should start from the root [README](../README.md) and the checked-in config example [../config/ursa-config.example.yaml](../config/ursa-config.example.yaml).
 
-Ursa can scan multiple AWS regions for ParallelCluster instances and run worksets on clusters in any configured region.
+## Current Shape
 
-TapDB persistence is Postgres-backed and configured via the deployment TapDB
-config file plus explicit `--config` and `--env` selection. TapDB is not
-configured as per-region “tables”.
+Ursa still reads configured AWS regions through `daylib_ursa.ursa_config.UrsaConfig`. Cluster API routes expose create options, cluster listing, cluster inspection, delete planning, and delete execution through the authenticated Ursa API.
 
-## Configure Regions
-
-Create `~/.config/ursa-<deployment>/ursa-config-<deployment>.yaml`:
+Example config shape:
 
 ```yaml
 aws_profile: lsmc
@@ -25,20 +20,21 @@ regions:
       ssh_pem: ~/.ssh/cluster-eu-central-1.pem
 ```
 
-The `regions` list controls which AWS regions Ursa will scan for clusters, and lets you provide region-specific SSH keys for headnode access.
+## Delegated Boundaries
 
-## Where It’s Used
+- Use `ursa ...` for Ursa-owned runtime operations.
+- Use `tapdb ...` only where Ursa delegates TapDB DB lifecycle.
+- Use `daylily-ec ...` for execution-plane staging, cluster, and workflow operations that Ursa delegates.
 
-- Cluster discovery and region-specific SSH configuration is loaded via `daylib_ursa.ursa_config.UrsaConfig` ([../daylib_ursa/ursa_config.py](../daylib_ursa/ursa_config.py)).
-- Workset monitor/worker AWS settings are primarily driven by the workset monitor YAML config (see `config/workset-monitor-config.yaml` and `config/workset-monitor-config.template.yaml`).
+## TapDB Runtime
 
-## TapDB Note
+TapDB connectivity and namespace are selected separately from region scanning:
 
-TapDB connectivity and namespace are configured separately via:
-
-- `tapdb_strict_namespace: true`
 - `tapdb_client_id`
 - `tapdb_database_name`
+- `tapdb_config_path`
 - `tapdb_env`
+- `tapdb_domain_registry_path`
+- `tapdb_prefix_ownership_registry_path`
 
-See `config/ursa-config.example.yaml` for an example and `daylib_ursa.tapdb_graph.backend.TapDBBackend` for enforcement ([../daylib_ursa/tapdb_graph/backend.py](../daylib_ursa/tapdb_graph/backend.py)).
+See [../config/ursa-config.example.yaml](../config/ursa-config.example.yaml) and `daylib_ursa.integrations.tapdb_runtime` for the current runtime shape.

@@ -1,15 +1,20 @@
 {% extends "base.html" %}
 
 {% block content %}
+{% set analysis_samples_manifest = (manifest.metadata or {}).get("analysis_samples_manifest", {}) %}
 <div class="page-header">
     <div>
         <a href="/manifests" class="small"><i class="fa-solid fa-arrow-left"></i> Back to Manifest Generator</a>
         <h1 class="page-title">{{ manifest.name }}</h1>
         <p class="page-subtitle mono">{{ manifest.manifest_euid }}</p>
     </div>
+    <a href="/api/v1/manifests/{{ manifest.manifest_euid }}/download" class="btn btn-primary btn-sm">
+        <i class="fa-solid fa-download"></i> analysis_samples.tsv
+    </a>
 </div>
 
 <section class="grid grid-3" style="margin-bottom: 1rem;">
+    <article class="stat-card"><div><div class="stat-value">{{ analysis_samples_manifest.get("row_count", 0) }}</div><div class="stat-label">Analysis Samples</div></div></article>
     <article class="stat-card"><div><div class="stat-value">{{ manifest.artifact_euids | length }}</div><div class="stat-label">Canonical Artifacts</div></div></article>
     <article class="stat-card"><div><div class="stat-value">{{ manifest.input_references | length }}</div><div class="stat-label">Ordered Inputs</div></div></article>
     <article class="stat-card"><div><div class="stat-value">{{ manifest.artifact_set_euid or "mixed" }}</div><div class="stat-label">Primary Set</div></div></article>

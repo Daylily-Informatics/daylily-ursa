@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from importlib import metadata as importlib_metadata
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -71,13 +72,27 @@ def test_require_daylily_ec_version_rejects_mismatched_distribution(monkeypatch)
         runner.require_daylily_ec_version()
 
 
-def test_write_generated_ec_config_expands_required_triplets(tmp_path: Path, monkeypatch) -> None:
+def test_write_dayec_cluster_config_delegates_to_dayec_library(tmp_path: Path, monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_writer(**kwargs):
+        captured.update(kwargs)
+        path = Path(kwargs["dest"])
+        path.write_text("ephemeral_cluster:\n  config: {}\n", encoding="utf-8")
+        return path
+
     monkeypatch.setattr(
         runner,
         "require_daylily_ec_version",
         lambda: runner.REQUIRED_DAYLILY_EC_VERSION,
     )
-    config_path = runner.write_generated_ec_config(
+    monkeypatch.setattr(
+        runner,
+        "import_module",
+        lambda name: SimpleNamespace(write_noninteractive_cluster_config=fake_writer),
+    )
+
+    config_path = runner.write_dayec_cluster_config(
         dest=tmp_path / "cluster.yaml",
         cluster_name="cluster-1",
         ssh_key_name="omics-key",
@@ -85,17 +100,14 @@ def test_write_generated_ec_config_expands_required_triplets(tmp_path: Path, mon
         contact_email="ops@example.com",
     )
 
-    payload = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-    config = payload["ephemeral_cluster"]["config"]
-
-    assert config["cluster_name"] == ["USESETVALUE", "", "cluster-1"]
-    assert config["ssh_key_name"] == ["USESETVALUE", "", "omics-key"]
-    assert config["s3_bucket_name"] == ["USESETVALUE", "", "omics-bucket"]
-    assert config["budget_email"] == ["USESETVALUE", "", "ops@example.com"]
-    assert config["cluster_template_yaml"] == ["PROMPTUSER", "", ""]
-    assert config["public_subnet_id"] == ["PROMPTUSER", "", ""]
-    assert config["private_subnet_id"] == ["PROMPTUSER", "", ""]
-    assert config["spot_instance_allocation_strategy"] == ["PROMPTUSER", "", ""]
+    assert config_path == tmp_path / "cluster.yaml"
+    assert captured == {
+        "dest": tmp_path / "cluster.yaml",
+        "cluster_name": "cluster-1",
+        "ssh_key_name": "omics-key",
+        "s3_bucket_name": "omics-bucket",
+        "contact_email": "ops@example.com",
+    }
 
 
 def test_cluster_partition_request_validates_region_and_az_pairing() -> None:

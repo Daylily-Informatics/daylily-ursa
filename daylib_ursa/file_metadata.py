@@ -17,8 +17,59 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
+from importlib import metadata as importlib_metadata
+from importlib import resources
 from pathlib import PurePosixPath
 from typing import Dict, List, Optional, Tuple
+
+from daylib_ursa.ephemeral_cluster.runner import (
+    DAYLILY_EC_DISTRIBUTION,
+    REQUIRED_DAYLILY_EC_VERSION,
+)
+
+
+ANALYSIS_SAMPLES_TEMPLATE_PACKAGE = "daylily_ec.resources.payload"
+ANALYSIS_SAMPLES_TEMPLATE_RESOURCE = "etc/analysis_samples_template.tsv"
+DEFAULT_STAGE_TARGET = "/data/staged_sample_data"
+
+
+def require_daylily_ec_template_version() -> str:
+    try:
+        installed = importlib_metadata.version(DAYLILY_EC_DISTRIBUTION)
+    except importlib_metadata.PackageNotFoundError as exc:
+        raise RuntimeError(
+            f"{DAYLILY_EC_DISTRIBUTION} is not installed. Install "
+            f"{DAYLILY_EC_DISTRIBUTION}=={REQUIRED_DAYLILY_EC_VERSION} in the active Ursa environment."
+        ) from exc
+    if installed != REQUIRED_DAYLILY_EC_VERSION:
+        raise RuntimeError(
+            f"{DAYLILY_EC_DISTRIBUTION} version mismatch: expected "
+            f"{REQUIRED_DAYLILY_EC_VERSION}, found {installed}."
+        )
+    return installed
+
+
+def load_analysis_samples_template_columns() -> tuple[str, ...]:
+    require_daylily_ec_template_version()
+    try:
+        template = resources.files(ANALYSIS_SAMPLES_TEMPLATE_PACKAGE).joinpath(
+            ANALYSIS_SAMPLES_TEMPLATE_RESOURCE
+        )
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            f"Cannot load {ANALYSIS_SAMPLES_TEMPLATE_PACKAGE}:{ANALYSIS_SAMPLES_TEMPLATE_RESOURCE}"
+        ) from exc
+    with template.open("r", encoding="utf-8", newline="") as handle:
+        header = handle.readline().strip("\r\n")
+    columns = tuple(column.strip() for column in header.split("\t") if column.strip())
+    if not columns:
+        raise RuntimeError(
+            f"{ANALYSIS_SAMPLES_TEMPLATE_PACKAGE}:{ANALYSIS_SAMPLES_TEMPLATE_RESOURCE} has no header"
+        )
+    return columns
+
+
+ANALYSIS_SAMPLES_COLUMNS = load_analysis_samples_template_columns()
 
 
 class SequencingPlatform(str, Enum):
@@ -213,7 +264,7 @@ class AnalysisInput:
 
     # Staging configuration
     stage_directive: str = "stage_data"
-    stage_target: str = "/fsx/staged_sample_data/"
+    stage_target: str = DEFAULT_STAGE_TARGET
     subsample_pct: str = "na"
 
     # QC configuration
@@ -335,7 +386,7 @@ def pair_fastq_files(files: List[str]) -> List[Tuple[str, str, Optional[str]]]:
 def create_analysis_inputs_from_files(
     files: List[str],
     run_id: str = "R0",
-    stage_target: str = "/fsx/staged_sample_data/",
+    stage_target: str = DEFAULT_STAGE_TARGET,
     default_platform: SequencingPlatform = SequencingPlatform.ILLUMINA_NOVASEQ_X,
     default_vendor: SequencingVendor = SequencingVendor.ILLUMINA,
     default_sample_type: SampleType = SampleType.BLOOD,
@@ -372,7 +423,7 @@ def generate_stage_samples_tsv(
     include_header: bool = True,
 ) -> str:
     """
-    Generate stage_samples.tsv content from AnalysisInput objects.
+    Generate analysis_samples.tsv content from AnalysisInput objects.
 
     Args:
         inputs: List of AnalysisInput objects
@@ -381,29 +432,7 @@ def generate_stage_samples_tsv(
     Returns:
         TSV-formatted string ready to write to file
     """
-    # Column order matching etc/analysis_samples_template.tsv
-    columns = [
-        "RUN_ID",
-        "SAMPLE_ID",
-        "EXPERIMENTID",
-        "SAMPLE_TYPE",
-        "LIB_PREP",
-        "SEQ_VENDOR",
-        "SEQ_PLATFORM",
-        "LANE",
-        "SEQBC_ID",
-        "PATH_TO_CONCORDANCE_DATA_DIR",
-        "R1_FQ",
-        "R2_FQ",
-        "STAGE_DIRECTIVE",
-        "STAGE_TARGET",
-        "SUBSAMPLE_PCT",
-        "IS_POS_CTRL",
-        "IS_NEG_CTRL",
-        "N_X",
-        "N_Y",
-        "EXTERNAL_SAMPLE_ID",
-    ]
+    columns = list(ANALYSIS_SAMPLES_COLUMNS)
 
     lines = []
 

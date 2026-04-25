@@ -3,7 +3,9 @@ Tests for file_metadata.py - FASTQ parsing, pairing, and TSV generation.
 """
 
 from daylib_ursa.file_metadata import (
+    ANALYSIS_SAMPLES_COLUMNS,
     AnalysisInput,
+    DEFAULT_STAGE_TARGET,
     LibraryPrep,
     SampleType,
     SequencingPlatform,
@@ -164,6 +166,7 @@ class TestCreateAnalysisInputs:
         assert inputs[0].sample_id == "sample"
         assert inputs[0].r1_fastq == "s3://bucket/sample_R1.fastq.gz"
         assert inputs[0].r2_fastq == "s3://bucket/sample_R2.fastq.gz"
+        assert inputs[0].stage_target == DEFAULT_STAGE_TARGET
 
     def test_create_with_defaults(self):
         """Test that defaults are applied."""
@@ -232,6 +235,7 @@ class TestAnalysisInputTsvRow:
         assert row["SEQBC_ID"] == "S1"
         assert row["R1_FQ"] == "s3://bucket/sample1_R1.fastq.gz"
         assert row["R2_FQ"] == "s3://bucket/sample1_R2.fastq.gz"
+        assert row["STAGE_TARGET"] == DEFAULT_STAGE_TARGET
 
     def test_to_tsv_row_controls(self):
         """Test control sample flags."""
@@ -316,7 +320,8 @@ class TestGenerateStageSamplesTsv:
         header = tsv.split("\n")[0]
         columns = header.split("\t")
 
-        # Verify first and last columns
+        assert columns == list(ANALYSIS_SAMPLES_COLUMNS)
         assert columns[0] == "RUN_ID"
+        assert columns[12] == "ILMN_R1_FQ"
         assert columns[-1] == "EXTERNAL_SAMPLE_ID"
-        assert len(columns) == 20  # Should have exactly 20 columns
+        assert len(columns) == 52

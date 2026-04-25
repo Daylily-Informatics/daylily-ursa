@@ -10,7 +10,16 @@ from fastapi.testclient import TestClient
 from daylib_ursa.auth import CurrentUser, Role
 from daylib_ursa.config import Settings
 from daylib_ursa.dewey_client import DeweyClientError
-from daylib_ursa.resource_store import LinkedBucketRecord, ManifestRecord, WorksetRecord
+from daylib_ursa.file_metadata import ANALYSIS_SAMPLES_COLUMNS, DEFAULT_STAGE_TARGET
+from daylib_ursa.resource_store import (
+    AnalysisJobEventRecord,
+    AnalysisJobRecord,
+    LinkedBucketRecord,
+    ManifestRecord,
+    StagingJobEventRecord,
+    StagingJobRecord,
+    WorksetRecord,
+)
 from daylib_ursa.workset_api import create_app
 
 TENANT_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
@@ -35,9 +44,15 @@ class MemoryResourceStore:
         self.worksets: dict[str, WorksetRecord] = {}
         self.manifests: dict[str, ManifestRecord] = {}
         self.buckets: dict[str, LinkedBucketRecord] = {}
+        self.analysis_jobs: dict[str, AnalysisJobRecord] = {}
+        self.staging_jobs: dict[str, StagingJobRecord] = {}
         self._workset_seq = 0
         self._manifest_seq = 0
         self._bucket_seq = 0
+        self._analysis_job_seq = 0
+        self._analysis_event_seq = 0
+        self._staging_job_seq = 0
+        self._staging_event_seq = 0
 
     def list_worksets(self, *, tenant_id: uuid.UUID, limit: int = 100):
         _ = limit
@@ -115,6 +130,206 @@ class MemoryResourceStore:
 
     def get_manifest(self, manifest_euid: str):
         return self.manifests.get(manifest_euid)
+
+    def create_analysis_job(
+        self,
+        *,
+        job_name: str,
+        workset_euid: str,
+        manifest_euid: str,
+        cluster_name: str,
+        region: str,
+        tenant_id: uuid.UUID,
+        owner_user_id: str,
+        request,
+    ):
+        self._analysis_job_seq += 1
+        record = AnalysisJobRecord(
+            job_euid=f"AJ-{self._analysis_job_seq}",
+            job_name=job_name,
+            workset_euid=workset_euid,
+            manifest_euid=manifest_euid,
+            cluster_name=cluster_name,
+            region=region,
+            tenant_id=tenant_id,
+            owner_user_id=owner_user_id,
+            state="DEFINED",
+            created_at="2026-03-25T00:40:00Z",
+            updated_at="2026-03-25T00:40:00Z",
+            started_at=None,
+            completed_at=None,
+            return_code=None,
+            error=None,
+            output_summary=None,
+            request=dict(request or {}),
+            launch={},
+            events=[],
+        )
+        self.analysis_jobs[record.job_euid] = record
+        return record
+
+    def add_analysis_job_event(
+        self,
+        *,
+        job_euid: str,
+        event_type: str,
+        status: str,
+        summary: str,
+        details=None,
+        created_by=None,
+    ):
+        self._analysis_event_seq += 1
+        event = AnalysisJobEventRecord(
+            event_euid=f"AJE-{self._analysis_event_seq}",
+            job_euid=job_euid,
+            event_type=event_type,
+            status=status,
+            summary=summary,
+            details=dict(details or {}),
+            created_by=created_by,
+            created_at="2026-03-25T00:40:01Z",
+        )
+        record = self.analysis_jobs[job_euid]
+        updated = AnalysisJobRecord(
+            **{
+                **record.__dict__,
+                "events": [event, *record.events],
+                "updated_at": event.created_at,
+            }
+        )
+        self.analysis_jobs[job_euid] = updated
+        return event
+
+    def update_analysis_job_status(self, *, job_euid: str, state: str, created_by: str, **updates):
+        _ = created_by
+        record = self.analysis_jobs[job_euid]
+        updated = AnalysisJobRecord(
+            **{
+                **record.__dict__,
+                "state": state,
+                "updated_at": "2026-03-25T00:41:00Z",
+                "started_at": updates.get("started_at", record.started_at),
+                "completed_at": updates.get("completed_at", record.completed_at),
+                "return_code": updates.get("return_code", record.return_code),
+                "error": updates.get("error", record.error),
+                "output_summary": updates.get("output_summary", record.output_summary),
+                "launch": updates.get("launch", record.launch),
+            }
+        )
+        self.analysis_jobs[job_euid] = updated
+        return updated
+
+    def get_analysis_job(self, job_euid: str):
+        return self.analysis_jobs.get(job_euid)
+
+    def list_analysis_jobs(self, *, tenant_id: uuid.UUID | None = None, limit: int = 200):
+        _ = limit
+        return [
+            item
+            for item in self.analysis_jobs.values()
+            if tenant_id is None or item.tenant_id == tenant_id
+        ]
+
+    def create_staging_job(
+        self,
+        *,
+        job_name: str,
+        workset_euid: str,
+        manifest_euid: str,
+        cluster_name: str,
+        region: str,
+        tenant_id: uuid.UUID,
+        owner_user_id: str,
+        request,
+    ):
+        workset = self.worksets[workset_euid]
+        manifest = self.manifests[manifest_euid]
+        if workset.tenant_id != tenant_id or manifest.tenant_id != tenant_id:
+            raise ValueError("staging job tenant mismatch")
+        if manifest.workset_euid != workset_euid:
+            raise ValueError("manifest does not belong to workset")
+        self._staging_job_seq += 1
+        record = StagingJobRecord(
+            job_euid=f"SJ-{self._staging_job_seq}",
+            job_name=job_name,
+            workset_euid=workset_euid,
+            manifest_euid=manifest_euid,
+            cluster_name=cluster_name,
+            region=region,
+            tenant_id=tenant_id,
+            owner_user_id=owner_user_id,
+            state="DEFINED",
+            created_at="2026-03-25T00:35:00Z",
+            updated_at="2026-03-25T00:35:00Z",
+            started_at=None,
+            completed_at=None,
+            return_code=None,
+            error=None,
+            output_summary=None,
+            request=dict(request or {}),
+            stage={},
+            events=[],
+        )
+        self.staging_jobs[record.job_euid] = record
+        return record
+
+    def add_staging_job_event(
+        self,
+        *,
+        job_euid: str,
+        event_type: str,
+        status: str,
+        summary: str,
+        details=None,
+        created_by=None,
+    ):
+        self._staging_event_seq += 1
+        event = StagingJobEventRecord(
+            event_euid=f"SJE-{self._staging_event_seq}",
+            job_euid=job_euid,
+            event_type=event_type,
+            status=status,
+            summary=summary,
+            details=dict(details or {}),
+            created_by=created_by,
+            created_at="2026-03-25T00:35:01Z",
+        )
+        record = self.staging_jobs[job_euid]
+        updated = StagingJobRecord(
+            **{
+                **record.__dict__,
+                "events": [event, *record.events],
+                "updated_at": event.created_at,
+            }
+        )
+        self.staging_jobs[job_euid] = updated
+        return event
+
+    def update_staging_job_status(self, *, job_euid: str, state: str, created_by: str, **updates):
+        _ = created_by
+        record = self.staging_jobs[job_euid]
+        updated = StagingJobRecord(
+            **{
+                **record.__dict__,
+                "state": state,
+                "updated_at": "2026-03-25T00:36:00Z",
+                "started_at": updates.get("started_at", record.started_at),
+                "completed_at": updates.get("completed_at", record.completed_at),
+                "return_code": updates.get("return_code", record.return_code),
+                "error": updates.get("error", record.error),
+                "output_summary": updates.get("output_summary", record.output_summary),
+                "stage": updates.get("stage", record.stage),
+            }
+        )
+        self.staging_jobs[job_euid] = updated
+        return updated
+
+    def get_staging_job(self, job_euid: str):
+        return self.staging_jobs.get(job_euid)
+
+    def list_staging_jobs(self, *, tenant_id: uuid.UUID, limit: int = 200):
+        _ = limit
+        return [item for item in self.staging_jobs.values() if item.tenant_id == tenant_id]
 
     def list_linked_buckets(self, *, tenant_id: uuid.UUID, limit: int = 200):
         _ = limit
@@ -281,6 +496,115 @@ class DummyClusterService:
         _ = (force_refresh, fetch_ssh_status)
         return []
 
+    def get_region_for_cluster(self, cluster_name: str):
+        _ = cluster_name
+        return "us-west-2"
+
+    def create_delete_plan(self, cluster_name: str, region: str):
+        return {
+            "cluster_name": cluster_name,
+            "region": region,
+            "confirmation_token": "delete-token",
+            "dry_run_stdout": "would delete",
+            "dry_run_stderr": "",
+        }
+
+    def delete_cluster(
+        self,
+        cluster_name: str,
+        region: str,
+        *,
+        confirmation_token: str,
+        confirm_cluster_name: str,
+    ):
+        if confirmation_token != "delete-token" or confirm_cluster_name != cluster_name:
+            raise ValueError("invalid token")
+        return {"cluster_name": cluster_name, "region": region, "return_code": 0}
+
+
+class DummyAnalysisJobManager:
+    def __init__(self, resources: MemoryResourceStore) -> None:
+        self.resources = resources
+
+    def launch_job(self, job_euid: str, *, actor_user_id: str):
+        return self.resources.update_analysis_job_status(
+            job_euid=job_euid,
+            state="RUNNING",
+            created_by=actor_user_id,
+            started_at="2026-03-25T00:41:00Z",
+            return_code=0,
+            output_summary="launched",
+            launch={"session_name": "ursa-test", "run_dir": "/home/ubuntu/daylily-runs/ursa-test"},
+        )
+
+    def refresh_job(self, job_euid: str, *, actor_user_id: str):
+        return self.resources.update_analysis_job_status(
+            job_euid=job_euid,
+            state="COMPLETED",
+            created_by=actor_user_id,
+            completed_at="2026-03-25T00:50:00Z",
+            return_code=0,
+            output_summary="Workflow status: COMPLETED",
+            launch={"session_name": "ursa-test", "status": {"exit_code": 0}},
+        )
+
+    def logs(self, job_euid: str, *, lines: int = 200):
+        return {
+            "job_euid": job_euid,
+            "session_name": "ursa-test",
+            "lines": lines,
+            "stdout": "ok\n",
+            "stderr": "",
+        }
+
+
+class DummyStagingJobManager:
+    def __init__(self, resources: MemoryResourceStore) -> None:
+        self.resources = resources
+
+    def run_job(self, job_euid: str, *, actor_user_id: str):
+        self.resources.add_staging_job_event(
+            job_euid=job_euid,
+            event_type="stage",
+            status="STAGING",
+            summary="Staging stable analysis manifest",
+            details={},
+            created_by=actor_user_id,
+        )
+        self.resources.add_staging_job_event(
+            job_euid=job_euid,
+            event_type="stage",
+            status="COMPLETED",
+            summary="Staged samples to /fsx/staged_sample_data",
+            details={"stage_dir": "/fsx/staged_sample_data"},
+            created_by=actor_user_id,
+        )
+        return self.resources.update_staging_job_status(
+            job_euid=job_euid,
+            state="COMPLETED",
+            created_by=actor_user_id,
+            started_at="2026-03-25T00:35:30Z",
+            completed_at="2026-03-25T00:36:00Z",
+            return_code=0,
+            output_summary="Staged samples to /fsx/staged_sample_data",
+            stage={
+                "stage_dir": "/fsx/staged_sample_data",
+                "stdout": "staged\n",
+                "stderr": "",
+            },
+        )
+
+    def logs(self, job_euid: str, *, lines: int = 200):
+        _ = lines
+        job = self.resources.get_staging_job(job_euid)
+        return {
+            "job_euid": job_euid,
+            "stage_dir": job.stage.get("stage_dir"),
+            "lines": lines,
+            "stdout": job.stage.get("stdout", ""),
+            "stderr": job.stage.get("stderr", ""),
+        }
+
 
 class DummyDeweyClient:
     def __init__(self) -> None:
@@ -362,6 +686,13 @@ def _settings() -> Settings:
         atlas_base_url="https://atlas.example",
         ursa_internal_output_bucket="ursa-internal",
         ursa_tapdb_mount_enabled=False,
+        session_secret_key="ursa-session-secret",
+        cognito_user_pool_id="us-west-2_pool",
+        cognito_app_client_id="client-id",
+        cognito_region="us-west-2",
+        cognito_domain="auth.example.test",
+        cognito_callback_url="https://localhost:8913/auth/callback",
+        cognito_logout_url="https://localhost:8913/login",
     )
 
 
@@ -370,16 +701,19 @@ def _create_test_app(
     resource_store: MemoryResourceStore | None = None,
     dewey_client: DummyDeweyClient | None = None,
 ):
+    resources = resource_store or MemoryResourceStore()
     app = create_app(
         DummyAnalysisStore(),
         bloom_client=object(),
         auth_provider=DummyAuthProvider(),
-        resource_store=resource_store or MemoryResourceStore(),
+        resource_store=resources,
         dewey_client=dewey_client,
+        cluster_service=DummyClusterService(),
+        analysis_job_manager=DummyAnalysisJobManager(resources),
+        staging_job_manager=DummyStagingJobManager(resources),
         settings=_settings(),
         s3_client=DummyS3Client(),
     )
-    app.state.cluster_service = DummyClusterService()
     return app
 
 
@@ -387,112 +721,101 @@ def _auth_headers() -> dict[str, str]:
     return {"Authorization": "Bearer atlas-token"}
 
 
-def _workflow_catalog_payload() -> dict:
+def _command_payload(*, command_id: str = "illumina_snv_alignstats") -> dict:
     return {
-        "schema_version": "1",
-        "catalog_version": "1.0.0",
+        "command_id": command_id,
         "repository": "daylily-omics-analysis",
-        "repository_ref": "0.7.640.dev0",
-        "display_name": "Daylily Omics Analysis",
-        "workflows": [
-            {
-                "workflow_id": "germline_wgs_snv",
-                "display_name": "Germline WGS SNV",
+        "display_name": "Illumina SNV + Alignstats",
+        "description": "Example",
+        "datasource": "Illumina",
+        "launcher": "workflow_launch",
+        "targets": ["produce_alignstats", "produce_snv_concordances"],
+        "genome": "hg38",
+        "jobs": 10,
+        "aligners": ["bwa2a"],
+        "dedupers": ["dppl"],
+        "snv_callers": ["sentd", "deep19"],
+        "sv_callers": [],
+        "destination": "dayoa",
+        "no_containerized": False,
+        "optional_features": {
+            "tiddit": {
+                "display_name": "Tiddit SV calling",
                 "description": "Example",
-                "targets": ["produce_alignstats", "produce_snv_concordances"],
-                "supported_genome_builds": ["hg38"],
-                "default_genome_build": "hg38",
-                "supported_execution_profiles": ["slurm", "local"],
-                "default_execution_profile": "slurm",
-                "required_inputs": [
-                    {
-                        "input_id": "workset_manifest",
-                        "label": "Workset manifest",
-                        "description": "Manifest",
-                        "required": True,
-                    }
-                ],
-                "options": [
-                    {
-                        "option_id": "jobs",
-                        "label": "Parallel jobs",
-                        "description": "Example",
-                        "type": "integer",
-                        "default": 10,
-                        "required": False,
-                        "minimum": 1,
-                        "maximum": 500,
-                        "choices": [],
-                    }
-                ],
+                "targets": ["produce_tiddit"],
+                "sv_callers": ["tiddit"],
             }
-        ],
+        },
     }
 
 
-def _workflow_preview_payload(*, valid: bool = True) -> dict:
+def _command_catalog_payload() -> dict:
     return {
-        "valid": valid,
-        "repository": "daylily-omics-analysis",
-        "repository_ref": "0.7.640.dev0",
-        "catalog_version": "1.0.0",
-        "workflow_id": "germline_wgs_snv",
-        "display_name": "Germline WGS SNV",
-        "argv": [
-            "dy-r",
-            "produce_alignstats",
-            "produce_snv_concordances",
-            "-p",
-            "-k",
-            "-j",
-            "10",
-            "--config",
-            "genome_build=hg38",
-            "aligners=['bwa2a']",
-            "dedupers=['dppl']",
-            "snv_callers=['sentd']",
-        ]
-        if valid
-        else [],
-        "shell_preview": "source dyoainit && dy-a slurm hg38 && dy-r produce_alignstats produce_snv_concordances -p -k -j 10 --config genome_build=hg38 aligners=['bwa2a'] dedupers=['dppl'] snv_callers=['sentd']"
-        if valid
-        else "",
-        "summary": {
-            "pipeline_type": "Germline WGS SNV",
-            "workflow_id": "germline_wgs_snv",
-            "description": "Example",
-            "genome_build": "hg38",
-            "execution_profile": "slurm",
-            "targets": ["produce_alignstats", "produce_snv_concordances"],
-            "sample_count": 2,
-            "input_mode": "uploaded_manifest",
-            "required_inputs": [
-                {"input_id": "workset_manifest", "label": "Workset manifest", "required": True}
-            ],
-        },
-        "normalized_spec": {
-            "workflow_id": "germline_wgs_snv",
-            "genome_build": "hg38",
-            "execution_profile": "slurm",
-            "options": {
-                "jobs": 10,
-                "aligners": ["bwa2a"],
-                "dedupers": ["dppl"],
-                "snv_callers": ["sentd"],
-                "print_commands": True,
-                "keep_going": True,
-            },
-            "input_context": {
-                "provided_inputs": ["workset_manifest"],
-                "sample_count": 2,
-                "input_mode": "uploaded_manifest",
-            },
-        },
-        "validation_errors": []
-        if valid
-        else ["Workset manifest is required for Germline WGS SNV."],
-        "warnings": [],
+        "command_catalog_version": 1,
+        "default_repository": "daylily-omics-analysis",
+        "repositories": {"daylily-omics-analysis": {"analysis_commands": [_command_payload()]}},
+        "commands": [_command_payload()],
     }
+
+
+def _command_preview_payload() -> dict:
+    return {
+        "valid": True,
+        "command": _command_payload(),
+        "argv": [
+            "workflow",
+            "launch",
+            "--repository",
+            "daylily-omics-analysis",
+            "--destination",
+            "dayoa",
+            "--genome",
+            "hg38",
+            "--jobs",
+            "10",
+            "--aligners",
+            "bwa2a",
+            "--dedupers",
+            "dppl",
+            "--snv-callers",
+            "sentd,deep19",
+            "--target",
+            "produce_alignstats produce_snv_concordances",
+        ],
+        "shell_preview": (
+            "daylily-ec workflow launch --repository daylily-omics-analysis "
+            "--destination dayoa --genome hg38 --jobs 10 --aligners bwa2a "
+            "--dedupers dppl --snv-callers sentd,deep19 --target "
+            "'produce_alignstats produce_snv_concordances'"
+        ),
+    }
+
+
+def _editor_rows() -> list[dict[str, str]]:
+    return [
+        {
+            "RUN_ID": "R0",
+            "SAMPLE_ID": "S1",
+            "EXPERIMENTID": "S1",
+            "SAMPLE_TYPE": "blood",
+            "LIB_PREP": "noampwgs",
+            "SEQ_VENDOR": "ILMN",
+            "SEQ_PLATFORM": "NOVASEQX",
+            "LANE": "1",
+            "SEQBC_ID": "S1",
+            "PATH_TO_CONCORDANCE_DATA_DIR": "",
+            "R1_FQ": "s3://bucket/S1_R1.fastq.gz",
+            "R2_FQ": "s3://bucket/S1_R2.fastq.gz",
+            "STAGE_DIRECTIVE": "stage_data",
+            "STAGE_TARGET": DEFAULT_STAGE_TARGET,
+            "SUBSAMPLE_PCT": "na",
+            "IS_POS_CTRL": "false",
+            "IS_NEG_CTRL": "false",
+            "N_X": "1",
+            "N_Y": "1",
+            "EXTERNAL_SAMPLE_ID": "S1",
+        }
+    ]
 
 
 def test_workset_and_manifest_routes_use_versioned_user_api() -> None:
@@ -513,6 +836,7 @@ def test_workset_and_manifest_routes_use_versioned_user_api() -> None:
                 "name": "manifest 1",
                 "artifact_set_euid": "AS-1",
                 "artifact_euids": ["AT-1", "AT-2"],
+                "metadata": {"editor_analysis_inputs": _editor_rows()},
             },
         )
         listed_worksets = client.get("/api/v1/worksets", headers=_auth_headers())
@@ -523,6 +847,17 @@ def test_workset_and_manifest_routes_use_versioned_user_api() -> None:
     assert workset.json()["tenant_id"] == str(TENANT_ID)
     assert manifest.status_code == 201, manifest.text
     assert manifest.json()["tenant_id"] == str(TENANT_ID)
+    manifest_metadata = manifest.json()["metadata"]
+    assert "stable_manifest" not in manifest_metadata
+    analysis_samples_manifest = manifest_metadata["analysis_samples_manifest"]
+    assert analysis_samples_manifest["filename"] == "analysis_samples.tsv"
+    assert analysis_samples_manifest["row_count"] == 1
+    assert len(analysis_samples_manifest["sha256"]) == 64
+    assert analysis_samples_manifest["columns"] == list(ANALYSIS_SAMPLES_COLUMNS)
+    assert analysis_samples_manifest["content"].splitlines()[0] == "\t".join(
+        ANALYSIS_SAMPLES_COLUMNS
+    )
+    assert DEFAULT_STAGE_TARGET in analysis_samples_manifest["content"]
     assert listed_worksets.json()[0]["manifests"][0]["manifest_euid"] == "MF-1"
     assert listed_manifests.json()[0]["artifact_set_euid"] == "AS-1"
     assert (
@@ -532,57 +867,372 @@ def test_workset_and_manifest_routes_use_versioned_user_api() -> None:
     assert clusters.json() == {"items": []}
 
 
-def test_workflow_catalog_and_preview_routes_use_versioned_user_api() -> None:
+def test_analysis_command_catalog_and_preview_routes_use_user_api() -> None:
     app = _create_test_app(resource_store=MemoryResourceStore(), dewey_client=DummyDeweyClient())
 
     with (
         patch(
-            "daylib_ursa.workset_api.load_workflow_catalog_snapshot",
-            return_value=_workflow_catalog_payload(),
+            "daylib_ursa.workset_api.command_catalog_payload",
+            return_value=_command_catalog_payload(),
         ),
         patch(
-            "daylib_ursa.workset_api.preview_workflow_command",
-            return_value=_workflow_preview_payload(),
+            "daylib_ursa.workset_api.analysis_command_payload",
+            return_value=_command_payload(),
+        ),
+        patch(
+            "daylib_ursa.workset_api.preview_analysis_command",
+            return_value=_command_preview_payload(),
         ),
         TestClient(app) as client,
     ):
-        catalog = client.get("/api/v1/worksets/workflow-catalog", headers=_auth_headers())
+        catalog = client.get("/api/v1/analysis-commands", headers=_auth_headers())
+        command = client.get(
+            "/api/v1/analysis-commands/illumina_snv_alignstats",
+            headers=_auth_headers(),
+        )
         preview = client.post(
-            "/api/v1/worksets/command-preview",
+            "/api/v1/analysis-commands/illumina_snv_alignstats/preview",
             headers=_auth_headers(),
             json={
-                "repository": "daylily-omics-analysis",
-                "workflow_id": "germline_wgs_snv",
-                "genome_build": "hg38",
-                "execution_profile": "slurm",
-                "options": {
-                    "jobs": 10,
-                    "aligners": ["bwa2a"],
-                    "dedupers": ["dppl"],
-                    "snv_callers": ["sentd"],
-                },
-                "input_context": {
-                    "provided_inputs": ["workset_manifest"],
-                    "sample_count": 2,
-                    "input_mode": "uploaded_manifest",
-                },
+                "optional_features": ["tiddit"],
+                "region": "us-west-2",
+                "cluster_name": "cluster-1",
             },
         )
 
     assert catalog.status_code == 200, catalog.text
-    assert catalog.json()["repository"] == "daylily-omics-analysis"
-    assert catalog.json()["workflows"][0]["workflow_id"] == "germline_wgs_snv"
-    assert catalog.json()["workflows"][0]["targets"] == [
+    assert catalog.json()["command_catalog_version"] == 1
+    assert catalog.json()["commands"][0]["command_id"] == "illumina_snv_alignstats"
+    assert catalog.json()["commands"][0]["targets"] == [
         "produce_alignstats",
         "produce_snv_concordances",
     ]
+    assert command.status_code == 200, command.text
+    assert command.json()["command_id"] == "illumina_snv_alignstats"
     assert preview.status_code == 200, preview.text
     assert preview.json()["valid"] is True
-    assert preview.json()["argv"][0] == "dy-r"
-    assert preview.json()["summary"]["targets"] == [
-        "produce_alignstats",
-        "produce_snv_concordances",
-    ]
+    assert preview.json()["argv"][:2] == ["workflow", "launch"]
+    assert "daylily-ec workflow launch" in preview.json()["shell_preview"]
+
+
+def test_analysis_job_routes_define_launch_refresh_and_logs() -> None:
+    resources = MemoryResourceStore()
+    app = _create_test_app(resource_store=resources, dewey_client=DummyDeweyClient())
+
+    with (
+        patch("daylib_ursa.workset_api.analysis_command_payload", return_value=_command_payload()),
+        TestClient(app) as client,
+    ):
+        workset = client.post(
+            "/api/v1/worksets",
+            headers=_auth_headers(),
+            json={"name": "Tumor batch", "artifact_set_euids": ["AS-1"]},
+        )
+        manifest = client.post(
+            "/api/v1/manifests",
+            headers=_auth_headers(),
+            json={
+                "workset_euid": workset.json()["workset_euid"],
+                "name": "analysis samples manifest",
+                "metadata": {"editor_analysis_inputs": _editor_rows()},
+            },
+        )
+        created = client.post(
+            "/api/v1/analysis-jobs",
+            headers=_auth_headers(),
+            json={
+                "workset_euid": workset.json()["workset_euid"],
+                "manifest_euid": manifest.json()["manifest_euid"],
+                "cluster_name": "cluster-1",
+                "region": "us-west-2",
+                "reference_bucket": "s3://reference-bucket",
+                "analysis_command_id": "illumina_snv_alignstats",
+                "optional_features": ["tiddit"],
+            },
+        )
+        listed = client.get("/api/v1/analysis-jobs", headers=_auth_headers())
+        detail = client.get(
+            f"/api/v1/analysis-jobs/{created.json()['job_euid']}",
+            headers=_auth_headers(),
+        )
+        launched = client.post(
+            f"/api/v1/analysis-jobs/{created.json()['job_euid']}/launch",
+            headers=_auth_headers(),
+            json={},
+        )
+        refreshed = client.post(
+            f"/api/v1/analysis-jobs/{created.json()['job_euid']}/refresh",
+            headers=_auth_headers(),
+        )
+        logs = client.get(
+            f"/api/v1/analysis-jobs/{created.json()['job_euid']}/logs",
+            headers=_auth_headers(),
+        )
+
+    assert created.status_code == 201, created.text
+    assert created.json()["state"] == "DEFINED"
+    assert created.json()["request"]["analysis_command_id"] == "illumina_snv_alignstats"
+    assert listed.status_code == 200, listed.text
+    assert listed.json()[0]["job_euid"] == created.json()["job_euid"]
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["job_euid"] == created.json()["job_euid"]
+    assert launched.status_code == 202, launched.text
+    assert launched.json()["state"] == "RUNNING"
+    assert refreshed.status_code == 200, refreshed.text
+    assert refreshed.json()["state"] == "COMPLETED"
+    assert logs.status_code == 200, logs.text
+    assert logs.json()["stdout"] == "ok\n"
+
+
+def test_staging_job_routes_define_run_and_logs() -> None:
+    resources = MemoryResourceStore()
+    app = _create_test_app(resource_store=resources, dewey_client=DummyDeweyClient())
+
+    with TestClient(app) as client:
+        workset = client.post(
+            "/api/v1/worksets",
+            headers=_auth_headers(),
+            json={"name": "Tumor batch", "artifact_set_euids": ["AS-1"]},
+        )
+        manifest = client.post(
+            "/api/v1/manifests",
+            headers=_auth_headers(),
+            json={
+                "workset_euid": workset.json()["workset_euid"],
+                "name": "analysis samples",
+                "metadata": {"editor_analysis_inputs": _editor_rows()},
+            },
+        )
+        created = client.post(
+            "/api/v1/staging-jobs",
+            headers=_auth_headers(),
+            json={
+                "workset_euid": workset.json()["workset_euid"],
+                "manifest_euid": manifest.json()["manifest_euid"],
+                "cluster_name": "cluster-1",
+                "region": "us-west-2",
+                "reference_bucket": "s3://reference-bucket",
+                "stage_target": "/fsx/staged_sample_data",
+            },
+        )
+        listed = client.get("/api/v1/staging-jobs", headers=_auth_headers())
+        detail = client.get(
+            f"/api/v1/staging-jobs/{created.json()['job_euid']}",
+            headers=_auth_headers(),
+        )
+        run = client.post(
+            f"/api/v1/staging-jobs/{created.json()['job_euid']}/run",
+            headers=_auth_headers(),
+            json={},
+        )
+        logs = client.get(
+            f"/api/v1/staging-jobs/{created.json()['job_euid']}/logs",
+            headers=_auth_headers(),
+        )
+
+    assert created.status_code == 201, created.text
+    assert created.json()["state"] == "DEFINED"
+    assert created.json()["request"]["reference_bucket"] == "s3://reference-bucket"
+    assert listed.status_code == 200, listed.text
+    assert listed.json()[0]["job_euid"] == created.json()["job_euid"]
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["workset_euid"] == workset.json()["workset_euid"]
+    assert run.status_code == 202, run.text
+    assert run.json()["state"] == "COMPLETED"
+    assert run.json()["stage"]["stage_dir"] == "/fsx/staged_sample_data"
+    assert logs.status_code == 200, logs.text
+    assert logs.json()["stdout"] == "staged\n"
+
+
+def test_staging_job_create_rejects_manifest_from_other_workset() -> None:
+    resources = MemoryResourceStore()
+    app = _create_test_app(resource_store=resources, dewey_client=DummyDeweyClient())
+
+    with TestClient(app) as client:
+        first_workset = client.post(
+            "/api/v1/worksets",
+            headers=_auth_headers(),
+            json={"name": "First", "artifact_set_euids": ["AS-1"]},
+        )
+        second_workset = client.post(
+            "/api/v1/worksets",
+            headers=_auth_headers(),
+            json={"name": "Second", "artifact_set_euids": ["AS-1"]},
+        )
+        manifest = client.post(
+            "/api/v1/manifests",
+            headers=_auth_headers(),
+            json={
+                "workset_euid": first_workset.json()["workset_euid"],
+                "name": "analysis samples",
+                "metadata": {"editor_analysis_inputs": _editor_rows()},
+            },
+        )
+        created = client.post(
+            "/api/v1/staging-jobs",
+            headers=_auth_headers(),
+            json={
+                "workset_euid": second_workset.json()["workset_euid"],
+                "manifest_euid": manifest.json()["manifest_euid"],
+                "cluster_name": "cluster-1",
+                "region": "us-west-2",
+                "reference_bucket": "s3://reference-bucket",
+            },
+        )
+
+    assert created.status_code == 400, created.text
+    assert created.json()["detail"] == "Manifest does not belong to workset"
+
+
+def test_analysis_job_accepts_completed_staging_job_without_reference_bucket() -> None:
+    resources = MemoryResourceStore()
+    app = _create_test_app(resource_store=resources, dewey_client=DummyDeweyClient())
+
+    with (
+        patch("daylib_ursa.workset_api.analysis_command_payload", return_value=_command_payload()),
+        TestClient(app) as client,
+    ):
+        workset = client.post(
+            "/api/v1/worksets",
+            headers=_auth_headers(),
+            json={"name": "Tumor batch", "artifact_set_euids": ["AS-1"]},
+        )
+        manifest = client.post(
+            "/api/v1/manifests",
+            headers=_auth_headers(),
+            json={
+                "workset_euid": workset.json()["workset_euid"],
+                "name": "analysis samples",
+                "metadata": {"editor_analysis_inputs": _editor_rows()},
+            },
+        )
+        staging = client.post(
+            "/api/v1/staging-jobs",
+            headers=_auth_headers(),
+            json={
+                "workset_euid": workset.json()["workset_euid"],
+                "manifest_euid": manifest.json()["manifest_euid"],
+                "cluster_name": "cluster-1",
+                "region": "us-west-2",
+                "reference_bucket": "s3://reference-bucket",
+                "stage_target": "/fsx/staged_sample_data",
+            },
+        )
+        run = client.post(
+            f"/api/v1/staging-jobs/{staging.json()['job_euid']}/run",
+            headers=_auth_headers(),
+            json={},
+        )
+        created = client.post(
+            "/api/v1/analysis-jobs",
+            headers=_auth_headers(),
+            json={
+                "workset_euid": workset.json()["workset_euid"],
+                "manifest_euid": manifest.json()["manifest_euid"],
+                "cluster_name": "cluster-1",
+                "region": "us-west-2",
+                "analysis_command_id": "illumina_snv_alignstats",
+                "staging_job_euid": staging.json()["job_euid"],
+            },
+        )
+
+    assert run.status_code == 202, run.text
+    assert run.json()["state"] == "COMPLETED"
+    assert created.status_code == 201, created.text
+    assert created.json()["request"]["staging_job_euid"] == staging.json()["job_euid"]
+    assert created.json()["request"]["reference_bucket"] is None
+    assert created.json()["request"]["stage_target"] == "/fsx/staged_sample_data"
+
+
+def test_analysis_job_rejects_completed_staging_job_manifest_mismatch() -> None:
+    resources = MemoryResourceStore()
+    app = _create_test_app(resource_store=resources, dewey_client=DummyDeweyClient())
+
+    with (
+        patch("daylib_ursa.workset_api.analysis_command_payload", return_value=_command_payload()),
+        TestClient(app) as client,
+    ):
+        first_workset = client.post(
+            "/api/v1/worksets",
+            headers=_auth_headers(),
+            json={"name": "First", "artifact_set_euids": ["AS-1"]},
+        )
+        first_manifest = client.post(
+            "/api/v1/manifests",
+            headers=_auth_headers(),
+            json={
+                "workset_euid": first_workset.json()["workset_euid"],
+                "name": "first samples",
+                "metadata": {"editor_analysis_inputs": _editor_rows()},
+            },
+        )
+        second_manifest = client.post(
+            "/api/v1/manifests",
+            headers=_auth_headers(),
+            json={
+                "workset_euid": first_workset.json()["workset_euid"],
+                "name": "second samples",
+                "metadata": {"editor_analysis_inputs": _editor_rows()},
+            },
+        )
+        staging = client.post(
+            "/api/v1/staging-jobs",
+            headers=_auth_headers(),
+            json={
+                "workset_euid": first_workset.json()["workset_euid"],
+                "manifest_euid": first_manifest.json()["manifest_euid"],
+                "cluster_name": "cluster-1",
+                "region": "us-west-2",
+                "reference_bucket": "s3://reference-bucket",
+            },
+        )
+        run = client.post(
+            f"/api/v1/staging-jobs/{staging.json()['job_euid']}/run",
+            headers=_auth_headers(),
+            json={},
+        )
+        created = client.post(
+            "/api/v1/analysis-jobs",
+            headers=_auth_headers(),
+            json={
+                "workset_euid": first_workset.json()["workset_euid"],
+                "manifest_euid": second_manifest.json()["manifest_euid"],
+                "cluster_name": "cluster-1",
+                "region": "us-west-2",
+                "analysis_command_id": "illumina_snv_alignstats",
+                "staging_job_euid": staging.json()["job_euid"],
+            },
+        )
+
+    assert run.status_code == 202, run.text
+    assert run.json()["state"] == "COMPLETED"
+    assert created.status_code == 400, created.text
+    assert created.json()["detail"] == "Staging job does not belong to manifest"
+
+
+def test_cluster_delete_requires_delete_plan_confirmation_token() -> None:
+    app = _create_test_app(resource_store=MemoryResourceStore(), dewey_client=DummyDeweyClient())
+
+    with TestClient(app) as client:
+        plan = client.post(
+            "/api/v1/clusters/cluster-1/delete-plan?region=us-west-2",
+            headers=_auth_headers(),
+        )
+        missing_confirmation = client.delete(
+            "/api/v1/clusters/cluster-1?region=us-west-2",
+            headers=_auth_headers(),
+        )
+        deleted = client.delete(
+            "/api/v1/clusters/cluster-1"
+            "?region=us-west-2&confirmation_token=delete-token&confirm_cluster_name=cluster-1",
+            headers=_auth_headers(),
+        )
+
+    assert plan.status_code == 200, plan.text
+    assert plan.json()["confirmation_token"] == "delete-token"
+    assert missing_confirmation.status_code == 422
+    assert deleted.status_code == 200, deleted.text
+    assert deleted.json()["result"]["return_code"] == 0
 
 
 def test_workset_create_canonicalizes_analysis_command_metadata() -> None:
@@ -590,8 +1240,8 @@ def test_workset_create_canonicalizes_analysis_command_metadata() -> None:
 
     with (
         patch(
-            "daylib_ursa.workset_api.preview_workflow_command",
-            return_value=_workflow_preview_payload(),
+            "daylib_ursa.workset_api.analysis_command_payload",
+            return_value=_command_payload(),
         ),
         TestClient(app) as client,
     ):
@@ -604,39 +1254,21 @@ def test_workset_create_canonicalizes_analysis_command_metadata() -> None:
                 "metadata": {
                     "workset_type": "ruo",
                     "priority": "normal",
-                    "analysis_command": {
-                        "repository": "daylily-omics-analysis",
-                        "workflow_id": "germline_wgs_snv",
-                        "genome_build": "hg38",
-                        "execution_profile": "slurm",
-                        "options": {
-                            "jobs": 10,
-                            "aligners": ["bwa2a"],
-                            "dedupers": ["dppl"],
-                            "snv_callers": ["sentd"],
-                        },
-                        "input_context": {
-                            "provided_inputs": ["workset_manifest"],
-                            "sample_count": 2,
-                            "input_mode": "uploaded_manifest",
-                        },
-                    },
+                    "analysis_command_id": "illumina_snv_alignstats",
+                    "optional_features": ["tiddit"],
                 },
             },
         )
 
     assert created.status_code == 201, created.text
     body = created.json()
-    assert body["metadata"]["pipeline_type"] == "Germline WGS SNV"
+    assert body["metadata"]["pipeline_type"] == "Illumina SNV + Alignstats"
     assert body["metadata"]["reference_genome"] == "hg38"
     assert body["metadata"]["analysis_repository"] == "daylily-omics-analysis"
-    assert body["metadata"]["analysis_workflow_id"] == "germline_wgs_snv"
-    assert body["metadata"]["analysis_command"]["workflow_id"] == "germline_wgs_snv"
-    assert body["metadata"]["analysis_command"]["spec"]["options"]["aligners"] == ["bwa2a"]
-    assert body["metadata"]["analysis_command"]["argv"][0] == "dy-r"
-    assert body["metadata"]["analysis_command"]["shell_preview"].startswith(
-        "source dyoainit && dy-a slurm hg38 && dy-r "
-    )
+    assert body["metadata"]["analysis_command_id"] == "illumina_snv_alignstats"
+    assert body["metadata"]["analysis_command"]["command_id"] == "illumina_snv_alignstats"
+    assert body["metadata"]["analysis_command"]["profile"]["aligners"] == ["bwa2a"]
+    assert body["metadata"]["analysis_command"]["optional_features"] == ["tiddit"]
     assert body["metadata"]["analysis_command"]["created_at"].endswith("Z")
 
 
@@ -645,8 +1277,8 @@ def test_workset_create_rejects_invalid_analysis_command_metadata() -> None:
 
     with (
         patch(
-            "daylib_ursa.workset_api.preview_workflow_command",
-            return_value=_workflow_preview_payload(valid=False),
+            "daylib_ursa.workset_api.analysis_command_payload",
+            side_effect=ValueError("Unknown analysis command: missing"),
         ),
         TestClient(app) as client,
     ):
@@ -657,23 +1289,13 @@ def test_workset_create_rejects_invalid_analysis_command_metadata() -> None:
                 "name": "Tumor batch",
                 "artifact_set_euids": ["AS-1"],
                 "metadata": {
-                    "analysis_command": {
-                        "repository": "daylily-omics-analysis",
-                        "workflow_id": "germline_wgs_snv",
-                        "genome_build": "hg38",
-                        "execution_profile": "slurm",
-                        "options": {},
-                        "input_context": {},
-                    },
+                    "analysis_command_id": "missing",
                 },
             },
         )
 
     assert created.status_code == 400
-    assert created.json()["detail"]["message"] == "Analysis command validation failed"
-    assert created.json()["detail"]["validation_errors"] == [
-        "Workset manifest is required for Germline WGS SNV."
-    ]
+    assert created.json()["detail"] == "Unknown analysis command: missing"
 
 
 def test_manifest_rejects_artifacts_outside_resolved_dewey_set() -> None:
@@ -693,6 +1315,7 @@ def test_manifest_rejects_artifacts_outside_resolved_dewey_set() -> None:
                 "name": "manifest 1",
                 "artifact_set_euid": "AS-1",
                 "artifact_euids": ["AT-3"],
+                "metadata": {"editor_analysis_inputs": _editor_rows()},
             },
         )
 
@@ -745,6 +1368,11 @@ def test_manifest_accepts_mixed_input_references_and_imports_s3_uris() -> None:
     assert body["artifact_set_euid"] is None
     assert body["artifact_euids"] == ["AT-1", "AT-IMPORTED-1"]
     assert body["metadata"]["input_references"][1]["value"] == "s3://bucket/sample_R1.fastq.gz"
+    assert "stable_manifest" not in body["metadata"]
+    assert body["metadata"]["analysis_samples_manifest"]["columns"] == list(
+        ANALYSIS_SAMPLES_COLUMNS
+    )
+    assert DEFAULT_STAGE_TARGET in body["metadata"]["analysis_samples_manifest"]["content"]
     assert body["input_references"][1]["reference_type"] == "s3_uri"
     assert dewey.register_calls[0]["artifact_type"] == "fastq"
 
@@ -794,7 +1422,7 @@ def test_detail_bucket_and_artifact_routes_cover_user_surface() -> None:
                 "name": "downloadable manifest",
                 "artifact_set_euid": "AS-1",
                 "artifact_euids": ["AT-1", "AT-2"],
-                "metadata": {"editor_manifest_tsv": "sample_id\tartifact_euid\nS1\tAT-1\n"},
+                "metadata": {"editor_analysis_inputs": _editor_rows()},
             },
         )
         validation = client.post(
@@ -877,8 +1505,8 @@ def test_detail_bucket_and_artifact_routes_cover_user_surface() -> None:
     assert manifest_detail.status_code == 200, manifest_detail.text
     assert manifest_detail.json()["manifest_euid"] == manifest.json()["manifest_euid"]
     assert manifest_download.status_code == 200, manifest_download.text
-    assert manifest_download.text.startswith("sample_id\tartifact_euid")
-    assert manifest_download.headers["content-disposition"].endswith('downloadable manifest.tsv"')
+    assert manifest_download.text.startswith("RUN_ID\tSAMPLE_ID\tEXPERIMENTID")
+    assert manifest_download.headers["content-disposition"].endswith('analysis_samples.tsv"')
     assert validation.status_code == 200, validation.text
     assert validation.json()["bucket_name"] == "omics-inputs"
     assert imported.status_code == 201, imported.text

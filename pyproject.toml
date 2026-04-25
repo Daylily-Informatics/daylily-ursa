@@ -24,6 +24,8 @@ dependencies = [
     "daylily-auth-cognito==2.1.1",
     # TapDB graph persistence
     "daylily-tapdb==6.0.4",
+    # Ephemeral cluster API/CLI contract
+    "daylily-ephemeral-cluster==2.1.4",
     "fastapi>=0.104.0",
     "httpx>=0.25.0",
     "itsdangerous>=2.2.0",

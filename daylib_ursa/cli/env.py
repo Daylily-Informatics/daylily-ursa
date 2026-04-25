@@ -129,7 +129,7 @@ def status():
             cli_output.print_rich(f"  [red]✗[/red] {dep} (not installed)")
 
     cli_output.print_rich("\n[bold]CLI Tools:[/bold]")
-    tools = ["aws", "pcluster", "jq", "yq", "rclone", "parallel", "fd", "psql", "node"]
+    tools = ["aws", "daylily-ec", "jq", "yq", "rclone", "parallel", "fd", "psql", "node"]
     for tool in tools:
         path = shutil.which(tool)
         if path:

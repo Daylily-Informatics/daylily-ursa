@@ -1,36 +1,45 @@
-# Ursa Mounted TapDB Admin Execution Plan
+# Ursa Mounted TapDB Admin Status
 
-## Goal
+## Current Behavior
 
-Expose TapDB admin surfaces inside Ursa's FastAPI process under `/admin/tapdb`,
-gated solely by Ursa's authenticated admin session, without a separate TapDB
-auth flow.
+Ursa mounts the TapDB admin ASGI app inside the Ursa FastAPI process when `ursa_tapdb_mount_enabled` is true. The default mount path is `/admin/tapdb`.
 
-## Implementation Steps
+Mounted mode:
 
-1. Add a dedicated Ursa integration module to:
-   - lazy load TapDB admin app (`admin.main:app`)
-   - wire an explicit mounted admin identity into the embedded TapDB app
-   - enforce Ursa admin session gate before forwarding requests
-2. Mount TapDB from `daylib_ursa.workset_api.create_app` after Ursa routes are
-   composed.
-3. Add minimal settings:
-   - `URSA_TAPDB_MOUNT_ENABLED` (default true)
-   - `URSA_TAPDB_MOUNT_PATH` (default `/admin/tapdb`)
-4. Fail fast when mount is enabled and TapDB admin app cannot be imported.
-5. Add tests for:
-   - route existence
-   - unauthenticated redirect
-   - non-admin 403
-   - admin access
-   - mounted-mode TapDB local-auth bypass
-   - startup failure behavior
-6. Update docs (`README.md`, `docs/INTEGRATION_GUIDE.md`) to describe mounted
-   behavior and standalone vs mounted mode.
+- loads `admin.main:app` lazily from the installed TapDB package
+- requires explicit `tapdb_env` and `tapdb_config_path`
+- forwards Ursa's TapDB env, config path, client ID, and namespace into the embedded app
+- gates access with `X-API-Key` matching `ursa_internal_api_key`
+- injects an embedded TapDB admin identity into the forwarded ASGI scope
+- does not mutate TapDB admin auth environment variables
+- fails application startup when enabled and TapDB admin import/configuration fails
 
-## Acceptance Criteria
+Set `ursa_tapdb_mount_enabled: false` to skip importing the TapDB admin app.
 
-- Ursa starts one FastAPI app containing `/admin/tapdb`.
-- Mounted TapDB routes are inaccessible without Ursa admin session.
-- TapDB local auth flow is bypassed in mounted mode without mutating `TAPDB_ADMIN_*`.
-- Tests pass for mounted admin-only behavior and startup policy.
+## Settings
+
+- `ursa_tapdb_mount_enabled`: enables or disables the mount
+- `ursa_tapdb_mount_path`: mount path, default `/admin/tapdb`
+- `ursa_internal_api_key`: API key required by the mounted gate
+- `tapdb_env`: TapDB environment selector
+- `tapdb_config_path`: explicit TapDB config path
+- `tapdb_client_id`: TapDB client ID
+- `tapdb_database_name`: TapDB namespace/database name
+
+## Verification
+
+Current tests cover:
+
+- mounted route existence
+- valid API key access
+- missing or wrong API key denial
+- no mutation of TapDB admin auth environment variables
+- fail-fast startup when the TapDB admin app cannot be imported
+- disabled mount skipping TapDB import
+- explicit TapDB context forwarding
+
+Run:
+
+```bash
+pytest tests/test_tapdb_mount.py -q
+```

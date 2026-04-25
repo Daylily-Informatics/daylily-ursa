@@ -62,6 +62,12 @@ def _settings() -> Settings:
     return Settings(
         cors_origins="*",
         ursa_internal_api_key="ursa-test-key",
+        session_secret_key="ursa-session-secret",
+        cognito_domain="auth.example.test",
+        cognito_app_client_id="client-123",
+        cognito_app_client_secret="ursa-cognito-secret",
+        cognito_callback_url="https://testserver/auth/callback",
+        cognito_logout_url="https://testserver/auth/logout",
         bloom_base_url="https://bloom.example",
         atlas_base_url="https://atlas.example",
         ursa_internal_output_bucket="ursa-internal",

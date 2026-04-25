@@ -62,15 +62,16 @@
 
 {% set analysis_command = workset.metadata.get("analysis_command") if workset.metadata else None %}
 {% if analysis_command %}
+{% set profile = analysis_command.profile or {} %}
 <section class="card" style="margin-top: 1rem;">
     <div class="card-header"><h3 class="card-title">Analysis Command</h3></div>
     <div class="grid grid-4" style="margin-bottom: 1rem;">
-        <article class="stat-card"><div><div class="stat-value">{{ analysis_command.display_name or analysis_command.workflow_id }}</div><div class="stat-label">Workflow</div></div></article>
-        <article class="stat-card"><div><div class="stat-value">{{ analysis_command.spec.genome_build if analysis_command.spec else "—" }}</div><div class="stat-label">Genome</div></div></article>
-        <article class="stat-card"><div><div class="stat-value">{{ analysis_command.spec.execution_profile if analysis_command.spec else "—" }}</div><div class="stat-label">Execution</div></div></article>
-        <article class="stat-card"><div><div class="stat-value">{{ analysis_command.repository_ref or "—" }}</div><div class="stat-label">Repository Ref</div></div></article>
+        <article class="stat-card"><div><div class="stat-value">{{ profile.display_name or analysis_command.command_id }}</div><div class="stat-label">Command</div></div></article>
+        <article class="stat-card"><div><div class="stat-value">{{ profile.genome or "—" }}</div><div class="stat-label">Genome</div></div></article>
+        <article class="stat-card"><div><div class="stat-value">{{ profile.datasource or "—" }}</div><div class="stat-label">Datasource</div></div></article>
+        <article class="stat-card"><div><div class="stat-value">{{ analysis_command.repository or "—" }}</div><div class="stat-label">Repository</div></div></article>
     </div>
-    <pre class="json-block">{{ analysis_command.shell_preview }}</pre>
+    <pre class="json-block">{{ profile.targets | join(" ") }}</pre>
 </section>
 {% endif %}
 

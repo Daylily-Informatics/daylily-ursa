@@ -14,7 +14,7 @@ from daylib_ursa.ephemeral_cluster.runner import (
     _summarize_process_output,
     run_create_sync,
     run_preflight_sync,
-    write_generated_ec_config,
+    write_dayec_cluster_config,
 )
 from daylib_ursa.resource_store import ClusterJobRecord, ResourceStore
 from daylib_ursa.tapdb_graph import utc_now_iso
@@ -71,7 +71,7 @@ def run_cluster_create_job(
 
         with TemporaryDirectory(prefix="ursa-cluster-") as temp_dir:
             scratch_dir = Path(temp_dir)
-            config_path = write_generated_ec_config(
+            config_path = write_dayec_cluster_config(
                 dest=scratch_dir / "cluster.yaml",
                 cluster_name=cluster_name,
                 ssh_key_name=ssh_key_name,
