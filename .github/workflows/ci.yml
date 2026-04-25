@@ -66,6 +66,8 @@ jobs:
               else:
                   files = collect_files(["git", "ls-files", "*.py"]) or []
 
+          files = [path for path in files if os.path.isfile(path)]
+
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
               fh.write(f"files={json.dumps(files)}\n")
               fh.write(f"count={len(files)}\n")
@@ -135,6 +137,8 @@ jobs:
                   files = collect_files(["git", "diff", "--name-only", "HEAD^", "HEAD", "--", "*.py"]) or []
               else:
                   files = collect_files(["git", "ls-files", "*.py"]) or []
+
+          files = [path for path in files if os.path.isfile(path)]
 
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
               fh.write(f"files={json.dumps(files)}\n")
