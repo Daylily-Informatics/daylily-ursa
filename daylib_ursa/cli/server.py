@@ -42,7 +42,6 @@ if TYPE_CHECKING:
 
 server_app = typer.Typer(help="API server management commands")
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-REPO_CERTS_DIR = PROJECT_ROOT / "certs"
 
 REQUIRED_COGNITO_APP_CLIENT_NAME = "ursa"
 
@@ -69,8 +68,8 @@ def _shared_dayhoff_certs_dir() -> Path:
     return shared_dayhoff_certs_dir(_resolve_deployment_code())
 
 
-def _option_default(value, fallback):
-    return fallback if isinstance(value, typer.models.OptionInfo) else value
+def _option_default(value, default_value):
+    return default_value if isinstance(value, typer.models.OptionInfo) else value
 
 
 def _resolved_server_host_port(
@@ -84,7 +83,7 @@ def _resolved_server_host_port(
         if port is not None
         else os.environ.get(
             "URSA_RUNTIME__PORT",
-            getattr(settings, "api_port", os.environ.get("URSA_PORT", DEFAULT_API_PORT)),
+            getattr(settings, "api_port", DEFAULT_API_PORT),
         )
     )
     resolved_host = str(
@@ -92,7 +91,7 @@ def _resolved_server_host_port(
         if host is not None
         else os.environ.get(
             "URSA_RUNTIME__HOST",
-            getattr(settings, "api_host", os.environ.get("URSA_HOST", "0.0.0.0")),
+            getattr(settings, "api_host", "0.0.0.0"),
         )
     )
     return resolved_host, resolved_port
@@ -167,7 +166,6 @@ def _resolve_https_cert_paths(
             cert_path=cert,
             key_path=key,
             shared_certs_dir=shared_dir,
-            fallback_certs_dir=REPO_CERTS_DIR,
             hosts=_https_san_hosts(host),
         )
     except SystemExit as exc:

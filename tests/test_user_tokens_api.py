@@ -215,7 +215,7 @@ def test_user_token_service_create_validate_revoke_and_usage_flow() -> None:
         service.validate_token(plaintext)
 
 
-def test_user_token_service_rejects_snapshotless_legacy_tokens() -> None:
+def test_user_token_service_rejects_tokens_without_snapshot() -> None:
     backend = MemoryBackend()
     service = UserTokenService(backend=backend)
     plaintext = service.generate_plaintext_token()
@@ -225,11 +225,11 @@ def test_user_token_service_rejects_snapshotless_legacy_tokens() -> None:
         token = backend.create_instance(
             session,
             "RGX/auth/user-token/1.0/",
-            "legacy token",
+            "snapshotless token",
             json_addl={
                 "owner_user_id": USER_ID,
                 "tenant_id": str(TENANT_ID),
-                "token_name": "legacy token",
+                "token_name": "snapshotless token",
                 "token_prefix": service.display_prefix(plaintext),
                 "scope": "internal_rw",
                 "created_by": USER_ID,
@@ -242,7 +242,7 @@ def test_user_token_service_rejects_snapshotless_legacy_tokens() -> None:
         revision = backend.create_instance(
             session,
             "RGX/auth/user-token-revision/1.0/",
-            "revision:legacy:1",
+            "revision:snapshotless:1",
             json_addl={
                 "token_euid": token.euid,
                 "token_hash": token_hash,

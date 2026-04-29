@@ -50,6 +50,11 @@ def run_cluster_create_job(
     contact_email = str(request.get("contact_email") or "").strip() or None
     pass_on_warn = bool(request.get("pass_on_warn"))
     debug = bool(request.get("debug"))
+    config_path = str(request.get("config_path") or "").strip()
+    cluster_config_values = dict(request.get("cluster_config_values") or {})
+    repo_overrides = [
+        str(item).strip() for item in list(request.get("repo_overrides") or []) if str(item).strip()
+    ]
     sponsor_user_id = str(job.sponsor_user_id or job.owner_user_id or "").strip()
 
     started_at = utc_now_iso()
@@ -71,18 +76,23 @@ def run_cluster_create_job(
 
         with TemporaryDirectory(prefix="ursa-cluster-") as temp_dir:
             scratch_dir = Path(temp_dir)
-            config_path = write_dayec_cluster_config(
-                dest=scratch_dir / "cluster.yaml",
-                cluster_name=cluster_name,
-                ssh_key_name=ssh_key_name,
-                s3_bucket_name=s3_bucket_name,
-                contact_email=contact_email,
+            effective_config_path = (
+                Path(config_path).expanduser()
+                if config_path
+                else write_dayec_cluster_config(
+                    dest=scratch_dir / "cluster.yaml",
+                    cluster_name=cluster_name,
+                    ssh_key_name=ssh_key_name,
+                    s3_bucket_name=s3_bucket_name,
+                    contact_email=contact_email,
+                    config_values=cluster_config_values,
+                )
             )
 
             preflight = run_preflight_sync(
                 region_az=region_az,
                 aws_profile=aws_profile,
-                config_path=config_path,
+                config_path=effective_config_path,
                 pass_on_warn=pass_on_warn,
                 debug=debug,
                 contact_email=contact_email,
@@ -117,10 +127,11 @@ def run_cluster_create_job(
             result = run_create_sync(
                 region_az=region_az,
                 aws_profile=aws_profile,
-                config_path=str(config_path),
+                config_path=str(effective_config_path),
                 pass_on_warn=pass_on_warn,
                 debug=debug,
                 contact_email=contact_email,
+                repo_overrides=repo_overrides,
                 cwd=workspace_root,
             )
             result_summary = _summarize_process_output(result)
@@ -241,6 +252,9 @@ class ClusterJobManager:
         contact_email: str | None,
         pass_on_warn: bool,
         debug: bool,
+        config_path: str | None = None,
+        cluster_config_values: dict[str, Any] | None = None,
+        repo_overrides: list[str] | None = None,
     ) -> ClusterJobRecord:
         region = region_from_region_az(region_az)
         request_payload = {
@@ -253,6 +267,9 @@ class ClusterJobManager:
             "contact_email": contact_email,
             "pass_on_warn": bool(pass_on_warn),
             "debug": bool(debug),
+            "config_path": str(config_path or "").strip() or None,
+            "cluster_config_values": dict(cluster_config_values or {}),
+            "repo_overrides": list(repo_overrides or []),
         }
         job = self.resource_store.create_cluster_job(
             cluster_name=cluster_name,

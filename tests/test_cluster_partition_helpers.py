@@ -75,11 +75,25 @@ def test_require_daylily_ec_version_rejects_mismatched_distribution(monkeypatch)
 def test_write_dayec_cluster_config_delegates_to_dayec_library(tmp_path: Path, monkeypatch) -> None:
     captured: dict[str, object] = {}
 
-    def fake_writer(**kwargs):
-        captured.update(kwargs)
-        path = Path(kwargs["dest"])
+    class FakeTriplet:
+        def __init__(self, *, action: str, default_value: str, set_value: str) -> None:
+            self.action = action
+            self.default_value = default_value
+            self.set_value = set_value
+
+    class FakeConfig:
+        def __init__(self) -> None:
+            self.ephemeral_cluster = SimpleNamespace(config={})
+
+    def fake_builder(**kwargs):
+        captured["builder"] = kwargs
+        return FakeConfig()
+
+    def fake_writer(cfg, dest):
+        captured["config"] = cfg.ephemeral_cluster.config
+        captured["dest"] = dest
+        path = Path(dest)
         path.write_text("ephemeral_cluster:\n  config: {}\n", encoding="utf-8")
-        return path
 
     monkeypatch.setattr(
         runner,
@@ -89,7 +103,11 @@ def test_write_dayec_cluster_config_delegates_to_dayec_library(tmp_path: Path, m
     monkeypatch.setattr(
         runner,
         "import_module",
-        lambda name: SimpleNamespace(write_noninteractive_cluster_config=fake_writer),
+        lambda name: SimpleNamespace(
+            build_noninteractive_cluster_config=fake_builder,
+            write_config=fake_writer,
+            Triplet=FakeTriplet,
+        ),
     )
 
     config_path = runner.write_dayec_cluster_config(
@@ -98,16 +116,18 @@ def test_write_dayec_cluster_config_delegates_to_dayec_library(tmp_path: Path, m
         ssh_key_name="omics-key",
         s3_bucket_name="omics-bucket",
         contact_email="ops@example.com",
+        config_values={"fsx_fs_size": "4800"},
     )
 
     assert config_path == tmp_path / "cluster.yaml"
-    assert captured == {
-        "dest": tmp_path / "cluster.yaml",
+    assert captured["builder"] == {
         "cluster_name": "cluster-1",
         "ssh_key_name": "omics-key",
         "s3_bucket_name": "omics-bucket",
         "contact_email": "ops@example.com",
     }
+    assert captured["dest"] == tmp_path / "cluster.yaml"
+    assert captured["config"]["fsx_fs_size"].set_value == "4800"
 
 
 def test_cluster_partition_request_validates_region_and_az_pairing() -> None:

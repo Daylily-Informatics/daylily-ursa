@@ -71,7 +71,7 @@ def _runtime_inventory(app) -> tuple[set[tuple[str, str]], set[str]]:
     return routes, mounts
 
 
-def test_public_routes_are_versioned_and_legacy_customer_routes_are_absent() -> None:
+def test_public_routes_are_versioned_and_customer_routes_are_absent() -> None:
     app = _create_test_app()
     paths = {getattr(route, "path", "") for route in app.routes if getattr(route, "path", "")}
     public_api_paths = {path for path in paths if path.startswith("/api/")}
@@ -98,7 +98,12 @@ def test_phase_one_route_families_exist() -> None:
         "/api/v1/buckets",
         "/api/v1/artifacts/import",
         "/api/v1/clusters",
+        "/api/v1/clusters/aws/check-all",
         "/api/v1/clusters/jobs",
+        "/api/v1/clusters/regions/{region}/names",
+        "/api/v1/clusters/{cluster_name}/headnode/static",
+        "/api/v1/clusters/{cluster_name}/headnode/scheduler",
+        "/api/v1/clusters/{cluster_name}/headnode/fsx",
         "/api/v1/user-tokens",
         "/api/v1/admin/user-tokens",
         "/api/v1/admin/users",

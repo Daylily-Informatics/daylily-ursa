@@ -7,11 +7,11 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Dict, Iterable, Optional, cast
+from typing import Any, Dict, Iterable, Mapping, Optional, Sequence, cast
 
 
 DAYLILY_EC_DISTRIBUTION = "daylily-ephemeral-cluster"
-REQUIRED_DAYLILY_EC_VERSION = "2.1.4"
+REQUIRED_DAYLILY_EC_VERSION = "2.1.11"
 
 
 def require_daylily_ec_version() -> str:
@@ -32,8 +32,39 @@ def require_daylily_ec_version() -> str:
     return installed
 
 
+DAYEC_CLUSTER_CONFIG_FIELDS = (
+    "s3_bucket_name",
+    "public_subnet_id",
+    "private_subnet_id",
+    "iam_policy_arn",
+    "cluster_name",
+    "budget_email",
+    "allowed_budget_users",
+    "budget_amount",
+    "global_allowed_budget_users",
+    "global_budget_amount",
+    "enforce_budget",
+    "cluster_template_yaml",
+    "headnode_instance_type",
+    "fsx_fs_size",
+    "enable_detailed_monitoring",
+    "delete_local_root",
+    "auto_delete_fsx",
+    "heartbeat_email",
+    "heartbeat_schedule",
+    "heartbeat_scheduler_role_arn",
+    "spot_instance_allocation_strategy",
+    "max_count_8I",
+    "max_count_128I",
+    "max_count_192I",
+)
+
+
 def _command_env(
-    *, aws_profile: Optional[str], contact_email: Optional[str] = None
+    *,
+    aws_profile: Optional[str],
+    contact_email: Optional[str] = None,
+    extra_env: Mapping[str, str] | None = None,
 ) -> Dict[str, str]:
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
@@ -41,6 +72,8 @@ def _command_env(
         env["AWS_PROFILE"] = aws_profile
     if contact_email:
         env["DAY_CONTACT_EMAIL"] = contact_email
+    if extra_env:
+        env.update({str(key): str(value) for key, value in extra_env.items()})
     return env
 
 
@@ -58,7 +91,7 @@ def _summarize_process_output(
 
 
 class DaylilyEcClient:
-    """Strict Ursa client for the daylily-ephemeral-cluster 2.1.4 contract."""
+    """Strict Ursa client for the daylily-ephemeral-cluster 2.1.11 contract."""
 
     def __init__(
         self,
@@ -87,6 +120,7 @@ class DaylilyEcClient:
         cwd: Optional[Path] = None,
         check: bool = False,
         timeout: Optional[int] = None,
+        extra_env: Mapping[str, str] | None = None,
     ) -> subprocess.CompletedProcess[str]:
         result = subprocess.run(
             self.command(args, json_mode=json_mode),
@@ -96,6 +130,7 @@ class DaylilyEcClient:
             env=_command_env(
                 aws_profile=aws_profile if aws_profile is not None else self.aws_profile,
                 contact_email=contact_email,
+                extra_env=extra_env,
             ),
             timeout=timeout,
             check=False,
@@ -261,23 +296,37 @@ def write_dayec_cluster_config(
     ssh_key_name: str,
     s3_bucket_name: str,
     contact_email: Optional[str],
+    config_values: Mapping[str, Any] | None = None,
 ) -> Path:
-    """Write a non-interactive cluster request through the day-ec 2.1.4 library."""
+    """Write a non-interactive cluster request through the day-ec 2.1.11 library."""
 
     require_daylily_ec_version()
     module = import_module("daylily_ec.config")
-    writer = getattr(module, "write_noninteractive_cluster_config", None)
-    if not callable(writer):
-        raise RuntimeError("daylily_ec.config.write_noninteractive_cluster_config is not available")
-    return Path(
-        writer(
-            dest=dest,
-            cluster_name=cluster_name,
-            ssh_key_name=ssh_key_name,
-            s3_bucket_name=s3_bucket_name,
-            contact_email=contact_email,
-        )
+    builder = getattr(module, "build_noninteractive_cluster_config", None)
+    writer = getattr(module, "write_config", None)
+    triplet_type = getattr(module, "Triplet", None)
+    if not callable(builder) or not callable(writer) or triplet_type is None:
+        raise RuntimeError("daylily_ec.config non-interactive config helpers are not available")
+
+    cfg = builder(
+        cluster_name=cluster_name,
+        ssh_key_name=ssh_key_name,
+        s3_bucket_name=s3_bucket_name,
+        contact_email=contact_email,
     )
+    for key, raw_value in dict(config_values or {}).items():
+        if key not in DAYEC_CLUSTER_CONFIG_FIELDS and key != "ssh_key_name":
+            raise ValueError(f"Unsupported daylily-ec cluster config field: {key}")
+        value = str(raw_value or "").strip()
+        if not value:
+            continue
+        cfg.ephemeral_cluster.config[key] = triplet_type(
+            action="USESETVALUE",
+            default_value="",
+            set_value=value,
+        )
+    writer(cfg, dest)
+    return Path(dest)
 
 
 def _cluster_command_args(
@@ -288,6 +337,7 @@ def _cluster_command_args(
     config_path: Path,
     pass_on_warn: bool,
     debug: bool,
+    repo_overrides: Sequence[str] | None = None,
 ) -> list[str]:
     command = [
         verb,
@@ -303,6 +353,10 @@ def _cluster_command_args(
         command.append("--pass-on-warn")
     if debug:
         command.append("--debug")
+    if verb == "create":
+        for override in list(repo_overrides or []):
+            if str(override or "").strip():
+                command.extend(["--repo-override", str(override).strip()])
     return command
 
 
@@ -314,6 +368,7 @@ def run_preflight_sync(
     pass_on_warn: bool,
     debug: bool,
     contact_email: Optional[str],
+    repo_overrides: Sequence[str] | None = None,
     cwd: Optional[Path] = None,
 ) -> subprocess.CompletedProcess[str]:
     client = get_daylily_ec_client(aws_profile=aws_profile)
@@ -325,10 +380,66 @@ def run_preflight_sync(
             config_path=config_path,
             pass_on_warn=pass_on_warn,
             debug=debug,
+            repo_overrides=repo_overrides,
         ),
         contact_email=contact_email,
         cwd=cwd,
     )
+
+
+def run_create_dry_run_sync(
+    *,
+    region_az: str,
+    aws_profile: Optional[str],
+    config_path: str,
+    pass_on_warn: bool,
+    debug: bool,
+    contact_email: Optional[str],
+    repo_overrides: Sequence[str] | None = None,
+    cwd: Optional[Path] = None,
+) -> subprocess.CompletedProcess[str]:
+    resolved_config_path = Path(config_path).expanduser()
+    if not resolved_config_path.is_absolute():
+        resolved_config_path = ((cwd or Path.cwd()) / resolved_config_path).resolve()
+    client = get_daylily_ec_client(aws_profile=aws_profile)
+    return client.run(
+        _cluster_command_args(
+            "create",
+            region_az=region_az,
+            aws_profile=aws_profile,
+            config_path=resolved_config_path,
+            pass_on_warn=pass_on_warn,
+            debug=debug,
+            repo_overrides=repo_overrides,
+        ),
+        contact_email=contact_email,
+        cwd=cwd,
+        extra_env={"DAY_BREAK": "1"},
+    )
+
+
+def run_aws_validate_all_sync(
+    *,
+    region_az: str,
+    aws_profile: str,
+    gap_analysis_path: Path,
+    config_path: str | None = None,
+    cwd: Optional[Path] = None,
+) -> subprocess.CompletedProcess[str]:
+    args = [
+        "aws",
+        "validate",
+        "all",
+        "--profile",
+        aws_profile,
+        "--region-az",
+        region_az,
+    ]
+    if config_path:
+        args.extend(["--config", config_path])
+    args.extend(["--gap-analysis", str(gap_analysis_path)])
+    client = get_daylily_ec_client(aws_profile=aws_profile)
+    return client.run(args, json_mode=True, cwd=cwd)
 
 
 def run_create_sync(
@@ -339,11 +450,12 @@ def run_create_sync(
     pass_on_warn: bool,
     debug: bool,
     contact_email: Optional[str],
+    repo_overrides: Sequence[str] | None = None,
     cwd: Optional[Path] = None,
 ) -> subprocess.CompletedProcess[str]:
     resolved_config_path = Path(config_path).expanduser()
     if not resolved_config_path.is_absolute():
-        resolved_config_path = (Path.cwd() / resolved_config_path).resolve()
+        resolved_config_path = ((cwd or Path.cwd()) / resolved_config_path).resolve()
     client = get_daylily_ec_client(aws_profile=aws_profile)
     return client.run(
         _cluster_command_args(
@@ -353,6 +465,7 @@ def run_create_sync(
             config_path=resolved_config_path,
             pass_on_warn=pass_on_warn,
             debug=debug,
+            repo_overrides=repo_overrides,
         ),
         contact_email=contact_email,
         cwd=cwd,
@@ -366,7 +479,9 @@ __all__ = [
     "_summarize_process_output",
     "get_daylily_ec_client",
     "require_daylily_ec_version",
+    "run_aws_validate_all_sync",
     "run_create_sync",
+    "run_create_dry_run_sync",
     "run_preflight_sync",
     "write_dayec_cluster_config",
 ]

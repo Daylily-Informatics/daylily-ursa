@@ -215,6 +215,7 @@ class UrsaObservabilityStore:
         self._auth_recent: deque[dict[str, Any]] = deque(maxlen=25)
         self._auth_status_counts: Counter[str] = Counter()
         self._observed_dependencies: set[str] = set()
+        self._obs_services_fragments: list[dict[str, Any]] = []
         self._schema_drift = _default_schema_drift_payload(
             str(self.settings.tapdb_env or self.settings.daylily_env or "")
         )
@@ -226,7 +227,7 @@ class UrsaObservabilityStore:
         return self._started_at
 
     def _build_obs_services_snapshot(self) -> dict[str, Any]:
-        return {
+        snapshot = {
             "status": "ok",
             "endpoints": [
                 {"path": "/healthz", "auth": "none", "kind": "liveness"},
@@ -258,9 +259,49 @@ class UrsaObservabilityStore:
                 "ursa.anomalies_v1",
                 "ursa.topology_v1",
             ],
+            "capabilities": [],
+            "external_ref_models": [],
             "dependencies": self._dependencies_snapshot(),
             "observed_at": self._dependency_observed_at,
         }
+        known_endpoints = {
+            (str(item.get("path") or ""), str(item.get("kind") or ""))
+            for item in snapshot["endpoints"]
+        }
+        known_extensions = {str(item) for item in snapshot["extensions"]}
+        known_capabilities: set[str] = set()
+        known_external_ref_models: set[str] = set()
+        for fragment in self._obs_services_fragments:
+            for item in list(fragment.get("endpoints") or []):
+                if not isinstance(item, dict):
+                    continue
+                key = (str(item.get("path") or ""), str(item.get("kind") or ""))
+                if key in known_endpoints:
+                    continue
+                snapshot["endpoints"].append(dict(item))
+                known_endpoints.add(key)
+            for item in list(fragment.get("extensions") or []):
+                normalized = str(item or "").strip()
+                if not normalized or normalized in known_extensions:
+                    continue
+                snapshot["extensions"].append(normalized)
+                known_extensions.add(normalized)
+            for item in list(fragment.get("capabilities") or []):
+                normalized = str(item or "").strip()
+                if not normalized or normalized in known_capabilities:
+                    continue
+                snapshot["capabilities"].append(normalized)
+                known_capabilities.add(normalized)
+            for item in list(fragment.get("external_ref_models") or []):
+                normalized = str(item or "").strip()
+                if not normalized or normalized in known_external_ref_models:
+                    continue
+                snapshot["external_ref_models"].append(normalized)
+                known_external_ref_models.add(normalized)
+            contract_version = str(fragment.get("contract_version") or "").strip()
+            if contract_version:
+                snapshot["tapdb_dag_contract_version"] = contract_version
+        return snapshot
 
     def _configured_dependencies(self) -> list[str]:
         configured: list[str] = []
@@ -392,6 +433,31 @@ class UrsaObservabilityStore:
             return
         with self._lock:
             self._observed_dependencies.add(candidate)
+            self._dependency_observed_at = _utcnow()
+            self._obs_services_snapshot = self._build_obs_services_snapshot()
+
+    def add_obs_services_fragment(
+        self,
+        *,
+        endpoints: list[dict[str, Any]] | None = None,
+        extensions: list[str] | None = None,
+        capabilities: list[str] | None = None,
+        external_ref_models: list[str] | None = None,
+        contract_version: str = "",
+    ) -> None:
+        """Merge additional discoverable service metadata into `/obs_services`."""
+
+        fragment = {
+            "endpoints": [dict(item) for item in endpoints or [] if isinstance(item, dict)],
+            "extensions": [str(item) for item in extensions or [] if str(item or "").strip()],
+            "capabilities": [str(item) for item in capabilities or [] if str(item or "").strip()],
+            "external_ref_models": [
+                str(item) for item in external_ref_models or [] if str(item or "").strip()
+            ],
+            "contract_version": str(contract_version or "").strip(),
+        }
+        with self._lock:
+            self._obs_services_fragments.append(fragment)
             self._dependency_observed_at = _utcnow()
             self._obs_services_snapshot = self._build_obs_services_snapshot()
 
@@ -684,6 +750,14 @@ def build_obs_services_payload(
     payload["endpoints"] = list(snapshot.get("endpoints") or [])
     payload["extensions"] = list(snapshot.get("extensions") or [])
     payload["dependencies"] = dict(snapshot.get("dependencies") or {})
+    if snapshot.get("capabilities"):
+        payload["capabilities"] = list(snapshot.get("capabilities") or [])
+    if snapshot.get("external_ref_models"):
+        payload["external_ref_models"] = list(snapshot.get("external_ref_models") or [])
+    if snapshot.get("tapdb_dag_contract_version"):
+        payload["tapdb_dag_contract_version"] = str(
+            snapshot.get("tapdb_dag_contract_version") or ""
+        )
     return _with_projection(payload, projection)
 
 

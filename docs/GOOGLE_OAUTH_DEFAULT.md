@@ -1,6 +1,6 @@
 # Google OAuth Default For Ursa
 
-Ursa uses `daylily-auth-cognito==2.1.1` for browser/session helpers and Hosted UI token exchange. Shared user-pool and app-client lifecycle belongs to `daycog`; this repo's helper script only applies Ursa-specific Google OAuth defaults on top of that lifecycle.
+Ursa uses `daylily-auth-cognito==2.1.5` for browser/session helpers and Hosted UI token exchange. Shared user-pool and app-client lifecycle belongs to `daycog`; this repo's helper script only applies Ursa-specific Google OAuth defaults on top of that lifecycle.
 
 ## Helper Script
 

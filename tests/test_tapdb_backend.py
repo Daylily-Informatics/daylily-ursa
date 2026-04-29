@@ -36,7 +36,7 @@ def _tapdb_dependency_spec() -> str:
     raise AssertionError("daylily-tapdb dependency missing from pyproject.toml")
 
 
-def test_backend_adapter_reexports_tapdb_surface_without_legacy_inheritance() -> None:
+def test_backend_adapter_reexports_tapdb_surface_directly() -> None:
     params = inspect.signature(TapDBBackend).parameters
     assert TapDBBackend.__mro__ == (TapDBBackend, object)
     assert "bundle" in params
@@ -98,7 +98,7 @@ def test_utc_now_iso_format() -> None:
     assert "T" in ts
 
 
-def test_adapter_module_has_no_legacy_repo_reference() -> None:
+def test_adapter_module_has_no_removed_repo_reference() -> None:
     source = Path("daylib_ursa/tapdb_graph/backend.py").read_text(encoding="utf-8")
     assert "UrsaTapdbRepository" not in source
     assert "TapdbClientBundle" in source
@@ -489,7 +489,7 @@ def test_backend_scopes_template_lookups_to_bundle_domain_code() -> None:
 def test_get_tapdb_bundle_scopes_instance_factory_to_runtime_domain(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
-    monkeypatch.setattr(tapdb_runtime, "ensure_tapdb_version", lambda: "6.0.4")
+    monkeypatch.setattr(tapdb_runtime, "ensure_tapdb_version", lambda: "6.0.8")
     monkeypatch.setattr(
         tapdb_runtime,
         "_resolve_runtime_env",

@@ -5,6 +5,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import io
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -576,6 +577,70 @@ class DummyClusterInfo:
             "region": self.region,
             "cluster_status": self.cluster_status,
             "compute_fleet_status": "RUNNING",
+            "scheduler_type": "slurm",
+            "creation_time": "2026-03-25T00:00:00Z",
+            "last_updated_time": "2026-03-25T00:30:00Z",
+            "head_node": {
+                "instance_type": "c7i.large",
+                "public_ip": "198.51.100.10",
+                "private_ip": "10.0.0.10",
+                "state": "running",
+                "instance_id": "i-0123456789abcdef0",
+            },
+            "daylily_ec_pinned_version": "2.1.11",
+            "aws_console_url": (
+                f"https://{self.region}.console.aws.amazon.com/ec2/home?region={self.region}"
+                "#InstanceDetails:instanceId=i-0123456789abcdef0"
+            ),
+            "headnode_probes": {
+                "static": {
+                    "probe_type": "static",
+                    "cluster_name": self.cluster_name,
+                    "region": self.region,
+                    "instance_id": "i-0123456789abcdef0",
+                    "captured_at": "2026-03-25T00:30:00Z",
+                    "cache_expires_at": "2026-03-26T00:30:00Z",
+                    "ttl_seconds": 86400,
+                    "cached": True,
+                    "data": {
+                        "daylily_ec_pinned_version": "2.1.11",
+                        "remote_daylily_ec_version": "2.1.11",
+                        "remote_git_hash": "abc123",
+                        "day_clone_available": True,
+                        "day_clone_help": "Usage: day-clone [OPTIONS]\n  --help",
+                    },
+                    "error": None,
+                },
+                "scheduler": {
+                    "probe_type": "scheduler",
+                    "cluster_name": self.cluster_name,
+                    "region": self.region,
+                    "instance_id": "i-0123456789abcdef0",
+                    "captured_at": "2026-03-25T00:31:00Z",
+                    "cache_expires_at": "2026-03-25T00:36:00Z",
+                    "ttl_seconds": 300,
+                    "cached": True,
+                    "data": {
+                        "squeue_output": "JOBID PARTITION NAME\n42 compute test",
+                        "sinfo_output": "PARTITION AVAIL\ncompute* up",
+                    },
+                    "error": None,
+                },
+                "fsx": {
+                    "probe_type": "fsx",
+                    "cluster_name": self.cluster_name,
+                    "region": self.region,
+                    "instance_id": "i-0123456789abcdef0",
+                    "captured_at": "2026-03-25T00:32:00Z",
+                    "cache_expires_at": "2026-03-25T00:37:00Z",
+                    "ttl_seconds": 300,
+                    "cached": True,
+                    "data": {
+                        "df_output": "Filesystem Size Used Avail Use% Mounted on\nfsx 1.2T 200G 1.0T 17% /fsx"
+                    },
+                    "error": None,
+                },
+            },
         }
 
 
@@ -595,6 +660,9 @@ class DummyClusterService:
     ):
         _ = (force_refresh, fetch_ssh_status)
         return list(self._clusters)
+
+    def list_clusters_in_region(self, region: str):
+        return [cluster.cluster_name for cluster in self._clusters if cluster.region == region]
 
     def get_region_for_cluster(self, cluster_name: str):
         for cluster in self._clusters:
@@ -617,6 +685,61 @@ class DummyClusterService:
 
     def fetch_headnode_status(self, cluster):
         return cluster
+
+    def fetch_headnode_static_probe(self, *, cluster_name: str, region: str, refresh: bool = False):
+        return {
+            "probe_type": "static",
+            "cluster_name": cluster_name,
+            "region": region,
+            "instance_id": "i-0123456789abcdef0",
+            "captured_at": "2026-03-25T00:30:00Z",
+            "cache_expires_at": "2026-03-26T00:30:00Z",
+            "ttl_seconds": 86400,
+            "cached": not refresh,
+            "data": {
+                "daylily_ec_pinned_version": "2.1.11",
+                "remote_daylily_ec_version": "2.1.11",
+                "remote_git_hash": "abc123",
+                "day_clone_available": True,
+                "day_clone_help": "Usage: day-clone [OPTIONS]",
+            },
+            "error": None,
+        }
+
+    def fetch_headnode_scheduler_probe(
+        self, *, cluster_name: str, region: str, refresh: bool = False
+    ):
+        return {
+            "probe_type": "scheduler",
+            "cluster_name": cluster_name,
+            "region": region,
+            "instance_id": "i-0123456789abcdef0",
+            "captured_at": "2026-03-25T00:31:00Z",
+            "cache_expires_at": "2026-03-25T00:36:00Z",
+            "ttl_seconds": 300,
+            "cached": not refresh,
+            "data": {
+                "squeue_output": "JOBID PARTITION NAME\n42 compute test",
+                "sinfo_output": "PARTITION AVAIL\ncompute* up",
+            },
+            "error": None,
+        }
+
+    def fetch_headnode_fsx_probe(self, *, cluster_name: str, region: str, refresh: bool = False):
+        return {
+            "probe_type": "fsx",
+            "cluster_name": cluster_name,
+            "region": region,
+            "instance_id": "i-0123456789abcdef0",
+            "captured_at": "2026-03-25T00:32:00Z",
+            "cache_expires_at": "2026-03-25T00:37:00Z",
+            "ttl_seconds": 300,
+            "cached": not refresh,
+            "data": {
+                "df_output": "Filesystem Size Used Avail Use% Mounted on\nfsx 1.2T 200G 1.0T 17% /fsx"
+            },
+            "error": None,
+        }
 
     def create_delete_plan(self, cluster_name: str, region: str):
         return {
@@ -817,6 +940,26 @@ def _verification_result(
     return SimpleNamespace(has_failures=has_failures, partitions=partitions)
 
 
+def _cluster_dryrun_ok(**_kwargs):
+    return subprocess.CompletedProcess(
+        ["daylily-ec", "create"],
+        0,
+        "Dry-run passed\n",
+        "",
+    )
+
+
+def _aws_check_all_result(**kwargs):
+    gap_path = kwargs["gap_analysis_path"]
+    gap_path.write_text("# Gap analysis\n\nPASS iam.policy\n", encoding="utf-8")
+    return subprocess.CompletedProcess(
+        ["daylily-ec", "--json", "aws", "validate", "all"],
+        0,
+        '{"summary":{"PASS":1,"WARN":0,"FAIL":0},"checks":[{"id":"iam.policy","status":"PASS"}]}',
+        "",
+    )
+
+
 def test_create_app_uses_package_version() -> None:
     app, _resources = _create_test_app(admin=True)
 
@@ -834,6 +977,8 @@ def test_admin_routes_cover_me_user_search_client_tokens_and_clusters() -> None:
             "daylib_ursa.workset_api.run_cluster_partition_verification",
             return_value=_verification_result(),
         ),
+        patch("daylib_ursa.workset_api.run_create_dry_run_sync", _cluster_dryrun_ok),
+        patch("daylib_ursa.workset_api.run_aws_validate_all_sync", _aws_check_all_result),
     ):
         me = client.get("/api/v1/me", headers={"Authorization": "Bearer atlas-token"})
         users = client.get("/api/v1/admin/users", headers={"Authorization": "Bearer atlas-token"})
@@ -891,6 +1036,10 @@ def test_admin_routes_cover_me_user_search_client_tokens_and_clusters() -> None:
         cluster_list = client.get(
             "/api/v1/clusters", headers={"Authorization": "Bearer atlas-token"}
         )
+        region_cluster_names = client.get(
+            "/api/v1/clusters/regions/us-west-2/names",
+            headers={"Authorization": "Bearer atlas-token"},
+        )
         cluster_job = client.post(
             "/api/v1/clusters",
             headers={"Authorization": "Bearer atlas-token"},
@@ -912,11 +1061,35 @@ def test_admin_routes_cover_me_user_search_client_tokens_and_clusters() -> None:
             "/api/v1/clusters/create-options?region=us-west-2",
             headers={"Authorization": "Bearer atlas-token"},
         )
+        cluster_aws_check = client.post(
+            "/api/v1/clusters/aws/check-all",
+            headers={"Authorization": "Bearer atlas-token"},
+            json={
+                "cluster_name": "cluster-2",
+                "region": "us-west-2",
+                "region_az": "us-west-2d",
+                "ssh_key_name": "omics-key",
+                "s3_bucket_name": "ursa-bucket",
+                "aws_profile": "lsmc",
+            },
+        )
         admin_bucket_list = client.get(
             "/api/v1/admin/s3-buckets", headers={"Authorization": "Bearer atlas-token"}
         )
         cluster_detail = client.get(
             "/api/v1/clusters/cluster-1?region=us-west-2",
+            headers={"Authorization": "Bearer atlas-token"},
+        )
+        cluster_static_probe = client.post(
+            "/api/v1/clusters/cluster-1/headnode/static?region=us-west-2",
+            headers={"Authorization": "Bearer atlas-token"},
+        )
+        cluster_scheduler_probe = client.post(
+            "/api/v1/clusters/cluster-1/headnode/scheduler?region=us-west-2",
+            headers={"Authorization": "Bearer atlas-token"},
+        )
+        cluster_fsx_probe = client.post(
+            "/api/v1/clusters/cluster-1/headnode/fsx?region=us-west-2",
             headers={"Authorization": "Bearer atlas-token"},
         )
         cluster_delete_plan = client.post(
@@ -952,6 +1125,10 @@ def test_admin_routes_cover_me_user_search_client_tokens_and_clusters() -> None:
     assert revoked_token.json()["status"] == "REVOKED"
     assert cluster_list.status_code == 200
     assert cluster_list.json()["items"][0]["cluster_name"] == "cluster-1"
+    assert region_cluster_names.status_code == 200
+    assert region_cluster_names.json()["items"] == [
+        {"cluster_name": "cluster-1", "region": "us-west-2"}
+    ]
     assert cluster_job.status_code == 202
     assert cluster_jobs.status_code == 200
     assert cluster_jobs.json()[0]["cluster_name"] == "cluster-2"
@@ -972,6 +1149,17 @@ def test_admin_routes_cover_me_user_search_client_tokens_and_clusters() -> None:
         "omics-secondary",
     ]
     assert cluster_detail.status_code == 200
+    assert cluster_aws_check.status_code == 200
+    assert cluster_aws_check.json()["return_code"] == 0
+    assert "PASS iam.policy" in cluster_aws_check.json()["gap_analysis"]
+    assert cluster_aws_check.json()["report"]["summary"] == {"PASS": 1, "WARN": 0, "FAIL": 0}
+    assert cluster_detail.json()["daylily_ec_pinned_version"] == "2.1.11"
+    assert cluster_static_probe.status_code == 200
+    assert cluster_static_probe.json()["data"]["day_clone_available"] is True
+    assert cluster_scheduler_probe.status_code == 200
+    assert "JOBID PARTITION" in cluster_scheduler_probe.json()["data"]["squeue_output"]
+    assert cluster_fsx_probe.status_code == 200
+    assert "df_output" in cluster_fsx_probe.json()["data"]
     assert cluster_delete_plan.status_code == 200
     assert cluster_delete.status_code == 200
     assert cluster_delete.json()["result"]["status"] == "DELETE_IN_PROGRESS"
@@ -991,6 +1179,7 @@ def test_gui_routes_cover_remaining_pages_and_logout() -> None:
             "daylib_ursa.gui_app.command_catalog_payload",
             return_value=_command_catalog_payload(),
         ),
+        patch("daylib_ursa.workset_api.run_create_dry_run_sync", _cluster_dryrun_ok),
     ):
         client.post(
             "/login",
@@ -1031,6 +1220,7 @@ def test_gui_routes_cover_remaining_pages_and_logout() -> None:
         analyses_page = client.get("/analyses")
         analysis_detail_page = client.get("/analyses/AN-1")
         artifacts_page = client.get("/artifacts")
+        graph_page = client.get("/graph")
         tokens_page = client.get("/tokens")
         token_detail_page = client.get(f"/tokens/{user_token.json()['token_euid']}")
         clusters_page = client.get("/clusters")
@@ -1055,6 +1245,10 @@ def test_gui_routes_cover_remaining_pages_and_logout() -> None:
     assert "Illumina SNV Alignstats" in workset_detail_page.text
     assert manifests_page.status_code == 200
     assert "Manifest One" in manifests_page.text
+    assert "CG_R1_FQ" in manifests_page.text
+    assert "CG_R2_FQ" in manifests_page.text
+    assert "manifest-sample-type-options" in manifests_page.text
+    assert "data-browse" in manifests_page.text
     assert manifest_detail_page.status_code == 200
     assert "Manifest Manifest One" in manifest_detail_page.text
     assert analysis_jobs_page.status_code == 200
@@ -1075,12 +1269,17 @@ def test_gui_routes_cover_remaining_pages_and_logout() -> None:
     assert "Analysis AN-1" in analysis_detail_page.text
     assert artifacts_page.status_code == 200
     assert "Artifact Tools" in artifacts_page.text
+    assert graph_page.status_code == 200
+    assert "TapDB Object Graph" in graph_page.text
+    assert "/api/dag/search" in graph_page.text
     assert tokens_page.status_code == 200
     assert "session token" in tokens_page.text
     assert token_detail_page.status_code == 200
     assert "session token" in token_detail_page.text
     assert clusters_page.status_code == 200
-    assert "cluster-1" in clusters_page.text
+    assert "Loading live clusters" in clusters_page.text
+    assert "data-cluster-region-grid" in clusters_page.text
+    assert "/api/v1/clusters/regions/" in clusters_page.text
     assert 'list="cc-region-options"' in clusters_page.text
     assert 'value="us-east-1"' in clusters_page.text
     assert 'value="us-east-2"' in clusters_page.text
@@ -1089,6 +1288,28 @@ def test_gui_routes_cover_remaining_pages_and_logout() -> None:
     assert "Availability Zone" in clusters_page.text
     assert "Verify Partition Instances" in clusters_page.text
     assert "Calculate Spot Pricing Per Partition" in clusters_page.text
+    assert "daylily-ec create prompts" in clusters_page.text
+    assert "AWS Check All" in clusters_page.text
+    assert "daylily-ec --json aws validate all --profile --region-az --config --gap-analysis" in (
+        clusters_page.text
+    )
+    assert "Download gap_analysis" in clusters_page.text
+    assert "Dry Run + Start Create Job" in clusters_page.text
+    assert 'id="cc-public-subnet-id"' in clusters_page.text
+    assert 'id="cc-fsx-fs-size"' in clusters_page.text
+    assert 'id="cc-repo-overrides"' in clusters_page.text
+    assert "daylily-ephemeral-cluster Pin" in clusters_page.text
+    assert "AWS Console" in clusters_page.text
+    assert "Headnode Diagnostics" in clusters_page.text
+    assert "Probe tools" in clusters_page.text
+    assert "Refresh Slurm" in clusters_page.text
+    assert "Check FSx" in clusters_page.text
+    assert "day-clone --help" in clusters_page.text
+    assert "squeue" in clusters_page.text
+    assert "df -h /fsx" in clusters_page.text
+    assert "/delete-plan?region=" in clusters_page.text
+    assert "confirmation_token" in clusters_page.text
+    assert "confirm_cluster_name" in clusters_page.text
     assert cluster_detail_page.status_code == 200
     assert "Cluster cluster-1" in cluster_detail_page.text
     assert cluster_job_page.status_code == 200
@@ -1222,8 +1443,10 @@ def test_clusters_page_groups_regions_and_surfaces_pending_create_jobs() -> None
     assert "Scanning regions: <strong>us-west-2, us-east-1, eu-central-1</strong>" in response.text
     assert "Create Jobs In Flight" in response.text
     assert "test-del-me" in response.text
-    assert "lsmc-20260413" in response.text
-    assert "cluster-east" in response.text
+    assert "Loading live clusters in us-west-2" in response.text
+    assert "Loading live clusters in us-east-1" in response.text
+    assert "Loading live clusters in eu-central-1" in response.text
+    assert "/api/v1/clusters/regions/" in response.text
     assert "us-west-2" in response.text
     assert "us-east-1" in response.text
     assert "eu-central-1" in response.text
@@ -1239,6 +1462,7 @@ def test_gui_routes_use_session_auth_and_gate_admin_pages() -> None:
             "daylib_ursa.workset_api.run_cluster_partition_verification",
             return_value=_verification_result(),
         ),
+        patch("daylib_ursa.workset_api.run_create_dry_run_sync", _cluster_dryrun_ok),
     ):
         redirect = client.get("/", follow_redirects=False)
         login_page = client.get("/login")
@@ -1332,6 +1556,42 @@ def test_cluster_create_blocks_when_partition_verification_fails() -> None:
         response.json()["detail"]
         == "Create blocked because partition verification found no current Spot availability for: i192bigmem."
     )
+    assert resources.cluster_jobs == {}
+
+
+def test_cluster_create_blocks_when_submit_dryrun_fails() -> None:
+    app, resources = _create_test_app(admin=True)
+
+    def dryrun_failed(**_kwargs):
+        return subprocess.CompletedProcess(
+            ["daylily-ec", "create"],
+            1,
+            "",
+            "pcluster dry-run rejected the rendered config",
+        )
+
+    with (
+        TestClient(app, base_url=TEST_BASE_URL) as client,
+        patch(
+            "daylib_ursa.workset_api.run_cluster_partition_verification",
+            return_value=_verification_result(),
+        ),
+        patch("daylib_ursa.workset_api.run_create_dry_run_sync", dryrun_failed),
+    ):
+        response = client.post(
+            "/api/v1/clusters",
+            headers={"Authorization": "Bearer atlas-token"},
+            json={
+                "cluster_name": "cluster-2",
+                "region": "us-west-2",
+                "region_az": "us-west-2d",
+                "ssh_key_name": "omics-key",
+                "s3_bucket_name": "ursa-bucket",
+            },
+        )
+
+    assert response.status_code == 400
+    assert "pcluster dry-run rejected" in response.json()["detail"]
     assert resources.cluster_jobs == {}
 
 
@@ -1453,3 +1713,13 @@ def test_gui_admin_pages_reject_non_admin_sessions() -> None:
     assert "List Buckets" not in buckets_page.text
     assert admin_home.status_code == 403
     assert response.status_code == 403
+
+
+def test_portal_js_exposes_sortable_table_helper() -> None:
+    portal_js = Path("daylib_ursa/gui/static/portal.js").read_text(encoding="utf-8")
+    base_html = Path("daylib_ursa/gui/templates/base.html").read_text(encoding="utf-8")
+
+    assert "function initSortableTables" in portal_js
+    assert "MutationObserver" in portal_js
+    assert "initSortableTables," in portal_js
+    assert "portal.js" in base_html

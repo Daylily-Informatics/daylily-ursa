@@ -56,14 +56,18 @@ def test_pyproject_contains_the_single_python_install_set() -> None:
     dependencies = project["dependencies"]
 
     assert "optional-dependencies" not in project
+    assert project["requires-python"] == ">=3.11"
+    assert pyproject["tool"]["black"]["target-version"] == ["py311", "py312"]
+    assert pyproject["tool"]["ruff"]["target-version"] == "py311"
+    assert pyproject["tool"]["mypy"]["python_version"] == "3.11"
 
     for expected in (
         "bandit[toml]>=1.8.0",
         "black>=23.0.0",
         "boto3-stubs[s3,sns,cloudwatch]>=1.28.0",
-        "daylily-auth-cognito==2.1.1",
-        "daylily-ephemeral-cluster==2.1.4",
-        "daylily-tapdb==6.0.4",
+        "daylily-auth-cognito==2.1.5",
+        "daylily-ephemeral-cluster==2.1.11",
+        "daylily-tapdb==6.0.8",
         "fastapi>=0.104.0",
         "httpx>=0.25.0",
         "itsdangerous>=2.2.0",
@@ -90,7 +94,8 @@ def test_pyproject_contains_the_single_python_install_set() -> None:
         "tabulate",
         "typer>=0.9.0",
         "uvicorn[standard]>=0.24.0",
-        "cli-core-yo==2.1.0",
+        "cli-core-yo==2.1.1",
+        "zebra_day==6.0.1",
         "boto3>=1.26.0",
     ):
         assert expected in dependencies
@@ -99,11 +104,19 @@ def test_pyproject_contains_the_single_python_install_set() -> None:
 def test_ecosystem_versions_track_ephemeral_cluster_baseline() -> None:
     payload = json.loads(_load_text(_project_root() / "config" / "ecosystem-versions.json"))
 
-    assert payload["last_updated"] == "2026-04-24"
-    assert payload["tested_combinations"][0]["date"] == "2026-04-24"
-    assert payload["components"]["daylily-ephemeral-cluster"]["current"] == "2.1.4"
-    assert payload["tested_combinations"][0]["ephemeral_cluster"] == "2.1.4"
-    assert "daylily-ephemeral-cluster to 2.1.4" in payload["tested_combinations"][0]["notes"]
+    assert payload["last_updated"] == "2026-04-29"
+    assert payload["tested_combinations"][0]["date"] == "2026-04-29"
+    assert payload["components"]["daylily-ephemeral-cluster"]["current"] == "2.1.11"
+    assert payload["components"]["daylily-auth-cognito"]["current"] == "2.1.5"
+    assert payload["components"]["daylily-tapdb"]["current"] == "6.0.8"
+    assert payload["components"]["cli-core-yo"]["current"] == "2.1.1"
+    assert payload["components"]["zebra_day"]["current"] == "6.0.1"
+    assert payload["tested_combinations"][0]["ephemeral_cluster"] == "2.1.11"
+    assert payload["tested_combinations"][0]["cognito"] == "2.1.5"
+    assert payload["tested_combinations"][0]["tapdb"] == "6.0.8"
+    assert payload["tested_combinations"][0]["cli_core_yo"] == "2.1.1"
+    assert payload["tested_combinations"][0]["zebra_day"] == "6.0.1"
+    assert "daylily-ephemeral-cluster to 2.1.11" in payload["tested_combinations"][0]["notes"]
 
 
 def test_workset_monitor_configs_use_daylily_ec_samples_stage() -> None:

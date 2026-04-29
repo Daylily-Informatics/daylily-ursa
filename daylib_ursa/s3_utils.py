@@ -156,7 +156,7 @@ class RegionAwareS3Client:
         # Look up bucket region
         try:
             response = self._default_client.get_bucket_location(Bucket=bucket_normalized)
-            # AWS returns None for us-east-1 (legacy behavior)
+            # AWS returns None for us-east-1.
             region = response.get("LocationConstraint") or "us-east-1"
             LOGGER.debug("Bucket %s is in region %s", sanitize_for_log(bucket_normalized), region)
         except ClientError as e:

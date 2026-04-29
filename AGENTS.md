@@ -30,7 +30,7 @@ source ./activate <deploy-name>
 ## No Circumvention Policy
 
 - Do not bypass `ursa`, `tapdb`, or `daycog` with raw tools just because something is missing or broken.
-- Do not treat direct `python -m ...`, raw `postgres`, raw AWS CLI mutations, or direct config-file edits as automatic fallbacks.
+- Do not treat direct `python -m ...`, raw `postgres`, raw AWS CLI mutations, or direct config-file edits as automatic substitutes.
 - If the intended CLI path is broken or incomplete, stop, diagnose, and ask for permission before circumventing it.
 - Prefer patience and repair of the intended CLI workflow over inventing a shortcut.
 
@@ -43,7 +43,7 @@ source ./activate <deploy-name>
 
 ## CHANGE POLICY
 
-- Do not default to preserving legacy behavior or adding fallback behavior.
-- Treat fallback/legacy compatibility as an explicit requirement, not a safe default.
-- Do not assume there is existing data to migrate unless the user directly says there is.
-- Do not add migration code, compatibility shims, dual-read/dual-write paths, or legacy field support unless explicitly requested.
+- Build only the current interface unless the user directly asks for support for prior interfaces.
+- Treat prior-interface support as an explicit requirement, not a safe default.
+- Do not assume existing data needs transformation unless the user directly says it does.
+- Do not add transition code, alternate read/write paths, or prior-field support unless explicitly requested.

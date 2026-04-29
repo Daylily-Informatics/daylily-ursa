@@ -39,6 +39,49 @@
     .cluster-job-card {
         border-style: dashed;
     }
+
+    .cluster-diagnostics {
+        margin-top: 1rem;
+        padding-top: 1rem;
+        border-top: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .cluster-diagnostics summary {
+        cursor: pointer;
+    }
+
+    .cluster-diagnostics-actions {
+        margin-top: 0.75rem;
+    }
+
+    .cluster-probe-result {
+        margin-top: 0.75rem;
+    }
+
+    .cluster-probe-card {
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 6px;
+        padding: 0.85rem;
+        background: rgba(255, 255, 255, 0.02);
+    }
+
+    .cluster-probe-pre {
+        margin: 0.4rem 0 0;
+        max-height: 18rem;
+        overflow: auto;
+        white-space: pre-wrap;
+        word-break: break-word;
+        border-radius: 6px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        background: rgba(0, 0, 0, 0.24);
+        padding: 0.75rem;
+        font-size: 0.82rem;
+        line-height: 1.45;
+    }
+
+    .cluster-probe-block + .cluster-probe-block {
+        margin-top: 0.75rem;
+    }
 </style>
 {% endblock %}
 
@@ -144,8 +187,16 @@
                     <input class="form-input" id="cc-cluster-name" type="text" placeholder="daylily-1700000000">
                 </div>
                 <div>
+                    <label class="form-label">AWS Profile</label>
+                    <input class="form-input" id="cc-aws-profile" type="text" value="{{ aws_profile_label if aws_profile_label != 'default' else '' }}" placeholder="lsmc">
+                </div>
+                <div>
                     <label class="form-label">Owner User ID (Optional)</label>
                     <input class="form-input" id="cc-owner-user-id" type="text" placeholder="owner-user-id">
+                </div>
+                <div>
+                    <label class="form-label">Contact Email</label>
+                    <input class="form-input" id="cc-contact-email" type="email" placeholder="ops@example.com">
                 </div>
                 <div>
                     <label class="form-label">SSH Keypair</label>
@@ -161,7 +212,132 @@
                     </select>
                     <input class="form-input mt-xs" id="cc-s3-bucket" type="text" placeholder="omics-analysis-bucket">
                 </div>
+                <div>
+                    <label class="form-label">Config Path (Optional)</label>
+                    <input class="form-input" id="cc-config-path" type="text" placeholder="config/daylily_ephemeral_cluster_template.yaml">
+                    <div class="text-sm text-muted mt-xs">Leave blank to generate a daylily-ec config from the fields below.</div>
+                </div>
+                <div>
+                    <label class="form-label">Repository Overrides</label>
+                    <textarea class="form-input" id="cc-repo-overrides" rows="2" placeholder="daylily-omics-analysis:main"></textarea>
+                    <div class="text-sm text-muted mt-xs">One <code>repo-key:git-ref</code> per line.</div>
+                </div>
             </div>
+
+            <details class="mt-lg" open>
+                <summary class="cursor-pointer">
+                    <strong>daylily-ec create prompts</strong>
+                    <span class="badge badge-outline ml-sm">non-interactive</span>
+                </summary>
+                <div class="grid grid-2 gap-lg mt-md">
+                    <div>
+                        <label class="form-label">Public Subnet ID</label>
+                        <input class="form-input" id="cc-public-subnet-id" type="text" placeholder="subnet-...">
+                    </div>
+                    <div>
+                        <label class="form-label">Private Subnet ID</label>
+                        <input class="form-input" id="cc-private-subnet-id" type="text" placeholder="subnet-...">
+                    </div>
+                    <div>
+                        <label class="form-label">IAM Policy ARN</label>
+                        <input class="form-input" id="cc-iam-policy-arn" type="text" placeholder="arn:aws:iam::...:policy/pclusterTagsAndBudget">
+                    </div>
+                    <div>
+                        <label class="form-label">Cluster Template YAML</label>
+                        <input class="form-input" id="cc-cluster-template-yaml" type="text" value="config/day_cluster/prod_cluster.yaml">
+                    </div>
+                    <div>
+                        <label class="form-label">Headnode Instance Type</label>
+                        <input class="form-input" id="cc-headnode-instance-type" type="text" value="r7i.2xlarge">
+                    </div>
+                    <div>
+                        <label class="form-label">FSx Size (GiB)</label>
+                        <input class="form-input" id="cc-fsx-fs-size" type="number" min="1200" step="1200" value="4800">
+                    </div>
+                    <div>
+                        <label class="form-label">Budget Email</label>
+                        <input class="form-input" id="cc-budget-email" type="email" placeholder="ops@example.com">
+                    </div>
+                    <div>
+                        <label class="form-label">Heartbeat Email</label>
+                        <input class="form-input" id="cc-heartbeat-email" type="email" placeholder="ops@example.com">
+                    </div>
+                    <div>
+                        <label class="form-label">Allowed Budget Users</label>
+                        <input class="form-input" id="cc-allowed-budget-users" type="text" placeholder="user1,user2">
+                    </div>
+                    <div>
+                        <label class="form-label">Global Allowed Budget Users</label>
+                        <input class="form-input" id="cc-global-allowed-budget-users" type="text" placeholder="user1,user2">
+                    </div>
+                    <div>
+                        <label class="form-label">Cluster Budget Amount</label>
+                        <input class="form-input" id="cc-budget-amount" type="number" min="1" step="1" value="200">
+                    </div>
+                    <div>
+                        <label class="form-label">Global Budget Amount</label>
+                        <input class="form-input" id="cc-global-budget-amount" type="number" min="1" step="1" value="1000">
+                    </div>
+                    <div>
+                        <label class="form-label">Heartbeat Schedule</label>
+                        <input class="form-input" id="cc-heartbeat-schedule" type="text" value="rate(60 minutes)">
+                    </div>
+                    <div>
+                        <label class="form-label">Heartbeat Scheduler Role ARN</label>
+                        <input class="form-input" id="cc-heartbeat-scheduler-role-arn" type="text" placeholder="arn:aws:iam::...:role/...">
+                    </div>
+                    <div>
+                        <label class="form-label">Spot Allocation Strategy</label>
+                        <select class="form-select" id="cc-spot-instance-allocation-strategy">
+                            <option value="price-capacity-optimized" selected>price-capacity-optimized</option>
+                            <option value="capacity-optimized">capacity-optimized</option>
+                            <option value="lowest-price">lowest-price</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="form-label">Enforce Budget</label>
+                        <select class="form-select" id="cc-enforce-budget">
+                            <option value="skip" selected>skip</option>
+                            <option value="true">true</option>
+                            <option value="false">false</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="form-label">Detailed Monitoring</label>
+                        <select class="form-select" id="cc-enable-detailed-monitoring">
+                            <option value="false" selected>false</option>
+                            <option value="true">true</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="form-label">Delete Local Root</label>
+                        <select class="form-select" id="cc-delete-local-root">
+                            <option value="true" selected>true</option>
+                            <option value="false">false</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="form-label">Auto Delete FSx</label>
+                        <select class="form-select" id="cc-auto-delete-fsx">
+                            <option value="Delete" selected>Delete</option>
+                            <option value="Retain">Retain</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="form-label">Max 8xlarge Count</label>
+                        <input class="form-input" id="cc-max-count-8i" type="number" min="0" step="1" value="1">
+                    </div>
+                    <div>
+                        <label class="form-label">Max 128xlarge Count</label>
+                        <input class="form-input" id="cc-max-count-128i" type="number" min="0" step="1" value="1">
+                    </div>
+                    <div>
+                        <label class="form-label">Max 192xlarge Count</label>
+                        <input class="form-input" id="cc-max-count-192i" type="number" min="0" step="1" value="1">
+                    </div>
+                </div>
+            </details>
+
             <div class="d-flex gap-lg align-center mt-md flex-wrap">
                 <label class="d-flex align-center gap-sm text-sm">
                     <input type="checkbox" id="cc-pass-on-warn">
@@ -182,12 +358,16 @@
                 <button class="btn btn-outline" type="button" onclick="calculatePartitionPricing()" id="cc-pricing-btn">
                     <i class="fas fa-chart-column"></i> Calculate Spot Pricing Per Partition
                 </button>
+                <button class="btn btn-outline" type="button" onclick="runAwsCheckAll()" id="cc-aws-check-btn">
+                    <i class="fas fa-clipboard-check"></i> AWS Check All
+                </button>
                 <button class="btn btn-primary" type="button" onclick="createCluster()" id="cc-submit-btn">
-                    <i class="fas fa-play"></i> Start Create Job
+                    <i class="fas fa-play"></i> Dry Run + Start Create Job
                 </button>
             </div>
             <section class="cluster-precheck-results d-none" id="cc-verification-results"></section>
             <section class="cluster-precheck-results d-none" id="cc-pricing-results"></section>
+            <section class="cluster-precheck-results d-none" id="cc-aws-check-results"></section>
         </div>
     </details>
     {% endif %}
@@ -280,7 +460,10 @@
                     <h3 class="card-title" style="margin-bottom: 0.25rem;">
                         <i class="fas fa-globe"></i> {{ region_group.region }}
                     </h3>
-                    <div class="text-sm text-muted">{{ region_group.live_count }} live cluster{{ '' if region_group.live_count == 1 else 's' }}, {{ region_group.pending_count }} create job{{ '' if region_group.pending_count == 1 else 's' }} in flight.</div>
+                    <div class="text-sm text-muted">
+                        <span data-region-live-count="{{ region_group.region }}">{{ region_group.live_count }} live cluster{{ '' if region_group.live_count == 1 else 's' }}</span>,
+                        {{ region_group.pending_count }} create job{{ '' if region_group.pending_count == 1 else 's' }} in flight.
+                    </div>
                 </div>
                 <div class="d-flex gap-sm flex-wrap">
                     <span class="badge badge-outline">{{ region_group.region }}</span>
@@ -290,8 +473,7 @@
                 </div>
             </div>
 
-            {% if region_group.pending_jobs or region_group.clusters %}
-            <div class="grid grid-2 mb-xl">
+            <div class="grid grid-2 mb-xl" data-cluster-region-grid data-region="{{ region_group.region }}">
                 {% for job in region_group.pending_jobs %}
                 <div class="card cluster-card cluster-job-card" data-region="{{ job.region }}" data-job-state="{{ job.state }}">
                     <div class="card-header d-flex justify-between align-center">
@@ -377,6 +559,22 @@
 
                         <div class="grid grid-2 gap-md">
                             <div>
+                                <span class="text-muted text-xs">daylily-ephemeral-cluster Pin</span>
+                                <div><code>{{ cluster.daylily_ec_pinned_version or '—' }}</code></div>
+                            </div>
+                            <div>
+                                <span class="text-muted text-xs">Headnode EC2</span>
+                                <div>
+                                    {% if cluster.aws_console_url %}
+                                    <a href="{{ cluster.aws_console_url }}" target="_blank" rel="noopener noreferrer">
+                                        AWS Console <i class="fas fa-external-link-alt"></i>
+                                    </a>
+                                    {% else %}
+                                    <span class="text-muted">No instance id</span>
+                                    {% endif %}
+                                </div>
+                            </div>
+                            <div>
                                 <span class="text-muted text-xs">Compute Fleet</span>
                                 <div><span class="badge badge-outline">{{ cluster.compute_fleet_status }}</span></div>
                             </div>
@@ -393,13 +591,114 @@
                                 <div>{{ cluster.last_updated_time[:19] if cluster.last_updated_time else '—' }}</div>
                             </div>
                         </div>
+
+                        <details
+                            class="cluster-diagnostics"
+                            data-cluster-diagnostics
+                            data-cluster-name="{{ cluster.cluster_name }}"
+                            data-region="{{ cluster.region }}"
+                        >
+                            <summary class="d-flex justify-between align-center gap-md">
+                                <span><i class="fas fa-terminal"></i> Headnode Diagnostics</span>
+                                <span class="badge badge-outline">Admin read-only</span>
+                            </summary>
+                            <div class="cluster-diagnostics-actions d-flex gap-sm flex-wrap">
+                                <button class="btn btn-outline btn-sm" type="button" onclick="runHeadnodeProbe(this, 'static', false)">
+                                    <i class="fas fa-screwdriver-wrench"></i> Probe tools
+                                </button>
+                                <button class="btn btn-outline btn-sm" type="button" onclick="runHeadnodeProbe(this, 'scheduler', true)">
+                                    <i class="fas fa-list-check"></i> Refresh Slurm
+                                </button>
+                                <button class="btn btn-outline btn-sm" type="button" onclick="runHeadnodeProbe(this, 'fsx', true)">
+                                    <i class="fas fa-hard-drive"></i> Check FSx
+                                </button>
+                            </div>
+
+                            {% set static_probe = cluster.headnode_probes.static if cluster.headnode_probes else none %}
+                            {% set scheduler_probe = cluster.headnode_probes.scheduler if cluster.headnode_probes else none %}
+                            {% set fsx_probe = cluster.headnode_probes.fsx if cluster.headnode_probes else none %}
+
+                            <section class="cluster-probe-result" data-probe-result="static">
+                                {% if static_probe %}
+                                <div class="cluster-probe-card">
+                                    <div class="d-flex justify-between align-center flex-wrap gap-sm">
+                                        <strong>Tools Probe</strong>
+                                        <span class="badge badge-outline">{{ 'cache' if static_probe.cached else 'fresh' }} {{ static_probe.captured_at[:19] }}</span>
+                                    </div>
+                                    {% if static_probe.error %}
+                                    <div class="alert alert-danger mt-sm">{{ static_probe.error }}</div>
+                                    {% endif %}
+                                    <div class="grid grid-2 gap-sm mt-sm">
+                                        <div><span class="text-muted text-xs">Pinned</span><div><code>{{ static_probe.data.daylily_ec_pinned_version or cluster.daylily_ec_pinned_version or '—' }}</code></div></div>
+                                        <div><span class="text-muted text-xs">Remote</span><div><code>{{ static_probe.data.remote_daylily_ec_version or 'unavailable' }}</code></div></div>
+                                        {% if static_probe.data.remote_git_hash %}
+                                        <div><span class="text-muted text-xs">Remote Git Hash</span><div><code>{{ static_probe.data.remote_git_hash }}</code></div></div>
+                                        {% endif %}
+                                        <div><span class="text-muted text-xs">day-clone</span><div>{{ 'available' if static_probe.data.day_clone_available else 'unavailable' }}</div></div>
+                                    </div>
+                                    <div class="cluster-probe-block">
+                                        <div class="text-muted text-xs">day-clone --help</div>
+                                        <pre class="cluster-probe-pre">{{ static_probe.data.day_clone_help or '—' }}</pre>
+                                    </div>
+                                </div>
+                                {% else %}
+                                <div class="text-muted text-sm">Tools probe has not run for this cluster.</div>
+                                {% endif %}
+                            </section>
+
+                            <section class="cluster-probe-result" data-probe-result="scheduler">
+                                {% if scheduler_probe %}
+                                <div class="cluster-probe-card">
+                                    <div class="d-flex justify-between align-center flex-wrap gap-sm">
+                                        <strong>Slurm Probe</strong>
+                                        <span class="badge badge-outline">{{ 'cache' if scheduler_probe.cached else 'fresh' }} {{ scheduler_probe.captured_at[:19] }}</span>
+                                    </div>
+                                    {% if scheduler_probe.error %}
+                                    <div class="alert alert-danger mt-sm">{{ scheduler_probe.error }}</div>
+                                    {% endif %}
+                                    <div class="cluster-probe-block">
+                                        <div class="text-muted text-xs">squeue</div>
+                                        <pre class="cluster-probe-pre">{{ scheduler_probe.data.squeue_output or '—' }}</pre>
+                                    </div>
+                                    <div class="cluster-probe-block">
+                                        <div class="text-muted text-xs">sinfo</div>
+                                        <pre class="cluster-probe-pre">{{ scheduler_probe.data.sinfo_output or '—' }}</pre>
+                                    </div>
+                                </div>
+                                {% else %}
+                                <div class="text-muted text-sm">Slurm probe has not run for this cluster.</div>
+                                {% endif %}
+                            </section>
+
+                            <section class="cluster-probe-result" data-probe-result="fsx">
+                                {% if fsx_probe %}
+                                <div class="cluster-probe-card">
+                                    <div class="d-flex justify-between align-center flex-wrap gap-sm">
+                                        <strong>FSx Probe</strong>
+                                        <span class="badge badge-outline">{{ 'cache' if fsx_probe.cached else 'fresh' }} {{ fsx_probe.captured_at[:19] }}</span>
+                                    </div>
+                                    {% if fsx_probe.error %}
+                                    <div class="alert alert-danger mt-sm">{{ fsx_probe.error }}</div>
+                                    {% endif %}
+                                    <div class="cluster-probe-block">
+                                        <div class="text-muted text-xs">df -h /fsx</div>
+                                        <pre class="cluster-probe-pre">{{ fsx_probe.data.df_output or '—' }}</pre>
+                                    </div>
+                                </div>
+                                {% else %}
+                                <div class="text-muted text-sm">FSx probe has not run for this cluster.</div>
+                                {% endif %}
+                            </section>
+                        </details>
                     </div>
                 </div>
                 {% endfor %}
+                <div class="card cluster-card" data-cluster-region-loading>
+                    <div class="card-body text-muted text-sm">
+                        <i class="fas fa-spinner fa-spin"></i> Loading live clusters in {{ region_group.region }}...
+                    </div>
+                </div>
             </div>
-            {% else %}
-            <div class="mb-xl text-muted text-sm">No live clusters or in-flight create jobs in {{ region_group.region }}.</div>
-            {% endif %}
         </section>
         {% endfor %}
     {% else %}
@@ -417,10 +716,43 @@
 <script>
 let clusterVerificationState = null;
 let clusterPricingChart = null;
+let latestAwsGapAnalysis = null;
+let clusterInventoryState = {
+    totalExpected: 0,
+    running: 0,
+    failed: 0,
+};
 
-function clusterActionErrorMessage(error, fallback) {
+const CLUSTER_DETAIL_CONCURRENCY = 3;
+
+const CLUSTER_CONFIG_INPUTS = {
+    public_subnet_id: 'cc-public-subnet-id',
+    private_subnet_id: 'cc-private-subnet-id',
+    iam_policy_arn: 'cc-iam-policy-arn',
+    budget_email: 'cc-budget-email',
+    allowed_budget_users: 'cc-allowed-budget-users',
+    budget_amount: 'cc-budget-amount',
+    global_allowed_budget_users: 'cc-global-allowed-budget-users',
+    global_budget_amount: 'cc-global-budget-amount',
+    enforce_budget: 'cc-enforce-budget',
+    cluster_template_yaml: 'cc-cluster-template-yaml',
+    headnode_instance_type: 'cc-headnode-instance-type',
+    fsx_fs_size: 'cc-fsx-fs-size',
+    enable_detailed_monitoring: 'cc-enable-detailed-monitoring',
+    delete_local_root: 'cc-delete-local-root',
+    auto_delete_fsx: 'cc-auto-delete-fsx',
+    heartbeat_email: 'cc-heartbeat-email',
+    heartbeat_schedule: 'cc-heartbeat-schedule',
+    heartbeat_scheduler_role_arn: 'cc-heartbeat-scheduler-role-arn',
+    spot_instance_allocation_strategy: 'cc-spot-instance-allocation-strategy',
+    max_count_8I: 'cc-max-count-8i',
+    max_count_128I: 'cc-max-count-128i',
+    max_count_192I: 'cc-max-count-192i',
+};
+
+function clusterActionErrorMessage(error, defaultMessage) {
     const message = String(error?.message || '').trim();
-    return message || fallback;
+    return message || defaultMessage;
 }
 
 async function withClusterButtonBusy(buttonId, loadingMessage, action) {
@@ -463,6 +795,50 @@ function selectedClusterRegion() {
 
 function selectedClusterRegionAz() {
     return document.getElementById('cc-region-az')?.value || '';
+}
+
+function clusterInputValue(id) {
+    return document.getElementById(id)?.value.trim() || '';
+}
+
+function collectClusterConfigValues() {
+    const values = {};
+    Object.entries(CLUSTER_CONFIG_INPUTS).forEach(([field, elementId]) => {
+        const value = clusterInputValue(elementId);
+        if (value) {
+            values[field] = value;
+        }
+    });
+    const clusterName = clusterInputValue('cc-cluster-name');
+    const s3BucketName = clusterInputValue('cc-s3-bucket');
+    if (clusterName) values.cluster_name = clusterName;
+    if (s3BucketName) values.s3_bucket_name = s3BucketName;
+    return values;
+}
+
+function collectRepoOverrides() {
+    return clusterInputValue('cc-repo-overrides')
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean);
+}
+
+function collectClusterCreatePayload() {
+    return {
+        cluster_name: clusterInputValue('cc-cluster-name'),
+        region: selectedClusterRegion(),
+        region_az: selectedClusterRegionAz(),
+        ssh_key_name: clusterInputValue('cc-ssh-key'),
+        s3_bucket_name: clusterInputValue('cc-s3-bucket'),
+        owner_user_id: clusterInputValue('cc-owner-user-id') || null,
+        aws_profile: clusterInputValue('cc-aws-profile') || null,
+        config_path: clusterInputValue('cc-config-path') || null,
+        contact_email: clusterInputValue('cc-contact-email') || null,
+        pass_on_warn: document.getElementById('cc-pass-on-warn')?.checked || false,
+        debug: document.getElementById('cc-debug')?.checked || false,
+        cluster_config_values: collectClusterConfigValues(),
+        repo_overrides: collectRepoOverrides(),
+    };
 }
 
 function setSelectOptions(selectId, placeholder, values, selectedValue = '') {
@@ -514,9 +890,19 @@ function clearClusterPricingResults() {
     }
 }
 
+function clearAwsCheckResults() {
+    latestAwsGapAnalysis = null;
+    const container = document.getElementById('cc-aws-check-results');
+    if (container) {
+        container.classList.add('d-none');
+        container.innerHTML = '';
+    }
+}
+
 function clearClusterPrechecks() {
     clearClusterVerificationResults();
     clearClusterPricingResults();
+    clearAwsCheckResults();
 }
 
 function handleClusterRegionChange() {
@@ -533,13 +919,390 @@ function handleClusterRegionAzChange() {
     clearClusterPrechecks();
 }
 
-async function refreshClusters() {
-    try {
-        await UrsaPortal.apiRequest('/api/v1/clusters?refresh=true');
-        window.location.reload();
-    } catch (error) {
-        showToast('error', clusterActionErrorMessage(error, 'Failed to refresh clusters'));
+function clusterProbeOutputBlock(title, value) {
+    return `
+        <div class="cluster-probe-block">
+            <div class="text-muted text-xs">${escapeHtml(title)}</div>
+            <pre class="cluster-probe-pre">${escapeHtml(value || '—')}</pre>
+        </div>
+    `;
+}
+
+function clusterProbeTitle(probeType) {
+    if (probeType === 'static') return 'Tools Probe';
+    if (probeType === 'scheduler') return 'Slurm Probe';
+    if (probeType === 'fsx') return 'FSx Probe';
+    return 'Headnode Probe';
+}
+
+function headnodeProbeHtml(payload) {
+    const data = payload?.data || {};
+    const probeType = payload?.probe_type || '';
+    const capturedAt = String(payload?.captured_at || '').slice(0, 19);
+    const cacheLabel = payload?.cached ? 'cache' : 'fresh';
+    const errorBlock = payload?.error
+        ? `<div class="alert alert-danger mt-sm">${escapeHtml(payload.error)}</div>`
+        : '';
+    const instanceBlock = payload?.instance_id
+        ? `<span class="badge badge-outline">${escapeHtml(payload.instance_id)}</span>`
+        : '';
+    let body = '';
+
+    if (probeType === 'static') {
+        const gitHashBlock = data.remote_git_hash
+            ? `<div><span class="text-muted text-xs">Remote Git Hash</span><div><code>${escapeHtml(data.remote_git_hash)}</code></div></div>`
+            : '';
+        body = `
+            <div class="grid grid-2 gap-sm mt-sm">
+                <div><span class="text-muted text-xs">Pinned</span><div><code>${escapeHtml(data.daylily_ec_pinned_version || '')}</code></div></div>
+                <div><span class="text-muted text-xs">Remote</span><div><code>${escapeHtml(data.remote_daylily_ec_version || 'unavailable')}</code></div></div>
+                ${gitHashBlock}
+                <div><span class="text-muted text-xs">day-clone</span><div>${data.day_clone_available ? 'available' : 'unavailable'}</div></div>
+            </div>
+            ${clusterProbeOutputBlock('day-clone --help', data.day_clone_help)}
+        `;
+    } else if (probeType === 'scheduler') {
+        body = `
+            ${clusterProbeOutputBlock('squeue', data.squeue_output)}
+            ${clusterProbeOutputBlock('sinfo', data.sinfo_output)}
+        `;
+    } else if (probeType === 'fsx') {
+        body = clusterProbeOutputBlock('df -h /fsx', data.df_output);
+    } else {
+        body = clusterProbeOutputBlock('stdout', data.stdout);
     }
+
+    return `
+        <div class="cluster-probe-card">
+            <div class="d-flex justify-between align-center flex-wrap gap-sm">
+                <strong>${escapeHtml(clusterProbeTitle(probeType))}</strong>
+                <div class="d-flex gap-sm flex-wrap">
+                    ${instanceBlock}
+                    <span class="badge badge-outline">${escapeHtml(`${cacheLabel} ${capturedAt}`.trim())}</span>
+                </div>
+            </div>
+            ${errorBlock}
+            ${body}
+        </div>
+    `;
+}
+
+function renderHeadnodeProbe(container, payload) {
+    container.innerHTML = headnodeProbeHtml(payload);
+}
+
+function clusterStatusBadgeClass(status) {
+    const value = String(status || '').toUpperCase();
+    if (value === 'CREATE_COMPLETE') return 'success';
+    if (value.includes('IN_PROGRESS')) return 'warning';
+    if (value.includes('FAILED')) return 'error';
+    return 'secondary';
+}
+
+function resetClusterInventoryStats() {
+    clusterInventoryState = { totalExpected: 0, running: 0, failed: 0 };
+    updateClusterInventoryStats();
+}
+
+function updateClusterInventoryStats() {
+    const totalEl = document.getElementById('total-clusters');
+    const runningEl = document.getElementById('running-clusters');
+    if (totalEl) totalEl.textContent = String(clusterInventoryState.totalExpected);
+    if (runningEl) runningEl.textContent = String(clusterInventoryState.running);
+}
+
+function setRegionLiveCount(region, count, failed = false) {
+    const label = document.querySelector(`[data-region-live-count="${CSS.escape(region)}"]`);
+    if (!label) return;
+    if (failed) {
+        label.textContent = 'cluster scan failed';
+        return;
+    }
+    label.textContent = `${count} live cluster${count === 1 ? '' : 's'}`;
+}
+
+function clusterProbeSectionHtml(probeType, payload) {
+    if (payload) {
+        return `<section class="cluster-probe-result" data-probe-result="${escapeHtml(probeType)}">${headnodeProbeHtml(payload)}</section>`;
+    }
+    const title = probeType === 'static' ? 'Tools' : probeType === 'scheduler' ? 'Slurm' : 'FSx';
+    return `
+        <section class="cluster-probe-result" data-probe-result="${escapeHtml(probeType)}">
+            <div class="text-muted text-sm">${title} probe has not run for this cluster.</div>
+        </section>
+    `;
+}
+
+function headNodeHtml(cluster) {
+    const headNode = cluster?.head_node || null;
+    if (!headNode) return '';
+    const publicIp = headNode.public_ip
+        ? `
+            <div>
+                <span class="text-muted text-xs">Public IP</span>
+                <div class="text-sm"><code>${escapeHtml(headNode.public_ip)}</code></div>
+            </div>
+        `
+        : '';
+    return `
+        <div class="mb-md">
+            <h4 class="text-sm text-muted mb-sm">Head Node</h4>
+            <div class="d-flex flex-wrap gap-md">
+                <div>
+                    <span class="text-muted text-xs">Instance Type</span>
+                    <div class="text-sm"><code>${escapeHtml(headNode.instance_type || '—')}</code></div>
+                </div>
+                <div>
+                    <span class="text-muted text-xs">State</span>
+                    <div class="text-sm"><span class="badge badge-${headNode.state === 'running' ? 'success' : 'warning'}">${escapeHtml(headNode.state || 'unknown')}</span></div>
+                </div>
+                ${publicIp}
+            </div>
+        </div>
+    `;
+}
+
+function renderClusterCard(cluster) {
+    const clusterName = String(cluster?.cluster_name || '').trim();
+    const region = String(cluster?.region || '').trim();
+    const status = String(cluster?.cluster_status || 'UNKNOWN').trim();
+    const probes = cluster?.headnode_probes || {};
+    const detailUrl = `/clusters/${encodeURIComponent(clusterName)}?region=${encodeURIComponent(region)}`;
+    const consoleLink = cluster?.aws_console_url
+        ? `<a href="${escapeHtml(cluster.aws_console_url)}" target="_blank" rel="noopener noreferrer">AWS Console <i class="fas fa-external-link-alt"></i></a>`
+        : '<span class="text-muted">No instance id</span>';
+    return `
+        <div class="card cluster-card" data-live-cluster-card data-status="${escapeHtml(status)}" data-region="${escapeHtml(region)}">
+            <div class="card-header d-flex justify-between align-center">
+                <div>
+                    <h3 class="card-title" style="margin-bottom: 0.25rem;">
+                        <i class="fas fa-server"></i> ${escapeHtml(clusterName)}
+                    </h3>
+                    <span class="badge badge-outline">${escapeHtml(region)}</span>
+                </div>
+                <div class="d-flex gap-sm">
+                    <a class="btn btn-sm btn-outline" href="${escapeHtml(detailUrl)}">
+                        <i class="fas fa-eye"></i>
+                    </a>
+                    <button class="btn btn-sm btn-danger" type="button" onclick="deleteCluster('${escapeHtml(clusterName)}', '${escapeHtml(region)}')">
+                        <i class="fas fa-trash"></i>
+                    </button>
+                    <span class="badge badge-${clusterStatusBadgeClass(status)}">${escapeHtml(status)}</span>
+                </div>
+            </div>
+            <div class="card-body">
+                ${headNodeHtml(cluster)}
+                <div class="grid grid-2 gap-md">
+                    <div>
+                        <span class="text-muted text-xs">daylily-ephemeral-cluster Pin</span>
+                        <div><code>${escapeHtml(cluster?.daylily_ec_pinned_version || '—')}</code></div>
+                    </div>
+                    <div>
+                        <span class="text-muted text-xs">Headnode EC2</span>
+                        <div>${consoleLink}</div>
+                    </div>
+                    <div>
+                        <span class="text-muted text-xs">Compute Fleet</span>
+                        <div><span class="badge badge-outline">${escapeHtml(cluster?.compute_fleet_status || 'UNKNOWN')}</span></div>
+                    </div>
+                    <div>
+                        <span class="text-muted text-xs">Scheduler</span>
+                        <div>${escapeHtml(cluster?.scheduler_type || 'slurm')}</div>
+                    </div>
+                    <div>
+                        <span class="text-muted text-xs">Created</span>
+                        <div>${escapeHtml(String(cluster?.creation_time || '—').slice(0, 19) || '—')}</div>
+                    </div>
+                    <div>
+                        <span class="text-muted text-xs">Updated</span>
+                        <div>${escapeHtml(String(cluster?.last_updated_time || '—').slice(0, 19) || '—')}</div>
+                    </div>
+                </div>
+
+                <details
+                    class="cluster-diagnostics"
+                    data-cluster-diagnostics
+                    data-cluster-name="${escapeHtml(clusterName)}"
+                    data-region="${escapeHtml(region)}"
+                >
+                    <summary class="d-flex justify-between align-center gap-md">
+                        <span><i class="fas fa-terminal"></i> Headnode Diagnostics</span>
+                        <span class="badge badge-outline">Admin read-only</span>
+                    </summary>
+                    <div class="cluster-diagnostics-actions d-flex gap-sm flex-wrap">
+                        <button class="btn btn-outline btn-sm" type="button" onclick="runHeadnodeProbe(this, 'static', false)">
+                            <i class="fas fa-screwdriver-wrench"></i> Probe tools
+                        </button>
+                        <button class="btn btn-outline btn-sm" type="button" onclick="runHeadnodeProbe(this, 'scheduler', true)">
+                            <i class="fas fa-list-check"></i> Refresh Slurm
+                        </button>
+                        <button class="btn btn-outline btn-sm" type="button" onclick="runHeadnodeProbe(this, 'fsx', true)">
+                            <i class="fas fa-hard-drive"></i> Check FSx
+                        </button>
+                    </div>
+                    ${clusterProbeSectionHtml('static', probes.static)}
+                    ${clusterProbeSectionHtml('scheduler', probes.scheduler)}
+                    ${clusterProbeSectionHtml('fsx', probes.fsx)}
+                </details>
+            </div>
+        </div>
+    `;
+}
+
+function clusterLoadingCard(clusterName, region) {
+    return `
+        <div class="card cluster-card" data-live-cluster-card data-region="${escapeHtml(region)}">
+            <div class="card-body text-muted text-sm">
+                <i class="fas fa-spinner fa-spin"></i> Loading ${escapeHtml(clusterName)}...
+            </div>
+        </div>
+    `;
+}
+
+function clusterErrorCard(clusterName, region, error) {
+    return `
+        <div class="card cluster-card" data-live-cluster-card data-region="${escapeHtml(region)}">
+            <div class="card-header d-flex justify-between align-center">
+                <h3 class="card-title" style="margin-bottom: 0.25rem;">
+                    <i class="fas fa-server"></i> ${escapeHtml(clusterName)}
+                </h3>
+                <span class="badge badge-error">load failed</span>
+            </div>
+            <div class="card-body">
+                <div class="alert alert-danger">${escapeHtml(clusterActionErrorMessage(error, 'Cluster detail failed'))}</div>
+            </div>
+        </div>
+    `;
+}
+
+function clearRegionLiveCards(grid) {
+    grid.querySelectorAll('[data-live-cluster-card], [data-cluster-region-loading], [data-cluster-empty], [data-cluster-region-error]').forEach((node) => node.remove());
+}
+
+async function loadClusterRegion(region, refresh = false) {
+    const grid = document.querySelector(`[data-cluster-region-grid][data-region="${CSS.escape(region)}"]`);
+    if (!grid) return;
+    clearRegionLiveCards(grid);
+    grid.insertAdjacentHTML('beforeend', `
+        <div class="card cluster-card" data-cluster-region-loading>
+            <div class="card-body text-muted text-sm">
+                <i class="fas fa-spinner fa-spin"></i> Scanning live clusters in ${escapeHtml(region)}...
+            </div>
+        </div>
+    `);
+
+    let refs = [];
+    try {
+        const payload = await UrsaPortal.apiRequest(`/api/v1/clusters/regions/${encodeURIComponent(region)}/names?refresh=${refresh ? 'true' : 'false'}`);
+        refs = Array.isArray(payload.items) ? payload.items : [];
+    } catch (error) {
+        clearRegionLiveCards(grid);
+        setRegionLiveCount(region, 0, true);
+        grid.insertAdjacentHTML('beforeend', `
+            <div class="card cluster-card" data-cluster-region-error>
+                <div class="card-body">
+                    <div class="alert alert-danger">${escapeHtml(clusterActionErrorMessage(error, `Failed to scan ${region}`))}</div>
+                </div>
+            </div>
+        `);
+        return;
+    }
+
+    clearRegionLiveCards(grid);
+    setRegionLiveCount(region, refs.length);
+    clusterInventoryState.totalExpected += refs.length;
+    updateClusterInventoryStats();
+
+    if (!refs.length) {
+        grid.insertAdjacentHTML('beforeend', `
+            <div class="card cluster-card" data-cluster-empty>
+                <div class="card-body text-muted text-sm">No live clusters in ${escapeHtml(region)}.</div>
+            </div>
+        `);
+        return;
+    }
+
+    let cursor = 0;
+    async function detailWorker() {
+        while (cursor < refs.length) {
+            const ref = refs[cursor];
+            cursor += 1;
+            const clusterName = String(ref.cluster_name || '').trim();
+            const clusterRegion = String(ref.region || region).trim();
+            if (!clusterName || !clusterRegion) continue;
+            const placeholder = document.createElement('div');
+            placeholder.innerHTML = clusterLoadingCard(clusterName, clusterRegion).trim();
+            const card = placeholder.firstElementChild;
+            grid.appendChild(card);
+            try {
+                const detail = await UrsaPortal.apiRequest(`/api/v1/clusters/${encodeURIComponent(clusterName)}?region=${encodeURIComponent(clusterRegion)}`);
+                if (String(detail.compute_fleet_status || '').toUpperCase() === 'RUNNING') {
+                    clusterInventoryState.running += 1;
+                }
+                card.outerHTML = renderClusterCard(detail);
+            } catch (error) {
+                clusterInventoryState.failed += 1;
+                card.outerHTML = clusterErrorCard(clusterName, clusterRegion, error);
+            } finally {
+                updateClusterInventoryStats();
+            }
+        }
+    }
+
+    const workerCount = Math.min(CLUSTER_DETAIL_CONCURRENCY, refs.length);
+    await Promise.all(Array.from({ length: workerCount }, () => detailWorker()));
+}
+
+async function loadClusterInventory(refresh = false) {
+    resetClusterInventoryStats();
+    const regions = Array.from(document.querySelectorAll('[data-cluster-region-grid]'))
+        .map((node) => node.dataset.region || '')
+        .filter(Boolean);
+    await Promise.all(regions.map((region) => loadClusterRegion(region, refresh)));
+}
+
+async function runHeadnodeProbe(button, probeType, refresh = false) {
+    const allowedProbeTypes = new Set(['static', 'scheduler', 'fsx']);
+    if (!allowedProbeTypes.has(probeType)) {
+        showToast('error', 'Unsupported headnode probe type');
+        return;
+    }
+    const panel = button.closest('[data-cluster-diagnostics]');
+    const clusterName = panel?.dataset.clusterName || '';
+    const region = panel?.dataset.region || '';
+    const container = panel?.querySelector(`[data-probe-result="${probeType}"]`);
+    if (!clusterName || !region || !container) {
+        showToast('error', 'Cluster diagnostics target is incomplete');
+        return;
+    }
+
+    const originalHtml = button.innerHTML;
+    const originalDisabled = button.disabled;
+    button.disabled = true;
+    button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Running...';
+    container.innerHTML = '<div class="text-muted text-sm">Running headnode probe...</div>';
+    try {
+        const result = await UrsaPortal.apiRequest(
+            `/api/v1/clusters/${encodeURIComponent(clusterName)}/headnode/${encodeURIComponent(probeType)}?region=${encodeURIComponent(region)}&refresh=${refresh ? 'true' : 'false'}`,
+            { method: 'POST' },
+        );
+        renderHeadnodeProbe(container, result);
+        if (result.error) {
+            showToast('error', `${clusterProbeTitle(probeType)} returned an error`);
+        } else {
+            showToast('success', `${clusterProbeTitle(probeType)} completed`);
+        }
+    } catch (error) {
+        container.innerHTML = `<div class="alert alert-danger">${escapeHtml(clusterActionErrorMessage(error, 'Headnode probe failed'))}</div>`;
+        showToast('error', clusterActionErrorMessage(error, 'Headnode probe failed'));
+    } finally {
+        button.disabled = originalDisabled;
+        button.innerHTML = originalHtml;
+    }
+}
+
+async function refreshClusters() {
+    await loadClusterInventory(true);
 }
 
 async function saveClusterScanRegions() {
@@ -885,37 +1648,157 @@ async function calculatePartitionPricing() {
     });
 }
 
+function awsCheckStatusCounts(result) {
+    const summary = result?.report?.summary || {};
+    if (Object.keys(summary).length) {
+        return {
+            pass: Number(summary.PASS || summary.pass || 0),
+            warn: Number(summary.WARN || summary.warn || 0),
+            fail: Number(summary.FAIL || summary.fail || 0),
+        };
+    }
+    const checks = result?.report?.checks || [];
+    return {
+        pass: checks.filter((item) => String(item.status || '').toUpperCase() === 'PASS').length,
+        warn: checks.filter((item) => String(item.status || '').toUpperCase() === 'WARN').length,
+        fail: checks.filter((item) => String(item.status || '').toUpperCase() === 'FAIL').length,
+    };
+}
+
+function renderAwsCheckAll(result) {
+    const container = document.getElementById('cc-aws-check-results');
+    if (!container) return;
+    latestAwsGapAnalysis = {
+        filename: result.gap_analysis_filename || 'daylily-ec-gap-analysis.md',
+        content: result.gap_analysis || '',
+    };
+    const counts = awsCheckStatusCounts(result);
+    const statusBadge = result.return_code === 0
+        ? '<span class="badge badge-success">PASS</span>'
+        : '<span class="badge badge-error">CHECKS NEED ATTENTION</span>';
+    const checks = result?.report?.checks || [];
+    const interestingChecks = checks
+        .filter((item) => String(item.status || '').toUpperCase() !== 'PASS')
+        .slice(0, 20);
+
+    container.innerHTML = `
+        <div class="cluster-precheck-header d-flex justify-between align-center flex-wrap gap-md">
+            <div>
+                <h4 class="card-title" style="margin-bottom: 0.25rem;">daylily-ec AWS Check All</h4>
+                <div class="text-sm text-muted">Runs <code>daylily-ec --json aws validate all --profile --region-az --config --gap-analysis</code> with the current create inputs.</div>
+            </div>
+            <div class="d-flex gap-sm flex-wrap">
+                ${statusBadge}
+                <span class="badge badge-success">${counts.pass} PASS</span>
+                <span class="badge badge-warning">${counts.warn} WARN</span>
+                <span class="badge badge-error">${counts.fail} FAIL</span>
+            </div>
+        </div>
+        ${interestingChecks.length ? `
+            <div class="table-wrapper mb-md">
+                <table class="table cluster-precheck-summary">
+                    <thead>
+                        <tr>
+                            <th>Status</th>
+                            <th>Check</th>
+                            <th class="cluster-precheck-detail">Remediation</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${interestingChecks.map((item) => `
+                            <tr>
+                                <td><span class="badge badge-${String(item.status || '').toUpperCase() === 'FAIL' ? 'error' : 'warning'}">${escapeHtml(item.status || '')}</span></td>
+                                <td><code>${escapeHtml(item.id || item.check_id || '')}</code></td>
+                                <td class="cluster-precheck-detail">${escapeHtml(item.remediation || item.message || '')}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            </div>
+        ` : ''}
+        <div class="d-flex gap-md flex-wrap mb-md">
+            <button class="btn btn-outline btn-sm" type="button" onclick="downloadAwsGapAnalysis()" ${latestAwsGapAnalysis.content ? '' : 'disabled'}>
+                <i class="fas fa-download"></i> Download gap_analysis
+            </button>
+            <span class="text-sm text-muted">Exit code ${escapeHtml(String(result.return_code))}</span>
+        </div>
+        <div class="cluster-probe-block">
+            <div class="text-muted text-xs">stdout</div>
+            <pre class="cluster-probe-pre">${escapeHtml(result.stdout || '—')}</pre>
+        </div>
+        <div class="cluster-probe-block">
+            <div class="text-muted text-xs">stderr</div>
+            <pre class="cluster-probe-pre">${escapeHtml(result.stderr || '—')}</pre>
+        </div>
+        <div class="cluster-probe-block">
+            <div class="text-muted text-xs">gap_analysis</div>
+            <pre class="cluster-probe-pre">${escapeHtml(result.gap_analysis || '—')}</pre>
+        </div>
+    `;
+    container.classList.remove('d-none');
+}
+
+function downloadAwsGapAnalysis() {
+    if (!latestAwsGapAnalysis?.content) {
+        showToast('error', 'No gap_analysis content is available');
+        return;
+    }
+    const blob = new Blob([latestAwsGapAnalysis.content], { type: 'text/markdown' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = latestAwsGapAnalysis.filename;
+    document.body.appendChild(link);
+    link.click();
+    URL.revokeObjectURL(link.href);
+    link.remove();
+}
+
+async function runAwsCheckAll() {
+    const payload = collectClusterCreatePayload();
+    if (!payload.region || !payload.region_az) {
+        showToast('error', 'Select a region and availability zone first');
+        return;
+    }
+    if (!payload.aws_profile) {
+        showToast('error', 'AWS profile is required for AWS Check All');
+        return;
+    }
+    await withClusterButtonBusy('cc-aws-check-btn', 'Running daylily-ec AWS Check All...', async () => {
+        try {
+            const result = await UrsaPortal.apiRequest('/api/v1/clusters/aws/check-all', {
+                method: 'POST',
+                body: payload,
+            });
+            renderAwsCheckAll(result);
+            if (result.return_code === 0) {
+                showToast('success', 'AWS Check All passed');
+            } else {
+                showToast('error', 'AWS Check All found permission or quota gaps');
+            }
+        } catch (error) {
+            showToast('error', clusterActionErrorMessage(error, 'AWS Check All failed'));
+        }
+    });
+}
+
 async function createCluster() {
     await withClusterButtonBusy('cc-submit-btn', 'Starting cluster create job...', async () => {
         try {
-            const region = selectedClusterRegion();
-            const regionAz = selectedClusterRegionAz();
-            const clusterName = document.getElementById('cc-cluster-name')?.value.trim() || '';
-            const sshKeyName = document.getElementById('cc-ssh-key')?.value.trim() || '';
-            const s3BucketName = document.getElementById('cc-s3-bucket')?.value.trim() || '';
-            if (!region || !regionAz || !clusterName || !sshKeyName || !s3BucketName) {
+            const payload = collectClusterCreatePayload();
+            if (!payload.region || !payload.region_az || !payload.cluster_name || !payload.ssh_key_name || !payload.s3_bucket_name) {
                 showToast('error', 'Region, availability zone, cluster name, SSH key, and S3 bucket are required');
                 return;
             }
-            const verification = await runPartitionVerification({ region, regionAz }, false);
+            const verification = await runPartitionVerification({ region: payload.region, regionAz: payload.region_az }, false);
             if (verification.has_failures) {
                 showToast('error', 'Create blocked until partition verification passes for the selected region and availability zone');
                 return;
             }
-            const payload = await UrsaPortal.apiRequest('/api/v1/clusters', {
+            const created = await UrsaPortal.apiRequest('/api/v1/clusters', {
                 method: 'POST',
-                body: {
-                    cluster_name: clusterName,
-                    region,
-                    region_az: regionAz,
-                    ssh_key_name: sshKeyName,
-                    s3_bucket_name: s3BucketName,
-                    owner_user_id: document.getElementById('cc-owner-user-id')?.value.trim() || null,
-                    pass_on_warn: document.getElementById('cc-pass-on-warn')?.checked || false,
-                    debug: document.getElementById('cc-debug')?.checked || false,
-                },
+                body: payload,
             });
-            window.location.assign(`/clusters/jobs/${encodeURIComponent(payload.job_euid)}`);
+            window.location.assign(`/clusters/jobs/${encodeURIComponent(created.job_euid)}`);
         } catch (error) {
             showToast('error', clusterActionErrorMessage(error, 'Failed to start cluster creation'));
         }
@@ -943,11 +1826,32 @@ async function refreshCreateJobs() {
 }
 
 async function deleteCluster(clusterName, region) {
-    if (!confirm(`Delete cluster ${clusterName} in ${region}?`)) return;
     try {
-        await UrsaPortal.apiRequest(`/api/v1/clusters/${encodeURIComponent(clusterName)}?region=${encodeURIComponent(region)}`, {
+        const plan = await UrsaPortal.apiRequest(`/api/v1/clusters/${encodeURIComponent(clusterName)}/delete-plan?region=${encodeURIComponent(region)}`, {
+            method: 'POST',
+        });
+        const token = String(plan.confirmation_token || '').trim();
+        if (!token) {
+            throw new Error('Cluster delete plan did not return a confirmation token');
+        }
+        const dryRunOutput = [plan.dry_run_stdout, plan.dry_run_stderr]
+            .map((value) => String(value || '').trim())
+            .filter(Boolean)
+            .join('\n')
+            .slice(0, 1800);
+        const prompt = dryRunOutput
+            ? `Delete cluster ${clusterName} in ${region}?\n\nDry run output:\n${dryRunOutput}`
+            : `Delete cluster ${clusterName} in ${region}?`;
+        if (!confirm(prompt)) return;
+        const query = new URLSearchParams({
+            region,
+            confirmation_token: token,
+            confirm_cluster_name: clusterName,
+        });
+        await UrsaPortal.apiRequest(`/api/v1/clusters/${encodeURIComponent(clusterName)}?${query.toString()}`, {
             method: 'DELETE',
         });
+        showToast('success', `Cluster delete submitted for ${clusterName}`);
         window.location.reload();
     } catch (error) {
         showToast('error', clusterActionErrorMessage(error, `Failed to delete cluster ${clusterName}`));
@@ -956,6 +1860,9 @@ async function deleteCluster(clusterName, region) {
 
 document.addEventListener('DOMContentLoaded', () => {
     updateCreateButtonState();
+    loadClusterInventory(false).catch((error) => {
+        showToast('error', clusterActionErrorMessage(error, 'Failed to load cluster inventory'));
+    });
     if (selectedClusterRegion()) {
         loadCreateOptions(false, false).catch(() => {});
     }

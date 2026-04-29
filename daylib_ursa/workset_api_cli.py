@@ -15,7 +15,7 @@ from daylib_ursa.atlas_result_client import AtlasResultClient
 from daylib_ursa.bloom_resolver_client import BloomResolverClient
 from daylib_ursa.config import DEFAULT_API_PORT, get_settings
 from daylib_ursa.cli.server import _resolve_https_cert_paths
-from daylib_ursa.dewey_client import DeweyClient
+from daylib_ursa.integrations.dewey_client import DeweyClient
 from daylib_ursa.workset_api import create_app
 
 LOGGER = logging.getLogger("daylily.analysis_api.cli")

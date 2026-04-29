@@ -5,7 +5,7 @@ from typing import Any
 
 from daylib_ursa.analysis_store import AnalysisState, AnalysisStore, ReviewState
 from daylib_ursa.bloom_resolver_client import BloomResolverClient
-from daylib_ursa.dewey_client import DeweyClient
+from daylib_ursa.integrations.dewey_client import DeweyClient
 
 try:
     __version__ = package_version("daylily-ursa")

@@ -4,12 +4,17 @@ from dataclasses import dataclass, field
 from typing import Any
 import uuid
 
+from daylib_ursa.manifest_editor_options import (
+    normalize_editor_option_value,
+    validate_editor_option_type,
+)
 from daylib_ursa.tapdb_graph import TapDBBackend, from_json_addl, utc_now_iso
 from daylib_ursa.tapdb_templates import seed_ursa_templates
 
 
 WORKSET_TEMPLATE = "RGX/workset/gui-ready/1.0/"
 MANIFEST_TEMPLATE = "RGX/manifest/dewey-bound/1.0/"
+MANIFEST_EDITOR_OPTION_TEMPLATE = "RGX/manifest/editor-option/1.0/"
 DEWEY_IMPORT_TEMPLATE = "RGX/artifact/dewey-import/1.0/"
 CLIENT_REGISTRATION_TEMPLATE = "RGX/auth/client-registration/1.0/"
 CLUSTER_JOB_TEMPLATE = "RGX/cluster/ephemeral-job/1.0/"
@@ -36,6 +41,19 @@ class ManifestRecord:
     artifact_euids: list[str]
     input_references: list[dict[str, Any]]
     metadata: dict[str, Any]
+    created_at: str
+    updated_at: str
+    state: str
+
+
+@dataclass(frozen=True)
+class ManifestEditorOptionRecord:
+    option_euid: str
+    tenant_id: uuid.UUID
+    option_type: str
+    value: str
+    normalized_value: str
+    created_by: str
     created_at: str
     updated_at: str
     state: str
@@ -642,6 +660,117 @@ class ResourceStore:
                 manifest,
                 workset_euid=str(from_json_addl(manifest).get("workset_euid") or ""),
             )
+
+    @staticmethod
+    def _manifest_editor_option_key(
+        *, tenant_id: uuid.UUID, option_type: str, normalized_value: str
+    ) -> str:
+        return f"{tenant_id}:{option_type}:{normalized_value}"
+
+    @staticmethod
+    def _manifest_editor_option_from_instance(instance) -> ManifestEditorOptionRecord:
+        payload = from_json_addl(instance)
+        return ManifestEditorOptionRecord(
+            option_euid=str(instance.euid),
+            tenant_id=ResourceStore._parse_tenant_uuid(payload.get("tenant_id")),
+            option_type=str(payload.get("option_type") or ""),
+            value=str(payload.get("value") or instance.name or ""),
+            normalized_value=str(payload.get("normalized_value") or ""),
+            created_by=str(payload.get("created_by") or ""),
+            created_at=str(payload.get("created_at") or utc_now_iso()),
+            updated_at=str(payload.get("updated_at") or payload.get("created_at") or utc_now_iso()),
+            state=str(payload.get("state") or instance.bstatus),
+        )
+
+    def list_manifest_editor_options(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        option_type: str | None = None,
+        limit: int = 1000,
+    ) -> list[ManifestEditorOptionRecord]:
+        validated_type = (
+            validate_editor_option_type(option_type) if option_type is not None else None
+        )
+        with self.backend.session_scope(commit=False) as session:
+            rows = self.backend.list_instances_by_property(
+                session,
+                template_code=MANIFEST_EDITOR_OPTION_TEMPLATE,
+                key="tenant_id",
+                value=str(tenant_id),
+                limit=limit,
+            )
+            records = [
+                self._manifest_editor_option_from_instance(item)
+                for item in rows
+                if str(from_json_addl(item).get("state") or item.bstatus) == "ACTIVE"
+            ]
+        if validated_type is None:
+            return records
+        return [record for record in records if record.option_type == validated_type]
+
+    def upsert_manifest_editor_option(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        option_type: str,
+        value: str,
+        actor_user_id: str,
+    ) -> ManifestEditorOptionRecord:
+        validated_type = validate_editor_option_type(option_type)
+        cleaned_value, normalized_value = normalize_editor_option_value(value)
+        option_key = self._manifest_editor_option_key(
+            tenant_id=tenant_id,
+            option_type=validated_type,
+            normalized_value=normalized_value,
+        )
+        now = utc_now_iso()
+        with self.backend.session_scope(commit=True) as session:
+            existing = self.backend.find_instance_by_external_id(
+                session,
+                template_code=MANIFEST_EDITOR_OPTION_TEMPLATE,
+                key="option_key",
+                value=option_key,
+            )
+            if existing is not None:
+                payload = from_json_addl(existing)
+                self.backend.update_instance_json(
+                    session,
+                    existing,
+                    {
+                        "tenant_id": str(tenant_id),
+                        "option_type": validated_type,
+                        "value": str(payload.get("value") or cleaned_value),
+                        "normalized_value": str(
+                            payload.get("normalized_value") or normalized_value
+                        ),
+                        "option_key": option_key,
+                        "updated_at": now,
+                        "state": "ACTIVE",
+                    },
+                )
+                existing.name = str(payload.get("value") or cleaned_value)
+                existing.bstatus = "ACTIVE"
+                return self._manifest_editor_option_from_instance(existing)
+            option = self.backend.create_instance(
+                session,
+                MANIFEST_EDITOR_OPTION_TEMPLATE,
+                cleaned_value,
+                json_addl={
+                    "tenant_id": str(tenant_id),
+                    "option_type": validated_type,
+                    "value": cleaned_value,
+                    "normalized_value": normalized_value,
+                    "option_key": option_key,
+                    "created_by": actor_user_id,
+                    "created_at": now,
+                    "updated_at": now,
+                    "state": "ACTIVE",
+                },
+                bstatus="ACTIVE",
+                tenant_id=tenant_id,
+            )
+            return self._manifest_editor_option_from_instance(option)
 
     @staticmethod
     def _linked_bucket_from_instance(instance) -> LinkedBucketRecord:

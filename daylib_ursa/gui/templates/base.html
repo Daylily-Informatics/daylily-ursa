@@ -44,6 +44,9 @@
                         <li><a href="/analysis-jobs" class="nav-link {% if active_page == 'analysis_jobs' %}active{% endif %}">Analysis Launches</a></li>
                         <li><a href="/staging" class="nav-link {% if active_page == 'staging' %}active{% endif %}">Staging</a></li>
                         <li><a href="/buckets" class="nav-link {% if active_page == 'buckets' %}active{% endif %}">Buckets</a></li>
+                        {% if actor.is_internal %}
+                        <li><a href="/graph" class="nav-link {% if active_page == 'graph' %}active{% endif %}">TapDB Graph</a></li>
+                        {% endif %}
                         {% if actor.is_admin %}
                         <li><a href="/clusters" class="nav-link {% if active_page == 'clusters' %}active{% endif %}">Clusters</a></li>
                         <li><a href="/admin" class="nav-link {% if active_page == 'admin' %}active{% endif %}">Admin</a></li>

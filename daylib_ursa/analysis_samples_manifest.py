@@ -23,6 +23,8 @@ ANALYSIS_SAMPLES_SOURCE_COLUMNS = (
     "R2_FQ",
     "ILMN_R1_FQ",
     "ILMN_R2_FQ",
+    "CG_R1_FQ",
+    "CG_R2_FQ",
     "PACBIO_R1_FQ",
     "PACBIO_R2_FQ",
     "ONT_R1_FQ",

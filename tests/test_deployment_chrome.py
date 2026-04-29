@@ -48,7 +48,6 @@ tapdb_database_name: daylily-ursa
 tapdb_env: dev
 api_host: 127.0.0.1
 api_port: 8913
-ursa_portal_default_customer_id: 77777777-7777-7777-7777-777777777777
 bloom_base_url: https://localhost:8912
 bloom_verify_ssl: true
 atlas_base_url: https://localhost:8915
@@ -93,7 +92,6 @@ deployment:
     assert settings.cognito_callback_url == "https://env.example.com/auth/callback"
     assert settings.cognito_logout_url == "https://env.example.com/login"
     assert settings.dewey_api_token == "dewey-dev-token"
-    assert settings.ursa_portal_default_customer_id == "77777777-7777-7777-7777-777777777777"
     assert settings.deployment == {
         "name": "staging",
         "color": _stable_deployment_color_hex("staging"),
@@ -106,9 +104,6 @@ def test_default_config_template_emits_secret_and_domain_defaults() -> None:
 
     assert "session_secret_key:" in template
     assert "generated-on-init" not in template
-    assert "default_tenant_id: 00000000-0000-0000-0000-000000000000" in template
-    assert "auto_provision_allowed_domains:" in template
-    assert "  - lsmc.com" in template
     assert "whitelist_domains: lsmc.com,lsmc.bio,lsmc.life,daylilyinformatics.com" in template
     assert "tapdb_config_path: ~/.config/tapdb/local/ursa-local/tapdb-config.yaml" in template
     assert "ui_show_environment_chrome: true" in template
@@ -417,7 +412,7 @@ def test_prod_deployment_name_uses_stable_color_and_marks_production() -> None:
 
 
 def test_light_aqua_is_used_without_any_deployment_name() -> None:
-    assert _resolve_deployment_chrome(name="", color="", fallback_name="") == {
+    assert _resolve_deployment_chrome(name="", color="", default_name="") == {
         "name": "",
         "color": DEFAULT_DEPLOYMENT_BANNER_COLOR,
         "is_production": False,
@@ -772,7 +767,7 @@ def test_auth_callback_passes_paired_access_token_for_id_token_verification(monk
             "sub": "user-123",
             "email": "user@lsmc.com",
             "aud": "client-123",
-            "custom:customer_id": "11111111-1111-1111-1111-111111111111",
+            "custom:tenant_id": "11111111-1111-1111-1111-111111111111",
             "cognito:groups": ["ursa-admin"],
         }
 

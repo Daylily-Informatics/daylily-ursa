@@ -93,6 +93,19 @@
       "json_addl": {}
     },
     {
+      "name": "Ursa Manifest Editor Option",
+      "polymorphic_discriminator": "generic_template",
+      "category": "RGX",
+      "type": "manifest",
+      "subtype": "editor-option",
+      "version": "1.0",
+      "instance_prefix": "RGX",
+      "instance_polymorphic_identity": "generic_instance",
+      "bstatus": "active",
+      "is_singleton": false,
+      "json_addl": {}
+    },
+    {
       "name": "Ursa Dewey Import Action",
       "polymorphic_discriminator": "action_template",
       "category": "RGX",

@@ -229,25 +229,9 @@ def _claims_to_current_user(claims: dict[str, Any]) -> CurrentUser:
         raise AuthError("Authentication token missing subject")
 
     email = str(claims.get("email") or "").strip()
-    tenant_value = (
-        claims.get("tenant_id")
-        or claims.get("custom:tenant_id")
-        or claims.get("custom:customer_id")
-    )
+    tenant_value = claims.get("tenant_id") or claims.get("custom:tenant_id")
     if not str(tenant_value or "").strip():
-        try:
-            from daylib_ursa.config import get_settings
-
-            configured_default = str(get_settings().ursa_portal_default_customer_id or "").strip()
-            if configured_default:
-                try:
-                    tenant_value = str(uuid.UUID(configured_default))
-                except ValueError:
-                    tenant_value = str(uuid.UUID(int=0))
-            else:
-                tenant_value = str(uuid.UUID(int=0))
-        except Exception:
-            tenant_value = tenant_value
+        raise AuthError("Authentication token missing tenant_id")
     name = str(claims.get("name") or claims.get("display_name") or "").strip() or None
     raw_roles = claims.get("cognito:groups")
     return CurrentUser(
@@ -565,9 +549,7 @@ class CognitoUserDirectoryService:
         attrs = self._attrs_to_dict(item)
         user_id = str(attrs.get("sub") or "").strip() or str(item.get("Username") or "").strip()
         tenant_id = _parse_uuid(
-            attrs.get("custom:tenant_id")
-            or attrs.get("tenant_id")
-            or attrs.get("custom:customer_id"),
+            attrs.get("custom:tenant_id") or attrs.get("tenant_id"),
             label="tenant_id",
         )
         roles = tuple(_map_cognito_groups_to_roles(group_names))

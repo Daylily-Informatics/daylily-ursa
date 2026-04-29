@@ -279,8 +279,6 @@ def test_ursa_config_template_bytes_are_fresh() -> None:
     assert first != second
     text = first.decode("utf-8")
     assert "session_secret_key:" in text
-    assert "default_tenant_id: 00000000-0000-0000-0000-000000000000" in text
-    assert "auto_provision_allowed_domains:" in text
     assert "whitelist_domains: lsmc.com,lsmc.bio,lsmc.life,daylilyinformatics.com" in text
     assert "api_port: 8913" in text
     assert "cognito_callback_url: https://localhost:8913/auth/callback" in text

@@ -825,6 +825,32 @@ input[type="radio"] {
     padding: 0.55rem 0.7rem;
 }
 
+.sortable-header {
+    align-items: center;
+    background: transparent;
+    border: 0;
+    color: inherit;
+    cursor: pointer;
+    display: inline-flex;
+    font: inherit;
+    font-weight: 700;
+    gap: 0.35rem;
+    padding: 0;
+    text-align: left;
+}
+
+.sortable-header:hover {
+    color: var(--color-accent);
+}
+
+.sortable-indicator {
+    color: var(--color-gray-500);
+    display: inline-block;
+    font-size: 0.72rem;
+    line-height: 1;
+    min-width: 0.8rem;
+}
+
 .table-wrapper {
     overflow-x: auto;
 }

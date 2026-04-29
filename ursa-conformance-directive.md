@@ -14,15 +14,16 @@ Ursa should remain a peer service to Atlas and Bloom. Auth, tenant isolation, da
 | --- | --- | --- |
 | Activation | Done | `source ./activate <deploy-name>` creates/activates one deployment-scoped conda env and performs one editable install only on first create. |
 | Packaging boundary | Done | `environment.yaml` holds system/runtime packages; Python dependencies live in `pyproject.toml`; no optional repo install groups are declared. |
-| CLI root | Done | `daylib_ursa.cli` builds a `cli-core-yo==2.1.0` `CliSpec` with XDG config, runtime guards, prereqs, JSON policy, and explicit plugins. |
+| CLI root | Done | `daylib_ursa.cli` builds a `cli-core-yo==2.1.1` `CliSpec` with XDG config, runtime guards, prereqs, JSON policy, and explicit plugins. |
 | CLI callbacks | Partially done | Command modules register through `cli-core-yo`, but several callbacks still use `typer` annotations and exits internally. |
-| TapDB runtime | Done | Ursa uses `daylily-tapdb==6.0.4`, `TapdbClientBundle`, `TAPDBConnection`, `TemplateManager`, `InstanceFactory`, explicit config paths, and namespace-aware runtime env derivation. |
+| TapDB runtime | Done | Ursa uses `daylily-tapdb==6.0.8`, `TapdbClientBundle`, `TAPDBConnection`, `TemplateManager`, `InstanceFactory`, explicit config paths, and namespace-aware runtime env derivation. |
+| Zebra dependency | Done | Ursa declares `zebra_day==6.0.1` as a direct Python dependency in the single package install set. |
 | TapDB backend | Done | `TapDBBackend` writes Ursa resource templates through the TapDB 6.x runtime surface and enforces tenant-aware instance creation/listing patterns. |
 | TapDB admin mount | Done | `/admin/tapdb` mounts the TapDB admin app inside Ursa when enabled, with explicit TapDB context forwarding and `X-API-Key` gating. |
 | Auth package shape | Done | Auth lives under `daylib_ursa/auth/` with `CurrentUser`, web/API auth dependencies, JWT/session handling, user tokens, and user directory integration. |
 | RBAC | Done | `Role`, `Permission`, `ROLE_PERMISSIONS`, and helper functions live in `daylib_ursa/auth/rbac.py`. |
 | Tenant isolation | Partially done | Most API routes check tenant ownership and admin access at route/service boundaries; continued review should focus on new routes and TapDB queries as they are added. |
-| Manifest contract | Done | Ursa generates `metadata.analysis_samples_manifest` from editor rows or S3 references using the installed `daylily-ephemeral-cluster==2.1.4` template. |
+| Manifest contract | Done | Ursa generates `metadata.analysis_samples_manifest` from editor rows or S3 references using the installed `daylily-ephemeral-cluster==2.1.11` template. |
 | Staging jobs | Done | `/api/v1/staging-jobs` defines, runs, reads, and returns logs for `daylily-ec samples stage` jobs. |
 | Analysis jobs | Done | `/api/v1/analysis-jobs` can create jobs from a manifest and either stage directly from a reference bucket or reuse a completed `staging_job_euid`. |
 | Atlas return | Done | Result return requires approved review state, Dewey artifact EUIDs, opaque Atlas/Bloom EUIDs, idempotency, and persisted Atlas response metadata. |

@@ -7,7 +7,7 @@ name = "daylily-ursa"
 dynamic = ["version"]
 description = "Daylily Ursa beta analysis API"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = {text = "MIT"}
 authors = [
     {name = "Daylily Informatics", email = "daylily@daylilyinformatics.com"}
@@ -19,13 +19,15 @@ dependencies = [
     "black>=23.0.0",
     "pyyaml>=6.0",
     "sqlalchemy>=2.0.0",
-    "cli-core-yo==2.1.0",
+    "cli-core-yo==2.1.1",
     # Cognito auth library
-    "daylily-auth-cognito==2.1.1",
+    "daylily-auth-cognito==2.1.5",
     # TapDB graph persistence
-    "daylily-tapdb==6.0.4",
+    "daylily-tapdb==6.0.8",
     # Ephemeral cluster API/CLI contract
-    "daylily-ephemeral-cluster==2.1.4",
+    "daylily-ephemeral-cluster==2.1.11",
+    # Shared Zebra runtime contract
+    "zebra_day==6.0.1",
     "fastapi>=0.104.0",
     "httpx>=0.25.0",
     "itsdangerous>=2.2.0",
@@ -59,7 +61,6 @@ daylily-workset-api = "daylib_ursa.workset_api_cli:main"
 [tool.setuptools_scm]
 version_scheme = "guess-next-dev"
 local_scheme = "node-and-date"
-fallback_version = "0.0.0"
 
 [tool.setuptools.packages.find]
 include = ["daylib_ursa*"]
@@ -76,14 +77,14 @@ markers = [
 
 [tool.black]
 line-length = 100
-target-version = ['py310', 'py311', 'py312']
+target-version = ['py311', 'py312']
 
 [tool.ruff]
 line-length = 100
-target-version = "py310"
+target-version = "py311"
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.11"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false

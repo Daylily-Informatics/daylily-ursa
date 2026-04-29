@@ -29,6 +29,7 @@ from daylib_ursa.auth import (
 from daylib_ursa.cluster_jobs import region_from_region_az
 from daylib_ursa.config import _require_bare_cognito_domain
 from daylib_ursa.analysis_commands import command_catalog_payload
+from daylib_ursa.manifest_editor_options import manifest_editor_static_payload
 from daylib_ursa.observability import (
     build_api_health_payload,
     build_auth_health_payload,
@@ -1155,6 +1156,25 @@ def mount_gui(app: FastAPI) -> None:
             context=_dashboard_context(actor),
         )
 
+    @app.get("/graph", response_class=HTMLResponse)
+    async def tapdb_graph_page(request: Request):
+        actor = _session_actor(request)
+        if actor is None:
+            return _login_redirect_response(request)
+        if not actor.is_internal:
+            raise HTTPException(status_code=403, detail="Internal or admin privileges are required")
+        return _render_page(
+            request,
+            template_name="tapdb_graph.html",
+            page_title="TapDB Graph",
+            active_page="graph",
+            context={
+                "tapdb_dag_configured": bool(
+                    getattr(request.app.state, "tapdb_dag_configured", False)
+                ),
+            },
+        )
+
     @app.get("/usage", response_class=HTMLResponse)
     async def usage_page(request: Request):
         actor = _session_actor(request)
@@ -1248,6 +1268,7 @@ def mount_gui(app: FastAPI) -> None:
             return RedirectResponse(
                 url=f"/login?next={request.url.path}", status_code=status.HTTP_303_SEE_OTHER
             )
+        manifest_editor = manifest_editor_static_payload()
         return _render_page(
             request,
             template_name="manifests/index.html",
@@ -1257,6 +1278,8 @@ def mount_gui(app: FastAPI) -> None:
                 "worksets": _list_worksets(actor),
                 "manifests": _list_manifests(actor),
                 "buckets": _list_buckets(actor),
+                "manifest_editor": manifest_editor,
+                "manifest_columns": manifest_editor["columns"],
             },
         )
 
@@ -1459,10 +1482,6 @@ def mount_gui(app: FastAPI) -> None:
             return RedirectResponse(
                 url=f"/login?next={request.url.path}", status_code=status.HTTP_303_SEE_OTHER
             )
-        clusters = _cluster_service().get_all_clusters_with_status(
-            force_refresh=False, fetch_ssh_status=False
-        )
-        cluster_payload = [item.to_dict(include_sensitive=False) for item in clusters]
         jobs = _resource_store().list_cluster_jobs(
             tenant_id=None if actor.is_admin else actor.tenant_id
         )
@@ -1475,8 +1494,8 @@ def mount_gui(app: FastAPI) -> None:
             active_page="clusters",
             admin_only=True,
             context={
-                "clusters": cluster_payload,
-                "cluster_regions": _cluster_region_sections(cluster_payload, jobs),
+                "clusters": [],
+                "cluster_regions": _cluster_region_sections([], jobs),
                 "jobs": jobs,
                 "regions": scanned_regions,
                 "scan_regions_csv": ",".join(scanned_regions),

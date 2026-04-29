@@ -6,6 +6,7 @@ import gzip
 import hashlib
 import hmac
 import io
+import json
 import logging
 import secrets
 import tarfile
@@ -14,6 +15,7 @@ import uuid
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Annotated, Any, Literal, Sequence
 from urllib.parse import urlparse
 
@@ -34,6 +36,7 @@ from fastapi import (
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+from starlette.concurrency import run_in_threadpool
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from daylily_auth_cognito import configure_session_middleware
@@ -76,17 +79,33 @@ from daylib_ursa.bloom_resolver_client import BloomResolverClient, BloomResolver
 from daylib_ursa.cluster_jobs import ClusterJobManager, region_from_region_az
 from daylib_ursa.cluster_service import ClusterService
 from daylib_ursa.config import Settings, get_settings
-from daylib_ursa.dewey_client import DeweyClient, DeweyClientError
 from daylib_ursa.domain_access import (
     build_allowed_origin_regex,
     build_trusted_hosts,
     is_allowed_origin,
 )
+from daylib_ursa.integrations.dewey_client import DeweyClient, DeweyClientError
 from daylib_ursa.ephemeral_cluster.runner import (
+    DAYEC_CLUSTER_CONFIG_FIELDS,
     REQUIRED_DAYLILY_EC_VERSION,
+    _summarize_process_output,
     require_daylily_ec_version,
+    run_aws_validate_all_sync,
+    run_create_dry_run_sync,
+    write_dayec_cluster_config,
 )
 from daylib_ursa.gui_app import mount_gui
+from daylib_ursa.manifest_editor_options import (
+    BUILTIN_LIBRARY_PREPS,
+    BUILTIN_SAMPLE_TYPES,
+    BUILTIN_SEQ_PLATFORMS,
+    BUILTIN_SEQ_VENDORS,
+    dedupe_option_values,
+    is_builtin_editor_option,
+    manifest_editor_static_payload,
+    normalize_editor_option_value,
+    validate_editor_option_type,
+)
 from daylib_ursa.observability import (
     UrsaObservabilityStore,
     build_api_health_payload,
@@ -109,6 +128,7 @@ from daylib_ursa.resource_store import (
     ClusterJobRecord,
     DeweyImportRecord,
     LinkedBucketRecord,
+    ManifestEditorOptionRecord,
     ManifestRecord,
     ResourceStore,
     StagingJobEventRecord,
@@ -118,6 +138,7 @@ from daylib_ursa.resource_store import (
 from daylib_ursa.s3_utils import RegionAwareS3Client, normalize_bucket_name
 from daylib_ursa.analysis_samples_manifest import build_analysis_samples_manifest
 from daylib_ursa.staging_jobs import StagingJobManager
+from daylib_ursa.tapdb_dag import mount_tapdb_dag_api, ursa_tapdb_dag_obs_services_fragment
 from daylib_ursa.tapdb_mount import mount_tapdb_admin
 from daylib_ursa.ursa_config import get_ursa_config, parse_regions_csv, update_config_regions
 
@@ -235,6 +256,18 @@ class ManifestInputReferenceRequest(BaseModel):
     def validate_value(self) -> "ManifestInputReferenceRequest":
         if not str(self.value or "").strip():
             raise ValueError("value is required")
+        return self
+
+
+class ManifestEditorOptionCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    option_type: Literal["sample_type", "library_prep"]
+    value: str
+
+    @model_validator(mode="after")
+    def validate_option_value(self) -> "ManifestEditorOptionCreateRequest":
+        normalize_editor_option_value(self.value)
         return self
 
 
@@ -364,15 +397,67 @@ class ClusterCreateRequest(BaseModel):
     ssh_key_name: str
     s3_bucket_name: str
     owner_user_id: str | None = None
+    aws_profile: str | None = None
+    config_path: str | None = None
     contact_email: str | None = None
     pass_on_warn: bool = False
     debug: bool = False
+    cluster_config_values: dict[str, str | None] = Field(default_factory=dict)
+    repo_overrides: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_cluster_config_values(self) -> "ClusterCreateRequest":
+        self.cluster_config_values = _normalize_cluster_config_values(self.cluster_config_values)
+        self.repo_overrides = _normalize_repo_overrides(self.repo_overrides)
+        return self
+
+
+class ClusterAwsCheckAllRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    region: str | None = None
+    region_az: str
+    cluster_name: str | None = None
+    ssh_key_name: str | None = None
+    s3_bucket_name: str | None = None
+    aws_profile: str | None = None
+    config_path: str | None = None
+    contact_email: str | None = None
+    cluster_config_values: dict[str, str | None] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_cluster_config_values(self) -> "ClusterAwsCheckAllRequest":
+        self.cluster_config_values = _normalize_cluster_config_values(self.cluster_config_values)
+        return self
 
 
 class ClusterCreateOptionsResponse(BaseModel):
     keypairs: list[str] = Field(default_factory=list)
     buckets: list[str] = Field(default_factory=list)
     availability_zones: list[str] = Field(default_factory=list)
+
+
+def _normalize_cluster_config_values(raw: dict[str, str | None] | None) -> dict[str, str]:
+    normalized: dict[str, str] = {}
+    for key, raw_value in dict(raw or {}).items():
+        if key not in DAYEC_CLUSTER_CONFIG_FIELDS:
+            raise ValueError(f"Unsupported daylily-ec cluster config field: {key}")
+        value = str(raw_value or "").strip()
+        if value:
+            normalized[key] = value
+    return normalized
+
+
+def _normalize_repo_overrides(raw: Sequence[str] | None) -> list[str]:
+    overrides: list[str] = []
+    for item in list(raw or []):
+        value = str(item or "").strip()
+        if not value:
+            continue
+        if ":" not in value:
+            raise ValueError("repo_overrides entries must use <repo-key>:<git-ref>")
+        overrides.append(value)
+    return overrides
 
 
 class ClusterScanRegionsUpdateRequest(BaseModel):
@@ -526,6 +611,32 @@ class ManifestResponse(BaseModel):
     created_at: str
     updated_at: str
     state: str
+
+
+class ManifestEditorOptionResponse(BaseModel):
+    option_euid: str | None = None
+    tenant_id: uuid.UUID
+    option_type: str
+    value: str
+    normalized_value: str
+    created_by: str
+    created_at: str
+    updated_at: str
+    state: str
+    is_builtin: bool = False
+
+
+class ManifestEditorOptionsResponse(BaseModel):
+    columns: list[str]
+    source_columns: list[str]
+    browse_columns: list[str]
+    column_groups: list[dict[str, Any]]
+    defaults: dict[str, str]
+    sample_types: list[str]
+    library_preps: list[str]
+    seq_platforms: list[str]
+    seq_vendors: list[str]
+    custom_options: list[ManifestEditorOptionResponse]
 
 
 class WorksetResponse(BaseModel):
@@ -881,6 +992,107 @@ def _analysis_response(record: AnalysisRecord) -> AnalysisResponse:
 
 def _manifest_response(record: ManifestRecord) -> ManifestResponse:
     return ManifestResponse(**record.__dict__)
+
+
+def _manifest_editor_option_response(
+    record: ManifestEditorOptionRecord,
+) -> ManifestEditorOptionResponse:
+    return ManifestEditorOptionResponse(
+        option_euid=record.option_euid,
+        tenant_id=record.tenant_id,
+        option_type=record.option_type,
+        value=record.value,
+        normalized_value=record.normalized_value,
+        created_by=record.created_by,
+        created_at=record.created_at,
+        updated_at=record.updated_at,
+        state=record.state,
+        is_builtin=False,
+    )
+
+
+def _manifest_editor_builtin_response(
+    *,
+    tenant_id: uuid.UUID,
+    option_type: str,
+    value: str,
+) -> ManifestEditorOptionResponse:
+    cleaned, normalized = normalize_editor_option_value(value)
+    return ManifestEditorOptionResponse(
+        option_euid=None,
+        tenant_id=tenant_id,
+        option_type=option_type,
+        value=cleaned,
+        normalized_value=normalized,
+        created_by="",
+        created_at="",
+        updated_at="",
+        state="BUILTIN",
+        is_builtin=True,
+    )
+
+
+def _manifest_editor_options_response(
+    *,
+    tenant_id: uuid.UUID,
+    records: list[ManifestEditorOptionRecord],
+) -> ManifestEditorOptionsResponse:
+    static_payload = manifest_editor_static_payload()
+    custom_options = [
+        _manifest_editor_option_response(record)
+        for record in sorted(records, key=lambda item: (item.option_type, item.value.casefold()))
+    ]
+    sample_values = [
+        *BUILTIN_SAMPLE_TYPES,
+        *(record.value for record in records if record.option_type == "sample_type"),
+    ]
+    library_values = [
+        *BUILTIN_LIBRARY_PREPS,
+        *(record.value for record in records if record.option_type == "library_prep"),
+    ]
+    return ManifestEditorOptionsResponse(
+        columns=list(static_payload["columns"]),
+        source_columns=list(static_payload["source_columns"]),
+        browse_columns=list(static_payload["browse_columns"]),
+        column_groups=list(static_payload["column_groups"]),
+        defaults=dict(static_payload["defaults"]),
+        sample_types=dedupe_option_values(sample_values),
+        library_preps=dedupe_option_values(library_values),
+        seq_platforms=list(BUILTIN_SEQ_PLATFORMS),
+        seq_vendors=list(BUILTIN_SEQ_VENDORS),
+        custom_options=custom_options,
+    )
+
+
+def _persist_manifest_editor_options(
+    *,
+    resources: ResourceStore,
+    actor: CurrentUser,
+    metadata: dict[str, Any],
+) -> None:
+    editor_rows = metadata.get("editor_analysis_inputs")
+    if not isinstance(editor_rows, list):
+        return
+    seen: set[tuple[str, str]] = set()
+    field_map = {"SAMPLE_TYPE": "sample_type", "LIB_PREP": "library_prep"}
+    for row in editor_rows:
+        if not isinstance(row, dict):
+            continue
+        for field, option_type in field_map.items():
+            raw_value = str(row.get(field) or "").strip()
+            if not raw_value:
+                continue
+            cleaned, normalized = normalize_editor_option_value(raw_value)
+            key = (option_type, normalized)
+            if key in seen or is_builtin_editor_option(option_type, cleaned):
+                continue
+            seen.add(key)
+            resources.upsert_manifest_editor_option(
+                tenant_id=actor.tenant_id,
+                option_type=option_type,
+                value=cleaned,
+                actor_user_id=actor.user_id,
+            )
 
 
 def _workset_response(record: WorksetRecord) -> WorksetResponse:
@@ -2470,6 +2682,128 @@ def create_app(
             availability_zones=availability_zones,
         )
 
+    def cluster_create_workspace_root() -> Path:
+        manager = getattr(app.state, "cluster_job_manager", None)
+        workspace_root = getattr(manager, "workspace_root", None)
+        return Path(workspace_root or Path.cwd()).resolve()
+
+    def write_cluster_request_config(
+        *,
+        scratch_dir: Path,
+        cluster_name: str,
+        ssh_key_name: str,
+        s3_bucket_name: str,
+        contact_email: str | None,
+        config_path: str | None,
+        cluster_config_values: dict[str, str],
+    ) -> Path:
+        explicit_config = str(config_path or "").strip()
+        if explicit_config:
+            path = Path(explicit_config).expanduser()
+            if not path.is_absolute():
+                path = (cluster_create_workspace_root() / path).resolve()
+            return path
+        values = dict(cluster_config_values)
+        values.setdefault("cluster_name", cluster_name)
+        values.setdefault("s3_bucket_name", s3_bucket_name)
+        return write_dayec_cluster_config(
+            dest=scratch_dir / "cluster.yaml",
+            cluster_name=cluster_name,
+            ssh_key_name=ssh_key_name,
+            s3_bucket_name=s3_bucket_name,
+            contact_email=contact_email,
+            config_values=values,
+        )
+
+    def run_cluster_submit_dry_run(
+        *,
+        request: ClusterCreateRequest,
+        cluster_name: str,
+        region_az: str,
+        ssh_key_name: str,
+        s3_bucket_name: str,
+        aws_profile: str | None,
+        contact_email: str | None,
+    ) -> dict[str, Any]:
+        with TemporaryDirectory(prefix="ursa-cluster-dryrun-") as temp_dir:
+            config_path = write_cluster_request_config(
+                scratch_dir=Path(temp_dir),
+                cluster_name=cluster_name,
+                ssh_key_name=ssh_key_name,
+                s3_bucket_name=s3_bucket_name,
+                contact_email=contact_email,
+                config_path=request.config_path,
+                cluster_config_values=request.cluster_config_values,
+            )
+            result = run_create_dry_run_sync(
+                region_az=region_az,
+                aws_profile=aws_profile,
+                config_path=str(config_path),
+                pass_on_warn=bool(request.pass_on_warn),
+                debug=bool(request.debug),
+                contact_email=contact_email,
+                repo_overrides=request.repo_overrides,
+                cwd=cluster_create_workspace_root(),
+            )
+        return {
+            "return_code": int(result.returncode),
+            "summary": _summarize_process_output(result),
+            "stdout": result.stdout or "",
+            "stderr": result.stderr or "",
+        }
+
+    def run_cluster_aws_check_all(request: ClusterAwsCheckAllRequest) -> dict[str, Any]:
+        region_az = str(request.region_az or "").strip()
+        if not region_az:
+            raise ValueError("region_az is required")
+        aws_profile = str(request.aws_profile or app.state.settings.aws_profile or "").strip()
+        if not aws_profile:
+            raise ValueError("aws_profile is required for daylily-ec aws validate all")
+        with TemporaryDirectory(prefix="ursa-aws-check-") as temp_dir:
+            scratch_dir = Path(temp_dir)
+            gap_path = scratch_dir / "gap_analysis.md"
+            config_path: Path | None = None
+            explicit_config = str(request.config_path or "").strip()
+            if explicit_config:
+                config_path = Path(explicit_config).expanduser()
+                if not config_path.is_absolute():
+                    config_path = (cluster_create_workspace_root() / config_path).resolve()
+            elif request.cluster_name and request.ssh_key_name and request.s3_bucket_name:
+                config_path = write_cluster_request_config(
+                    scratch_dir=scratch_dir,
+                    cluster_name=str(request.cluster_name).strip(),
+                    ssh_key_name=str(request.ssh_key_name).strip(),
+                    s3_bucket_name=str(request.s3_bucket_name).strip(),
+                    contact_email=str(request.contact_email or "").strip() or None,
+                    config_path=None,
+                    cluster_config_values=request.cluster_config_values,
+                )
+            result = run_aws_validate_all_sync(
+                region_az=region_az,
+                aws_profile=aws_profile,
+                config_path=str(config_path) if config_path else None,
+                gap_analysis_path=gap_path,
+                cwd=cluster_create_workspace_root(),
+            )
+            gap_analysis = gap_path.read_text(encoding="utf-8") if gap_path.exists() else ""
+        report: dict[str, Any] | None = None
+        if str(result.stdout or "").strip():
+            try:
+                parsed = json.loads(result.stdout)
+                if isinstance(parsed, dict):
+                    report = parsed
+            except json.JSONDecodeError:
+                report = None
+        return {
+            "return_code": int(result.returncode),
+            "summary": _summarize_process_output(result),
+            "stdout": result.stdout or "",
+            "stderr": result.stderr or "",
+            "gap_analysis": gap_analysis,
+            "gap_analysis_filename": f"daylily-ec-gap-analysis-{region_az}.md",
+            "report": report,
+        }
+
     def update_cluster_scan_regions(regions_csv: str) -> ClusterScanRegionsResponse:
         normalized_regions = parse_regions_csv(regions_csv)
         current_config = getattr(app.state, "ursa_config", None)
@@ -3072,6 +3406,39 @@ def create_app(
         records = resources.list_manifests(tenant_id=actor.tenant_id)
         return [_manifest_response(item) for item in records]
 
+    @app.get("/api/v1/manifest-editor/options", response_model=ManifestEditorOptionsResponse)
+    async def get_manifest_editor_options(
+        actor: RequireAuth,
+        resources: ResourceStore = Depends(require_resource_store),
+    ) -> ManifestEditorOptionsResponse:
+        records = resources.list_manifest_editor_options(tenant_id=actor.tenant_id)
+        return _manifest_editor_options_response(tenant_id=actor.tenant_id, records=records)
+
+    @app.post("/api/v1/manifest-editor/options", response_model=ManifestEditorOptionResponse)
+    async def create_manifest_editor_option(
+        request: ManifestEditorOptionCreateRequest,
+        actor: RequireAuth,
+        resources: ResourceStore = Depends(require_resource_store),
+    ) -> ManifestEditorOptionResponse:
+        try:
+            option_type = validate_editor_option_type(request.option_type)
+            cleaned_value, _ = normalize_editor_option_value(request.value)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if is_builtin_editor_option(option_type, cleaned_value):
+            return _manifest_editor_builtin_response(
+                tenant_id=actor.tenant_id,
+                option_type=option_type,
+                value=cleaned_value,
+            )
+        record = resources.upsert_manifest_editor_option(
+            tenant_id=actor.tenant_id,
+            option_type=option_type,
+            value=cleaned_value,
+            actor_user_id=actor.user_id,
+        )
+        return _manifest_editor_option_response(record)
+
     @app.post(
         "/api/v1/manifests", response_model=ManifestResponse, status_code=status.HTTP_201_CREATED
     )
@@ -3117,6 +3484,14 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         metadata["analysis_samples_manifest"] = analysis_samples_manifest.metadata()
+        try:
+            _persist_manifest_editor_options(
+                resources=resources,
+                actor=actor,
+                metadata=metadata,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         record = resources.create_manifest(
             workset_euid=request.workset_euid,
             name=request.name,
@@ -3922,6 +4297,20 @@ def create_app(
             LOGGER.exception("Failed to update cluster scan regions")
             raise HTTPException(status_code=503, detail=str(exc)) from exc
 
+    @app.post("/api/v1/clusters/aws/check-all")
+    async def cluster_aws_check_all(
+        request: ClusterAwsCheckAllRequest,
+        actor: RequireAdmin,
+    ) -> dict[str, Any]:
+        _ = actor
+        try:
+            return run_cluster_aws_check_all(request)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            LOGGER.exception("Failed to run daylily-ec aws validate all")
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
     @app.post(
         "/api/v1/clusters/verify-partitions",
         response_model=ClusterPartitionVerificationResponse,
@@ -3992,11 +4381,38 @@ def create_app(
         service: ClusterService = Depends(require_cluster_service),
     ) -> dict[str, list[dict[str, Any]]]:
         _ = actor
-        items = service.get_all_clusters_with_status(
-            force_refresh=refresh,
-            fetch_ssh_status=fetch_ssh_status,
+        items = await run_in_threadpool(
+            lambda: service.get_all_clusters_with_status(
+                force_refresh=refresh,
+                fetch_ssh_status=fetch_ssh_status,
+            )
         )
         return {"items": [item.to_dict(include_sensitive=fetch_ssh_status) for item in items]}
+
+    @app.get("/api/v1/clusters/regions/{region}/names")
+    async def list_region_cluster_names(
+        region: str,
+        actor: RequireAdmin,
+        refresh: bool = Query(default=False),
+        service: ClusterService = Depends(require_cluster_service),
+    ) -> dict[str, Any]:
+        _ = actor
+        resolved_region = str(region or "").strip()
+        if not resolved_region:
+            raise HTTPException(status_code=400, detail="region is required")
+        if resolved_region not in service.regions:
+            raise HTTPException(
+                status_code=400, detail=f"Unsupported cluster region: {resolved_region}"
+            )
+        if refresh:
+            service.clear_cache()
+        names = await run_in_threadpool(service.list_clusters_in_region, resolved_region)
+        return {
+            "region": resolved_region,
+            "items": [
+                {"cluster_name": cluster_name, "region": resolved_region} for cluster_name in names
+            ],
+        }
 
     @app.post(
         "/api/v1/clusters",
@@ -4015,6 +4431,8 @@ def create_app(
         region_az = str(request.region_az or "").strip()
         ssh_key_name = str(request.ssh_key_name or "").strip()
         s3_bucket_name = str(request.s3_bucket_name or "").strip()
+        aws_profile = str(request.aws_profile or app.state.settings.aws_profile or "").strip()
+        contact_email = str(request.contact_email or "").strip() or actor.email
         if not cluster_name or not region_az or not ssh_key_name or not s3_bucket_name:
             raise HTTPException(
                 status_code=400,
@@ -4053,6 +4471,29 @@ def create_app(
                     f"availability for: {failing_partitions}."
                 ),
             )
+        try:
+            dry_run = run_cluster_submit_dry_run(
+                request=request,
+                cluster_name=cluster_name,
+                region_az=selection.region_az,
+                ssh_key_name=ssh_key_name,
+                s3_bucket_name=s3_bucket_name,
+                aws_profile=aws_profile or None,
+                contact_email=contact_email,
+            )
+        except (FileNotFoundError, RuntimeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=f"Create dry-run failed: {exc}") from exc
+        except Exception as exc:
+            LOGGER.exception("Cluster create dry-run failed for %s", cluster_name)
+            raise HTTPException(status_code=503, detail=f"Create dry-run failed: {exc}") from exc
+        if int(dry_run["return_code"]) != 0:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Create dry-run failed: "
+                    + str(dry_run.get("summary") or f"exit code {dry_run['return_code']}")
+                ),
+            )
         record = manager.start_create_job(
             cluster_name=cluster_name,
             region_az=selection.region_az,
@@ -4061,10 +4502,13 @@ def create_app(
             tenant_id=actor.tenant_id,
             owner_user_id=owner_user_id,
             sponsor_user_id=actor.user_id,
-            aws_profile=app.state.settings.aws_profile,
-            contact_email=str(request.contact_email or "").strip() or actor.email,
+            aws_profile=aws_profile or None,
+            contact_email=contact_email,
             pass_on_warn=bool(request.pass_on_warn),
             debug=bool(request.debug),
+            config_path=request.config_path,
+            cluster_config_values=request.cluster_config_values,
+            repo_overrides=request.repo_overrides,
         )
         return _cluster_job_response(record)
 
@@ -4078,16 +4522,84 @@ def create_app(
         service: ClusterService = Depends(require_cluster_service),
     ) -> dict[str, Any]:
         _ = actor
-        resolved_region = resolve_cluster_region(cluster_name, region=region, service=service)
-        cluster = service.describe_cluster(cluster_name, resolved_region)
-        if fetch_ssh_status:
-            cluster = service.fetch_headnode_status(cluster)
-        payload = cluster.to_dict(include_sensitive=fetch_ssh_status)
-        if refresh:
-            service.clear_cache()
-        if cluster.error_message and payload.get("cluster_status") == "UNKNOWN":
-            raise HTTPException(status_code=404, detail=cluster.error_message)
+
+        def _load_cluster_payload() -> dict[str, Any]:
+            resolved_region = resolve_cluster_region(cluster_name, region=region, service=service)
+            cluster = service.describe_cluster(cluster_name, resolved_region)
+            if fetch_ssh_status:
+                cluster = service.fetch_headnode_status(cluster)
+            payload = cluster.to_dict(include_sensitive=fetch_ssh_status)
+            if refresh:
+                service.clear_cache()
+            return payload
+
+        payload = await run_in_threadpool(_load_cluster_payload)
+        if payload.get("error_message") and payload.get("cluster_status") == "UNKNOWN":
+            raise HTTPException(status_code=404, detail=str(payload["error_message"]))
         return payload
+
+    @app.post("/api/v1/clusters/{cluster_name}/headnode/static")
+    async def probe_cluster_headnode_static(
+        cluster_name: str,
+        actor: RequireAdmin,
+        region: str | None = Query(default=None),
+        refresh: bool = Query(default=False),
+        service: ClusterService = Depends(require_cluster_service),
+    ) -> dict[str, Any]:
+        _ = actor
+        resolved_region = resolve_cluster_region(cluster_name, region=region, service=service)
+        try:
+            return service.fetch_headnode_static_probe(
+                cluster_name=cluster_name,
+                region=resolved_region,
+                refresh=refresh,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    @app.post("/api/v1/clusters/{cluster_name}/headnode/scheduler")
+    async def probe_cluster_headnode_scheduler(
+        cluster_name: str,
+        actor: RequireAdmin,
+        region: str | None = Query(default=None),
+        refresh: bool = Query(default=False),
+        service: ClusterService = Depends(require_cluster_service),
+    ) -> dict[str, Any]:
+        _ = actor
+        resolved_region = resolve_cluster_region(cluster_name, region=region, service=service)
+        try:
+            return service.fetch_headnode_scheduler_probe(
+                cluster_name=cluster_name,
+                region=resolved_region,
+                refresh=refresh,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    @app.post("/api/v1/clusters/{cluster_name}/headnode/fsx")
+    async def probe_cluster_headnode_fsx(
+        cluster_name: str,
+        actor: RequireAdmin,
+        region: str | None = Query(default=None),
+        refresh: bool = Query(default=False),
+        service: ClusterService = Depends(require_cluster_service),
+    ) -> dict[str, Any]:
+        _ = actor
+        resolved_region = resolve_cluster_region(cluster_name, region=region, service=service)
+        try:
+            return service.fetch_headnode_fsx_probe(
+                cluster_name=cluster_name,
+                region=resolved_region,
+                refresh=refresh,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     @app.post("/api/v1/clusters/{cluster_name}/delete-plan")
     async def create_cluster_delete_plan(
@@ -4356,6 +4868,16 @@ def create_app(
             client_registration_euid=client_registration_euid,
         )
         return _token_response(record, plaintext_token=plaintext)
+
+    if mount_tapdb_dag_api(app, settings):
+        fragment = ursa_tapdb_dag_obs_services_fragment()
+        app.state.observability.add_obs_services_fragment(
+            endpoints=list(fragment.get("endpoints") or []),
+            extensions=list(fragment.get("extensions") or []),
+            capabilities=list(fragment.get("capabilities") or []),
+            external_ref_models=list(fragment.get("external_ref_models") or []),
+            contract_version=str(fragment.get("contract_version") or ""),
+        )
 
     mount_gui(app)
     mount_tapdb_admin(app, settings)

@@ -8,13 +8,15 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from daylib_ursa.auth import CurrentUser, Role
+from daylib_ursa.analysis_samples_manifest import ANALYSIS_SAMPLES_SOURCE_COLUMNS
 from daylib_ursa.config import Settings
-from daylib_ursa.dewey_client import DeweyClientError
+from daylib_ursa.integrations.dewey_client import DeweyClientError
 from daylib_ursa.file_metadata import ANALYSIS_SAMPLES_COLUMNS, DEFAULT_STAGE_TARGET
 from daylib_ursa.resource_store import (
     AnalysisJobEventRecord,
     AnalysisJobRecord,
     LinkedBucketRecord,
+    ManifestEditorOptionRecord,
     ManifestRecord,
     StagingJobEventRecord,
     StagingJobRecord,
@@ -23,11 +25,21 @@ from daylib_ursa.resource_store import (
 from daylib_ursa.workset_api import create_app
 
 TENANT_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
+TENANT_TWO_ID = uuid.UUID("00000000-0000-0000-0000-000000000002")
 USER_ID = "00000000-0000-0000-0000-000000000101"
 
 
 class DummyAuthProvider:
     def resolve_access_token(self, access_token: str) -> CurrentUser:
+        if access_token == "tenant-two-token":
+            return CurrentUser(
+                sub="00000000-0000-0000-0000-000000000202",
+                email="tenant-two@example.test",
+                name="Tenant Two",
+                tenant_id=TENANT_TWO_ID,
+                roles=[Role.ADMIN.value],
+                auth_source="cognito",
+            )
         assert access_token == "atlas-token"
         return CurrentUser(
             sub=USER_ID,
@@ -43,11 +55,13 @@ class MemoryResourceStore:
     def __init__(self) -> None:
         self.worksets: dict[str, WorksetRecord] = {}
         self.manifests: dict[str, ManifestRecord] = {}
+        self.manifest_options: dict[str, ManifestEditorOptionRecord] = {}
         self.buckets: dict[str, LinkedBucketRecord] = {}
         self.analysis_jobs: dict[str, AnalysisJobRecord] = {}
         self.staging_jobs: dict[str, StagingJobRecord] = {}
         self._workset_seq = 0
         self._manifest_seq = 0
+        self._manifest_option_seq = 0
         self._bucket_seq = 0
         self._analysis_job_seq = 0
         self._analysis_event_seq = 0
@@ -130,6 +144,64 @@ class MemoryResourceStore:
 
     def get_manifest(self, manifest_euid: str):
         return self.manifests.get(manifest_euid)
+
+    def list_manifest_editor_options(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        option_type: str | None = None,
+        limit: int = 1000,
+    ):
+        _ = limit
+        records = [
+            record
+            for record in self.manifest_options.values()
+            if record.tenant_id == tenant_id and record.state == "ACTIVE"
+        ]
+        if option_type is not None:
+            records = [record for record in records if record.option_type == option_type]
+        return records
+
+    def upsert_manifest_editor_option(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        option_type: str,
+        value: str,
+        actor_user_id: str,
+    ):
+        cleaned = " ".join(str(value or "").strip().split())
+        normalized = cleaned.casefold()
+        option_key = f"{tenant_id}:{option_type}:{normalized}"
+        existing = self.manifest_options.get(option_key)
+        if existing is not None:
+            updated = ManifestEditorOptionRecord(
+                option_euid=existing.option_euid,
+                tenant_id=tenant_id,
+                option_type=option_type,
+                value=existing.value,
+                normalized_value=existing.normalized_value,
+                created_by=existing.created_by,
+                created_at=existing.created_at,
+                updated_at="2026-03-25T00:12:00Z",
+                state="ACTIVE",
+            )
+            self.manifest_options[option_key] = updated
+            return updated
+        self._manifest_option_seq += 1
+        record = ManifestEditorOptionRecord(
+            option_euid=f"MO-{self._manifest_option_seq}",
+            tenant_id=tenant_id,
+            option_type=option_type,
+            value=cleaned,
+            normalized_value=normalized,
+            created_by=actor_user_id,
+            created_at="2026-03-25T00:11:00Z",
+            updated_at="2026-03-25T00:11:00Z",
+            state="ACTIVE",
+        )
+        self.manifest_options[option_key] = record
+        return record
 
     def create_analysis_job(
         self,
@@ -717,8 +789,9 @@ def _create_test_app(
     return app
 
 
-def _auth_headers() -> dict[str, str]:
-    return {"Authorization": "Bearer atlas-token"}
+def _auth_headers(token: str | None = None) -> dict[str, str]:
+    token = token or "atlas-token"
+    return {"Authorization": f"Bearer {token}"}
 
 
 def _command_payload(*, command_id: str = "illumina_snv_alignstats") -> dict:
@@ -865,6 +938,106 @@ def test_workset_and_manifest_routes_use_versioned_user_api() -> None:
     )
     assert clusters.status_code == 200
     assert clusters.json() == {"items": []}
+
+
+def test_manifest_editor_options_api_persists_custom_values_and_scopes_tenants() -> None:
+    resources = MemoryResourceStore()
+    app = _create_test_app(resource_store=resources, dewey_client=DummyDeweyClient())
+
+    with TestClient(app) as client:
+        initial = client.get("/api/v1/manifest-editor/options", headers=_auth_headers())
+        created = client.post(
+            "/api/v1/manifest-editor/options",
+            headers=_auth_headers(),
+            json={"option_type": "sample_type", "value": "  nasal   swab  "},
+        )
+        duplicate = client.post(
+            "/api/v1/manifest-editor/options",
+            headers=_auth_headers(),
+            json={"option_type": "sample_type", "value": "Nasal Swab"},
+        )
+        builtin = client.post(
+            "/api/v1/manifest-editor/options",
+            headers=_auth_headers(),
+            json={"option_type": "library_prep", "value": "noampwgs"},
+        )
+        tenant_one = client.get("/api/v1/manifest-editor/options", headers=_auth_headers())
+        tenant_two = client.get(
+            "/api/v1/manifest-editor/options",
+            headers=_auth_headers(token="tenant-two-token"),
+        )
+
+    assert initial.status_code == 200, initial.text
+    assert "blood" in initial.json()["sample_types"]
+    assert "noampwgs" in initial.json()["library_preps"]
+    assert "NOVASEQX" in initial.json()["seq_platforms"]
+    assert "CG_R1_FQ" in initial.json()["columns"]
+    assert created.status_code == 200, created.text
+    assert created.json()["value"] == "nasal swab"
+    assert created.json()["normalized_value"] == "nasal swab"
+    assert created.json()["is_builtin"] is False
+    assert duplicate.status_code == 200, duplicate.text
+    assert duplicate.json()["option_euid"] == created.json()["option_euid"]
+    assert builtin.status_code == 200, builtin.text
+    assert builtin.json()["is_builtin"] is True
+    assert "nasal swab" in tenant_one.json()["sample_types"]
+    assert "nasal swab" not in tenant_two.json()["sample_types"]
+
+
+def test_manifest_editor_full_daylily_ec_row_keeps_all_columns_and_cg_inputs() -> None:
+    resources = MemoryResourceStore()
+    app = _create_test_app(resource_store=resources, dewey_client=DummyDeweyClient())
+    row = {column: "" for column in ANALYSIS_SAMPLES_COLUMNS}
+    row.update(
+        {
+            "RUN_ID": "R9",
+            "SAMPLE_ID": "CGS1",
+            "EXPERIMENTID": "EXP-CG",
+            "SAMPLE_TYPE": "nasal swab",
+            "LIB_PREP": "hybrid-capture",
+            "SEQ_VENDOR": "CG",
+            "SEQ_PLATFORM": "COMPLETE_GENOMICS",
+            "LANE": "1",
+            "SEQBC_ID": "CGBC1",
+            "CG_R1_FQ": "s3://bucket/cg/CGS1_R1.fastq.gz",
+            "CG_R2_FQ": "s3://bucket/cg/CGS1_R2.fastq.gz",
+            "STAGE_DIRECTIVE": "stage_data",
+            "STAGE_TARGET": "/data/staged_sample_data",
+            "SUBSAMPLE_PCT": "na",
+            "IS_POS_CTRL": "false",
+            "IS_NEG_CTRL": "false",
+            "N_X": "1",
+            "N_Y": "1",
+            "EXTERNAL_SAMPLE_ID": "EXT-CG",
+        }
+    )
+
+    with TestClient(app) as client:
+        workset = client.post(
+            "/api/v1/worksets",
+            headers=_auth_headers(),
+            json={"name": "CG batch", "artifact_set_euids": []},
+        )
+        manifest = client.post(
+            "/api/v1/manifests",
+            headers=_auth_headers(),
+            json={
+                "workset_euid": workset.json()["workset_euid"],
+                "name": "cg manifest",
+                "metadata": {"editor_analysis_inputs": [row]},
+            },
+        )
+
+    assert "CG_R1_FQ" in ANALYSIS_SAMPLES_SOURCE_COLUMNS
+    assert "CG_R2_FQ" in ANALYSIS_SAMPLES_SOURCE_COLUMNS
+    assert manifest.status_code == 201, manifest.text
+    analysis_samples_manifest = manifest.json()["metadata"]["analysis_samples_manifest"]
+    assert analysis_samples_manifest["columns"] == list(ANALYSIS_SAMPLES_COLUMNS)
+    assert set(analysis_samples_manifest["rows"][0]) == set(ANALYSIS_SAMPLES_COLUMNS)
+    assert analysis_samples_manifest["rows"][0]["CG_R1_FQ"] == row["CG_R1_FQ"]
+    assert analysis_samples_manifest["rows"][0]["CG_R2_FQ"] == row["CG_R2_FQ"]
+    option_values = {record.value for record in resources.manifest_options.values()}
+    assert {"nasal swab", "hybrid-capture"} <= option_values
 
 
 def test_analysis_command_catalog_and_preview_routes_use_user_api() -> None:

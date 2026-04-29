@@ -3,7 +3,7 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from daylib_ursa.dewey_client import DeweyClient, DeweyClientError
+from daylib_ursa.integrations.dewey_client import DeweyClient, DeweyClientError
 
 
 def test_resolve_rejects_non_https_base_url():

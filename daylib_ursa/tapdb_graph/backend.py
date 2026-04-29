@@ -42,6 +42,7 @@ URSA_TEMPLATE_DEFINITIONS: list[TemplateSpec] = [
     TemplateSpec("RGX/reference/sequenced-assignment-context/1.0/"),
     TemplateSpec("RGX/workset/gui-ready/1.0/"),
     TemplateSpec("RGX/manifest/dewey-bound/1.0/"),
+    TemplateSpec("RGX/manifest/editor-option/1.0/"),
     TemplateSpec("RGX/artifact/dewey-import/1.0/"),
     TemplateSpec("RGX/auth/user-token/1.0/"),
     TemplateSpec("RGX/auth/user-token-revision/1.0/"),

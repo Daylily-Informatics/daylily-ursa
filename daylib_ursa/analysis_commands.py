@@ -8,7 +8,7 @@ from daylib_ursa.ephemeral_cluster.runner import require_daylily_ec_version
 
 
 def load_dayec_command_catalog() -> Any:
-    """Load the day-ec repository command catalog through the 2.1.4 library surface."""
+    """Load the day-ec repository command catalog through the 2.1.11 library surface."""
 
     require_daylily_ec_version()
     module = import_module("daylily_ec.repositories")

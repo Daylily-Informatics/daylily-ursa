@@ -109,7 +109,7 @@
 
             <div class="mt-md p-md" style="background: var(--color-gray-100); border-radius: var(--radius-md); font-size: 0.8rem;">
                 <strong>Template columns:</strong>
-                <code>RUN_ID, SAMPLE_ID, EXPERIMENTID, SAMPLE_TYPE, LIB_PREP, SEQ_VENDOR, SEQ_PLATFORM, LANE, SEQBC_ID, PATH_TO_CONCORDANCE_DATA_DIR, R1_FQ, R2_FQ, ILMN_R1_FQ, ILMN_R2_FQ, PACBIO_R1_FQ, PACBIO_R2_FQ, ONT_R1_FQ, ONT_R2_FQ, UG_R1_FQ, UG_R2_FQ, ULTIMA_CRAM, ULTIMA_CRAM_ALIGNER, ULTIMA_CRAM_SNV_CALLER, ULTIMA_SUBSAMPLE_PCT, ONT_CRAM, ONT_CRAM_ALIGNER, ONT_CRAM_SNV_CALLER, ONT_SUBSAMPLE_PCT, PB_BAM, PB_BAM_ALIGNER, PB_BAM_SNV_CALLER, ONT_BAM, ONT_BAM_ALIGNER, ONT_BAM_SNV_CALLER, ROCHE_BAM, ROCHE_BAM_ALIGNER, ROCHE_BAM_SNV_CALLER, ROCHE_DOWNSAMPLE_RATIO, STAGE_DIRECTIVE, STAGE_TARGET, SUBSAMPLE_PCT, ILMN_TRIM_READ_LENGTH, LONGREADTRIM_READ_LENGTH, LONGREADTRIM_MODE, SAMPLEUSE, BWA_KMER, DEEP_MODEL, IS_POS_CTRL, IS_NEG_CTRL, N_X, N_Y, EXTERNAL_SAMPLE_ID</code>
+                <code id="manifest-template-columns">{{ manifest_columns | join(', ') }}</code>
             </div>
         </div>
     </div>
@@ -132,7 +132,7 @@
 <div class="modal-overlay" id="file-browser-modal">
     <div class="modal-content" style="max-width: 900px;">
         <div class="modal-header">
-            <h3><i class="fas fa-folder-open"></i> Select FASTQ from S3</h3>
+            <h3><i class="fas fa-folder-open"></i> Select Source Path from S3</h3>
             <button class="modal-close" type="button" onclick="closeModal('file-browser-modal')">&times;</button>
         </div>
         <div class="modal-body">
@@ -151,6 +151,9 @@
             <div id="browser-file-list" style="max-height: 400px; overflow-y: auto;"></div>
         </div>
         <div class="modal-footer">
+            <button class="btn btn-primary" type="button" id="browser-use-prefix-btn">
+                Use Current Prefix
+            </button>
             <button class="btn btn-outline" type="button" onclick="closeModal('file-browser-modal')">Cancel</button>
         </div>
     </div>
@@ -192,6 +195,18 @@
     border-bottom-left-radius: 0;
     border-left: none;
 }
+.manifest-fieldset {
+    border: 1px solid var(--color-gray-200);
+    border-radius: var(--radius-md);
+    margin: 0 0 var(--spacing-md);
+    padding: var(--spacing-md);
+}
+.manifest-fieldset legend {
+    color: var(--color-accent);
+    font-size: 0.9rem;
+    font-weight: 700;
+    padding: 0 var(--spacing-xs);
+}
 .file-list-item {
     display: flex;
     justify-content: space-between;
@@ -215,48 +230,23 @@
 {% block extra_js %}
 <script>
 (() => {
-    const MANIFEST_COLUMNS = [
-        'RUN_ID', 'SAMPLE_ID', 'EXPERIMENTID', 'SAMPLE_TYPE', 'LIB_PREP',
-        'SEQ_VENDOR', 'SEQ_PLATFORM', 'LANE', 'SEQBC_ID',
-        'PATH_TO_CONCORDANCE_DATA_DIR', 'R1_FQ', 'R2_FQ',
-        'ILMN_R1_FQ', 'ILMN_R2_FQ', 'PACBIO_R1_FQ', 'PACBIO_R2_FQ',
-        'ONT_R1_FQ', 'ONT_R2_FQ', 'UG_R1_FQ', 'UG_R2_FQ',
-        'ULTIMA_CRAM', 'ULTIMA_CRAM_ALIGNER', 'ULTIMA_CRAM_SNV_CALLER',
-        'ULTIMA_SUBSAMPLE_PCT', 'ONT_CRAM', 'ONT_CRAM_ALIGNER',
-        'ONT_CRAM_SNV_CALLER', 'ONT_SUBSAMPLE_PCT', 'PB_BAM',
-        'PB_BAM_ALIGNER', 'PB_BAM_SNV_CALLER', 'ONT_BAM', 'ONT_BAM_ALIGNER',
-        'ONT_BAM_SNV_CALLER', 'ROCHE_BAM', 'ROCHE_BAM_ALIGNER',
-        'ROCHE_BAM_SNV_CALLER', 'ROCHE_DOWNSAMPLE_RATIO',
-        'STAGE_DIRECTIVE', 'STAGE_TARGET', 'SUBSAMPLE_PCT',
-        'ILMN_TRIM_READ_LENGTH', 'LONGREADTRIM_READ_LENGTH',
-        'LONGREADTRIM_MODE', 'SAMPLEUSE', 'BWA_KMER', 'DEEP_MODEL',
-        'IS_POS_CTRL', 'IS_NEG_CTRL', 'N_X', 'N_Y', 'EXTERNAL_SAMPLE_ID'
-    ];
-    const SOURCE_COLUMNS = [
-        'R1_FQ', 'R2_FQ', 'ILMN_R1_FQ', 'ILMN_R2_FQ',
-        'PACBIO_R1_FQ', 'PACBIO_R2_FQ', 'ONT_R1_FQ', 'ONT_R2_FQ',
-        'UG_R1_FQ', 'UG_R2_FQ', 'ULTIMA_CRAM', 'ONT_CRAM',
-        'PB_BAM', 'ONT_BAM', 'ROCHE_BAM'
-    ];
-
-    const COLUMN_DEFAULTS = {
-        SAMPLE_TYPE: 'blood',
-        LIB_PREP: 'noampwgs',
-        SEQ_VENDOR: 'ILMN',
-        SEQ_PLATFORM: 'NOVASEQX',
-        LANE: '0',
-        SEQBC_ID: 'S1',
-        PATH_TO_CONCORDANCE_DATA_DIR: '',
-        STAGE_DIRECTIVE: 'stage_data',
-        STAGE_TARGET: '/data/staged_sample_data',
-        SUBSAMPLE_PCT: 'na',
-        IS_POS_CTRL: 'false',
-        IS_NEG_CTRL: 'false',
-        N_X: '1',
-        N_Y: '1',
-    };
-
     const pageData = UrsaPortal.parsePageData();
+    const editorData = pageData.manifest_editor || {};
+    const coerceList = (value) => Array.isArray(value) ? value.filter((item) => String(item || '').trim()) : [];
+    let MANIFEST_COLUMNS = coerceList(editorData.columns).length
+        ? coerceList(editorData.columns)
+        : coerceList(pageData.manifest_columns);
+    let SOURCE_COLUMNS = coerceList(editorData.source_columns);
+    let BROWSE_COLUMNS = new Set(coerceList(editorData.browse_columns));
+    const DIRECTORY_COLUMNS = new Set(['PATH_TO_CONCORDANCE_DATA_DIR']);
+    let COLUMN_GROUPS = coerceList(editorData.column_groups);
+    let COLUMN_DEFAULTS = {
+        ...(editorData.defaults || {}),
+    };
+    let sampleTypeOptions = coerceList(editorData.sample_types);
+    let libraryPrepOptions = coerceList(editorData.library_preps);
+    let seqPlatformOptions = coerceList(editorData.seq_platforms);
+    let seqVendorOptions = coerceList(editorData.seq_vendors);
     let analysisInputs = [];
     let inputIndex = 0;
     let currentEditIndex = null;
@@ -264,33 +254,79 @@
     let currentBucketId = null;
     let currentBrowserPrefix = '';
 
+    function normalizeOption(value) {
+        return String(value || '').trim().replace(/\s+/g, ' ').toLocaleLowerCase();
+    }
+
+    function mergeOptionValue(field, value) {
+        const cleaned = String(value || '').trim().replace(/\s+/g, ' ');
+        if (!cleaned) return;
+        const target = field === 'SAMPLE_TYPE' ? sampleTypeOptions : libraryPrepOptions;
+        const seen = new Set(target.map((item) => normalizeOption(item)));
+        if (!seen.has(normalizeOption(cleaned))) {
+            target.push(cleaned);
+        }
+    }
+
+    function updateEditorOptions(payload) {
+        const columns = coerceList(payload.columns);
+        const sourceColumns = coerceList(payload.source_columns);
+        const browseColumns = coerceList(payload.browse_columns);
+        const columnGroups = coerceList(payload.column_groups);
+        if (columns.length) {
+            MANIFEST_COLUMNS = columns;
+        }
+        if (sourceColumns.length) {
+            SOURCE_COLUMNS = sourceColumns;
+        }
+        if (browseColumns.length) {
+            BROWSE_COLUMNS = new Set(browseColumns);
+        }
+        if (columnGroups.length) {
+            COLUMN_GROUPS = columnGroups;
+        }
+        COLUMN_DEFAULTS = {
+            ...COLUMN_DEFAULTS,
+            ...(payload.defaults || {}),
+        };
+        sampleTypeOptions = coerceList(payload.sample_types);
+        libraryPrepOptions = coerceList(payload.library_preps);
+        seqPlatformOptions = coerceList(payload.seq_platforms);
+        seqVendorOptions = coerceList(payload.seq_vendors);
+        renderTemplateColumns();
+    }
+
+    async function refreshManifestEditorOptions() {
+        const payload = await UrsaPortal.apiRequest('/api/v1/manifest-editor/options');
+        updateEditorOptions(payload);
+    }
+
+    function renderTemplateColumns() {
+        const node = document.getElementById('manifest-template-columns');
+        if (node) {
+            node.textContent = MANIFEST_COLUMNS.join(', ');
+        }
+    }
+
     function initialInput(data = {}) {
         const idx = inputIndex++;
-        return {
-            idx,
-            RUN_ID: document.getElementById('run_id')?.value || 'R0',
-            SAMPLE_ID: '',
-            EXPERIMENTID: '',
-            SAMPLE_TYPE: COLUMN_DEFAULTS.SAMPLE_TYPE,
-            LIB_PREP: COLUMN_DEFAULTS.LIB_PREP,
-            SEQ_VENDOR: COLUMN_DEFAULTS.SEQ_VENDOR,
-            SEQ_PLATFORM: COLUMN_DEFAULTS.SEQ_PLATFORM,
-            LANE: COLUMN_DEFAULTS.LANE,
-            SEQBC_ID: COLUMN_DEFAULTS.SEQBC_ID,
-            PATH_TO_CONCORDANCE_DATA_DIR: COLUMN_DEFAULTS.PATH_TO_CONCORDANCE_DATA_DIR,
-            R1_FQ: '',
-            R2_FQ: '',
-            STAGE_DIRECTIVE: COLUMN_DEFAULTS.STAGE_DIRECTIVE,
-            STAGE_TARGET: document.getElementById('stage_target')?.value || COLUMN_DEFAULTS.STAGE_TARGET,
-            SUBSAMPLE_PCT: COLUMN_DEFAULTS.SUBSAMPLE_PCT,
-            IS_POS_CTRL: COLUMN_DEFAULTS.IS_POS_CTRL,
-            IS_NEG_CTRL: COLUMN_DEFAULTS.IS_NEG_CTRL,
-            N_X: COLUMN_DEFAULTS.N_X,
-            N_Y: COLUMN_DEFAULTS.N_Y,
-            EXTERNAL_SAMPLE_ID: '',
-            ...data,
-            idx,
-        };
+        const input = { idx };
+        MANIFEST_COLUMNS.forEach((column) => {
+            input[column] = COLUMN_DEFAULTS[column] || '';
+        });
+        input.RUN_ID = document.getElementById('run_id')?.value || input.RUN_ID || 'R0';
+        input.STAGE_TARGET = (
+            document.getElementById('stage_target')?.value
+            || input.STAGE_TARGET
+            || '/data/staged_sample_data'
+        );
+        Object.entries(data || {}).forEach(([key, value]) => {
+            if (MANIFEST_COLUMNS.includes(key)) {
+                input[key] = String(value ?? '');
+            }
+        });
+        input.idx = idx;
+        return input;
     }
 
     function renderInputs() {
@@ -298,6 +334,8 @@
         container.innerHTML = '';
         analysisInputs.forEach((input) => {
             const row = document.createElement('div');
+            const sourceField = SOURCE_COLUMNS.find((field) => String(input[field] || '').trim());
+            const sourceValue = sourceField ? String(input[sourceField] || '') : '';
             row.className = 'analysis-input-row';
             row.innerHTML = `
                 <div class="input-header">
@@ -312,7 +350,7 @@
                     </div>
                 </div>
                 <div class="input-summary">
-                    <span><strong>R1:</strong> ${escapeHtml((input.R1_FQ || '').split('/').pop() || 'Not set')}</span>
+                    <span><strong>Source:</strong> ${escapeHtml(sourceField ? `${sourceField}: ${(sourceValue || '').split('/').pop()}` : 'Not set')}</span>
                     <span class="ml-md"><strong>Platform:</strong> ${escapeHtml(input.SEQ_PLATFORM)}</span>
                     <span class="ml-md"><strong>Type:</strong> ${escapeHtml(input.SAMPLE_TYPE)}</span>
                 </div>
@@ -338,11 +376,16 @@
             const row = {};
             MANIFEST_COLUMNS.forEach((column) => {
                 if (column === 'RUN_ID') {
-                    row[column] = document.getElementById('run_id')?.value || input.RUN_ID || '';
+                    row[column] = input.RUN_ID || document.getElementById('run_id')?.value || '';
                 } else if (column === 'STAGE_TARGET') {
-                    row[column] = document.getElementById('stage_target')?.value || input.STAGE_TARGET || COLUMN_DEFAULTS.STAGE_TARGET;
+                    row[column] = (
+                        input.STAGE_TARGET
+                        || document.getElementById('stage_target')?.value
+                        || COLUMN_DEFAULTS.STAGE_TARGET
+                        || ''
+                    );
                 } else {
-                    row[column] = String(input[column] || '');
+                    row[column] = String(input[column] ?? '');
                 }
             });
             return row;
@@ -370,56 +413,88 @@
         updateManifestPreview();
     }
 
-    function buildEditForm(input) {
+    function fieldLabel(field) {
+        return String(field || '')
+            .replace(/_/g, ' ')
+            .replace(/\b\w/g, (letter) => letter.toUpperCase());
+    }
+
+    function datalist(id, values) {
         return `
-            <div class="grid grid-2">
-                <div class="form-group">
-                    <label class="form-label">Sample ID</label>
-                    <input class="form-control" data-field="SAMPLE_ID" value="${escapeHtml(input.SAMPLE_ID)}">
+            <datalist id="${id}">
+                ${values.map((value) => `<option value="${escapeHtml(value)}"></option>`).join('')}
+            </datalist>
+        `;
+    }
+
+    function selectField(field, value, values) {
+        const selected = String(value ?? '');
+        const options = values.includes('') ? values : [''].concat(values);
+        return `
+            <select class="form-control form-select" data-field="${escapeHtml(field)}">
+                ${options.map((option) => `
+                    <option value="${escapeHtml(option)}"${option === selected ? ' selected' : ''}>${escapeHtml(option)}</option>
+                `).join('')}
+            </select>
+        `;
+    }
+
+    function textInput(field, value, extraAttrs = '') {
+        return `
+            <input class="form-control" data-field="${escapeHtml(field)}" value="${escapeHtml(value ?? '')}" ${extraAttrs}>
+        `;
+    }
+
+    function renderField(field, input) {
+        const value = input[field] ?? '';
+        let control;
+        if (field === 'SAMPLE_TYPE') {
+            control = textInput(field, value, 'list="manifest-sample-type-options"');
+        } else if (field === 'LIB_PREP') {
+            control = textInput(field, value, 'list="manifest-library-prep-options"');
+        } else if (field === 'SEQ_PLATFORM') {
+            control = selectField(field, value, seqPlatformOptions);
+        } else if (field === 'SEQ_VENDOR') {
+            control = selectField(field, value, seqVendorOptions);
+        } else if (field === 'IS_POS_CTRL' || field === 'IS_NEG_CTRL') {
+            control = selectField(field, value, ['', 'false', 'true']);
+        } else if (BROWSE_COLUMNS.has(field)) {
+            control = `
+                <div class="input-group">
+                    <input class="form-control mono" data-field="${escapeHtml(field)}" value="${escapeHtml(value)}">
+                    <button class="btn btn-outline" type="button" data-browse="${escapeHtml(field)}" title="Browse linked buckets">
+                        <i class="fas fa-folder-open"></i>
+                    </button>
                 </div>
-                <div class="form-group">
-                    <label class="form-label">Experiment ID</label>
-                    <input class="form-control" data-field="EXPERIMENTID" value="${escapeHtml(input.EXPERIMENTID)}">
-                </div>
-                <div class="form-group">
-                    <label class="form-label">External Sample ID</label>
-                    <input class="form-control" data-field="EXTERNAL_SAMPLE_ID" value="${escapeHtml(input.EXTERNAL_SAMPLE_ID)}">
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Sample Type</label>
-                    <input class="form-control" data-field="SAMPLE_TYPE" value="${escapeHtml(input.SAMPLE_TYPE)}">
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Library Prep</label>
-                    <input class="form-control" data-field="LIB_PREP" value="${escapeHtml(input.LIB_PREP)}">
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Sequencing Platform</label>
-                    <input class="form-control" data-field="SEQ_PLATFORM" value="${escapeHtml(input.SEQ_PLATFORM)}">
-                </div>
-                <div class="form-group">
-                    <label class="form-label">R1 FASTQ</label>
-                    <div class="input-group">
-                        <input class="form-control mono" data-field="R1_FQ" value="${escapeHtml(input.R1_FQ)}">
-                        <button class="btn btn-outline" type="button" data-browse="R1_FQ"><i class="fas fa-folder-open"></i></button>
-                    </div>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">R2 FASTQ</label>
-                    <div class="input-group">
-                        <input class="form-control mono" data-field="R2_FQ" value="${escapeHtml(input.R2_FQ)}">
-                        <button class="btn btn-outline" type="button" data-browse="R2_FQ"><i class="fas fa-folder-open"></i></button>
-                    </div>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Lane</label>
-                    <input class="form-control" data-field="LANE" value="${escapeHtml(input.LANE)}">
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Seq Barcode</label>
-                    <input class="form-control" data-field="SEQBC_ID" value="${escapeHtml(input.SEQBC_ID)}">
-                </div>
+            `;
+        } else {
+            control = textInput(field, value);
+        }
+        return `
+            <div class="form-group">
+                <label class="form-label">${escapeHtml(fieldLabel(field))}</label>
+                ${control}
             </div>
+        `;
+    }
+
+    function buildEditForm(input) {
+        const renderedGroups = COLUMN_GROUPS.map((group) => {
+            const fields = (group.fields || []).filter((field) => MANIFEST_COLUMNS.includes(field));
+            if (!fields.length) return '';
+            return `
+                <fieldset class="manifest-fieldset">
+                    <legend>${escapeHtml(group.title || 'Fields')}</legend>
+                    <div class="grid grid-2">
+                        ${fields.map((field) => renderField(field, input)).join('')}
+                    </div>
+                </fieldset>
+            `;
+        }).join('');
+        return `
+            ${datalist('manifest-sample-type-options', sampleTypeOptions)}
+            ${datalist('manifest-library-prep-options', libraryPrepOptions)}
+            ${renderedGroups}
         `;
     }
 
@@ -434,12 +509,27 @@
         showModal('input-edit-modal');
     }
 
-    function saveInputFromModal() {
+    async function persistEditorOption(field, value) {
+        const optionType = field === 'SAMPLE_TYPE' ? 'sample_type' : field === 'LIB_PREP' ? 'library_prep' : '';
+        if (!optionType || !String(value || '').trim()) return;
+        const response = await UrsaPortal.apiRequest('/api/v1/manifest-editor/options', {
+            method: 'POST',
+            body: { option_type: optionType, value },
+        });
+        mergeOptionValue(field, response.value || value);
+    }
+
+    async function saveInputFromModal() {
         const input = analysisInputs.find((item) => item.idx === currentEditIndex);
         if (!input) return;
+        const optionWrites = [];
         document.querySelectorAll('#input-modal-body [data-field]').forEach((field) => {
             input[field.dataset.field] = field.value;
+            if (field.dataset.field === 'SAMPLE_TYPE' || field.dataset.field === 'LIB_PREP') {
+                optionWrites.push(persistEditorOption(field.dataset.field, field.value));
+            }
         });
+        await Promise.all(optionWrites);
         renderInputs();
         updateManifestPreview();
         closeModal('input-edit-modal');
@@ -450,6 +540,10 @@
         if (!lines.length) return [];
         const delimiter = lines[0].includes('\t') ? '\t' : ',';
         const headers = lines[0].split(delimiter).map((value) => value.trim());
+        const unknownHeaders = headers.filter((header) => !MANIFEST_COLUMNS.includes(header));
+        if (unknownHeaders.length) {
+            throw new Error(`Imported manifest has columns outside the active template: ${unknownHeaders.join(', ')}`);
+        }
         return lines.slice(1).map((line) => {
             const values = line.split(delimiter);
             const row = {};
@@ -522,8 +616,10 @@
         const name = document.getElementById('manifest-save-name')?.value.trim() || '';
         if (!worksetEuid) throw new Error('Select a workset first.');
         if (!name) throw new Error('Enter a manifest name.');
+        if (!currentManifestRows().some((row) => SOURCE_COLUMNS.some((field) => String(row[field] || '').trim()))) {
+            throw new Error('Add at least one source FASTQ, CRAM, or BAM reference before saving.');
+        }
         const inputReferences = manifestInputReferences();
-        if (!inputReferences.length) throw new Error('Add at least one S3 FASTQ reference before saving.');
         const created = await UrsaPortal.apiRequest('/api/v1/manifests', {
             method: 'POST',
             body: {
@@ -590,15 +686,39 @@
         currentBucketId = bucketSelect.value;
         currentBrowserPrefix = '';
         showModal('file-browser-modal');
+        updatePrefixButton();
         if (currentBucketId) {
             await browseFolder('');
         }
+    }
+
+    function currentBucketRecord(payload = null) {
+        if (payload?.bucket?.bucket_name) return payload.bucket;
+        return (pageData.buckets || []).find((bucket) => bucket.bucket_id === currentBucketId) || null;
+    }
+
+    function updatePrefixButton(payload = null) {
+        const button = document.getElementById('browser-use-prefix-btn');
+        if (!button) return;
+        const canUsePrefix = DIRECTORY_COLUMNS.has(currentFileBrowserTarget || '') && Boolean(currentBucketId);
+        button.classList.toggle('d-none', !canUsePrefix);
+        button.disabled = !canUsePrefix || !currentBucketRecord(payload);
+    }
+
+    function useCurrentPrefix() {
+        const bucket = currentBucketRecord();
+        if (!bucket?.bucket_name || !currentFileBrowserTarget) return;
+        const prefix = String(currentBrowserPrefix || '');
+        const field = document.querySelector(`#input-modal-body [data-field="${currentFileBrowserTarget}"]`);
+        if (field) field.value = `s3://${bucket.bucket_name}/${prefix}`;
+        closeModal('file-browser-modal');
     }
 
     async function browseFolder(prefix) {
         if (!currentBucketId) return;
         currentBrowserPrefix = prefix;
         const payload = await UrsaPortal.apiRequest(`/api/v1/buckets/${encodeURIComponent(currentBucketId)}/objects?prefix=${encodeURIComponent(prefix || '')}`);
+        updatePrefixButton(payload);
         const breadcrumb = document.getElementById('browser-breadcrumb');
         const fileList = document.getElementById('browser-file-list');
         breadcrumb.innerHTML = (payload.breadcrumbs || []).map((crumb) => (
@@ -663,7 +783,13 @@
         }
     }
 
-    document.getElementById('save-input-modal-btn')?.addEventListener('click', saveInputFromModal);
+    document.getElementById('save-input-modal-btn')?.addEventListener('click', async () => {
+        try {
+            await saveInputFromModal();
+        } catch (error) {
+            showToast('error', error.message);
+        }
+    });
     document.getElementById('add-input-btn')?.addEventListener('click', () => addAnalysisInput());
     document.getElementById('download-template-btn')?.addEventListener('click', downloadTemplate);
     document.getElementById('copy-manifest-btn')?.addEventListener('click', copyManifest);
@@ -690,21 +816,37 @@
     document.getElementById('browser-bucket-select')?.addEventListener('change', async (event) => {
         currentBucketId = event.target.value;
         currentBrowserPrefix = '';
+        updatePrefixButton();
         if (currentBucketId) await browseFolder('');
     });
+    document.getElementById('browser-use-prefix-btn')?.addEventListener('click', useCurrentPrefix);
     document.getElementById('tsv-upload')?.addEventListener('change', async (event) => {
         const file = event.target.files?.[0];
         if (!file) return;
-        const text = await file.text();
-        loadInputsFromTSVContent(text);
+        try {
+            const text = await file.text();
+            loadInputsFromTSVContent(text);
+        } catch (error) {
+            showToast('error', error.message);
+        }
     });
     document.getElementById('import-tsv-btn')?.addEventListener('click', () => {
         document.getElementById('tsv-upload')?.click();
     });
 
-    addAnalysisInput();
-    hydrateFromQuery();
-    updateManifestPreview();
+    async function initializeManifestEditor() {
+        try {
+            await refreshManifestEditorOptions();
+        } catch (error) {
+            showToast('warning', error.message);
+            renderTemplateColumns();
+        }
+        addAnalysisInput();
+        hydrateFromQuery();
+        updateManifestPreview();
+    }
+
+    initializeManifestEditor();
 })();
 </script>
 {% endblock %}

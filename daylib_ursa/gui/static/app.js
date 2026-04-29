@@ -80,10 +80,10 @@ function jsonBlock(value) {
   return `<pre>${escapeHtml(JSON.stringify(value, null, 2))}</pre>`;
 }
 
-function parseJsonInput(value, fallback = {}) {
+function parseJsonInput(value, defaultValue = {}) {
   const raw = String(value || "").trim();
   if (!raw) {
-    return fallback;
+    return defaultValue;
   }
   return JSON.parse(raw);
 }
@@ -568,8 +568,34 @@ async function renderClusters() {
     await renderClusters();
   });
   bindClicks("[data-cluster-delete]", async (element) => {
+    const clusterName = element.dataset.clusterDelete;
+    const region = element.dataset.region;
+    const plan = await apiRequest(
+      `/api/v1/clusters/${encodeURIComponent(clusterName)}/delete-plan?region=${encodeURIComponent(region)}`,
+      { method: "POST" }
+    );
+    const token = String(plan.confirmation_token || "").trim();
+    if (!token) {
+      throw new Error("Cluster delete plan did not return a confirmation token");
+    }
+    const dryRunOutput = [plan.dry_run_stdout, plan.dry_run_stderr]
+      .map((value) => String(value || "").trim())
+      .filter(Boolean)
+      .join("\n")
+      .slice(0, 1800);
+    const prompt = dryRunOutput
+      ? `Delete cluster ${clusterName} in ${region}?\n\nDry run output:\n${dryRunOutput}`
+      : `Delete cluster ${clusterName} in ${region}?`;
+    if (!confirm(prompt)) {
+      return;
+    }
+    const query = new URLSearchParams({
+      region,
+      confirmation_token: token,
+      confirm_cluster_name: clusterName,
+    });
     await apiRequest(
-      `/api/v1/clusters/${encodeURIComponent(element.dataset.clusterDelete)}?region=${encodeURIComponent(element.dataset.region)}`,
+      `/api/v1/clusters/${encodeURIComponent(clusterName)}?${query.toString()}`,
       { method: "DELETE" }
     );
     setFlash("Cluster delete submitted");

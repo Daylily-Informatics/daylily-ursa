@@ -56,12 +56,9 @@ def test_yaml_seed_from_ursa_config_includes_allowed_regions(monkeypatch) -> Non
     config = SimpleNamespace(
         aws_profile="lsmc",
         get_allowed_regions=lambda: ["us-west-2", "us-east-1"],
-        ursa_portal_default_customer_id=None,
         cognito_group_role_map=None,
         whitelist_domains=None,
         session_secret_key="ursa-session-secret",
-        default_tenant_id="00000000-0000-0000-0000-000000000000",
-        auto_provision_allowed_domains=["lsmc.com"],
         ursa_internal_output_bucket="ursa-internal",
         tapdb_client_id="local",
         tapdb_database_name="ursa",

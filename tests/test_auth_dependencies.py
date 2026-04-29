@@ -14,7 +14,7 @@ def test_claims_to_current_user_maps_canonical_cognito_groups() -> None:
         {
             "sub": "user-123",
             "email": "ursa@example.com",
-            "custom:customer_id": "00000000-0000-0000-0000-000000000001",
+            "custom:tenant_id": "00000000-0000-0000-0000-000000000001",
             "cognito:groups": ["platform-admin"],
         }
     )
@@ -24,6 +24,17 @@ def test_claims_to_current_user_maps_canonical_cognito_groups() -> None:
     assert user.tenant_id == uuid.UUID("00000000-0000-0000-0000-000000000001")
     assert user.roles == ["ADMIN"]
     assert user.is_admin is True
+
+
+def test_claims_to_current_user_requires_tenant_claim() -> None:
+    with pytest.raises(AuthError, match="missing tenant_id"):
+        auth_dependencies._claims_to_current_user(
+            {
+                "sub": "user-123",
+                "email": "ursa@example.com",
+                "cognito:groups": ["platform-admin"],
+            }
+        )
 
 
 def test_cognito_auth_provider_accepts_id_token_claims(monkeypatch) -> None:
@@ -39,7 +50,7 @@ def test_cognito_auth_provider_accepts_id_token_claims(monkeypatch) -> None:
             "sub": "user-123",
             "email": "ursa@example.com",
             "aud": "client-123",
-            "custom:customer_id": "00000000-0000-0000-0000-000000000001",
+            "custom:tenant_id": "00000000-0000-0000-0000-000000000001",
             "cognito:groups": ["ursa-admin"],
         },
     )
@@ -87,7 +98,7 @@ def test_cognito_auth_provider_passes_paired_access_token_for_id_token_at_hash(m
             "sub": "user-123",
             "email": "ursa@example.com",
             "aud": "client-123",
-            "custom:customer_id": "00000000-0000-0000-0000-000000000001",
+            "custom:tenant_id": "00000000-0000-0000-0000-000000000001",
             "cognito:groups": ["ursa-admin"],
         }
 
@@ -128,7 +139,7 @@ def test_cognito_auth_provider_routes_id_tokens_without_unverified_at_hash_valid
             "sub": "user-123",
             "email": "ursa@example.com",
             "aud": "client-123",
-            "custom:customer_id": "00000000-0000-0000-0000-000000000001",
+            "custom:tenant_id": "00000000-0000-0000-0000-000000000001",
             "cognito:groups": ["ursa-admin"],
         },
     )
@@ -153,7 +164,7 @@ def test_claims_to_current_user_maps_external_admin_group() -> None:
         {
             "sub": "user-123",
             "email": "ursa@example.com",
-            "custom:customer_id": "00000000-0000-0000-0000-000000000001",
+            "custom:tenant_id": "00000000-0000-0000-0000-000000000001",
             "cognito:groups": ["ursa-external-admin"],
         }
     )
@@ -241,7 +252,7 @@ def test_user_directory_uses_cognito_groups_as_role_source() -> None:
                             {"Name": "sub", "Value": "user-123"},
                             {"Name": "email", "Value": "ursa@example.com"},
                             {
-                                "Name": "custom:customer_id",
+                                "Name": "custom:tenant_id",
                                 "Value": "00000000-0000-0000-0000-000000000001",
                             },
                             {"Name": "custom:roles", "Value": "READ_ONLY"},

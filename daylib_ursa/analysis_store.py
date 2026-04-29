@@ -3,35 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 import uuid
 
-try:
-    from daylib_ursa.tapdb_graph import TapDBBackend, from_json_addl, utc_now_iso
-    from daylib_ursa.tapdb_templates import seed_ursa_templates
-except ImportError:  # pragma: no cover - import-time compatibility for reduced test envs
-    TapDBBackend = Any  # type: ignore[assignment]
-    seed_ursa_templates = None  # type: ignore[assignment]
+from daylily_tapdb import generic_instance
 
-    def from_json_addl(instance) -> dict[str, Any]:
-        raw = dict(getattr(instance, "json_addl", {}) or {})
-        properties = raw.get("properties")
-        if isinstance(properties, dict):
-            merged = dict(raw)
-            merged.update(properties)
-            return merged
-        return raw
-
-    def utc_now_iso() -> str:
-        return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-
-
-try:
-    from daylily_tapdb import generic_instance
-except ImportError:  # pragma: no cover - typing-only compatibility for reduced test envs
-    generic_instance = Any  # type: ignore[assignment]
+from daylib_ursa.tapdb_graph import TapDBBackend, from_json_addl, utc_now_iso
+from daylib_ursa.tapdb_templates import seed_ursa_templates
 
 
 class AnalysisState(str, Enum):

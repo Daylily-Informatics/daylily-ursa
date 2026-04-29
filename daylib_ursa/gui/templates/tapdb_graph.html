@@ -1,0 +1,456 @@
+{% extends "base.html" %}
+
+{% block extra_head %}
+<style>
+  .tapdb-graph-grid {
+    display: grid;
+    grid-template-columns: minmax(280px, 380px) minmax(0, 1fr);
+    gap: 1rem;
+    align-items: start;
+  }
+  .tapdb-graph-form {
+    display: grid;
+    gap: 0.8rem;
+  }
+  .tapdb-graph-result-list {
+    display: grid;
+    gap: 0.7rem;
+    margin-top: 1rem;
+  }
+  .tapdb-graph-result {
+    border: 1px solid var(--border-color, rgba(148, 163, 184, 0.22));
+    border-radius: 8px;
+    padding: 0.8rem;
+    background: rgba(255, 255, 255, 0.9);
+  }
+  .tapdb-graph-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(260px, 340px);
+    gap: 1rem;
+  }
+  .tapdb-graph-stage {
+    min-height: 640px;
+    border: 1px solid var(--border-color, rgba(148, 163, 184, 0.22));
+    border-radius: 8px;
+    overflow: hidden;
+    background: #071018;
+  }
+  .tapdb-graph-canvas {
+    width: 100%;
+    height: 640px;
+  }
+  .tapdb-graph-sidebar {
+    display: grid;
+    gap: 1rem;
+  }
+  .tapdb-detail-list {
+    display: grid;
+    gap: 0.55rem;
+  }
+  .tapdb-detail-row {
+    display: grid;
+    gap: 0.18rem;
+  }
+  .tapdb-detail-row span {
+    color: var(--text-muted, #94a3b8);
+    font-size: 0.78rem;
+    text-transform: uppercase;
+  }
+  .tapdb-detail-row strong {
+    overflow-wrap: anywhere;
+  }
+  .tapdb-external-actions {
+    display: grid;
+    gap: 0.5rem;
+  }
+  @media (max-width: 980px) {
+    .tapdb-graph-grid,
+    .tapdb-graph-layout {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<section class="page-header">
+  <div>
+    <p class="eyebrow">TapDB Object Graph</p>
+    <h1>Follow Ursa TapDB object lineage.</h1>
+    <p class="page-subtitle">
+      Search Ursa objects, open a rooted DAG, and inspect external identifier references.
+    </p>
+  </div>
+</section>
+
+{% if not tapdb_dag_configured %}
+<section class="card">
+  <div class="status-error">
+    Ursa does not have an explicit TapDB config path for the DAG API in this process.
+  </div>
+</section>
+{% endif %}
+
+<section class="tapdb-graph-grid">
+  <article class="card">
+    <div class="card-header">
+      <div>
+        <p class="eyebrow">Search</p>
+        <h2>Find Object</h2>
+      </div>
+      <span class="badge" data-graph-search-status>Idle</span>
+    </div>
+    <form class="tapdb-graph-form" data-graph-search-form>
+      <label>
+        Text
+        <input type="search" name="q" placeholder="name, EUID, category, type">
+      </label>
+      <label>
+        EUID
+        <input type="text" name="euid" placeholder="exact EUID">
+      </label>
+      <label>
+        Record Type
+        <select name="record_type">
+          <option value="all">all</option>
+          <option value="template">template</option>
+          <option value="instance">instance</option>
+          <option value="lineage">lineage</option>
+        </select>
+      </label>
+      <label>
+        Category
+        <input type="text" name="category" placeholder="optional">
+      </label>
+      <label>
+        Type
+        <input type="text" name="type" placeholder="optional">
+      </label>
+      <label>
+        Tenant
+        <input type="text" name="tenant_id" placeholder="optional tenant UUID">
+      </label>
+      <label>
+        Relationship
+        <input type="text" name="relationship_type" placeholder="optional lineage type">
+      </label>
+      <button type="submit">Search</button>
+    </form>
+    <div class="tapdb-graph-result-list" data-graph-search-results>
+      <p class="text-muted">Search results appear here.</p>
+    </div>
+  </article>
+
+  <section class="stack">
+    <article class="card">
+      <div class="card-header">
+        <div>
+          <p class="eyebrow">Rooted DAG</p>
+          <h2>Open By EUID</h2>
+        </div>
+        <span class="badge" data-graph-status>Waiting</span>
+      </div>
+      <form class="tapdb-graph-form" data-graph-open-form>
+        <label>
+          Start EUID
+          <input type="text" name="start_euid" required placeholder="root EUID">
+        </label>
+        <label>
+          Depth
+          <input type="number" name="depth" min="0" max="10" value="4">
+        </label>
+        <button type="submit">Open DAG</button>
+      </form>
+      <p class="text-muted" data-graph-summary>No graph loaded.</p>
+    </article>
+
+    <section class="tapdb-graph-layout">
+      <article class="tapdb-graph-stage">
+        <div id="ursa-tapdb-graph" class="tapdb-graph-canvas">
+          <div class="empty-state">Search for an object or enter a root EUID.</div>
+        </div>
+      </article>
+      <aside class="tapdb-graph-sidebar">
+        <article class="card">
+          <h2>Selected Object</h2>
+          <div data-graph-node-detail>
+            <p class="text-muted">Select a node to inspect object metadata.</p>
+          </div>
+        </article>
+        <article class="card">
+          <h2>External References</h2>
+          <div class="tapdb-external-actions" data-graph-external-actions>
+            <p class="text-muted">External references for the selected object appear here.</p>
+          </div>
+        </article>
+      </aside>
+    </section>
+  </section>
+</section>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.28.1/cytoscape.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dagre@0.8.5/dist/dagre.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.min.js"></script>
+<script>
+  const tapdbState = { graph: null, nodes: new Map() };
+
+  function graphParams(form) {
+    const params = new URLSearchParams();
+    for (const [key, value] of new FormData(form).entries()) {
+      const clean = String(value || "").trim();
+      if (clean) params.set(key, clean);
+    }
+    return params;
+  }
+
+  async function getJson(url) {
+    const response = await fetch(url, { headers: { Accept: "application/json" } });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload.detail || `HTTP ${response.status}`);
+    }
+    return payload;
+  }
+
+  function setText(selector, value) {
+    const node = document.querySelector(selector);
+    if (node) node.textContent = value;
+  }
+
+  function normalizeElements(payload) {
+    const elements = payload.elements || {};
+    const nodes = Array.isArray(elements.nodes) ? elements.nodes : [];
+    const edges = Array.isArray(elements.edges) ? elements.edges : [];
+    return {
+      nodes: nodes.map((node) => {
+        const data = Object.assign({}, node.data || {});
+        data.id = String(data.id || data.euid || "");
+        data.euid = String(data.euid || data.id || "");
+        data.label = String(data.display_label || data.name || data.euid || data.id || "object");
+        return { data };
+      }).filter((node) => node.data.id),
+      edges: edges.map((edge) => ({ data: Object.assign({}, edge.data || {}) })),
+    };
+  }
+
+  function renderDetail(data) {
+    const detail = document.querySelector("[data-graph-node-detail]");
+    const refsMount = document.querySelector("[data-graph-external-actions]");
+    if (!detail || !refsMount) return;
+    detail.innerHTML = "";
+    const list = document.createElement("div");
+    list.className = "tapdb-detail-list";
+    for (const [label, value] of [
+      ["Object", data.display_label || data.label || data.name || data.euid || data.id],
+      ["EUID", data.euid || data.id],
+      ["Record Type", data.record_type || "object"],
+      ["Category", data.category || "n/a"],
+      ["Type", data.type || "n/a"],
+      ["Subtype", data.subtype || "n/a"],
+      ["System", data.system || "ursa"],
+    ]) {
+      const row = document.createElement("div");
+      row.className = "tapdb-detail-row";
+      const key = document.createElement("span");
+      key.textContent = label;
+      const val = document.createElement("strong");
+      val.textContent = value || "n/a";
+      row.append(key, val);
+      list.append(row);
+    }
+    detail.append(list);
+
+    refsMount.innerHTML = "";
+    const refs = Array.isArray(data.external_refs) ? data.external_refs : [];
+    if (!refs.length) {
+      const empty = document.createElement("p");
+      empty.className = "text-muted";
+      empty.textContent = "No external references.";
+      refsMount.append(empty);
+      return;
+    }
+    refs.forEach((ref, index) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = ref.label || `${ref.system || "external"}:${ref.root_euid || ""}`;
+      button.disabled = ref.graph_expandable === false;
+      button.addEventListener("click", () => loadExternalGraph(data.euid || data.id, ref.ref_index ?? index));
+      refsMount.append(button);
+      if (ref.reason) {
+        const reason = document.createElement("p");
+        reason.className = "text-muted";
+        reason.textContent = ref.reason;
+        refsMount.append(reason);
+      }
+    });
+  }
+
+  function renderGraph(payload) {
+    const mount = document.getElementById("ursa-tapdb-graph");
+    if (!mount) return;
+    const { nodes, edges } = normalizeElements(payload);
+    setText("[data-graph-summary]", `${nodes.length} nodes, ${edges.length} edges`);
+    mount.innerHTML = "";
+    if (!nodes.length) {
+      mount.innerHTML = '<div class="empty-state">No graph nodes were returned.</div>';
+      return;
+    }
+    if (!window.cytoscape) {
+      mount.innerHTML = '<div class="empty-state">Cytoscape did not load.</div>';
+      return;
+    }
+    if (window.cytoscapeDagre) window.cytoscape.use(window.cytoscapeDagre);
+    tapdbState.nodes = new Map(nodes.map((node) => [node.data.id, node.data]));
+    tapdbState.graph = window.cytoscape({
+      container: mount,
+      elements: nodes.concat(edges),
+      style: [
+        {
+          selector: "node",
+          style: {
+            label: "data(label)",
+            "background-color": "#124238",
+            color: "#edf6f2",
+            "text-valign": "bottom",
+            "text-halign": "center",
+            "text-margin-y": "8px",
+            "font-size": "10px",
+            "font-weight": "700",
+            width: "46px",
+            height: "46px",
+            "border-width": 3,
+            "border-color": "#9de6c5",
+            "text-outline-color": "#071018",
+            "text-outline-width": 3,
+          },
+        },
+        {
+          selector: "edge",
+          style: {
+            width: 2,
+            "line-color": "#4c7781",
+            "target-arrow-color": "#4c7781",
+            "target-arrow-shape": "triangle",
+            "curve-style": "bezier",
+          },
+        },
+        { selector: "node:selected", style: { "border-width": 5, "border-color": "#ffffff" } },
+      ],
+      layout: { name: window.cytoscapeDagre ? "dagre" : "grid", rankDir: "LR" },
+    });
+    renderDetail(nodes[0].data);
+    tapdbState.graph.$id(nodes[0].data.id).select();
+    tapdbState.graph.on("tap", "node", async (event) => {
+      const data = tapdbState.nodes.get(event.target.id()) || event.target.data();
+      renderDetail(data);
+      if (!data.euid) return;
+      try {
+        const detail = await getJson(`/api/dag/object/${encodeURIComponent(data.euid)}`);
+        const merged = Object.assign({}, data, detail);
+        tapdbState.nodes.set(data.id, merged);
+        renderDetail(merged);
+      } catch (_error) {
+        renderDetail(data);
+      }
+    });
+  }
+
+  async function loadGraph(startEuid, depth) {
+    const params = new URLSearchParams({ start_euid: startEuid, depth: String(depth || "4") });
+    setText("[data-graph-status]", "Loading");
+    try {
+      const payload = await getJson(`/api/dag/data?${params.toString()}`);
+      renderGraph(payload);
+      setText("[data-graph-status]", "Loaded");
+    } catch (error) {
+      setText("[data-graph-status]", "Failed");
+      setText("[data-graph-summary]", error.message);
+    }
+  }
+
+  async function loadExternalGraph(sourceEuid, refIndex) {
+    const form = document.querySelector("[data-graph-open-form]");
+    const depth = form?.elements.depth?.value || "4";
+    const params = new URLSearchParams({
+      source_euid: sourceEuid,
+      ref_index: String(refIndex),
+      depth: String(depth),
+    });
+    setText("[data-graph-status]", "Loading external");
+    try {
+      const payload = await getJson(`/api/dag/external?${params.toString()}`);
+      renderGraph(payload);
+      setText("[data-graph-status]", "External loaded");
+    } catch (error) {
+      setText("[data-graph-status]", "External failed");
+      setText("[data-graph-summary]", error.message);
+    }
+  }
+
+  function renderSearchResults(payload) {
+    const mount = document.querySelector("[data-graph-search-results]");
+    if (!mount) return;
+    const items = Array.isArray(payload.items) ? payload.items : [];
+    setText("[data-graph-search-status]", `${items.length} results`);
+    mount.innerHTML = "";
+    if (!items.length) {
+      const empty = document.createElement("p");
+      empty.className = "text-muted";
+      empty.textContent = "No matching TapDB objects.";
+      mount.append(empty);
+      return;
+    }
+    items.forEach((item) => {
+      const card = document.createElement("article");
+      card.className = "tapdb-graph-result";
+      const title = document.createElement("h3");
+      title.textContent = item.display_label || item.name || item.euid || "Unnamed object";
+      const meta = document.createElement("p");
+      meta.className = "text-muted";
+      meta.textContent = `${item.record_type || item.kind || "object"} / ${item.category || "uncategorized"} / ${item.type || "n/a"}`;
+      const euid = document.createElement("div");
+      euid.className = "mono";
+      euid.textContent = item.euid || "no EUID";
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = "Open DAG";
+      button.disabled = !item.euid;
+      button.addEventListener("click", () => {
+        const openForm = document.querySelector("[data-graph-open-form]");
+        if (openForm) openForm.elements.start_euid.value = item.euid || "";
+        loadGraph(item.euid || "", openForm?.elements.depth?.value || "4");
+      });
+      card.append(title, meta, euid, button);
+      mount.append(card);
+    });
+  }
+
+  document.addEventListener("DOMContentLoaded", () => {
+    const searchForm = document.querySelector("[data-graph-search-form]");
+    const openForm = document.querySelector("[data-graph-open-form]");
+    searchForm?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      setText("[data-graph-search-status]", "Searching");
+      try {
+        renderSearchResults(await getJson(`/api/dag/search?${graphParams(searchForm).toString()}`));
+      } catch (error) {
+        setText("[data-graph-search-status]", "Failed");
+        const mount = document.querySelector("[data-graph-search-results]");
+        if (mount) mount.textContent = error.message;
+      }
+    });
+    openForm?.addEventListener("submit", (event) => {
+      event.preventDefault();
+      loadGraph(openForm.elements.start_euid.value, openForm.elements.depth.value);
+    });
+    const params = new URLSearchParams(window.location.search || "");
+    const euid = params.get("start_euid") || params.get("euid") || "";
+    if (euid && openForm) {
+      openForm.elements.start_euid.value = euid;
+      loadGraph(euid, params.get("depth") || openForm.elements.depth.value);
+    }
+  });
+</script>
+{% endblock %}

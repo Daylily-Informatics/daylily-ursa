@@ -323,5 +323,6 @@ class TestGenerateStageSamplesTsv:
         assert columns == list(ANALYSIS_SAMPLES_COLUMNS)
         assert columns[0] == "RUN_ID"
         assert columns[12] == "ILMN_R1_FQ"
+        assert columns[-3:-1] == ["N_X", "N_Y"]
         assert columns[-1] == "EXTERNAL_SAMPLE_ID"
-        assert len(columns) == 52
+        assert len(columns) == 54
