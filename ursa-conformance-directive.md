@@ -23,7 +23,7 @@ Ursa should remain a peer service to Atlas and Bloom. Auth, tenant isolation, da
 | Auth package shape | Done | Auth lives under `daylib_ursa/auth/` with `CurrentUser`, web/API auth dependencies, JWT/session handling, user tokens, and user directory integration. |
 | RBAC | Done | `Role`, `Permission`, `ROLE_PERMISSIONS`, and helper functions live in `daylib_ursa/auth/rbac.py`. |
 | Tenant isolation | Partially done | Most API routes check tenant ownership and admin access at route/service boundaries; continued review should focus on new routes and TapDB queries as they are added. |
-| Manifest contract | Done | Ursa generates `metadata.analysis_samples_manifest` from editor rows or S3 references using the installed `daylily-ephemeral-cluster==2.1.11` template. |
+| Manifest contract | Done | Ursa generates `metadata.analysis_samples_manifest` from editor rows or S3 references using the installed `daylily-ephemeral-cluster==2.1.12` template. |
 | Staging jobs | Done | `/api/v1/staging-jobs` defines, runs, reads, and returns logs for `daylily-ec samples stage` jobs. |
 | Analysis jobs | Done | `/api/v1/analysis-jobs` can create jobs from a manifest and either stage directly from a reference bucket or reuse a completed `staging_job_euid`. |
 | Atlas return | Done | Result return requires approved review state, Dewey artifact EUIDs, opaque Atlas/Bloom EUIDs, idempotency, and persisted Atlas response metadata. |

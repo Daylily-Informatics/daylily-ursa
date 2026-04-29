@@ -3,9 +3,9 @@ channels:
   - conda-forge
   - defaults
 dependencies:
-  - python=3.11
+  - python=3.12
   - awscli=2.34.31
-  # Conda AWS CLI v2 metadata pins stay aligned with daylily-ec 2.1.11.
+  # Conda AWS CLI v2 metadata pins stay aligned with daylily-ec 2.1.12.
   - prompt-toolkit=3.0.51
   - ruamel.yaml=0.19.1
   - aws-parallelcluster=3.13.2

@@ -7,7 +7,7 @@ name = "daylily-ursa"
 dynamic = ["version"]
 description = "Daylily Ursa beta analysis API"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 license = {text = "MIT"}
 authors = [
     {name = "Daylily Informatics", email = "daylily@daylilyinformatics.com"}
@@ -25,7 +25,7 @@ dependencies = [
     # TapDB graph persistence
     "daylily-tapdb==6.0.8",
     # Ephemeral cluster API/CLI contract
-    "daylily-ephemeral-cluster==2.1.11",
+    "daylily-ephemeral-cluster==2.1.12",
     # Shared Zebra runtime contract
     "zebra_day==6.0.1",
     "fastapi>=0.104.0",
@@ -77,14 +77,14 @@ markers = [
 
 [tool.black]
 line-length = 100
-target-version = ['py311', 'py312']
+target-version = ['py312']
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py312"
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false

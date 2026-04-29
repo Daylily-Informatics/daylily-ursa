@@ -8,7 +8,7 @@
     },
     "daylily-ephemeral-cluster": {
       "repo": "Daylily-Informatics/daylily-ephemeral-cluster",
-      "current": "2.1.11"
+      "current": "2.1.12"
     },
     "daylily-omics-analysis": {
       "repo": "Daylily-Informatics/daylily-omics-analysis",
@@ -39,14 +39,14 @@
     {
       "date": "2026-04-29",
       "ursa": "2.0.1",
-      "ephemeral_cluster": "2.1.11",
+      "ephemeral_cluster": "2.1.12",
       "omics_analysis": "0.7.641",
       "cognito": "2.1.5",
       "tapdb": "6.0.8",
       "cli_core_yo": "2.1.1",
       "zebra_day": "6.0.1",
       "omics_references": "0.3.1",
-      "notes": "Pinned daylily-ephemeral-cluster to 2.1.11, daylily-auth-cognito to 2.1.5, daylily-tapdb to 6.0.8, cli-core-yo to 2.1.1, zebra_day to 6.0.1, and daylily-omics-analysis to GitHub release 0.7.641"
+      "notes": "Pinned daylily-ephemeral-cluster to 2.1.12, daylily-auth-cognito to 2.1.5, daylily-tapdb to 6.0.8, cli-core-yo to 2.1.1, zebra_day to 6.0.1, and daylily-omics-analysis to GitHub release 0.7.641"
     },
     {
       "date": "2026-03-03",

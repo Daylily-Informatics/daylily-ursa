@@ -11,7 +11,7 @@ from typing import Any, Dict, Iterable, Mapping, Optional, Sequence, cast
 
 
 DAYLILY_EC_DISTRIBUTION = "daylily-ephemeral-cluster"
-REQUIRED_DAYLILY_EC_VERSION = "2.1.11"
+REQUIRED_DAYLILY_EC_VERSION = "2.1.12"
 
 
 def require_daylily_ec_version() -> str:
@@ -91,7 +91,7 @@ def _summarize_process_output(
 
 
 class DaylilyEcClient:
-    """Strict Ursa client for the daylily-ephemeral-cluster 2.1.11 contract."""
+    """Strict Ursa client for the daylily-ephemeral-cluster 2.1.12 contract."""
 
     def __init__(
         self,
@@ -298,7 +298,7 @@ def write_dayec_cluster_config(
     contact_email: Optional[str],
     config_values: Mapping[str, Any] | None = None,
 ) -> Path:
-    """Write a non-interactive cluster request through the day-ec 2.1.11 library."""
+    """Write a non-interactive cluster request through the day-ec 2.1.12 library."""
 
     require_daylily_ec_version()
     module = import_module("daylily_ec.config")
