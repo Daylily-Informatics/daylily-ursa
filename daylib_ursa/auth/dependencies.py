@@ -230,16 +230,20 @@ def _claims_to_current_user(claims: dict[str, Any]) -> CurrentUser:
 
     email = str(claims.get("email") or "").strip()
     tenant_value = claims.get("tenant_id") or claims.get("custom:tenant_id")
-    if not str(tenant_value or "").strip():
-        raise AuthError("Authentication token missing tenant_id")
-    name = str(claims.get("name") or claims.get("display_name") or "").strip() or None
     raw_roles = claims.get("cognito:groups")
+    roles = _map_cognito_groups_to_roles(raw_roles)
+    if not str(tenant_value or "").strip():
+        if Role.ADMIN.value in roles:
+            tenant_value = str(uuid.UUID(int=0))
+        else:
+            raise AuthError("Authentication token missing tenant_id")
+    name = str(claims.get("name") or claims.get("display_name") or "").strip() or None
     return CurrentUser(
         sub=sub,
         email=email,
         name=name,
         tenant_id=_parse_uuid(tenant_value, label="tenant_id"),
-        roles=_map_cognito_groups_to_roles(raw_roles),
+        roles=roles,
     )
 
 

@@ -26,13 +26,27 @@ def test_claims_to_current_user_maps_canonical_cognito_groups() -> None:
     assert user.is_admin is True
 
 
-def test_claims_to_current_user_requires_tenant_claim() -> None:
+def test_claims_to_current_user_allows_admin_without_tenant_claim() -> None:
+    user = auth_dependencies._claims_to_current_user(
+        {
+            "sub": "user-123",
+            "email": "ursa@example.com",
+            "cognito:groups": ["platform-admin"],
+        }
+    )
+
+    assert user.tenant_id == uuid.UUID("00000000-0000-0000-0000-000000000000")
+    assert user.roles == ["ADMIN"]
+    assert user.is_admin is True
+
+
+def test_claims_to_current_user_requires_tenant_claim_for_non_admin() -> None:
     with pytest.raises(AuthError, match="missing tenant_id"):
         auth_dependencies._claims_to_current_user(
             {
                 "sub": "user-123",
                 "email": "ursa@example.com",
-                "cognito:groups": ["platform-admin"],
+                "cognito:groups": ["ursa-readonly"],
             }
         )
 
